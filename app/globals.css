@@ -1,0 +1,213 @@
+:root {
+  font-family: 'Segoe UI', 'Heebo', 'Open Sans', system-ui, -apple-system,
+    BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #0f172a;
+  background-color: #f6f7fb;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  background: linear-gradient(180deg, #eef2ff 0%, #f6f7fb 100%);
+  padding: 2rem 1rem;
+}
+
+main.app {
+  width: min(960px, 100%);
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+}
+
+.card {
+  background: #fff;
+  border-radius: 20px;
+  box-shadow: 0 20px 65px rgba(15, 23, 42, 0.08);
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+header h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1.75rem;
+}
+
+header p {
+  margin: 0;
+  color: #475569;
+}
+
+.file-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem 1.5rem;
+  border-radius: 999px;
+  background-color: #4338ca;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  width: fit-content;
+}
+
+.file-picker span {
+  pointer-events: none;
+}
+
+.file-picker input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.note {
+  margin: 0;
+  color: #475569;
+  font-size: 0.9rem;
+}
+
+.banner {
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem;
+  font-weight: 500;
+}
+
+.banner.error {
+  background-color: #fee2e2;
+  color: #991b1b;
+}
+
+.banner.info {
+  background-color: #e0f2fe;
+  color: #075985;
+}
+
+.months-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+}
+
+.month-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  padding: 1rem 1.25rem;
+  border-radius: 1rem;
+  border: 1px solid #e0e7ff;
+  background-color: #f8f9ff;
+  color: inherit;
+  cursor: pointer;
+  transition: border 0.2s, background 0.2s, transform 0.2s;
+  font: inherit;
+  text-align: right;
+  width: 100%;
+}
+
+.month-card:hover {
+  border-color: #4c1d95;
+}
+
+.month-card.active {
+  background: linear-gradient(120deg, #312e81, #6366f1);
+  color: #fff;
+  border-color: transparent;
+  transform: translateY(-2px);
+}
+
+.month-card .month-label {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.month-card .month-total {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.month-card .month-count {
+  font-size: 0.9rem;
+  color: inherit;
+  opacity: 0.85;
+}
+
+.month-card:focus-visible {
+  outline: 2px solid #312e81;
+  outline-offset: 2px;
+}
+
+.details {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.details-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.details-total {
+  font-weight: 600;
+  color: #4338ca;
+}
+
+.table-wrapper {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+th,
+td {
+  padding: 0.75rem 0.5rem;
+  text-align: right;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+th {
+  color: #475569;
+  font-weight: 600;
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+@media (max-width: 640px) {
+  .card {
+    padding: 1.25rem;
+  }
+
+  header h1 {
+    font-size: 1.4rem;
+  }
+
+  .month-card {
+    padding: 0.75rem 1rem;
+  }
+}
