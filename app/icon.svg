@@ -1,18 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
   <defs>
-    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#4338ca" />
-      <stop offset="100%" stop-color="#7c3aed" />
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4b6cb7"/>
+      <stop offset="100%" stop-color="#182848"/>
     </linearGradient>
   </defs>
-  <rect width="64" height="64" rx="16" fill="url(#g)" />
-  <path
-    d="M19 18h7l4 10 4-10h7l-7 14v14h-8V32z"
-    fill="#fff"
-    opacity="0.95"
-  />
-  <path
-    d="M33 18h7l9 28h-8l-1.2-4h-6.8l-1.2 4h-8z"
-    fill="#f8fafc"
-  />
+
+  <!-- Background -->
+  <rect width="256" height="256" fill="url(#bgGrad)" />
+
+  <!-- Letter A made from lines -->
+  <line x1="70" y1="200" x2="128" y2="60" stroke="white" stroke-width="20" stroke-linecap="round"/>
+  <line x1="186" y1="200" x2="128" y2="60" stroke="white" stroke-width="20" stroke-linecap="round"/>
+  <line x1="100" y1="150" x2="156" y2="150" stroke="white" stroke-width="18" stroke-linecap="round"/>
+
+  <!-- Letter Y made from lines, overlapping A on the right side -->
+  <line x1="70" y1="60" x2="99" y2="140" stroke="white" stroke-width="20" stroke-linecap="round"/>
 </svg>
