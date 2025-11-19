@@ -3,11 +3,10 @@ import type { Metadata } from 'next'
 import type { ReactNode } from 'react'
 import './globals.css'
 
-if (! process.env.NEXT_PUBLIC_NEXT_PUBLIC) {
-  console.error("Missing NEXT_PUBLIC NEXT_PUBLIC");
-  process.exit(1);
+if (!process.env.NEXT_PUBLIC_SITE_URL) {
+  throw new Error('Missing NEXT_PUBLIC_SITE_URL environment variable')
 }
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL!;
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL
 const metadataBase = (() => {
   try {
     return new URL(siteUrl)
