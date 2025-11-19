@@ -121,7 +121,7 @@ const parseStatement = (rows: SheetRow[] = []): Statement => {
   }
 
   const headers = sanitized[headerIndex]
-  const findIndex = (text) =>
+  const findIndex = (text: string) =>
     headers.findIndex((cell) => typeof cell === 'string' && cell.includes(text))
 
   const transactionDateIdx = findIndex('תאריך')
@@ -166,8 +166,8 @@ const parseStatement = (rows: SheetRow[] = []): Statement => {
 
     payments.push({
       id: `${rowIndex}-${amount}-${current}`,
-      transactionDate: row[transactionDateIdx] || '',
-      merchant: row[merchantIdx] || 'עסקה ללא שם',
+      transactionDate: String(row[transactionDateIdx] || ''),
+      merchant: String(row[merchantIdx] || 'עסקה ללא שם'),
       amount,
       currentStep: current,
       totalSteps: total,
