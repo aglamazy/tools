@@ -1,7 +1,41 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
 import * as XLSX from 'xlsx'
+
+type SheetCell = string | number | null | undefined
+type SheetRow = SheetCell[]
+
+type Payment = {
+  id: string
+  transactionDate: string
+  merchant: string
+  amount: number
+  currentStep: number
+  totalSteps: number
+}
+
+type ForecastPayment = {
+  id: string
+  merchant: string
+  transactionDate: string
+  scheduledStep: number
+  totalSteps: number
+  amount: number
+}
+
+type ForecastMonth = {
+  key: string
+  label: string
+  date: Date | null
+  total: number
+  payments: ForecastPayment[]
+}
+
+type Statement = {
+  billingDate: Date | null
+  payments: Payment[]
+}
 
 const currencyFormatter = new Intl.NumberFormat('he-IL', {
   style: 'currency',
@@ -9,17 +43,20 @@ const currencyFormatter = new Intl.NumberFormat('he-IL', {
   minimumFractionDigits: 2,
 })
 
-const normalizeCell = (value) => {
+const normalizeCell = (value: SheetCell): string | number => {
   if (value === undefined || value === null) {
     return ''
   }
   if (typeof value === 'string') {
     return value.trim()
   }
-  return value
+  if (typeof value === 'number') {
+    return value
+  }
+  return ''
 }
 
-const toNumber = (value) => {
+const toNumber = (value: string | number): number => {
   if (typeof value === 'number') {
     return value
   }
@@ -31,7 +68,7 @@ const toNumber = (value) => {
   return NaN
 }
 
-const tryParseDate = (value) => {
+const tryParseDate = (value: string | number): Date | null => {
   if (typeof value !== 'string') {
     return null
   }
@@ -52,7 +89,7 @@ const tryParseDate = (value) => {
   return Number.isNaN(parsed.getTime()) ? null : parsed
 }
 
-const findBillingDate = (rows) => {
+const findBillingDate = (rows: Array<Array<string | number>>): Date | null => {
   for (const row of rows) {
     for (const cell of row) {
       const parsed = tryParseDate(cell)
@@ -64,8 +101,8 @@ const findBillingDate = (rows) => {
   return null
 }
 
-const parseStatement = (rows = []) => {
-  const sanitized = rows.map((row) => row.map(normalizeCell))
+const parseStatement = (rows: SheetRow[] = []): Statement => {
+  const sanitized = rows.map((row) => row.map(normalizeCell)) as Array<Array<string | number>>
   const billingDate = findBillingDate(sanitized)
 
   const headerIndex = sanitized.findIndex((row) =>
@@ -101,7 +138,7 @@ const parseStatement = (rows = []) => {
     return { billingDate, payments: [] }
   }
 
-  const payments = []
+  const payments: Payment[] = []
   const rowsAfterHeader = sanitized.slice(headerIndex + 1)
 
   rowsAfterHeader.forEach((row, rowIndex) => {
@@ -140,7 +177,7 @@ const parseStatement = (rows = []) => {
   return { billingDate, payments }
 }
 
-const addMonths = (date, count) => {
+const addMonths = (date: Date | null, count: number): Date | null => {
   if (!date) {
     return null
   }
@@ -149,19 +186,19 @@ const addMonths = (date, count) => {
   return result
 }
 
-const formatMonthLabel = (date, fallbackIndex) => {
+const formatMonthLabel = (date: Date | null, fallbackIndex: number): string => {
   if (!date) {
     return `חודש ${fallbackIndex + 1}`
   }
   return date.toLocaleDateString('he-IL', { month: 'long', year: 'numeric' })
 }
 
-const buildForecast = (payments, billingDate) => {
+const buildForecast = (payments: Payment[], billingDate: Date | null): ForecastMonth[] => {
   if (!payments.length) {
     return []
   }
 
-  const buckets = new Map()
+  const buckets = new Map<string, ForecastMonth>()
 
   payments.forEach((payment) => {
     const remaining = payment.totalSteps - payment.currentStep
@@ -181,6 +218,9 @@ const buildForecast = (payments, billingDate) => {
       }
 
       const bucket = buckets.get(key)
+      if (!bucket) {
+        continue
+      }
       bucket.total += payment.amount
       bucket.payments.push({
         id: `${payment.id}-${offset}`,
@@ -195,7 +235,7 @@ const buildForecast = (payments, billingDate) => {
 
   return Array.from(buckets.values()).sort((a, b) => {
     if (a.date && b.date) {
-      return a.date - b.date
+      return a.date.getTime() - b.date.getTime()
     }
     if (a.date && !b.date) {
       return -1
@@ -209,12 +249,15 @@ const buildForecast = (payments, billingDate) => {
 
 export default function FuturePaymentsPage() {
   const [fileName, setFileName] = useState('')
-  const [payments, setPayments] = useState([])
-  const [billingDate, setBillingDate] = useState(null)
+  const [payments, setPayments] = useState<Payment[]>([])
+  const [billingDate, setBillingDate] = useState<Date | null>(null)
   const [selectedMonthKey, setSelectedMonthKey] = useState('')
   const [error, setError] = useState('')
 
-  const forecastMonths = useMemo(() => buildForecast(payments, billingDate), [payments, billingDate])
+  const forecastMonths = useMemo(
+    () => buildForecast(payments, billingDate),
+    [payments, billingDate],
+  )
 
   useEffect(() => {
     if (!forecastMonths.length) {
@@ -230,7 +273,7 @@ export default function FuturePaymentsPage() {
 
   const selectedMonth = forecastMonths.find((month) => month.key === selectedMonthKey)
 
-  const handleFileChange = (event) => {
+  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) {
       return
@@ -244,11 +287,16 @@ export default function FuturePaymentsPage() {
     const reader = new FileReader()
     reader.onload = (loadEvent) => {
       try {
-        const data = new Uint8Array(loadEvent.target?.result)
+        const arrayBuffer = loadEvent.target?.result
+        if (!arrayBuffer || !(arrayBuffer instanceof ArrayBuffer)) {
+          setError('אירעה שגיאה בקריאת הקובץ. נסה לבחור קובץ XLS תקין.')
+          return
+        }
+        const data = new Uint8Array(arrayBuffer)
         const workbook = XLSX.read(data, { type: 'array' })
         const sheetName = workbook.SheetNames[0]
         const worksheet = workbook.Sheets[sheetName]
-        const rows = XLSX.utils.sheet_to_json(worksheet, {
+        const rows = XLSX.utils.sheet_to_json<SheetRow>(worksheet, {
           header: 1,
           raw: false,
         })
