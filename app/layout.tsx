@@ -2,6 +2,8 @@ import { Analytics } from '@vercel/analytics/react'
 import type { Metadata } from 'next'
 import type { ReactNode } from 'react'
 import './globals.css'
+import Sidebar from './components/Sidebar'
+import PageHeader from './components/PageHeader'
 
 if (!process.env.NEXT_PUBLIC_SITE_URL) {
   throw new Error('Missing NEXT_PUBLIC_SITE_URL environment variable')
@@ -17,16 +19,16 @@ const metadataBase = (() => {
 
 export const metadata: Metadata = {
   metadataBase,
-  title: 'Future Payments Forecast',
-  description: 'Upload your credit card statement to forecast upcoming installment charges.',
+  title: 'ארגז כלים פיננסיים',
+  description: 'כלים פיננסיים לניהול תשלומים ותקציב.',
   alternates: {
     canonical: '/',
   },
   openGraph: {
-    title: 'Future Payments Forecast',
-    description: 'Upload your credit card statement to forecast upcoming installment charges.',
+    title: 'ארגז כלים פיננסיים',
+    description: 'כלים פיננסיים לניהול תשלומים ותקציב.',
     url: '/',
-    siteName: 'Tools',
+    siteName: 'ארגז כלים',
     type: 'website',
   },
   robots: {
@@ -43,7 +45,13 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="he">
       <body>
-        {children}
+        <PageHeader />
+        <div className="app-layout">
+          <Sidebar />
+          <div className="main-content">
+            {children}
+          </div>
+        </div>
         <Analytics />
       </body>
     </html>

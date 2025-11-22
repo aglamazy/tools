@@ -18,17 +18,158 @@
 body {
   margin: 0;
   min-height: 100vh;
+  background: #f6f7fb;
+}
+
+.app-layout {
   display: flex;
-  align-items: flex-start;
+  min-height: calc(100vh - 80px);
+}
+
+.sidebar {
+  width: 260px;
+  background: #fff;
+  border-left: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  right: 0;
+  top: 80px;
+  bottom: 0;
+  overflow-y: auto;
+  direction: rtl;
+}
+
+.sidebar-header {
+  padding: 1.5rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.sidebar-logo {
+  text-decoration: none;
+  color: inherit;
+}
+
+.sidebar-logo h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #4338ca;
+  text-align: right;
+}
+
+.sidebar-nav {
+  flex: 1;
+  padding: 0;
+}
+
+.nav-section-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: #64748b;
+  padding: 0.5rem 1.5rem;
+  margin: 0 0 0.5rem 0;
+  letter-spacing: 0.05em;
+  text-align: right;
+}
+
+.nav-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1.5rem;
+  color: #475569;
+  text-decoration: none;
+  transition: all 0.2s;
+  cursor: pointer;
+  border-right: 3px solid transparent;
+}
+
+.nav-item:hover:not(.disabled) {
+  background-color: #f8fafc;
+  color: #4338ca;
+}
+
+.nav-item.active {
+  background-color: #eef2ff;
+  color: #4338ca;
+  font-weight: 600;
+  border-right-color: #4338ca;
+}
+
+.nav-item.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.nav-icon {
+  font-size: 1.25rem;
+  display: flex;
+  align-items: center;
   justify-content: center;
+  width: 1.5rem;
+}
+
+.nav-title {
+  flex: 1;
+  font-size: 0.9rem;
+}
+
+.nav-badge {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+  background-color: #e0e7ff;
+  color: #4338ca;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.main-content {
+  flex: 1;
+  margin-right: 260px;
   background: linear-gradient(180deg, #eef2ff 0%, #f6f7fb 100%);
-  padding: 2rem 1rem;
+  min-height: 100vh;
+}
+
+.page-header {
+  background: #fff;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 1.5rem 2rem;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.page-header h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #4338ca;
+  text-align: center;
+}
+
+.tool-page {
+  padding: 2rem 1.5rem;
+  max-width: 1200px;
+  margin: 0 auto;
 }
 
 main.app {
-  width: min(960px, 100%);
-  margin: 0 auto;
+  width: 100%;
   padding: 2rem 1.5rem;
+  max-width: 1200px;
+  margin: 0 auto;
 }
 
 .card {
@@ -49,6 +190,179 @@ header h1 {
 header p {
   margin: 0;
   color: #475569;
+}
+
+.processing-month-badge {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  background: linear-gradient(135deg, #4338ca 0%, #6366f1 100%);
+  color: #fff;
+  border-radius: 0.75rem;
+  font-weight: 600;
+  font-size: 1rem;
+  display: inline-block;
+}
+
+.upload-another-btn {
+  padding: 0.75rem 1.5rem;
+  background: #fff;
+  border: 2px solid #4338ca;
+  color: #4338ca;
+  border-radius: 999px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 0.9rem;
+}
+
+.upload-another-btn:hover {
+  background: #4338ca;
+  color: #fff;
+}
+
+.file-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.file-preview-card {
+  background: #fff;
+  border: 2px solid #e2e8f0;
+  border-radius: 1rem;
+  padding: 1.25rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.file-preview-card:hover {
+  border-color: #4338ca;
+  box-shadow: 0 4px 12px rgba(67, 56, 202, 0.15);
+  transform: translateY(-2px);
+}
+
+.file-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.file-preview-icon {
+  font-size: 1.75rem;
+}
+
+.file-preview-name {
+  flex: 1;
+  font-weight: 600;
+  color: #0f172a;
+  font-size: 0.95rem;
+  word-break: break-word;
+}
+
+.file-preview-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.file-preview-detail {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.9rem;
+}
+
+.detail-label {
+  color: #64748b;
+  font-weight: 500;
+}
+
+.detail-value {
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.loaded-file-badge {
+  padding: 0.5rem 0.75rem;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.5rem;
+  font-size: 0.85rem;
+  color: #475569;
+  font-weight: 500;
+}
+
+.file-picker.secondary {
+  background-color: #f8fafc;
+  border: 2px solid #e2e8f0;
+  color: #4338ca;
+}
+
+.file-picker.secondary:hover {
+  background-color: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+
+.modal-content {
+  background: #fff;
+  border-radius: 1rem;
+  max-width: 900px;
+  width: 100%;
+  max-height: 90vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.25);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  line-height: 1;
+  transition: color 0.2s;
+}
+
+.modal-close:hover {
+  color: #0f172a;
+}
+
+.modal-body {
+  padding: 1.5rem;
+  overflow-y: auto;
 }
 
 .file-picker {
@@ -198,7 +512,149 @@ tbody tr:last-child td {
   border-bottom: none;
 }
 
-@media (max-width: 640px) {
+.credit-card-row {
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.credit-card-row:hover {
+  background-color: #f8fafc;
+}
+
+.credit-card-link {
+  color: #4338ca;
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.expand-indicator {
+  display: inline-block;
+  margin-right: 0.5rem;
+  color: #4338ca;
+  font-size: 0.85rem;
+}
+
+.credit-card-details-row {
+  background-color: #f8fafc;
+}
+
+.credit-card-details {
+  padding: 1.5rem;
+  background-color: #fff;
+  border-radius: 0.75rem;
+  border: 2px solid #e0e7ff;
+  margin: 0.5rem 0;
+}
+
+.credit-card-details h4 {
+  margin: 0 0 1rem 0;
+  color: #4338ca;
+  font-size: 1.1rem;
+  font-weight: 700;
+  text-align: right;
+}
+
+.credit-card-details-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.credit-card-details-table th,
+.credit-card-details-table td {
+  padding: 0.5rem;
+  text-align: right;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.credit-card-details-table thead {
+  background-color: #f8fafc;
+}
+
+.credit-card-details-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.summary-card {
+  padding: 1.5rem;
+  border-radius: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.summary-card.income {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: #fff;
+}
+
+.summary-card.expenses {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  color: #fff;
+}
+
+.summary-card.net {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  color: #fff;
+}
+
+.summary-label {
+  font-size: 0.9rem;
+  opacity: 0.9;
+  font-weight: 500;
+}
+
+.summary-amount {
+  font-size: 1.75rem;
+  font-weight: 700;
+}
+
+.summary-count {
+  font-size: 0.85rem;
+  opacity: 0.85;
+}
+
+.amount-positive {
+  color: #10b981;
+  font-weight: 600;
+}
+
+.amount-negative {
+  color: #ef4444;
+  font-weight: 600;
+}
+
+@media (max-width: 768px) {
+  .sidebar {
+    width: 100%;
+    position: relative;
+    border-left: none;
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  .main-content {
+    margin-right: 0;
+  }
+
+  .app-layout {
+    flex-direction: column;
+  }
+
+  .page-header {
+    padding: 1rem 1.5rem;
+  }
+
+  .page-header h1 {
+    font-size: 1.25rem;
+  }
+
   .card {
     padding: 1.25rem;
   }
@@ -209,5 +665,13 @@ tbody tr:last-child td {
 
   .month-card {
     padding: 0.75rem 1rem;
+  }
+
+  .tool-page {
+    padding: 1rem;
+  }
+
+  main.app {
+    padding: 1rem;
   }
 }
