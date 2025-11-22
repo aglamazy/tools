@@ -17,3 +17,22 @@ export type ParseResult = {
   transactions: Transaction[]
   processingMonth: string | null
 }
+
+export type TransactionStorage = {
+  version: string
+  processingMonth: string | null
+  transactions: Transaction[]
+  creditCardData: {
+    cardNumber: string
+    payments: Array<{
+      id: string
+      transactionDate: string
+      merchant: string
+      amount: number
+      currentStep: number
+      totalSteps: number
+    }>
+  }[]
+  loadedFiles: string[]
+  lastUpdated: string
+}

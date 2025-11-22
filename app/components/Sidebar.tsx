@@ -14,7 +14,7 @@ type Tool = {
 const tools: Tool[] = [
   {
     id: 'analyze-transactions',
-    title: 'ניתוח עסקאות חודש קודם',
+    title: 'ניתוח עסקאות',
     href: '/tools/analyze-transactions',
     icon: '📊',
     available: true,

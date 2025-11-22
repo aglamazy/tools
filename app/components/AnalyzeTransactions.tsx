@@ -1,10 +1,12 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import * as XLSX from 'xlsx'
-import type { SheetRow, Transaction, ParseResult } from '@/app/types/transactions'
+import type { SheetRow, Transaction, ParseResult, TransactionStorage } from '@/app/types/transactions'
 import FileSelectModal from './FileSelectModal'
 import { parseCreditCardStatement } from '@/app/utils/creditCardParser'
+
+const STORAGE_KEY = 'finance-transactions'
 
 const currencyFormatter = new Intl.NumberFormat('he-IL', {
   style: 'currency',
@@ -231,6 +233,66 @@ export default function AnalyzeTransactions() {
   const [expandedTransaction, setExpandedTransaction] = useState<string | null>(null)
   const [savedDirHandle, setSavedDirHandle] = useState<FileSystemDirectoryHandle | null>(null)
 
+  // Load from LocalStorage on mount
+  useEffect(() => {
+    loadFromStorage()
+  }, [])
+
+  // Auto-save whenever data changes
+  useEffect(() => {
+    if (transactions.length > 0 || creditCardData.size > 0) {
+      saveToStorage()
+    }
+  }, [transactions, creditCardData, loadedFiles, processingMonth])
+
+  const saveToStorage = () => {
+    try {
+      const data: TransactionStorage = {
+        version: '1.0',
+        processingMonth,
+        transactions,
+        creditCardData: Array.from(creditCardData.values()),
+        loadedFiles,
+        lastUpdated: new Date().toISOString(),
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+      console.log('Saved transactions to localStorage:', {
+        transactionCount: transactions.length,
+        creditCards: creditCardData.size,
+        files: loadedFiles.length,
+      })
+    } catch (err) {
+      console.error('Error saving transactions:', err)
+    }
+  }
+
+  const loadFromStorage = () => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY)
+      if (stored) {
+        const data: TransactionStorage = JSON.parse(stored)
+        setTransactions(data.transactions || [])
+        setProcessingMonth(data.processingMonth)
+        setLoadedFiles(data.loadedFiles || [])
+
+        // Restore credit card data as Map
+        const ccMap = new Map<string, CreditCardData>()
+        data.creditCardData?.forEach((cc) => {
+          ccMap.set(cc.cardNumber, cc)
+        })
+        setCreditCardData(ccMap)
+
+        console.log('Loaded transactions from localStorage:', {
+          transactionCount: data.transactions?.length || 0,
+          creditCards: data.creditCardData?.length || 0,
+          files: data.loadedFiles?.length || 0,
+        })
+      }
+    } catch (err) {
+      console.error('Error loading transactions:', err)
+    }
+  }
+
   const processFile = async (file: File, isAdditional: boolean = false) => {
     setError('')
 
@@ -290,9 +352,20 @@ export default function AnalyzeTransactions() {
           }
 
           if (isAdditional) {
+            // Check for duplicates before merging
+            const existingIds = new Set(transactions.map(t => t.id))
+            const newTransactions = result.transactions.filter(t => !existingIds.has(t.id))
+
+            if (newTransactions.length === 0) {
+              setError('כל העסקאות מהקובץ כבר קיימות.')
+              return
+            }
+
             // Merge with existing transactions
-            setTransactions((prev) => [...prev, ...result.transactions])
+            setTransactions((prev) => [...prev, ...newTransactions])
             setLoadedFiles((prev) => [...prev, file.name])
+
+            console.log(`Added ${newTransactions.length} new transactions (${result.transactions.length - newTransactions.length} duplicates skipped)`)
           } else {
             // Replace transactions
             setTransactions(result.transactions)
@@ -342,10 +415,19 @@ export default function AnalyzeTransactions() {
   const netAmount = totalIncome - totalExpenses
 
   const handleReset = () => {
+    if (!confirm('האם אתה בטוח שברצונך למחוק את כל הנתונים?')) {
+      return
+    }
+
     setLoadedFiles([])
     setTransactions([])
+    setCreditCardData(new Map())
     setProcessingMonth(null)
     setError('')
+
+    // Clear from localStorage
+    localStorage.removeItem(STORAGE_KEY)
+    console.log('Cleared all transaction data')
   }
 
   const formatMonthDisplay = (monthStr: string | null): string => {
