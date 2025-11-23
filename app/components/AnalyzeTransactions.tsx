@@ -266,12 +266,14 @@ export default function AnalyzeTransactions() {
 
   useEffect(() => {
     if (!processingMonth) return
+    // Always load fresh categories from localStorage to ensure isFixed and other properties are current
+    const freshCategories = loadCategoriesFromStorage()
     const snapshot = buildSnapshot(
       processingMonth,
       transactions,
       creditCardData,
       classifications,
-      categories,
+      freshCategories,
       loadedFiles
     )
     saveHistorySnapshot(snapshot)
@@ -342,6 +344,22 @@ export default function AnalyzeTransactions() {
     } catch (err) {
       console.error('Error loading transactions:', err)
     }
+  }
+
+  const loadCategoriesFromStorage = (): Category[] => {
+    try {
+      const stored = localStorage.getItem(CATEGORIES_STORAGE_KEY)
+      if (stored) {
+        const data = JSON.parse(stored)
+        return (data.categories || []).map((cat: Category) => ({
+          ...cat,
+          isFixed: cat.isFixed ?? false,
+        }))
+      }
+    } catch (err) {
+      console.error('Error loading categories from storage:', err)
+    }
+    return []
   }
 
   const loadCategories = () => {
@@ -677,7 +695,6 @@ export default function AnalyzeTransactions() {
         categoryName: cat.name,
         type: cat.type,
         color: cat.color,
-        isFixed: cat.isFixed,
         total: 0,
         count: 0,
       }

@@ -3,7 +3,6 @@ export type CategoryBreakdown = {
   categoryName: string
   type: 'income' | 'expense'
   color?: string
-  isFixed?: boolean
   total: number
   count: number
 }
