@@ -3,10 +3,17 @@
 import React, { useState, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import type { SheetRow, Transaction, ParseResult, TransactionStorage } from '@/app/types/transactions'
+import type { Category } from '@/app/types/category'
 import FileSelectModal from './FileSelectModal'
 import { parseCreditCardStatement } from '@/app/utils/creditCardParser'
+import {
+  clearDirectoryHandle,
+  loadDirectoryHandle,
+  requestDirectoryPermission,
+} from '@/app/utils/directoryStorage'
 
 const STORAGE_KEY = 'finance-transactions'
+const CATEGORIES_STORAGE_KEY = 'finance-categories'
 
 const currencyFormatter = new Intl.NumberFormat('he-IL', {
   style: 'currency',
@@ -232,10 +239,14 @@ export default function AnalyzeTransactions() {
   const [isAdditionalFile, setIsAdditionalFile] = useState(false)
   const [expandedTransaction, setExpandedTransaction] = useState<string | null>(null)
   const [savedDirHandle, setSavedDirHandle] = useState<FileSystemDirectoryHandle | null>(null)
+  const [categories, setCategories] = useState<Category[]>([])
+  const [classifications, setClassifications] = useState<Map<string, string>>(new Map()) // transactionId -> categoryId
 
   // Load from LocalStorage on mount
   useEffect(() => {
     loadFromStorage()
+    loadCategories()
+    initDirectoryHandle()
   }, [])
 
   // Auto-save whenever data changes
@@ -266,6 +277,18 @@ export default function AnalyzeTransactions() {
     }
   }
 
+  const initDirectoryHandle = async () => {
+    const handle = await loadDirectoryHandle()
+    if (handle) {
+      const hasPermission = await requestDirectoryPermission(handle, 'read')
+      if (hasPermission) {
+        setSavedDirHandle(handle)
+      } else {
+        setSavedDirHandle(null)
+      }
+    }
+  }
+
   const loadFromStorage = () => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY)
@@ -291,6 +314,61 @@ export default function AnalyzeTransactions() {
     } catch (err) {
       console.error('Error loading transactions:', err)
     }
+  }
+
+  const loadCategories = () => {
+    try {
+      const stored = localStorage.getItem(CATEGORIES_STORAGE_KEY)
+      if (stored) {
+        const data = JSON.parse(stored)
+        setCategories(data.categories || [])
+
+        // Load classifications
+        const classMap = new Map<string, string>()
+        data.classifications?.forEach((c: any) => {
+          classMap.set(c.transactionId, c.categoryId)
+        })
+        setClassifications(classMap)
+
+        console.log('Loaded categories:', {
+          categoryCount: data.categories?.length || 0,
+          classificationCount: data.classifications?.length || 0,
+        })
+      }
+    } catch (err) {
+      console.error('Error loading categories:', err)
+    }
+  }
+
+  const saveClassification = (transactionId: string, categoryId: string | null) => {
+    setClassifications((prev) => {
+      const newMap = new Map(prev)
+      if (categoryId) {
+        newMap.set(transactionId, categoryId)
+      } else {
+        newMap.delete(transactionId)
+      }
+
+      // Save to localStorage
+      try {
+        const stored = localStorage.getItem(CATEGORIES_STORAGE_KEY)
+        const data = stored ? JSON.parse(stored) : { categories: [], classifications: [] }
+
+        data.classifications = Array.from(newMap.entries()).map(([transactionId, categoryId]) => ({
+          transactionId,
+          categoryId,
+          monthYear: processingMonth || '',
+          classifiedAt: new Date().toISOString(),
+        }))
+
+        localStorage.setItem(CATEGORIES_STORAGE_KEY, JSON.stringify(data))
+        console.log('Saved classification:', { transactionId, categoryId, totalClassifications: newMap.size })
+      } catch (err) {
+        console.error('Error saving classification:', err)
+      }
+
+      return newMap
+    })
   }
 
   const processFile = async (file: File, isAdditional: boolean = false) => {
@@ -388,6 +466,13 @@ export default function AnalyzeTransactions() {
 
   const handleModalFileSelect = (file: File) => {
     processFile(file, isAdditionalFile)
+  }
+
+  const handleDirHandleChange = async (handle: FileSystemDirectoryHandle | null) => {
+    setSavedDirHandle(handle)
+    if (!handle) {
+      await clearDirectoryHandle()
+    }
   }
 
   const handleOpenModal = () => {
@@ -538,6 +623,7 @@ export default function AnalyzeTransactions() {
                   <tr>
                     <th>תאריך</th>
                     <th>תיאור</th>
+                    <th>נושא</th>
                     <th>סוג פעולה</th>
                     <th>סכום</th>
                     <th>יתרה</th>
@@ -565,6 +651,38 @@ export default function AnalyzeTransactions() {
                             </span>
                           )}
                         </td>
+                        <td onClick={(e) => e.stopPropagation()}>
+                          {transaction.isCreditCardCharge ? (
+                            <span style={{ fontSize: '0.85rem', color: '#64748b', fontStyle: 'italic' }}>
+                              תשלום כרטיס
+                            </span>
+                          ) : (
+                            <select
+                              value={classifications.get(transaction.id) || ''}
+                              onChange={(e) => saveClassification(transaction.id, e.target.value || null)}
+                              style={{
+                                padding: '0.35rem 0.5rem',
+                                borderRadius: '0.375rem',
+                                border: '1px solid #cbd5e1',
+                                fontSize: '0.85rem',
+                                width: '100%',
+                                cursor: 'pointer',
+                                backgroundColor: classifications.get(transaction.id)
+                                  ? categories.find(c => c.id === classifications.get(transaction.id))?.color + '20' || '#fff'
+                                  : '#fff',
+                              }}
+                            >
+                              <option value="">לא מסווג</option>
+                              {categories
+                                .filter((cat) => cat.type === (transaction.amount >= 0 ? 'income' : 'expense'))
+                                .map((cat) => (
+                                  <option key={cat.id} value={cat.id}>
+                                    {cat.name}
+                                  </option>
+                                ))}
+                            </select>
+                          )}
+                        </td>
                         <td>{transaction.activity}</td>
                         <td className={transaction.amount >= 0 ? 'amount-positive' : 'amount-negative'}>
                           {currencyFormatter.format(transaction.amount)}
@@ -576,7 +694,7 @@ export default function AnalyzeTransactions() {
                        transaction.cardNumber &&
                        creditCardData.has(transaction.cardNumber) && (
                         <tr className="credit-card-details-row">
-                          <td colSpan={5}>
+                          <td colSpan={6}>
                             <div className="credit-card-details">
                               <h4>פירוט תשלומים - כרטיס {transaction.cardNumber}</h4>
                               <table className="credit-card-details-table">
@@ -584,6 +702,7 @@ export default function AnalyzeTransactions() {
                                   <tr>
                                     <th>תאריך עסקה</th>
                                     <th>בית עסק</th>
+                                    <th>נושא</th>
                                     <th>תשלום</th>
                                     <th>סכום</th>
                                   </tr>
@@ -593,6 +712,32 @@ export default function AnalyzeTransactions() {
                                     <tr key={payment.id}>
                                       <td>{payment.transactionDate}</td>
                                       <td>{payment.merchant}</td>
+                                      <td>
+                                        <select
+                                          value={classifications.get(payment.id) || ''}
+                                          onChange={(e) => saveClassification(payment.id, e.target.value || null)}
+                                          style={{
+                                            padding: '0.35rem 0.5rem',
+                                            borderRadius: '0.375rem',
+                                            border: '1px solid #cbd5e1',
+                                            fontSize: '0.85rem',
+                                            width: '100%',
+                                            cursor: 'pointer',
+                                            backgroundColor: classifications.get(payment.id)
+                                              ? categories.find(c => c.id === classifications.get(payment.id))?.color + '20' || '#fff'
+                                              : '#fff',
+                                          }}
+                                        >
+                                          <option value="">לא מסווג</option>
+                                          {categories
+                                            .filter((cat) => cat.type === 'expense')
+                                            .map((cat) => (
+                                              <option key={cat.id} value={cat.id}>
+                                                {cat.name}
+                                              </option>
+                                            ))}
+                                        </select>
+                                      </td>
                                       <td>{payment.currentStep}/{payment.totalSteps}</td>
                                       <td className="amount-negative">
                                         {currencyFormatter.format(payment.amount)}
@@ -619,7 +764,7 @@ export default function AnalyzeTransactions() {
         onClose={handleCloseModal}
         onFileSelect={handleModalFileSelect}
         savedDirHandle={savedDirHandle}
-        onDirHandleChange={setSavedDirHandle}
+        onDirHandleChange={handleDirHandleChange}
       />
     </div>
   )

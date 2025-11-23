@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx'
 import type { SheetRow } from '@/app/types/transactions'
 import type { FilePreview } from '@/app/types/file-preview'
 import { extractCreditCardPreview } from '@/app/utils/creditCardParser'
+import { requestDirectoryPermission } from '@/app/utils/directoryStorage'
 
 type FileBrowserProps = {
   onFileSelect: (file: File) => void
@@ -162,11 +163,30 @@ export default function FileBrowser({ onFileSelect, isOpen, savedDirHandle, onDi
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  // Auto-load files when modal opens if we have a saved directory
+  // Auto-load files when modal opens using the saved directory from settings
   useEffect(() => {
-    if (isOpen && savedDirHandle && previews.length === 0 && !loading) {
-      loadFilesFromDirectory(savedDirHandle)
+    const run = async () => {
+      if (!isOpen) return
+      if (!savedDirHandle) {
+        setError('לא הוגדרה תיקייה בהגדרות. עבור למסך ההגדרות כדי לבחור תיקייה.')
+        setPreviews([])
+        return
+      }
+
+      setError('')
+      const hasPermission = await requestDirectoryPermission(savedDirHandle, 'read')
+      if (!hasPermission) {
+        setError('אין הרשאה לתיקייה. פתח את התיקייה במסך ההגדרות ואשר גישה.')
+        onDirHandleChange(null)
+        setPreviews([])
+        setLoading(false)
+        return
+      }
+
+      await loadFilesFromDirectory(savedDirHandle)
     }
+
+    run()
   }, [isOpen, savedDirHandle])
 
   const loadFilesFromDirectory = async (dirHandle: FileSystemDirectoryHandle) => {
@@ -213,32 +233,6 @@ export default function FileBrowser({ onFileSelect, isOpen, savedDirHandle, onDi
     }
   }
 
-  const handleBrowseFolder = async () => {
-    try {
-      // Check if File System Access API is supported
-      if (!('showDirectoryPicker' in window)) {
-        setError('הדפדפן שלך לא תומך בבחירת תיקיות. נסה Chrome או Edge.')
-        return
-      }
-
-      // If we have a saved directory, reuse it
-      if (savedDirHandle) {
-        await loadFilesFromDirectory(savedDirHandle)
-      } else {
-        // First time - ask user to select directory
-        const dirHandle = await (window as any).showDirectoryPicker()
-        onDirHandleChange(dirHandle)
-        await loadFilesFromDirectory(dirHandle)
-      }
-    } catch (err: any) {
-      console.error('Error browsing folder:', err)
-      if (err.name !== 'AbortError') {
-        setError('אירעה שגיאה בבחירת התיקייה.')
-      }
-      setLoading(false)
-    }
-  }
-
   const handleSelectFile = async (preview: FilePreview) => {
     const file = await preview.fileHandle.getFile()
     onFileSelect(file)
@@ -255,38 +249,18 @@ export default function FileBrowser({ onFileSelect, isOpen, savedDirHandle, onDi
     return `${monthName} ${year}`
   }
 
-  const handleChangeFolder = async () => {
-    try {
-      if (!('showDirectoryPicker' in window)) {
-        setError('הדפדפן שלך לא תומך בבחירת תיקיות. נסה Chrome או Edge.')
-        return
-      }
-
-      const dirHandle = await (window as any).showDirectoryPicker()
-      onDirHandleChange(dirHandle)
-      await loadFilesFromDirectory(dirHandle)
-    } catch (err: any) {
-      console.error('Error changing folder:', err)
-      if (err.name !== 'AbortError') {
-        setError('אירעה שגיאה בבחירת התיקייה.')
-      }
-      setLoading(false)
-    }
-  }
-
   return (
     <div>
-      <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-        <button onClick={handleBrowseFolder} className="file-picker" disabled={loading}>
-          <span>{loading ? 'טוען...' : (savedDirHandle ? 'טען קבצים' : 'עיין בתיקייה')}</span>
-        </button>
-        {savedDirHandle && (
-          <button onClick={handleChangeFolder} className="file-picker secondary" disabled={loading}>
-            <span>שנה תיקייה</span>
-          </button>
-        )}
-      </div>
-
+      {!savedDirHandle && (
+        <div className="banner warning" style={{ marginBottom: '1rem' }}>
+          לא הוגדרה תיקייה. עבור למסך ההגדרות כדי לבחור תיקייה עבור קבצי הבנק/אשראי.
+        </div>
+      )}
+      {loading && (
+        <div className="banner" style={{ marginBottom: '1rem' }}>
+          טוען קבצים מהתיקייה...
+        </div>
+      )}
       {error && <div className="banner error" style={{ marginTop: '1rem' }}>{error}</div>}
 
       {previews.length > 0 && (
@@ -329,6 +303,11 @@ export default function FileBrowser({ onFileSelect, isOpen, savedDirHandle, onDi
               </div>
             </div>
           ))}
+        </div>
+      )}
+      {savedDirHandle && !loading && !error && previews.length === 0 && (
+        <div className="banner" style={{ marginTop: '1rem' }}>
+          לא נמצאו קבצי XLS/XLSX בתיקייה שנבחרה.
         </div>
       )}
     </div>

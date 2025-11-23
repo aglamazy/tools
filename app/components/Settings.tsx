@@ -2,6 +2,13 @@
 
 import React, { useState, useEffect } from 'react'
 import type { Category, CategoryType } from '@/app/types/category'
+import {
+  clearDirectoryHandle,
+  getDirectoryMeta,
+  loadDirectoryHandle,
+  persistDirectoryHandle,
+  requestDirectoryPermission,
+} from '@/app/utils/directoryStorage'
 
 const DEFAULT_CATEGORIES: Category[] = [
   // Income categories
@@ -27,9 +34,13 @@ export default function Settings() {
   const [categories, setCategories] = useState<Category[]>([])
   const [editingCategory, setEditingCategory] = useState<Category | null>(null)
   const [isAddingNew, setIsAddingNew] = useState(false)
+  const [dirHandle, setDirHandle] = useState<FileSystemDirectoryHandle | null>(null)
+  const [dirError, setDirError] = useState('')
+  const [dirMeta, setDirMeta] = useState<{ name: string; savedAt: string } | null>(null)
 
   useEffect(() => {
     loadCategories()
+    initDirectoryHandle()
   }, [])
 
   const loadCategories = () => {
@@ -46,6 +57,66 @@ export default function Settings() {
     } catch (err) {
       console.error('Error loading categories:', err)
       setCategories(DEFAULT_CATEGORIES)
+    }
+  }
+
+  const initDirectoryHandle = async () => {
+    const meta = getDirectoryMeta()
+    setDirMeta(meta)
+
+    const handle = await loadDirectoryHandle()
+    if (handle) {
+      const hasPermission = await requestDirectoryPermission(handle, 'read')
+      if (hasPermission) {
+        setDirHandle(handle)
+      } else {
+        setDirHandle(null)
+      }
+    }
+  }
+
+  const handlePickDirectory = async () => {
+    try {
+      if (!('showDirectoryPicker' in window)) {
+        setDirError('הדפדפן שלך לא תומך בבחירת תיקיות. נסה Chrome או Edge.')
+        return
+      }
+
+      setDirError('')
+      const handle = await (window as any).showDirectoryPicker()
+      const hasPermission = await requestDirectoryPermission(handle, 'read')
+      if (!hasPermission) {
+        setDirError('לא ניתנה הרשאה לתיקייה. אפשר גישה כדי להשתמש בהמשך.')
+        return
+      }
+
+      await persistDirectoryHandle(handle)
+      setDirHandle(handle)
+      setDirMeta({ name: handle.name, savedAt: new Date().toISOString() })
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return
+      console.error('Error picking directory:', err)
+      setDirError('אירעה שגיאה בבחירת התיקייה.')
+    }
+  }
+
+  const handleClearDirectory = async () => {
+    await clearDirectoryHandle()
+    setDirHandle(null)
+    setDirMeta(null)
+    setDirError('')
+  }
+
+  const handleRecheckPermission = async () => {
+    if (!dirHandle) return
+    const granted = await requestDirectoryPermission(dirHandle, 'read')
+    if (!granted) {
+      setDirError('הרשאה לתיקייה נדחתה. בחר תיקייה מחדש.')
+      setDirHandle(null)
+      setDirMeta(null)
+      await clearDirectoryHandle()
+    } else {
+      setDirError('')
     }
   }
 
@@ -168,6 +239,43 @@ export default function Settings() {
           </div>
         </div>
       </header>
+
+      <section style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid #e2e8f0', borderRadius: '0.75rem', background: '#f8fafc' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: '1.05rem' }}>תיקיית קבצים ברירת מחדל</h2>
+            <p style={{ margin: '0.25rem 0 0', color: '#475569', fontSize: '0.95rem' }}>
+              בחר תיקייה פעם אחת במסך זה כדי שפתיחת קובץ תציג מיד את הקבצים מהתיקייה.
+            </p>
+            {dirMeta && (
+              <p style={{ margin: '0.4rem 0 0', color: '#64748b', fontSize: '0.9rem' }}>
+                תיקייה נוכחית: <strong>{dirMeta.name}</strong> (נשמרה {new Date(dirMeta.savedAt).toLocaleString()})
+              </p>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+            <button onClick={handlePickDirectory} className="file-picker">
+              {dirHandle ? 'בחר תיקייה אחרת' : 'בחר תיקייה'}
+            </button>
+            {dirHandle && (
+              <>
+                <button onClick={handleRecheckPermission} className="file-picker secondary">
+                  אשר הרשאה
+                </button>
+                <button onClick={handleClearDirectory} className="upload-another-btn">
+                  נקה תיקייה
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+        {dirError && <div className="banner error" style={{ marginTop: '0.75rem' }}>{dirError}</div>}
+        {!dirHandle && !dirError && (
+          <p style={{ marginTop: '0.75rem', color: '#64748b', fontSize: '0.9rem' }}>
+            עדיין לא הוגדרה תיקייה. בחר תיקייה כדי לדלג על בחירת תיקייה בכל פעם שפותחים קובץ.
+          </p>
+        )}
+      </section>
 
       <section style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
         <div>
