@@ -6,6 +6,7 @@ export type Category = {
   type: CategoryType
   color: string
   createdAt: string
+  isFixed?: boolean
 }
 
 export type Classification = {
@@ -13,6 +14,13 @@ export type Classification = {
   categoryId: string
   monthYear: string // "MM/YYYY" format
   classifiedAt: string
+  // Optional fields for reuse across months
+  descriptionKey?: string
+  amount?: number
+  sign?: 'income' | 'expense'
+  matchDeltaPct?: number
+  matchSourceMonthYear?: string
+  amountChangeWarningPct?: number
 }
 
 export type CategoryStorage = {

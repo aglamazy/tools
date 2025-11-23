@@ -3,7 +3,8 @@
 import React, { useState, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import type { SheetRow, Transaction, ParseResult, TransactionStorage } from '@/app/types/transactions'
-import type { Category } from '@/app/types/category'
+import type { Category, Classification } from '@/app/types/category'
+import type { MonthSnapshot, HistoryStorage, CategoryBreakdown } from '@/app/types/history'
 import FileSelectModal from './FileSelectModal'
 import { parseCreditCardStatement } from '@/app/utils/creditCardParser'
 import {
@@ -14,6 +15,7 @@ import {
 
 const STORAGE_KEY = 'finance-transactions'
 const CATEGORIES_STORAGE_KEY = 'finance-categories'
+const HISTORY_STORAGE_KEY = 'finance-history'
 
 const currencyFormatter = new Intl.NumberFormat('he-IL', {
   style: 'currency',
@@ -241,6 +243,8 @@ export default function AnalyzeTransactions() {
   const [savedDirHandle, setSavedDirHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [categories, setCategories] = useState<Category[]>([])
   const [classifications, setClassifications] = useState<Map<string, string>>(new Map()) // transactionId -> categoryId
+  const [classificationRecords, setClassificationRecords] = useState<Classification[]>([])
+  const [classificationWarnings, setClassificationWarnings] = useState<Map<string, number>>(new Map()) // transactionId -> delta pct
 
   // Load from LocalStorage on mount
   useEffect(() => {
@@ -248,6 +252,30 @@ export default function AnalyzeTransactions() {
     loadCategories()
     initDirectoryHandle()
   }, [])
+
+  useEffect(() => {
+    // Restore warning indicators for already-stored classifications
+    const warnMap = new Map<string, number>()
+    classificationRecords.forEach((rec) => {
+      if (rec.amountChangeWarningPct && rec.amountChangeWarningPct > 0.01) {
+        warnMap.set(rec.transactionId, rec.amountChangeWarningPct)
+      }
+    })
+    setClassificationWarnings(warnMap)
+  }, [classificationRecords])
+
+  useEffect(() => {
+    if (!processingMonth) return
+    const snapshot = buildSnapshot(
+      processingMonth,
+      transactions,
+      creditCardData,
+      classifications,
+      categories,
+      loadedFiles
+    )
+    saveHistorySnapshot(snapshot)
+  }, [processingMonth, transactions, creditCardData, classifications, categories, loadedFiles])
 
   // Auto-save whenever data changes
   useEffect(() => {
@@ -321,14 +349,21 @@ export default function AnalyzeTransactions() {
       const stored = localStorage.getItem(CATEGORIES_STORAGE_KEY)
       if (stored) {
         const data = JSON.parse(stored)
-        setCategories(data.categories || [])
+        const normalizedCategories = (data.categories || []).map((cat: Category) => ({
+          ...cat,
+          isFixed: cat.isFixed ?? false,
+        }))
+        setCategories(normalizedCategories)
 
         // Load classifications
         const classMap = new Map<string, string>()
-        data.classifications?.forEach((c: any) => {
+        const records: Classification[] = []
+        data.classifications?.forEach((c: Classification) => {
+          records.push(c)
           classMap.set(c.transactionId, c.categoryId)
         })
         setClassifications(classMap)
+        setClassificationRecords(records)
 
         console.log('Loaded categories:', {
           categoryCount: data.categories?.length || 0,
@@ -340,7 +375,27 @@ export default function AnalyzeTransactions() {
     }
   }
 
-  const saveClassification = (transactionId: string, categoryId: string | null) => {
+  const normalizeDescription = (text: string) =>
+    text.trim().replace(/\s+/g, ' ')
+
+  const computeSign = (amount: number): 'income' | 'expense' =>
+    amount >= 0 ? 'income' : 'expense'
+
+  const parseMonthYear = (monthYear: string) => {
+    const [m, y] = monthYear.split('/').map((v) => parseInt(v, 10))
+    return { month: m, year: y }
+  }
+
+  const saveClassification = (
+    transactionId: string,
+    categoryId: string | null,
+    meta?: { description?: string; amount?: number; monthYear?: string | null; warningDeltaPct?: number; matchSourceMonthYear?: string }
+  ) => {
+    const descriptionKey = meta?.description ? normalizeDescription(meta.description) : undefined
+    const amount = meta?.amount
+    const sign = typeof amount === 'number' ? computeSign(amount) : undefined
+    const monthYear = meta?.monthYear || processingMonth || ''
+
     setClassifications((prev) => {
       const newMap = new Map(prev)
       if (categoryId) {
@@ -349,20 +404,53 @@ export default function AnalyzeTransactions() {
         newMap.delete(transactionId)
       }
 
-      // Save to localStorage
+      setClassificationWarnings((prevWarn) => {
+        const warnMap = new Map(prevWarn)
+        if (categoryId && meta?.warningDeltaPct && meta.warningDeltaPct > 0.01) {
+          warnMap.set(transactionId, meta.warningDeltaPct)
+        } else {
+          warnMap.delete(transactionId)
+        }
+        return warnMap
+      })
+
+      // Save to localStorage with extended classification records
       try {
         const stored = localStorage.getItem(CATEGORIES_STORAGE_KEY)
         const data = stored ? JSON.parse(stored) : { categories: [], classifications: [] }
+        const existingRecords: Classification[] = data.classifications || []
 
-        data.classifications = Array.from(newMap.entries()).map(([transactionId, categoryId]) => ({
+        const updatedRecord: Classification | null = categoryId
+          ? {
+              transactionId,
+              categoryId,
+              monthYear,
+              classifiedAt: new Date().toISOString(),
+              descriptionKey,
+              amount,
+              sign,
+              matchDeltaPct: meta?.warningDeltaPct,
+              matchSourceMonthYear: meta?.matchSourceMonthYear,
+              amountChangeWarningPct: meta?.warningDeltaPct,
+            }
+          : null
+
+        const nextRecords = existingRecords
+          .filter((rec: Classification) => rec.transactionId !== transactionId)
+
+        if (updatedRecord) {
+          nextRecords.push(updatedRecord)
+        }
+
+        data.classifications = nextRecords
+        localStorage.setItem(CATEGORIES_STORAGE_KEY, JSON.stringify(data))
+        setClassificationRecords(nextRecords)
+        console.log('Saved classification:', {
           transactionId,
           categoryId,
-          monthYear: processingMonth || '',
-          classifiedAt: new Date().toISOString(),
-        }))
-
-        localStorage.setItem(CATEGORIES_STORAGE_KEY, JSON.stringify(data))
-        console.log('Saved classification:', { transactionId, categoryId, totalClassifications: newMap.size })
+          totalClassifications: nextRecords.length,
+          warning: meta?.warningDeltaPct,
+        })
       } catch (err) {
         console.error('Error saving classification:', err)
       }
@@ -442,6 +530,7 @@ export default function AnalyzeTransactions() {
             // Merge with existing transactions
             setTransactions((prev) => [...prev, ...newTransactions])
             setLoadedFiles((prev) => [...prev, file.name])
+            applyHistoricalClassifications(newTransactions, processingMonth)
 
             console.log(`Added ${newTransactions.length} new transactions (${result.transactions.length - newTransactions.length} duplicates skipped)`)
           } else {
@@ -449,6 +538,7 @@ export default function AnalyzeTransactions() {
             setTransactions(result.transactions)
             setProcessingMonth(result.processingMonth)
             setLoadedFiles([file.name])
+            applyHistoricalClassifications(result.transactions, result.processingMonth)
           }
         }
       } catch (err) {
@@ -508,6 +598,8 @@ export default function AnalyzeTransactions() {
     setTransactions([])
     setCreditCardData(new Map())
     setProcessingMonth(null)
+    setClassificationWarnings(new Map())
+    setClassificationRecords([])
     setError('')
 
     // Clear from localStorage
@@ -524,6 +616,180 @@ export default function AnalyzeTransactions() {
     ]
     const monthName = monthNames[parseInt(month, 10) - 1]
     return `${monthName} ${year}`
+  }
+
+  const monthsBetween = (a: string, b: string) => {
+    const [ma, ya] = a.split('/').map((v) => parseInt(v, 10))
+    const [mb, yb] = b.split('/').map((v) => parseInt(v, 10))
+    return (yb - ya) * 12 + (mb - ma)
+  }
+
+  const parseMonthFromDateString = (dateStr: string): string | null => {
+    const parsed = parseTransactionDate(dateStr)
+    if (!parsed) return null
+    return `${parsed.month}/${parsed.year}`
+  }
+
+  const loadHistory = (): HistoryStorage => {
+    try {
+      const raw = localStorage.getItem(HISTORY_STORAGE_KEY)
+      if (!raw) {
+        return { version: '1.0', months: [], lastUpdated: new Date().toISOString() }
+      }
+      return JSON.parse(raw) as HistoryStorage
+    } catch (err) {
+      console.error('Error loading history:', err)
+      return { version: '1.0', months: [], lastUpdated: new Date().toISOString() }
+    }
+  }
+
+  const saveHistorySnapshot = (snapshot: MonthSnapshot) => {
+    const history = loadHistory()
+    const existingIndex = history.months.findIndex((m) => m.monthYear === snapshot.monthYear)
+    if (existingIndex >= 0) {
+      history.months[existingIndex] = snapshot
+    } else {
+      history.months.push(snapshot)
+    }
+    history.lastUpdated = new Date().toISOString()
+    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history))
+  }
+
+  const buildSnapshot = (
+    monthYear: string,
+    txs: Transaction[],
+    ccData: Map<string, CreditCardData>,
+    classMap: Map<string, string>,
+    cats: Category[],
+    files: string[]
+  ): MonthSnapshot => {
+    const incomeTotal = { value: 0 }
+    const expenseTotal = { value: 0 }
+    const breakdown = new Map<string, CategoryBreakdown>()
+    let unclassifiedCount = 0
+
+    const addToBreakdown = (categoryId: string, amount: number) => {
+      const cat = cats.find((c) => c.id === categoryId)
+      if (!cat) return
+
+      const existing = breakdown.get(categoryId) || {
+        categoryId,
+        categoryName: cat.name,
+        type: cat.type,
+        color: cat.color,
+        isFixed: cat.isFixed,
+        total: 0,
+        count: 0,
+      }
+
+      existing.total += amount
+      existing.count += 1
+      breakdown.set(categoryId, existing)
+    }
+
+    const handleAmount = (amount: number) => {
+      if (amount >= 0) {
+        incomeTotal.value += amount
+      } else {
+        expenseTotal.value += Math.abs(amount)
+      }
+    }
+
+    // Bank transactions
+    txs.forEach((tx) => {
+      const txMonth = parseMonthFromDateString(tx.date)
+      if (txMonth !== monthYear) return
+
+      handleAmount(tx.amount)
+      const catId = classMap.get(tx.id)
+      if (catId) {
+        addToBreakdown(catId, tx.amount)
+      } else {
+        unclassifiedCount += 1
+      }
+    })
+
+    // Credit card payments
+    ccData.forEach((cc) => {
+      cc.payments.forEach((payment) => {
+        const payMonth = parseMonthFromDateString(payment.transactionDate)
+        if (payMonth !== monthYear) return
+
+        const amount = -Math.abs(payment.amount)
+        handleAmount(amount)
+        const catId = classMap.get(payment.id)
+        if (catId) {
+          addToBreakdown(catId, amount)
+        } else {
+          unclassifiedCount += 1
+        }
+      })
+    })
+
+    const net = incomeTotal.value - expenseTotal.value
+
+    return {
+      monthYear,
+      income: incomeTotal.value,
+      expense: expenseTotal.value,
+      net,
+      fileNames: files,
+      categories: Array.from(breakdown.values()),
+      unclassifiedCount,
+      transactionCount: txs.length,
+      lastUpdated: new Date().toISOString(),
+    }
+  }
+
+  const applyHistoricalClassifications = (txs: Transaction[], monthYear: string | null) => {
+    if (!monthYear || !classificationRecords.length) return
+
+    const history = classificationRecords.filter((rec) => {
+      if (!rec.monthYear || !rec.categoryId || !rec.descriptionKey || typeof rec.amount !== 'number' || !rec.sign) {
+        return false
+      }
+      const diff = monthsBetween(rec.monthYear, monthYear)
+      // Look back up to 2 months, current month, and one month ahead
+      return diff >= -2 && diff <= 1
+    })
+
+    if (!history.length) return
+
+    const historyByKey = new Map<string, Classification[]>()
+    history.forEach((rec) => {
+      const key = `${rec.descriptionKey}|${rec.sign}`
+      const list = historyByKey.get(key) || []
+      list.push(rec)
+      historyByKey.set(key, list)
+    })
+
+    txs.forEach((tx) => {
+      const descriptionKey = normalizeDescription(tx.description)
+      const sign = computeSign(tx.amount)
+      const candidates = historyByKey.get(`${descriptionKey}|${sign}`)
+      if (!candidates || !candidates.length) return
+
+      const sorted = candidates
+        .map((rec) => {
+          const base = Math.max(1, Math.abs(rec.amount || 0))
+          const deltaPct = Math.abs(Math.abs(tx.amount) - Math.abs(rec.amount || 0)) / base
+          const recency = rec.monthYear ? monthsBetween(rec.monthYear, monthYear) : 99
+          return { rec, deltaPct, recency: Math.abs(recency) }
+        })
+        .sort((a, b) => a.deltaPct !== b.deltaPct ? a.deltaPct - b.deltaPct : a.recency - b.recency)
+
+      const best = sorted[0]
+      if (!best || !best.rec.categoryId) return
+
+      const warningDeltaPct = best.deltaPct > 0.01 ? best.deltaPct : undefined
+      saveClassification(tx.id, best.rec.categoryId, {
+        description: tx.description,
+        amount: tx.amount,
+        monthYear,
+        warningDeltaPct,
+        matchSourceMonthYear: best.rec.monthYear,
+      })
+    })
   }
 
   return (
@@ -659,11 +925,17 @@ export default function AnalyzeTransactions() {
                           ) : (
                             <select
                               value={classifications.get(transaction.id) || ''}
-                              onChange={(e) => saveClassification(transaction.id, e.target.value || null)}
+                              onChange={(e) => saveClassification(
+                                transaction.id,
+                                e.target.value || null,
+                                { description: transaction.description, amount: transaction.amount, monthYear: processingMonth }
+                              )}
                               style={{
                                 padding: '0.35rem 0.5rem',
                                 borderRadius: '0.375rem',
-                                border: '1px solid #cbd5e1',
+                                border: classificationWarnings.get(transaction.id)
+                                  ? '1px solid #f97316'
+                                  : '1px solid #cbd5e1',
                                 fontSize: '0.85rem',
                                 width: '100%',
                                 cursor: 'pointer',
@@ -715,11 +987,17 @@ export default function AnalyzeTransactions() {
                                       <td>
                                         <select
                                           value={classifications.get(payment.id) || ''}
-                                          onChange={(e) => saveClassification(payment.id, e.target.value || null)}
+                                          onChange={(e) => saveClassification(
+                                            payment.id,
+                                            e.target.value || null,
+                                            { description: payment.merchant, amount: -payment.amount, monthYear: processingMonth }
+                                          )}
                                           style={{
                                             padding: '0.35rem 0.5rem',
                                             borderRadius: '0.375rem',
-                                            border: '1px solid #cbd5e1',
+                                            border: classificationWarnings.get(payment.id)
+                                              ? '1px solid #f97316'
+                                              : '1px solid #cbd5e1',
                                             fontSize: '0.85rem',
                                             width: '100%',
                                             cursor: 'pointer',

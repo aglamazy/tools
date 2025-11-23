@@ -10,23 +10,7 @@ import {
   requestDirectoryPermission,
 } from '@/app/utils/directoryStorage'
 
-const DEFAULT_CATEGORIES: Category[] = [
-  // Income categories
-  { id: 'inc-salary', name: 'משכורת', type: 'income', color: '#10b981', createdAt: new Date().toISOString() },
-  { id: 'inc-onetime', name: 'הכנסה חד פעמית', type: 'income', color: '#059669', createdAt: new Date().toISOString() },
-
-  // Expense categories
-  { id: 'exp-home', name: 'בית', type: 'expense', color: '#ef4444', createdAt: new Date().toISOString() },
-  { id: 'exp-car', name: 'רכב', type: 'expense', color: '#f59e0b', createdAt: new Date().toISOString() },
-  { id: 'exp-food', name: 'מזון', type: 'expense', color: '#8b5cf6', createdAt: new Date().toISOString() },
-  { id: 'exp-culture', name: 'תרבות ובילויים', type: 'expense', color: '#ec4899', createdAt: new Date().toISOString() },
-  { id: 'exp-health', name: 'בריאות', type: 'expense', color: '#06b6d4', createdAt: new Date().toISOString() },
-  { id: 'exp-shopping', name: 'קניות', type: 'expense', color: '#84cc16', createdAt: new Date().toISOString() },
-  { id: 'exp-education', name: 'חינוך', type: 'expense', color: '#6366f1', createdAt: new Date().toISOString() },
-  { id: 'exp-transport', name: 'תחבורה', type: 'expense', color: '#f97316', createdAt: new Date().toISOString() },
-  { id: 'exp-bills', name: 'חשבונות ושירותים', type: 'expense', color: '#14b8a6', createdAt: new Date().toISOString() },
-  { id: 'exp-other', name: 'אחר', type: 'expense', color: '#64748b', createdAt: new Date().toISOString() },
-]
+const DEFAULT_CATEGORIES: Category[] = []
 
 const STORAGE_KEY = 'finance-categories'
 
@@ -48,7 +32,11 @@ export default function Settings() {
       const stored = localStorage.getItem(STORAGE_KEY)
       if (stored) {
         const data = JSON.parse(stored)
-        setCategories(data.categories || [])
+        const normalized = (data.categories || []).map((cat: Category) => ({
+          ...cat,
+          isFixed: cat.isFixed ?? false,
+        }))
+        setCategories(normalized)
       } else {
         // First time - load defaults
         setCategories(DEFAULT_CATEGORIES)
@@ -144,6 +132,7 @@ export default function Settings() {
       type: type,
       color: type === 'income' ? '#10b981' : '#ef4444',
       createdAt: new Date().toISOString(),
+      isFixed: false,
     }
     setEditingCategory(newCategory)
     setIsAddingNew(true)
@@ -309,7 +298,7 @@ export default function Settings() {
                 <div style={{ flex: 1, fontWeight: 500, fontSize: '0.95rem' }}>{category.name}</div>
                 <button
                   onClick={() => {
-                    setEditingCategory(category)
+                    setEditingCategory({ ...category, isFixed: category.isFixed ?? false })
                     setIsAddingNew(false)
                   }}
                   style={{
@@ -390,7 +379,7 @@ export default function Settings() {
                 <div style={{ flex: 1, fontWeight: 500, fontSize: '0.95rem' }}>{category.name}</div>
                 <button
                   onClick={() => {
-                    setEditingCategory(category)
+                    setEditingCategory({ ...category, isFixed: category.isFixed ?? false })
                     setIsAddingNew(false)
                   }}
                   style={{
@@ -486,6 +475,16 @@ export default function Settings() {
                     style={{ width: '100%', height: '50px', cursor: 'pointer', border: 'none' }}
                   />
                 </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600 }}>
+                  <input
+                    type="checkbox"
+                    checked={editingCategory.isFixed ?? false}
+                    onChange={(e) =>
+                      setEditingCategory({ ...editingCategory, isFixed: e.target.checked })
+                    }
+                  />
+                  הוצאה קבועה (משכנתא, ארנונה וכד')
+                </label>
                 <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
                   <button
                     onClick={() => setEditingCategory(null)}

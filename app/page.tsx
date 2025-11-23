@@ -1,19 +1,200 @@
+"use client"
+
+import { useEffect, useMemo, useState } from 'react'
+import type { MonthSnapshot, HistoryStorage, CategoryBreakdown } from '@/app/types/history'
+
+const HISTORY_STORAGE_KEY = 'finance-history'
+
+const currency = (value: number) =>
+  new Intl.NumberFormat('he-IL', {
+    style: 'currency',
+    currency: 'ILS',
+    minimumFractionDigits: 0,
+  }).format(value)
+
+const loadHistory = (): MonthSnapshot[] => {
+  if (typeof window === 'undefined') return []
+  try {
+    const raw = localStorage.getItem(HISTORY_STORAGE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as HistoryStorage
+    return (parsed.months || []).map((month) => ({
+      ...month,
+      categories: (month.categories || []).map((c) => ({
+        ...c,
+        isFixed: c.isFixed ?? false,
+      })),
+    }))
+  } catch (err) {
+    console.error('Error loading history:', err)
+    return []
+  }
+}
+
 export default function HomePage() {
+  const [history, setHistory] = useState<MonthSnapshot[]>([])
+
+  useEffect(() => {
+    setHistory(loadHistory())
+  }, [])
+
+  const sortedMonths = useMemo(() => {
+    const parseKey = (monthYear: string) => {
+      const [m, y] = monthYear.split('/').map((v) => parseInt(v, 10))
+      return y * 12 + m
+    }
+    return [...history].sort((a, b) => parseKey(b.monthYear) - parseKey(a.monthYear))
+  }, [history])
+
+  const latestMonth = sortedMonths[0]
+  const latestCategories: CategoryBreakdown[] = latestMonth?.categories || []
+  const latestIncomeCategories = latestCategories.filter((c) => c.type === 'income')
+  const latestExpenseCategories = latestCategories
+    .filter((c) => c.type === 'expense')
+    .sort((a, b) => {
+      console.log(a);
+      const aFixed = !!a.isFixed
+      const bFixed = !!b.isFixed
+      if (aFixed && !bFixed) return 1
+      if (bFixed && !aFixed) return -1
+      return a.total - b.total
+    })
+
   return (
     <main className="app" dir="rtl">
-      <div className="card">
-        <header>
-          <h1>ברוכים הבאים לארגז הכלים הפיננסיים</h1>
-          <p>בחר כלי מהתפריט הצדדי כדי להתחיל.</p>
-        </header>
+      <div style={{ display: 'grid', gap: '1.5rem' }}>
+        {sortedMonths.length === 0 ? (
+          <div className="card">
+            <p style={{ margin: 0, color: '#64748b' }}>
+              עדיין אין נתונים היסטוריים. טען קובץ תנועות כדי לראות תקציר כאן.
+            </p>
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: '1.5rem' }}>
+            <div className="card">
+              <div style={{ marginBottom: '1rem' }}>
+                <h2 style={{ margin: 0 }}>חודשים קודמים</h2>
+                <p style={{ margin: '0.25rem 0 0', color: '#64748b' }}>הכנסות, הוצאות ומאזן חודשי.</p>
+              </div>
+              <div className="table-wrapper">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>חודש</th>
+                      <th>הכנסה</th>
+                      <th>הוצאה</th>
+                      <th>מאזן</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedMonths.map((row) => (
+                      <tr key={row.monthYear}>
+                        <td>{row.monthYear}</td>
+                        <td className="amount-positive">{currency(row.income)}</td>
+                        <td className="amount-negative">{currency(-row.expense)}</td>
+                        <td className={row.net >= 0 ? 'amount-positive' : 'amount-negative'}>
+                          {currency(row.net)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
 
-        <div style={{ padding: '2rem 0' }}>
-          <h2 style={{ fontSize: '1.1rem', marginBottom: '1rem', color: '#475569' }}>כלים זמינים:</h2>
-          <ul style={{ lineHeight: '2', color: '#64748b' }}>
-            <li>💳 תחזית תשלומים עתידיים - ניתוח קובץ אשראי והצגת תשלומים עתידיים</li>
-            <li>🔧 כלים נוספים יתווספו בקרוב...</li>
-          </ul>
-        </div>
+            <div className="card">
+              <div style={{ marginBottom: '1rem' }}>
+                <h2 style={{ margin: 0 }}>חלוקה לפי נושאים</h2>
+                <p style={{ margin: '0.25rem 0 0', color: '#64748b' }}>
+                  תקציב מול ביצוע לחודש האחרון.
+                </p>
+              </div>
+              {latestCategories.length === 0 ? (
+                <p style={{ margin: 0, color: '#64748b' }}>אין קטגוריות מסווגות לחודש זה.</p>
+              ) : (
+                <div style={{ display: 'grid', gap: '1rem' }}>
+                  <div className="table-wrapper">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th colSpan={4} style={{ textAlign: 'right' }}>הוצאות</th>
+                        </tr>
+                        <tr>
+                          <th>נושא</th>
+                          <th>תקציב</th>
+                          <th>הוצאה</th>
+                          <th>נשאר</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {latestExpenseCategories.length === 0 ? (
+                          <tr>
+                            <td colSpan={4} style={{ color: '#64748b' }}>אין קטגוריות הוצאה לחודש זה.</td>
+                          </tr>
+                        ) : (
+                          latestExpenseCategories.map((row) => {
+                            const budget = 0 // budgets not defined yet
+                            const spent = Math.abs(row.total)
+                            const left = budget - spent
+                            return (
+                              <tr key={row.categoryId}>
+                                <td>{row.categoryName}</td>
+                                <td>{budget ? currency(budget) : '—'}</td>
+                                <td className="amount-negative">{currency(-spent)}</td>
+                                <td className={left >= 0 ? 'amount-positive' : 'amount-negative'}>
+                                  {budget ? currency(left) : '—'}
+                                </td>
+                              </tr>
+                            )
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="table-wrapper">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th colSpan={4} style={{ textAlign: 'right' }}>הכנסות</th>
+                        </tr>
+                        <tr>
+                          <th>נושא</th>
+                          <th>תקציב</th>
+                          <th>הכנסה</th>
+                          <th>נשאר</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {latestIncomeCategories.length === 0 ? (
+                          <tr>
+                            <td colSpan={4} style={{ color: '#64748b' }}>אין קטגוריות הכנסה לחודש זה.</td>
+                          </tr>
+                        ) : (
+                          latestIncomeCategories.map((row) => {
+                            const budget = 0 // budgets not defined yet
+                            const income = row.total
+                            const left = budget ? budget - income : 0
+                            return (
+                              <tr key={row.categoryId}>
+                                <td>{row.categoryName}</td>
+                                <td>{budget ? currency(budget) : '—'}</td>
+                                <td className="amount-positive">{currency(income)}</td>
+                                <td className={left >= 0 ? 'amount-positive' : 'amount-negative'}>
+                                  {budget ? currency(left) : '—'}
+                                </td>
+                              </tr>
+                            )
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </main>
   )
