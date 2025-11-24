@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import './globals.css'
 import Sidebar from './components/Sidebar'
 import PageHeader from './components/PageHeader'
+import { ToastProvider } from './components/ToastContainer'
 
 if (!process.env.NEXT_PUBLIC_SITE_URL) {
   throw new Error('Missing NEXT_PUBLIC_SITE_URL environment variable')
@@ -45,14 +46,16 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="he">
       <body>
-        <PageHeader />
-        <div className="app-layout">
-          <Sidebar />
-          <div className="main-content">
-            {children}
+        <ToastProvider>
+          <PageHeader />
+          <div className="app-layout">
+            <Sidebar />
+            <div className="main-content">
+              {children}
+            </div>
           </div>
-        </div>
-        <Analytics />
+          <Analytics />
+        </ToastProvider>
       </body>
     </html>
   )

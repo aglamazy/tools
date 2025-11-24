@@ -1,9 +1,18 @@
+'use client'
+
 import Link from 'next/link'
+import NotificationCenter from './NotificationCenter'
+import { useToast } from './ToastContainer'
 
 export default function PageHeader() {
+  const { notifications, clearNotifications } = useToast()
+
   return (
     <header className="page-header">
-      <div className="page-header-inner">      <div aria-hidden="true" style={{ minWidth: '72px' }} />
+      <div className="page-header-inner">
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+          <NotificationCenter notifications={notifications} onClear={clearNotifications} />
+        </div>
         <div className="page-header-title">
           <h1>ארגז כלים פיננסיים</h1>
         </div>

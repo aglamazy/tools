@@ -13,6 +13,13 @@ type Tool = {
 
 const tools: Tool[] = [
   {
+    id: 'import',
+    title: 'ייבוא קבצים',
+    href: '/tools/import',
+    icon: '📥',
+    available: true,
+  },
+  {
     id: 'analyze-transactions',
     title: 'ניתוח עסקאות',
     href: '/tools/analyze-transactions',
