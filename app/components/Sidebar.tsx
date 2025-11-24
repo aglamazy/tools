@@ -20,6 +20,13 @@ const tools: Tool[] = [
     available: true,
   },
   {
+    id: 'cash-flow',
+    title: 'תזרים מזומנים',
+    href: '/tools/cash-flow',
+    icon: '💰',
+    available: true,
+  },
+  {
     id: 'analyze-transactions',
     title: 'ניתוח עסקאות',
     href: '/tools/analyze-transactions',
