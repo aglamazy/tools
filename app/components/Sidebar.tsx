@@ -27,10 +27,17 @@ const tools: Tool[] = [
     available: true,
   },
   {
+    id: 'budget',
+    title: 'תקציב',
+    href: '/tools/budget',
+    icon: '📊',
+    available: true,
+  },
+  {
     id: 'analyze-transactions',
     title: 'ניתוח עסקאות',
     href: '/tools/analyze-transactions',
-    icon: '📊',
+    icon: '📈',
     available: true,
   },
   {

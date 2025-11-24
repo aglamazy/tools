@@ -9,6 +9,7 @@ import {
   persistDirectoryHandle,
   requestDirectoryPermission,
 } from '@/app/utils/directoryStorage'
+import { generateDistinctColors } from '@/app/utils/colorGenerator'
 
 const DEFAULT_CATEGORIES: Category[] = []
 
@@ -205,6 +206,18 @@ export default function Settings() {
     saveCategories(updatedCategories)
   }
 
+  const handleReorganizeColors = () => {
+    const distinctColors = generateDistinctColors(categories.length)
+
+    const updatedCategories = categories.map((cat, index) => ({
+      ...cat,
+      color: distinctColors[index],
+    }))
+
+    setCategories(updatedCategories)
+    saveCategories(updatedCategories)
+  }
+
   const handleExport = () => {
     try {
       const data = localStorage.getItem(STORAGE_KEY)
@@ -250,6 +263,9 @@ export default function Settings() {
             <p>ניהול נושאים וקטגוריות</p>
           </div>
           <div style={{ display: 'flex', gap: '0.75rem' }}>
+            <button onClick={handleReorganizeColors} className="file-picker">
+              🎨 צבעים ברורים
+            </button>
             <button onClick={handleExport} className="upload-another-btn">
               ייצא הגדרות
             </button>
@@ -512,16 +528,6 @@ export default function Settings() {
                     style={{ width: '100%', height: '50px', cursor: 'pointer', border: 'none' }}
                   />
                 </div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600 }}>
-                  <input
-                    type="checkbox"
-                    checked={editingCategory.isFixed ?? false}
-                    onChange={(e) =>
-                      setEditingCategory({ ...editingCategory, isFixed: e.target.checked })
-                    }
-                  />
-                  הוצאה קבועה (משכנתא, ארנונה וכד')
-                </label>
                 <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
                   <button
                     onClick={() => setEditingCategory(null)}

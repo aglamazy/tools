@@ -11,6 +11,7 @@ export type Transaction = {
   balance: number
   cardNumber?: string | null
   isCreditCardCharge?: boolean
+  accountNumber?: string | null
 }
 
 export type ParseResult = {
@@ -31,8 +32,28 @@ export type TransactionStorage = {
       amount: number
       currentStep: number
       totalSteps: number
+      category?: string
+      isFixed?: boolean
+      chargingDate?: string
     }>
   }[]
   loadedFiles: string[]
   lastUpdated: string
+}
+
+export type BudgetTransaction = {
+  id: string
+  date: string
+  business: string
+  category: string
+  amount: number
+  isFixed: boolean
+  paymentMethod: string
+  installmentInfo?: string
+  totalAmount?: number
+}
+
+export type TransactionUpdate = {
+  category?: string
+  isFixed?: boolean
 }

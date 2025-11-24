@@ -30,6 +30,15 @@ export default function ImportPage() {
     question: '',
     onConfirm: () => {},
   })
+  const [viewModal, setViewModal] = useState<{
+    isOpen: boolean
+    file: ImportedFile | null
+    transactions: any[]
+  }>({
+    isOpen: false,
+    file: null,
+    transactions: [],
+  })
 
   // Load directory handle and imported files from storage
   useEffect(() => {
@@ -67,6 +76,41 @@ export default function ImportPage() {
     if (handle) {
       await persistDirectoryHandle(handle)
     }
+  }
+
+  const handleViewFile = (fileId: string) => {
+    const file = files.find((f) => f.id === fileId)
+    if (!file) return
+
+    // Load transactions from localStorage
+    const transactionsData = localStorage.getItem('finance-transactions')
+    if (!transactionsData) {
+      showToast('error', 'No transaction data found')
+      return
+    }
+
+    const data = JSON.parse(transactionsData)
+    let transactions: any[] = []
+
+    if (file.fileType === 'bank') {
+      // Show ALL bank transactions (not filtered by month for the view)
+      transactions = data.transactions.filter((t: any) => {
+        const transactionMonth = t.date.substring(3) // Extract MM/YYYY
+        return transactionMonth === file.processingMonth
+      })
+    } else if (file.fileType === 'credit-card') {
+      // Show ALL credit card payments (not filtered by month)
+      const cardData = data.creditCardData?.find((cc: any) => cc.cardNumber === file.cardNumber)
+      if (cardData) {
+        transactions = cardData.payments
+      }
+    }
+
+    setViewModal({
+      isOpen: true,
+      file,
+      transactions,
+    })
   }
 
   const handleDeleteFile = (fileId: string) => {
@@ -201,6 +245,28 @@ export default function ImportPage() {
     ? files.filter((f) => f.processingMonth === selectedMonth)
     : files
 
+  // Get actual transaction count from storage
+  const getActualTransactionCount = (file: ImportedFile): number => {
+    const transactionsData = localStorage.getItem('finance-transactions')
+    if (!transactionsData) return file.transactionCount
+
+    const data = JSON.parse(transactionsData)
+
+    if (file.fileType === 'bank') {
+      // Count bank transactions for this month
+      return data.transactions.filter((t: any) => {
+        const transactionMonth = t.date.substring(3)
+        return transactionMonth === file.processingMonth
+      }).length
+    } else if (file.fileType === 'credit-card') {
+      // Count ALL credit card payments (not just for one month)
+      const cardData = data.creditCardData?.find((cc: any) => cc.cardNumber === file.cardNumber)
+      return cardData?.payments.length || 0
+    }
+
+    return file.transactionCount
+  }
+
   return (
     <main className="app" dir="rtl">
       <div className="card">
@@ -291,15 +357,24 @@ export default function ImportPage() {
                     <td>{file.fileType === 'bank' ? 'בנק' : 'כרטיס אשראי'}</td>
                     <td>{file.processingMonth ? formatMonthDisplay(file.processingMonth) : '—'}</td>
                     <td>{file.accountNumber || file.cardNumber || '—'}</td>
-                    <td>{file.transactionCount}</td>
+                    <td>{getActualTransactionCount(file)}</td>
                     <td>
-                      <button
-                        onClick={() => handleDeleteFile(file.id)}
-                        className="upload-another-btn"
-                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.875rem' }}
-                      >
-                        🗑️ מחק
-                      </button>
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button
+                          onClick={() => handleViewFile(file.id)}
+                          className="file-picker"
+                          style={{ padding: '0.25rem 0.5rem', fontSize: '0.875rem' }}
+                        >
+                          👁️ צפה
+                        </button>
+                        <button
+                          onClick={() => handleDeleteFile(file.id)}
+                          className="upload-another-btn"
+                          style={{ padding: '0.25rem 0.5rem', fontSize: '0.875rem' }}
+                        >
+                          🗑️ מחק
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -328,6 +403,106 @@ export default function ImportPage() {
         onYes={yesNoModal.onConfirm}
         onNo={() => setYesNoModal({ isOpen: false, question: '', onConfirm: () => {} })}
       />
+
+      {/* View Transactions Modal */}
+      {viewModal.isOpen && viewModal.file && (
+        <div className="modal-overlay" onClick={() => setViewModal({ isOpen: false, file: null, transactions: [] })}>
+          <div
+            className="modal-content"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '90vw', width: '1200px' }}
+          >
+            <div className="modal-header">
+              <h2>
+                {viewModal.file.fileName} - {viewModal.file.fileType === 'bank' ? 'Bank Transactions' : 'Credit Card Payments'}
+              </h2>
+              <button
+                className="modal-close"
+                onClick={() => setViewModal({ isOpen: false, file: null, transactions: [] })}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="modal-body" style={{ maxHeight: '70vh', overflow: 'auto' }}>
+              {viewModal.file.fileType === 'bank' ? (
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                      <th style={{ padding: '0.5rem', textAlign: 'right' }}>Date</th>
+                      <th style={{ padding: '0.5rem', textAlign: 'right' }}>Description</th>
+                      <th style={{ padding: '0.5rem', textAlign: 'right' }}>Amount</th>
+                      <th style={{ padding: '0.5rem', textAlign: 'right' }}>Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {viewModal.transactions.map((t: any, idx) => (
+                      <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                        <td style={{ padding: '0.5rem' }}>{t.date}</td>
+                        <td style={{ padding: '0.5rem' }}>{t.description}</td>
+                        <td
+                          style={{
+                            padding: '0.5rem',
+                            color: t.amount > 0 ? '#10b981' : '#ef4444',
+                            fontWeight: 500,
+                          }}
+                        >
+                          {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(t.amount)}
+                        </td>
+                        <td style={{ padding: '0.5rem' }}>
+                          {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(t.balance)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                      <th style={{ padding: '0.5rem', textAlign: 'right' }}>Transaction Date</th>
+                      <th style={{ padding: '0.5rem', textAlign: 'right' }}>Merchant</th>
+                      <th style={{ padding: '0.5rem', textAlign: 'right' }}>Amount</th>
+                      <th style={{ padding: '0.5rem', textAlign: 'right' }}>Installment</th>
+                      <th style={{ padding: '0.5rem', textAlign: 'right' }}>Charging Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {viewModal.transactions.map((t: any, idx) => (
+                      <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                        <td style={{ padding: '0.5rem' }}>{t.transactionDate}</td>
+                        <td style={{ padding: '0.5rem' }}>{t.merchant}</td>
+                        <td style={{ padding: '0.5rem', color: '#ef4444', fontWeight: 500 }}>
+                          {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(t.amount)}
+                        </td>
+                        <td style={{ padding: '0.5rem', fontSize: '0.875rem' }}>
+                          {t.totalSteps > 1 ? (
+                            <div>
+                              <div style={{ fontWeight: 500 }}>
+                                {t.currentStep}/{t.totalSteps}
+                              </div>
+                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+                                Total: {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(t.amount * t.totalSteps)}
+                              </div>
+                            </div>
+                          ) : (
+                            '—'
+                          )}
+                        </td>
+                        <td style={{ padding: '0.5rem', fontSize: '0.875rem', color: '#6b7280' }}>
+                          {t.chargingDate || '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              <div style={{ marginTop: '1rem', padding: '0.75rem', background: '#f8fafc', borderRadius: '0.5rem' }}>
+                <strong>Total Transactions:</strong> {viewModal.transactions.length}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
 }
