@@ -154,35 +154,39 @@ export function parseCreditCardStatement(rows: SheetRow[]): CreditCardStatement 
   const rowsAfterHeader = sanitized.slice(headerIndex + 1)
 
   rowsAfterHeader.forEach((row, rowIndex) => {
-    const detailCell = row[detailIdx]
-    if (!detailCell || typeof detailCell !== 'string') {
-      return
-    }
-
-    const match = detailCell.match(/(\d+)\s*מתוך\s*(\d+)/)
-    if (!match) {
-      return
-    }
-
-    const current = parseInt(match[1], 10)
-    const total = parseInt(match[2], 10)
-
-    if (!Number.isFinite(current) || !Number.isFinite(total) || current >= total) {
-      return
-    }
-
+    const transactionDate = row[transactionDateIdx]
+    const merchant = row[merchantIdx]
     const amount = toNumber(row[amountIdx])
-    if (!Number.isFinite(amount)) {
+
+    // Skip rows without basic transaction info
+    if (!transactionDate || !merchant || !Number.isFinite(amount) || amount === 0) {
       return
+    }
+
+    const detailCell = row[detailIdx]
+    let currentStep = 1
+    let totalSteps = 1
+
+    // Check if this is an installment payment
+    if (detailCell && typeof detailCell === 'string') {
+      const match = detailCell.match(/(\d+)\s*מתוך\s*(\d+)/)
+      if (match) {
+        const current = parseInt(match[1], 10)
+        const total = parseInt(match[2], 10)
+        if (Number.isFinite(current) && Number.isFinite(total)) {
+          currentStep = current
+          totalSteps = total
+        }
+      }
     }
 
     payments.push({
-      id: `${rowIndex}-${amount}-${current}`,
-      transactionDate: String(row[transactionDateIdx] || ''),
-      merchant: String(row[merchantIdx] || 'עסקה ללא שם'),
+      id: `${cardNumber || 'unknown'}-${String(transactionDate)}-${String(merchant)}-${amount}-${currentStep}-${totalSteps}`,
+      transactionDate: String(transactionDate),
+      merchant: String(merchant),
       amount,
-      currentStep: current,
-      totalSteps: total,
+      currentStep,
+      totalSteps,
     })
   })
 

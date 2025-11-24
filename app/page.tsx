@@ -96,7 +96,7 @@ export default function HomePage() {
           <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: '1.5rem' }}>
             <div className="card">
               <div style={{ marginBottom: '1rem' }}>
-                <h2 style={{ margin: 0 }}>חודשים קודמים</h2>
+                <h2 style={{ margin: 0 }}>תזרים - חודשים קודמים</h2>
                 <p style={{ margin: '0.25rem 0 0', color: '#64748b' }}>הכנסות, הוצאות ומאזן חודשי.</p>
               </div>
               <div className="table-wrapper">
@@ -127,7 +127,7 @@ export default function HomePage() {
 
             <div className="card">
               <div style={{ marginBottom: '1rem' }}>
-                <h2 style={{ margin: 0 }}>חלוקה לפי נושאים</h2>
+                <h2 style={{ margin: 0 }}>תקציב - חלוקה לפי נושאים</h2>
                 <p style={{ margin: '0.25rem 0 0', color: '#64748b' }}>
                   תקציב מול ביצוע לחודש האחרון.
                 </p>

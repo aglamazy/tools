@@ -228,6 +228,7 @@ type CreditCardData = {
     amount: number
     currentStep: number
     totalSteps: number
+    chargingDate: string | null // Date when money is debited from bank account (תאריך חיוב)
   }>
 }
 
@@ -503,23 +504,65 @@ export default function AnalyzeTransactions() {
 
         const result = parseTransactions(rows)
 
-        // If this is an additional file, validate it's from the same month
-        if (isAdditional && processingMonth) {
-          if (result.processingMonth !== processingMonth) {
-            setError(`הקובץ הזה משייך לחודש ${result.processingMonth} אבל אתה מנתח ${processingMonth}. אנא בחר קובץ מאותו חודש.`)
-            return
+        // If this is an additional file, validate month compatibility
+        if (isAdditional && processingMonth && result.processingMonth) {
+          // For credit card files, allow current month or next month (billing cycle)
+          // For bank files, must be exact match
+          if (fileType === 'credit-card') {
+            const [currentMonth, currentYear] = processingMonth.split('/').map(v => parseInt(v, 10))
+            const [fileMonth, fileYear] = result.processingMonth.split('/').map(v => parseInt(v, 10))
+
+            // Calculate month difference
+            const monthDiff = (fileYear - currentYear) * 12 + (fileMonth - currentMonth)
+
+            // Allow same month (0) or next month (1)
+            if (monthDiff < 0 || monthDiff > 1) {
+              setError(`הקובץ הזה משייך לחודש ${result.processingMonth} אבל אתה מנתח ${processingMonth}. עבור כרטיס אשראי, ניתן לטעון קבצים מהחודש הנוכחי או הבא.`)
+              return
+            }
+          } else {
+            // Bank files must match exactly
+            if (result.processingMonth !== processingMonth) {
+              setError(`הקובץ הזה משייך לחודש ${result.processingMonth} אבל אתה מנתח ${processingMonth}. אנא בחר קובץ מאותו חודש.`)
+              return
+            }
           }
         }
 
         // If this is a credit card file, store the credit card data
         const statement = fileType === 'credit-card' ? parseCreditCardStatement(rows) : null
         if (statement && statement.cardNumber) {
+          const chargingDateStr = statement.billingDate ?
+            `${String(statement.billingDate.getDate()).padStart(2, '0')}/${String(statement.billingDate.getMonth() + 1).padStart(2, '0')}/${statement.billingDate.getFullYear()}`
+            : null
+
+          // Add charging date to each payment
+          const paymentsWithChargingDate = statement.payments.map(p => ({
+            ...p,
+            chargingDate: chargingDateStr,
+          }))
+
           setCreditCardData((prev) => {
             const newMap = new Map(prev)
-            newMap.set(statement.cardNumber!, {
-              cardNumber: statement.cardNumber!,
-              payments: statement.payments,
-            })
+            const existing = newMap.get(statement.cardNumber!)
+
+            if (existing && isAdditional) {
+              // Merge payments, avoiding duplicates by payment ID
+              const existingPaymentIds = new Set(existing.payments.map(p => p.id))
+              const newPayments = paymentsWithChargingDate.filter(p => !existingPaymentIds.has(p.id))
+
+              newMap.set(statement.cardNumber!, {
+                cardNumber: statement.cardNumber!,
+                payments: [...existing.payments, ...newPayments],
+              })
+            } else {
+              // First file or not additional - replace
+              newMap.set(statement.cardNumber!, {
+                cardNumber: statement.cardNumber!,
+                payments: paymentsWithChargingDate,
+              })
+            }
+
             return newMap
           })
 
@@ -729,8 +772,31 @@ export default function AnalyzeTransactions() {
     // Credit card payments
     ccData.forEach((cc) => {
       cc.payments.forEach((payment) => {
-        const payMonth = parseMonthFromDateString(payment.transactionDate)
-        if (payMonth !== monthYear) return
+        const transactionMonth = parseMonthFromDateString(payment.transactionDate)
+        const isInstallment = payment.totalSteps > 1
+
+        if (isInstallment) {
+          // Installment: count in the month it's charged (charging month), not transaction month
+          if (payment.chargingDate) {
+            const chargingMonth = parseMonthFromDateString(payment.chargingDate)
+            // Only count this installment if the charging month matches analysis month
+            if (chargingMonth !== monthYear) {
+              console.log(`[INSTALLMENT FILTERED] ${payment.merchant} - chargingMonth: ${chargingMonth} vs monthYear: ${monthYear}`)
+              return
+            }
+          } else {
+            // No charging date - skip installments (we can't determine when to count them)
+            console.log(`[INSTALLMENT SKIPPED - NO CHARGING DATE] ${payment.merchant}`)
+            return
+          }
+        } else {
+          // Regular transaction (1/1): count in the month the transaction was made
+          if (transactionMonth !== monthYear) {
+            console.log(`[REGULAR FILTERED] ${payment.merchant} - transactionMonth: ${transactionMonth} vs monthYear: ${monthYear}, transactionDate: ${payment.transactionDate}`)
+            return
+          }
+          console.log(`[REGULAR INCLUDED] ${payment.merchant} - transactionMonth: ${transactionMonth} = monthYear: ${monthYear}, transactionDate: ${payment.transactionDate}`)
+        }
 
         const amount = -Math.abs(payment.amount)
         handleAmount(amount)
@@ -997,7 +1063,25 @@ export default function AnalyzeTransactions() {
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {creditCardData.get(transaction.cardNumber)!.payments.map((payment) => (
+                                  {creditCardData.get(transaction.cardNumber)!.payments
+                                    .filter((payment) => {
+                                      // Filter to show only payments relevant to the analysis month
+                                      const transactionMonth = parseMonthFromDateString(payment.transactionDate)
+                                      const isInstallment = payment.totalSteps > 1
+
+                                      if (isInstallment) {
+                                        // Installment: show if charging month matches
+                                        if (payment.chargingDate) {
+                                          const chargingMonth = parseMonthFromDateString(payment.chargingDate)
+                                          return chargingMonth === processingMonth
+                                        }
+                                        return false
+                                      } else {
+                                        // Regular: show if transaction month matches
+                                        return transactionMonth === processingMonth
+                                      }
+                                    })
+                                    .map((payment) => (
                                     <tr key={payment.id}>
                                       <td>{payment.transactionDate}</td>
                                       <td>{payment.merchant}</td>

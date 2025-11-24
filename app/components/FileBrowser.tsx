@@ -224,7 +224,31 @@ export default function FileBrowser({ onFileSelect, isOpen, savedDirHandle, onDi
       })
 
       const filePreviews = await Promise.all(previewPromises)
-      setPreviews(filePreviews.filter((p) => p.fileType === 'fibi-transactions' || p.fileType === 'credit-card'))
+      const validPreviews = filePreviews.filter((p) => p.fileType === 'fibi-transactions' || p.fileType === 'credit-card')
+
+      // Sort by month (descending), then by account
+      validPreviews.sort((a, b) => {
+        // Parse month/year for comparison
+        const parseMonthYear = (monthStr: string | null): number => {
+          if (!monthStr) return 0
+          const [month, year] = monthStr.split('/').map(v => parseInt(v, 10))
+          return year * 12 + month
+        }
+
+        const aMonth = parseMonthYear(a.processingMonth)
+        const bMonth = parseMonthYear(b.processingMonth)
+
+        if (aMonth !== bMonth) {
+          return bMonth - aMonth // Descending (newest first)
+        }
+
+        // Same month - sort by account/card number
+        const aAccount = a.accountNumber || a.cardNumber || ''
+        const bAccount = b.accountNumber || b.cardNumber || ''
+        return aAccount.localeCompare(bAccount)
+      })
+
+      setPreviews(validPreviews)
       setLoading(false)
     } catch (err: any) {
       console.error('Error loading files:', err)
@@ -264,45 +288,38 @@ export default function FileBrowser({ onFileSelect, isOpen, savedDirHandle, onDi
       {error && <div className="banner error" style={{ marginTop: '1rem' }}>{error}</div>}
 
       {previews.length > 0 && (
-        <div className="file-preview-grid">
-          {previews.map((preview, index) => (
-            <div
-              key={index}
-              className="file-preview-card"
-              onClick={() => handleSelectFile(preview)}
-            >
-              <div className="file-preview-header">
-                <div className="file-preview-icon">
-                  {preview.fileType === 'credit-card' ? '💳' : '📄'}
-                </div>
-                <div className="file-preview-name">{preview.fileName}</div>
-              </div>
-              <div className="file-preview-details">
-                <div className="file-preview-detail">
-                  <span className="detail-label">חודש:</span>
-                  <span className="detail-value">{formatMonthDisplay(preview.processingMonth)}</span>
-                </div>
-                {preview.cardNumber && (
-                  <div className="file-preview-detail">
-                    <span className="detail-label">כרטיס:</span>
-                    <span className="detail-value">{preview.cardNumber}</span>
-                  </div>
-                )}
-                {preview.accountNumber && (
-                  <div className="file-preview-detail">
-                    <span className="detail-label">חשבון:</span>
-                    <span className="detail-value">{preview.accountNumber}</span>
-                  </div>
-                )}
-                <div className="file-preview-detail">
-                  <span className="detail-label">
-                    {preview.fileType === 'credit-card' ? 'תשלומים:' : 'עסקאות:'}
-                  </span>
-                  <span className="detail-value">{preview.transactionCount}</span>
-                </div>
-              </div>
-            </div>
-          ))}
+        <div className="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>שם קובץ</th>
+                <th>תאריך</th>
+                <th>חשבון</th>
+                <th>מספר עסקה</th>
+              </tr>
+            </thead>
+            <tbody>
+              {previews.map((preview, index) => (
+                <tr
+                  key={index}
+                  onClick={() => handleSelectFile(preview)}
+                  style={{ cursor: 'pointer' }}
+                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f8fafc'}
+                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                >
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span>{preview.fileType === 'credit-card' ? '💳' : '📄'}</span>
+                      <span>{preview.fileName}</span>
+                    </div>
+                  </td>
+                  <td>{formatMonthDisplay(preview.processingMonth)}</td>
+                  <td>{preview.accountNumber || preview.cardNumber || '—'}</td>
+                  <td>{preview.transactionCount}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
       {savedDirHandle && !loading && !error && previews.length === 0 && (

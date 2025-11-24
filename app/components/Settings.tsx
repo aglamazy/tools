@@ -125,12 +125,49 @@ export default function Settings() {
     }
   }
 
+  const getNextColor = (type: CategoryType): string => {
+    const incomeColors = [
+      '#10b981', // green
+      '#3b82f6', // blue
+      '#8b5cf6', // purple
+      '#06b6d4', // cyan
+      '#14b8a6', // teal
+      '#84cc16', // lime
+      '#22c55e', // green-light
+      '#0ea5e9', // sky
+    ]
+
+    const expenseColors = [
+      '#ef4444', // red
+      '#f97316', // orange
+      '#f59e0b', // amber
+      '#eab308', // yellow
+      '#ec4899', // pink
+      '#a855f7', // purple
+      '#6366f1', // indigo
+      '#f43f5e', // rose
+      '#fb923c', // orange-light
+      '#fbbf24', // yellow-light
+      '#94a3b8', // slate
+      '#64748b', // gray
+    ]
+
+    const colors = type === 'income' ? incomeColors : expenseColors
+    const existingColors = categories
+      .filter(c => c.type === type)
+      .map(c => c.color)
+
+    // Find first unused color, or cycle back to start
+    const unusedColor = colors.find(c => !existingColors.includes(c))
+    return unusedColor || colors[existingColors.length % colors.length]
+  }
+
   const handleAddCategory = (type: CategoryType) => {
     const newCategory: Category = {
       id: `custom-${Date.now()}`,
       name: '',
       type: type,
-      color: type === 'income' ? '#10b981' : '#ef4444',
+      color: getNextColor(type),
       createdAt: new Date().toISOString(),
       isFixed: false,
     }
