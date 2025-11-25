@@ -254,6 +254,76 @@ export default function Settings() {
     reader.readAsText(file)
   }
 
+  const handleExportAllData = () => {
+    try {
+      // Gather all data from localStorage
+      const allData = {
+        version: '2.0',
+        exportDate: new Date().toISOString(),
+        transactions: localStorage.getItem('finance-transactions'),
+        importedFiles: localStorage.getItem('finance-imported-files'),
+        categories: localStorage.getItem('finance-categories'),
+      }
+
+      const blob = new Blob([JSON.stringify(allData, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `finance-backup-${new Date().toISOString().split('T')[0]}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+      alert('הנתונים יוצאו בהצלחה!')
+    } catch (err) {
+      console.error('Error exporting all data:', err)
+      alert('שגיאה בייצוא הנתונים')
+    }
+  }
+
+  const handleImportAllData = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    if (!confirm('ייבוא נתונים ימחק את כל הנתונים הקיימים. האם להמשיך?')) {
+      event.target.value = '' // Reset file input
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      try {
+        const content = e.target?.result as string
+        const data = JSON.parse(content)
+
+        // Validate version
+        if (!data.version) {
+          alert('פורמט קובץ לא תקין')
+          return
+        }
+
+        // Import all data
+        if (data.transactions) {
+          localStorage.setItem('finance-transactions', data.transactions)
+        }
+        if (data.importedFiles) {
+          localStorage.setItem('finance-imported-files', data.importedFiles)
+        }
+        if (data.categories) {
+          localStorage.setItem('finance-categories', data.categories)
+          const categoriesData = JSON.parse(data.categories)
+          setCategories(categoriesData.categories || [])
+        }
+
+        alert('הנתונים יובאו בהצלחה! הדף יטען מחדש.')
+        window.location.reload()
+      } catch (err) {
+        console.error('Error importing all data:', err)
+        alert('שגיאה בקריאת הקובץ')
+      }
+    }
+    reader.readAsText(file)
+    event.target.value = '' // Reset file input
+  }
+
   return (
     <div className="card">
       <header>
@@ -281,6 +351,31 @@ export default function Settings() {
           </div>
         </div>
       </header>
+
+      <section style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid #e2e8f0', borderRadius: '0.75rem', background: '#fef3c7' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: '1.05rem' }}>💾 גיבוי ושחזור נתונים</h2>
+            <p style={{ margin: '0.25rem 0 0', color: '#92400e', fontSize: '0.95rem' }}>
+              ייצוא כל הנתונים לקובץ גיבוי או ייבוא מגיבוי קיים. הנתונים נשארים רק במכשיר שלך.
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+            <button onClick={handleExportAllData} className="file-picker" style={{ background: '#10b981', color: 'white' }}>
+              📤 ייצא הכל
+            </button>
+            <label className="upload-another-btn" style={{ cursor: 'pointer', background: '#3b82f6', color: 'white' }}>
+              📥 ייבא הכל
+              <input
+                type="file"
+                accept=".json"
+                onChange={handleImportAllData}
+                style={{ display: 'none' }}
+              />
+            </label>
+          </div>
+        </div>
+      </section>
 
       <section style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid #e2e8f0', borderRadius: '0.75rem', background: '#f8fafc' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>

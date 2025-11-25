@@ -1,5 +1,64 @@
+import { parseXlsTables } from './xlsTableParser'
+import { config } from '@/app/config'
+
 type SheetCell = string | number | null | undefined
 type SheetRow = SheetCell[]
+
+// Mapping from Hebrew column names to standardized property names
+const COLUMN_MAPPINGS = {
+  merchant: ['שם בית העסק', 'שם', 'שם העסק', 'בית עסק', 'שם העסק'],
+  transactionDate: ['תאריך עסקה', 'תאריך'],
+  domesticAmount: ['סכום עסקה'],
+  billingAmount: ['סכום חיוב', 'סכום לחיוב'],
+  detail: ['פירוט', 'פירוט נוסף'],
+  originalAmount: ['סכום מקורי'],
+  originalCurrency: ['מטבע מקורי', 'מטבע'],
+  billingCurrency: ['מטבע חיוב'],
+}
+
+/**
+ * Gets all known column names from mappings
+ */
+function getAllKnownColumns(): Set<string> {
+  const known = new Set<string>()
+  for (const possibleNames of Object.values(COLUMN_MAPPINGS)) {
+    possibleNames.forEach(name => known.add(name))
+  }
+  return known
+}
+
+/**
+ * Checks for unmapped columns in developer mode
+ */
+function checkUnmappedColumns(headers: string[]): void {
+  if (!config.developerMode) return
+
+  const knownColumns = getAllKnownColumns()
+  const unmappedColumns: string[] = []
+
+  for (const header of headers) {
+    if (!knownColumns.has(header)) {
+      unmappedColumns.push(header)
+    }
+  }
+
+  if (unmappedColumns.length > 0) {
+    const message = `⚠️ Unmapped columns detected:\n\n${unmappedColumns.join('\n')}\n\nAdd these to COLUMN_MAPPINGS in creditCardParser.ts`
+    console.error(message)
+  }
+}
+
+/**
+ * Gets a value from a row using multiple possible column names
+ */
+function getRowValue(row: Record<string, any>, possibleNames: string[]): any {
+  for (const name of possibleNames) {
+    if (row[name] !== undefined && row[name] !== null) {
+      return row[name]
+    }
+  }
+  return null
+}
 
 export type CreditCardPayment = {
   id: string
@@ -113,106 +172,115 @@ const extractCardNumber = (rows: Array<Array<string | number>>): string | null =
 }
 
 export function parseCreditCardStatement(rows: SheetRow[]): CreditCardStatement {
-  const sanitized = rows.map((row) => row.map(normalizeCell)) as Array<Array<string | number>>
-  const billingDate = findBillingDate(sanitized)
-  const cardNumber = extractCardNumber(sanitized)
+  const billingDate = findBillingDate(rows)
+  const cardNumber = extractCardNumber(rows)
 
-  const headerIndex = sanitized.findIndex((row) =>
-    row.some(
-      (cell) =>
-        typeof cell === 'string' &&
-        cell.includes('סכום חיוב') &&
-        row.some(
-          (innerCell) => typeof innerCell === 'string' && innerCell.includes('פירוט'),
-        ),
-    ),
-  )
+  // Debug: Show first 20 rows
+  console.log('====== RAW ROWS (first 20) ======')
+  rows.slice(0, 20).forEach((row, idx) => {
+    console.log(`Row ${idx}:`, row)
+  })
+  console.log('====== END RAW ROWS ======')
 
-  if (headerIndex === -1) {
-    return { billingDate, cardNumber, payments: [] }
-  }
+  // Use the table parser to detect all sections
+  const parsed = parseXlsTables(rows)
 
-  const headers = sanitized[headerIndex]
-  const findIndex = (text: string) =>
-    headers.findIndex((cell) => typeof cell === 'string' && cell.includes(text))
+  console.log('====== XLS TO JSON DUMP ======')
+  console.log(JSON.stringify(parsed, null, 2))
+  console.log('====== END DUMP ======')
 
-  const transactionDateIdx = findIndex('תאריך')
-  const merchantIdx = findIndex('שם')
-  const domesticAmountIdx = findIndex('סכום עסקה')
-  const billingAmountIdx = findIndex('סכום חיוב')
-  const detailIdx = findIndex('פירוט')
-
-  console.log('🔍 Credit Card Parser Debug:')
-  console.log('Header row:', headers)
-  console.log('Indices:', { transactionDateIdx, merchantIdx, domesticAmountIdx, billingAmountIdx, detailIdx })
-
-  if (merchantIdx === -1) {
-    console.log('❌ Missing merchant column')
-    return { billingDate, cardNumber, payments: [] }
-  }
+  console.log('🔍 Credit Card Parser - Detected sections:', parsed.sections.length)
+  parsed.sections.forEach((section, idx) => {
+    console.log(`Section ${idx}:`)
+    console.log(`  tableInfo:`, section.tableInfo)
+    console.log(`  headers (${section.headers.length}):`, section.headers)
+    console.log(`  rows: ${section.rows.length}`)
+    if (section.rows.length > 0) {
+      console.log(`  First row sample:`, section.rows[0])
+    }
+  })
 
   const payments: CreditCardPayment[] = []
-  const rowsAfterHeader = sanitized.slice(headerIndex + 1)
+  let globalRowIndex = 0
 
-  rowsAfterHeader.forEach((row, rowIndex) => {
-    const merchant = row[merchantIdx]
-    const domesticAmount = domesticAmountIdx !== -1 ? row[domesticAmountIdx] : null
-    const billingAmount = billingAmountIdx !== -1 ? row[billingAmountIdx] : null
+  // Process each section
+  parsed.sections.forEach((section) => {
+    // Check for unmapped columns in developer mode
+    checkUnmappedColumns(section.headers)
 
-    // Valid transaction must have merchant name
-    if (!merchant || String(merchant).trim() === '') {
-      return
-    }
+    // Check if this is a foreign currency section
+    const isForeign = section.tableInfo.some(info => info.includes('מט"ח') || info.includes('עסקאות במט"ח'))
 
-    // Determine which amount to use
-    let amount = 0
-    const domesticNum = domesticAmount !== null && domesticAmount !== '' ? toNumber(domesticAmount) : NaN
-    const billingNum = billingAmount !== null && billingAmount !== '' ? toNumber(billingAmount) : NaN
+    console.log(`📊 Processing section: tableInfo=${section.tableInfo.join(', ')}, isForeign=${isForeign}`)
 
-    // Domestic transaction: has valid סכום עסקה
-    if (Number.isFinite(domesticNum) && domesticNum !== 0) {
-      amount = domesticNum
-    }
-    // Foreign transaction: has valid סכום חיוב but no valid סכום עסקה
-    else if (Number.isFinite(billingNum) && billingNum !== 0) {
-      amount = billingNum
-    }
-    // Skip if no valid amount
-    else {
-      return
-    }
+    section.rows.forEach((row, rowIdx) => {
+      // Normalize row: extract all known properties
+      const normalizedRow: Record<string, any> = {}
 
-    const transactionDate = row[transactionDateIdx]
-    if (!transactionDate) {
-      return
-    }
-
-    const detailCell = row[detailIdx]
-    let currentStep = 1
-    let totalSteps = 1
-
-    // Check if this is an installment payment
-    if (detailCell && typeof detailCell === 'string') {
-      const match = detailCell.match(/(\d+)\s*מתוך\s*(\d+)/)
-      if (match) {
-        const current = parseInt(match[1], 10)
-        const total = parseInt(match[2], 10)
-        if (Number.isFinite(current) && Number.isFinite(total)) {
-          currentStep = current
-          totalSteps = total
+      for (const [key, possibleNames] of Object.entries(COLUMN_MAPPINGS)) {
+        const value = getRowValue(row, possibleNames)
+        if (value !== null && value !== undefined && String(value).trim() !== '') {
+          normalizedRow[key] = value
         }
       }
-    }
 
-    payments.push({
-      id: `${cardNumber || 'unknown'}-${String(transactionDate)}-${String(merchant)}-${amount}-${currentStep}-${totalSteps}`,
-      transactionDate: String(transactionDate),
-      merchant: String(merchant),
-      amount,
-      currentStep,
-      totalSteps,
+      if (config.developerMode && rowIdx === 0) {
+        console.log(`  Normalized first row:`, normalizedRow)
+      }
+
+      // Validate required fields
+      if (!normalizedRow.merchant) {
+        if (config.developerMode && rowIdx < 3) {
+          console.log(`  Row ${rowIdx}: Skipping - no merchant`)
+        }
+        return
+      }
+      if (!normalizedRow.transactionDate) {
+        if (config.developerMode && rowIdx < 3) {
+          console.log(`  Row ${rowIdx}: Skipping - no transactionDate`)
+        }
+        return
+      }
+
+      // Determine amount based on section type
+      let amount = 0
+      if (isForeign) {
+        // Foreign: use billing amount
+        amount = toNumber(normalizedRow.billingAmount)
+      } else {
+        // Domestic: use domestic amount, fallback to billing amount
+        amount = toNumber(normalizedRow.domesticAmount || normalizedRow.billingAmount)
+      }
+
+      if (!amount || amount === 0) {
+        return
+      }
+
+      // Parse installment info from detail
+      let currentStep = 1
+      let totalSteps = 1
+      if (normalizedRow.detail && typeof normalizedRow.detail === 'string') {
+        const match = normalizedRow.detail.match(/(\d+)\s*מתוך\s*(\d+)/)
+        if (match) {
+          currentStep = parseInt(match[1], 10)
+          totalSteps = parseInt(match[2], 10)
+        }
+      }
+
+      payments.push({
+        id: `${cardNumber || 'unknown'}-${globalRowIndex}-${String(normalizedRow.transactionDate)}-${String(normalizedRow.merchant)}-${amount}-${currentStep}-${totalSteps}`,
+        transactionDate: String(normalizedRow.transactionDate),
+        merchant: String(normalizedRow.merchant),
+        amount,
+        currentStep,
+        totalSteps,
+      })
+
+      globalRowIndex++
     })
   })
+
+  console.log(`✅ Parsed ${payments.length} total payments`)
 
   return { billingDate, cardNumber, payments }
 }

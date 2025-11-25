@@ -17,12 +17,18 @@ export const fileImportService = {
     // Parse credit card data
     const statement = parseCreditCardStatement(rows)
 
-    // Format charging date
-    const chargingDateStr = billingDate
-      ? `${String(billingDate.getDate()).padStart(2, '0')}/${String(billingDate.getMonth() + 1).padStart(2, '0')}/${billingDate.getFullYear()}`
+    // Use billing date from file (when these transactions are charged)
+    // This is critical: ALL transactions in this file are charged in this billing month
+    const effectiveBillingDate = statement.billingDate || billingDate
+
+    // Format charging date (DD/MM/YYYY format)
+    const chargingDateStr = effectiveBillingDate
+      ? `${String(effectiveBillingDate.getDate()).padStart(2, '0')}/${String(effectiveBillingDate.getMonth() + 1).padStart(2, '0')}/${effectiveBillingDate.getFullYear()}`
       : undefined
 
-    // Save to store
+    console.log('💳 Importing credit card file with charging date:', chargingDateStr)
+
+    // Save to store - all payments get the same charging date
     transactionStore.saveCreditCardData(cardNumber, statement.payments, chargingDateStr)
 
     return statement.payments.length
