@@ -19,24 +19,28 @@ export type ParseResult = {
   processingMonth: string | null
 }
 
+export type CreditCardPayment = {
+  id: string
+  transactionDate: string
+  merchant: string
+  amount: number
+  currentStep: number
+  totalSteps: number
+  category?: string
+  isFixed?: boolean
+  chargingDate?: string
+}
+
+export type CreditCardData = {
+  cardNumber: string
+  payments: CreditCardPayment[]
+}
+
 export type TransactionStorage = {
   version: string
   processingMonth: string | null
   transactions: Transaction[]
-  creditCardData: {
-    cardNumber: string
-    payments: Array<{
-      id: string
-      transactionDate: string
-      merchant: string
-      amount: number
-      currentStep: number
-      totalSteps: number
-      category?: string
-      isFixed?: boolean
-      chargingDate?: string
-    }>
-  }[]
+  creditCardData: CreditCardData[]
   loadedFiles: string[]
   lastUpdated: string
 }

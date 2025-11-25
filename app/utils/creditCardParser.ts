@@ -138,15 +138,16 @@ export function parseCreditCardStatement(rows: SheetRow[]): CreditCardStatement 
 
   const transactionDateIdx = findIndex('תאריך')
   const merchantIdx = findIndex('שם')
-  const amountIdx = findIndex('סכום חיוב')
+  const domesticAmountIdx = findIndex('סכום עסקה')
+  const billingAmountIdx = findIndex('סכום חיוב')
   const detailIdx = findIndex('פירוט')
 
-  if (
-    transactionDateIdx === -1 ||
-    merchantIdx === -1 ||
-    amountIdx === -1 ||
-    detailIdx === -1
-  ) {
+  console.log('🔍 Credit Card Parser Debug:')
+  console.log('Header row:', headers)
+  console.log('Indices:', { transactionDateIdx, merchantIdx, domesticAmountIdx, billingAmountIdx, detailIdx })
+
+  if (merchantIdx === -1) {
+    console.log('❌ Missing merchant column')
     return { billingDate, cardNumber, payments: [] }
   }
 
@@ -154,12 +155,35 @@ export function parseCreditCardStatement(rows: SheetRow[]): CreditCardStatement 
   const rowsAfterHeader = sanitized.slice(headerIndex + 1)
 
   rowsAfterHeader.forEach((row, rowIndex) => {
-    const transactionDate = row[transactionDateIdx]
     const merchant = row[merchantIdx]
-    const amount = toNumber(row[amountIdx])
+    const domesticAmount = domesticAmountIdx !== -1 ? row[domesticAmountIdx] : null
+    const billingAmount = billingAmountIdx !== -1 ? row[billingAmountIdx] : null
 
-    // Skip rows without basic transaction info
-    if (!transactionDate || !merchant || !Number.isFinite(amount) || amount === 0) {
+    // Valid transaction must have merchant name
+    if (!merchant || String(merchant).trim() === '') {
+      return
+    }
+
+    // Determine which amount to use
+    let amount = 0
+    const domesticNum = domesticAmount !== null && domesticAmount !== '' ? toNumber(domesticAmount) : NaN
+    const billingNum = billingAmount !== null && billingAmount !== '' ? toNumber(billingAmount) : NaN
+
+    // Domestic transaction: has valid סכום עסקה
+    if (Number.isFinite(domesticNum) && domesticNum !== 0) {
+      amount = domesticNum
+    }
+    // Foreign transaction: has valid סכום חיוב but no valid סכום עסקה
+    else if (Number.isFinite(billingNum) && billingNum !== 0) {
+      amount = billingNum
+    }
+    // Skip if no valid amount
+    else {
+      return
+    }
+
+    const transactionDate = row[transactionDateIdx]
+    if (!transactionDate) {
       return
     }
 
@@ -211,54 +235,14 @@ const extractProcessingMonth = (rows: Array<Array<string | number>>): string | n
 }
 
 export function extractCreditCardPreview(rows: SheetRow[]): CreditCardPreview {
-  const sanitized = rows.map((row) => row.map(normalizeCell)) as Array<Array<string | number>>
-
-  const cardNumber = extractCardNumber(sanitized)
-  const processingMonth = extractProcessingMonth(sanitized)
-
-  // Find header row to count payments
-  const headerIndex = sanitized.findIndex((row) =>
-    row.some(
-      (cell) =>
-        typeof cell === 'string' &&
-        cell.includes('סכום חיוב') &&
-        row.some(
-          (innerCell) => typeof innerCell === 'string' && innerCell.includes('פירוט'),
-        ),
-    ),
-  )
-
-  let paymentCount = 0
-
-  if (headerIndex !== -1) {
-    const headers = sanitized[headerIndex]
-    const detailIdx = headers.findIndex((cell) => typeof cell === 'string' && cell.includes('פירוט'))
-
-    if (detailIdx !== -1) {
-      const rowsAfterHeader = sanitized.slice(headerIndex + 1)
-
-      for (const row of rowsAfterHeader) {
-        const detailCell = row[detailIdx]
-        if (!detailCell || typeof detailCell !== 'string') {
-          continue
-        }
-
-        const match = detailCell.match(/(\d+)\s*מתוך\s*(\d+)/)
-        if (match) {
-          const current = parseInt(match[1], 10)
-          const total = parseInt(match[2], 10)
-
-          if (Number.isFinite(current) && Number.isFinite(total) && current < total) {
-            paymentCount++
-          }
-        }
-      }
-    }
-  }
+  // Use the main parser and just return the summary info
+  const statement = parseCreditCardStatement(rows)
 
   return {
-    cardNumber,
-    processingMonth,
-    paymentCount,
+    cardNumber: statement.cardNumber,
+    processingMonth: statement.billingDate
+      ? `${String(statement.billingDate.getMonth() + 1).padStart(2, '0')}/${statement.billingDate.getFullYear()}`
+      : null,
+    paymentCount: statement.payments.length,
   }
 }

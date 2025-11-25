@@ -1,6 +1,13 @@
 // Transaction Store - Handles all localStorage operations for transactions
 
-import type { BudgetTransaction, TransactionUpdate } from '@/app/types/transactions'
+import type {
+  BudgetTransaction,
+  TransactionUpdate,
+  Transaction,
+  TransactionStorage,
+  CreditCardPayment,
+  CreditCardData,
+} from '@/app/types/transactions'
 
 const STORAGE_KEY = 'finance-transactions'
 const IMPORTED_FILES_KEY = 'finance-imported-files'
@@ -16,6 +23,60 @@ export const transactionStore = {
   getImportedFiles: () => {
     const stored = localStorage.getItem(IMPORTED_FILES_KEY)
     return stored ? JSON.parse(stored) : null
+  },
+
+  // Save credit card transactions
+  saveCreditCardData: (cardNumber: string, payments: CreditCardPayment[], chargingDate?: string) => {
+    const stored = localStorage.getItem(STORAGE_KEY)
+    const data: TransactionStorage = stored
+      ? JSON.parse(stored)
+      : {
+          version: '1.0',
+          processingMonth: null,
+          transactions: [],
+          creditCardData: [],
+          loadedFiles: [],
+          lastUpdated: '',
+        }
+
+    const cardData: CreditCardData = {
+      cardNumber,
+      payments: payments.map((p) => ({ ...p, chargingDate })),
+    }
+
+    const existingIndex = data.creditCardData.findIndex((cc) => cc.cardNumber === cardNumber)
+
+    if (existingIndex !== -1) {
+      data.creditCardData[existingIndex] = cardData
+    } else {
+      data.creditCardData.push(cardData)
+    }
+
+    data.lastUpdated = new Date().toISOString()
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+  },
+
+  // Save bank transactions for a specific month
+  saveBankTransactions: (processingMonth: string, transactions: Transaction[]) => {
+    const stored = localStorage.getItem(STORAGE_KEY)
+    const data: TransactionStorage = stored
+      ? JSON.parse(stored)
+      : {
+          version: '1.0',
+          processingMonth: null,
+          transactions: [],
+          creditCardData: [],
+          loadedFiles: [],
+          lastUpdated: '',
+        }
+
+    // Remove old transactions for this month
+    data.transactions = data.transactions.filter((t) => t.date.substring(3) !== processingMonth)
+
+    // Add new transactions
+    data.transactions.push(...transactions)
+    data.lastUpdated = new Date().toISOString()
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
   },
 
   // Get bank account number for a specific month

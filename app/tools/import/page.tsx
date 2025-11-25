@@ -78,6 +78,29 @@ export default function ImportPage() {
     }
   }
 
+  const handleOpenFile = async (fileName: string) => {
+    if (!savedDirHandle) {
+      showToast('error', 'לא נמצאה תיקייה שמורה')
+      return
+    }
+
+    try {
+      // Get the file handle from the directory
+      const fileHandle = await savedDirHandle.getFileHandle(fileName)
+      const file = await fileHandle.getFile()
+
+      // Create a temporary URL and open it
+      const url = URL.createObjectURL(file)
+      window.open(url, '_blank')
+
+      // Clean up the URL after a delay
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (err) {
+      console.error('Error opening file:', err)
+      showToast('error', 'לא ניתן לפתוח את הקובץ')
+    }
+  }
+
   const handleViewFile = (fileId: string) => {
     const file = files.find((f) => f.id === fileId)
     if (!file) return
@@ -158,6 +181,15 @@ export default function ImportPage() {
           message: 'לא ניתן לזהות את סוג הקובץ. אנא ודא שזהו קובץ בנק FIBI או כרטיס אשראי.',
         })
         return
+      }
+
+      // Import and save transactions
+      const { fileImportService } = await import('@/app/services/fileImportService')
+
+      if (metadata.fileType === 'credit-card' && metadata.cardNumber) {
+        await fileImportService.importCreditCardFile(file, metadata.cardNumber, null)
+      } else if (metadata.fileType === 'bank' && metadata.processingMonth) {
+        await fileImportService.importBankFile(file, metadata.processingMonth)
       }
 
       // Create imported file record
@@ -360,6 +392,14 @@ export default function ImportPage() {
                     <td>{getActualTransactionCount(file)}</td>
                     <td>
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button
+                          onClick={() => handleOpenFile(file.fileName)}
+                          className="file-picker"
+                          style={{ padding: '0.25rem 0.5rem', fontSize: '0.875rem' }}
+                          title="פתח את הקובץ המקורי"
+                        >
+                          📂 פתח
+                        </button>
                         <button
                           onClick={() => handleViewFile(file.id)}
                           className="file-picker"
