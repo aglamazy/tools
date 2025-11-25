@@ -18,6 +18,7 @@ export default function BudgetPage() {
   const [loading, setLoading] = useState(true)
   const [autoClassifiedIds, setAutoClassifiedIds] = useState<Set<string>>(new Set())
   const [hideClassified, setHideClassified] = useState(false)
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
 
   // Load available months from imported files and categories
   useEffect(() => {
@@ -90,10 +91,32 @@ export default function BudgetPage() {
 
   const categoryData = getCategoryData()
 
-  // Filter transactions based on hideClassified toggle
-  const displayedTransactions = hideClassified
-    ? transactions.filter((t) => !t.category || t.category.trim() === '')
-    : transactions
+  // Handler for category click - filter by category and reset hideClassified
+  const handleCategoryClick = (categoryName: string) => {
+    if (selectedCategory === categoryName) {
+      // Clicking the same category again clears the filter
+      setSelectedCategory(null)
+    } else {
+      setSelectedCategory(categoryName)
+      setHideClassified(false) // Reset "not classified only" filter
+    }
+  }
+
+  // Filter transactions based on hideClassified toggle and selected category
+  const displayedTransactions = transactions.filter((t) => {
+    // First apply category filter if one is selected
+    if (selectedCategory) {
+      return t.category === selectedCategory
+    }
+
+    // Otherwise apply hideClassified filter
+    if (hideClassified) {
+      return !t.category || t.category.trim() === ''
+    }
+
+    // Show all transactions if no filters applied
+    return true
+  })
 
   return (
     <main className="app" dir="rtl">
@@ -148,9 +171,25 @@ export default function BudgetPage() {
                     onClick={() => setHideClassified(!hideClassified)}
                     className="upload-another-btn"
                     style={{ margin: 0, padding: '0.5rem 1rem', fontSize: '0.875rem' }}
+                    disabled={selectedCategory !== null}
                   >
                     {hideClassified ? '👁️ הצג הכל' : '🎯 רק לא מסווגים'}
                   </button>
+                  {selectedCategory && (
+                    <button
+                      onClick={() => setSelectedCategory(null)}
+                      className="upload-another-btn"
+                      style={{
+                        margin: 0,
+                        padding: '0.5rem 1rem',
+                        fontSize: '0.875rem',
+                        background: '#0284c7',
+                        color: 'white',
+                      }}
+                    >
+                      ✕ נושא: {selectedCategory}
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       const result = transactionStore.autoClassify(selectedMonth)
@@ -249,9 +288,15 @@ export default function BudgetPage() {
                           outerRadius={100}
                           fill="#8884d8"
                           dataKey="value"
+                          onClick={(data) => handleCategoryClick(data.name)}
+                          style={{ cursor: 'pointer' }}
                         >
                           {categoryData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={entry.color} />
+                            <Cell
+                              key={`cell-${index}`}
+                              fill={entry.color}
+                              opacity={selectedCategory === null || selectedCategory === entry.name ? 1 : 0.3}
+                            />
                           ))}
                         </Pie>
                         <Tooltip
@@ -270,14 +315,28 @@ export default function BudgetPage() {
                       {categoryData.map((cat) => (
                         <div
                           key={cat.name}
+                          onClick={() => handleCategoryClick(cat.name)}
                           style={{
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'space-between',
                             padding: '0.5rem 1rem',
                             borderRadius: '0.5rem',
-                            background: '#f8fafc',
-                            border: '1px solid #e2e8f0',
+                            background: selectedCategory === cat.name ? '#e0f2fe' : '#f8fafc',
+                            border: selectedCategory === cat.name ? '2px solid #0284c7' : '1px solid #e2e8f0',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s ease',
+                            opacity: selectedCategory === null || selectedCategory === cat.name ? 1 : 0.5,
+                          }}
+                          onMouseEnter={(e) => {
+                            if (selectedCategory !== cat.name) {
+                              e.currentTarget.style.background = '#f1f5f9'
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (selectedCategory !== cat.name) {
+                              e.currentTarget.style.background = '#f8fafc'
+                            }
                           }}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
@@ -290,6 +349,9 @@ export default function BudgetPage() {
                               }}
                             />
                             <span style={{ fontWeight: 500 }}>{cat.name}</span>
+                            {selectedCategory === cat.name && (
+                              <span style={{ fontSize: '0.75rem', color: '#0284c7' }}>✓</span>
+                            )}
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                             <span style={{ color: '#6b7280', fontSize: '0.875rem' }}>

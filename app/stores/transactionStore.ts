@@ -244,6 +244,7 @@ export const transactionStore = {
     if (!data) return new Map()
 
     const relevantMonths = transactionStore.getRelevantMonths(selectedMonth)
+    console.log('🔍 Auto-classify learning from months:', relevantMonths)
     const businessToCategories = new Map<string, Map<string, number>>()
 
     // Process bank transactions from relevant months
@@ -306,25 +307,36 @@ export const transactionStore = {
       }
     })
 
+    console.log('📚 Learned mappings:', businessToCategoryMap.size, 'businesses')
+    console.log('Business → Category map:', Array.from(businessToCategoryMap.entries()).slice(0, 10))
+
     return businessToCategoryMap
   },
 
   // Auto-classify unclassified transactions based on previous classifications
   autoClassify: (selectedMonth: string): { count: number; classifiedIds: string[] } => {
+    console.log('🪄 Starting auto-classify for month:', selectedMonth)
     const businessMap = transactionStore.getBusinessCategoryMap(selectedMonth)
     const data = transactionStore.getData()
     if (!data) return { count: 0, classifiedIds: [] }
 
     const classifiedIds: string[] = []
+    let matchAttempts = 0
+    let successfulMatches = 0
 
     // Auto-classify bank transactions
     data.transactions = data.transactions.map((t: any) => {
       const transactionMonth = t.date.substring(3)
       if (transactionMonth === selectedMonth && (!t.category || t.category.trim() === '')) {
+        matchAttempts++
         const suggestedCategory = businessMap.get(t.description)
         if (suggestedCategory) {
+          successfulMatches++
+          console.log(`✅ Bank: "${t.description}" → "${suggestedCategory}"`)
           classifiedIds.push(t.id)
           return { ...t, category: suggestedCategory }
+        } else {
+          console.log(`❌ Bank: No match for "${t.description}"`)
         }
       }
       return t
@@ -336,16 +348,22 @@ export const transactionStore = {
       payments: cc.payments.map((p: any) => {
         const chargingMonth = p.chargingDate ? p.chargingDate.substring(3) : p.transactionDate.substring(3)
         if (chargingMonth === selectedMonth && (!p.category || p.category.trim() === '')) {
+          matchAttempts++
           const suggestedCategory = businessMap.get(p.merchant)
           if (suggestedCategory) {
+            successfulMatches++
+            console.log(`✅ Credit: "${p.merchant}" → "${suggestedCategory}"`)
             classifiedIds.push(p.id)
             return { ...p, category: suggestedCategory }
+          } else {
+            console.log(`❌ Credit: No match for "${p.merchant}"`)
           }
         }
         return p
       }),
     }))
 
+    console.log(`📊 Auto-classify results: ${successfulMatches}/${matchAttempts} matched`)
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
     return { count: classifiedIds.length, classifiedIds }
   },

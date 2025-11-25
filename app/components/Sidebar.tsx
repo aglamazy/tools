@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
@@ -58,10 +59,19 @@ const tools: Tool[] = [
 
 export default function Sidebar() {
   const pathname = usePathname()
+  const [isCollapsed, setIsCollapsed] = useState(false)
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${isCollapsed ? 'collapsed' : ''}`}>
       <nav className="sidebar-nav">
+        <button
+          onClick={() => setIsCollapsed(!isCollapsed)}
+          className="sidebar-toggle"
+          aria-label={isCollapsed ? 'הרחב תפריט' : 'צמצם תפריט'}
+        >
+          {isCollapsed ? '◀' : '▶'}
+        </button>
+
         <ul className="nav-list">
           {tools.map((tool) => (
             <li key={tool.id}>
@@ -69,15 +79,20 @@ export default function Sidebar() {
                 <Link
                   href={tool.href}
                   className={`nav-item ${pathname === tool.href ? 'active' : ''}`}
+                  title={isCollapsed ? tool.title : undefined}
                 >
                   <span className="nav-icon">{tool.icon}</span>
-                  <span className="nav-title">{tool.title}</span>
+                  {!isCollapsed && <span className="nav-title">{tool.title}</span>}
                 </Link>
               ) : (
-                <div className="nav-item disabled">
+                <div className="nav-item disabled" title={isCollapsed ? tool.title : undefined}>
                   <span className="nav-icon">{tool.icon}</span>
-                  <span className="nav-title">{tool.title}</span>
-                  <span className="nav-badge">בקרוב</span>
+                  {!isCollapsed && (
+                    <>
+                      <span className="nav-title">{tool.title}</span>
+                      <span className="nav-badge">בקרוב</span>
+                    </>
+                  )}
                 </div>
               )}
             </li>
