@@ -18,7 +18,7 @@ export default function BudgetPage() {
   const [loading, setLoading] = useState(true)
   const [autoClassifiedIds, setAutoClassifiedIds] = useState<Set<string>>(new Set())
   const [hideClassified, setHideClassified] = useState(false)
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
+  const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set())
 
   // Load available months from imported files and categories
   useEffect(() => {
@@ -91,22 +91,37 @@ export default function BudgetPage() {
 
   const categoryData = getCategoryData()
 
-  // Handler for category click - filter by category and reset hideClassified
-  const handleCategoryClick = (categoryName: string) => {
-    if (selectedCategory === categoryName) {
-      // Clicking the same category again clears the filter
-      setSelectedCategory(null)
-    } else {
-      setSelectedCategory(categoryName)
+  // Handler for category click - supports multi-select with Ctrl/Cmd key
+  const handleCategoryClick = (categoryName: string, event: React.MouseEvent) => {
+    if (event.ctrlKey || event.metaKey) {
+      // Ctrl/Cmd + Click: toggle this category in the selection
+      setSelectedCategories((prev) => {
+        const newSet = new Set(prev)
+        if (newSet.has(categoryName)) {
+          newSet.delete(categoryName)
+        } else {
+          newSet.add(categoryName)
+        }
+        return newSet
+      })
       setHideClassified(false) // Reset "not classified only" filter
+    } else {
+      // Regular click: select only this category (or clear if already selected)
+      if (selectedCategories.size === 1 && selectedCategories.has(categoryName)) {
+        // Clicking the same single category again clears the filter
+        setSelectedCategories(new Set())
+      } else {
+        setSelectedCategories(new Set([categoryName]))
+        setHideClassified(false) // Reset "not classified only" filter
+      }
     }
   }
 
-  // Filter transactions based on hideClassified toggle and selected category
+  // Filter transactions based on hideClassified toggle and selected categories
   const displayedTransactions = transactions.filter((t) => {
-    // First apply category filter if one is selected
-    if (selectedCategory) {
-      return t.category === selectedCategory
+    // First apply category filter if any are selected
+    if (selectedCategories.size > 0) {
+      return t.category && selectedCategories.has(t.category)
     }
 
     // Otherwise apply hideClassified filter
@@ -171,13 +186,13 @@ export default function BudgetPage() {
                     onClick={() => setHideClassified(!hideClassified)}
                     className="upload-another-btn"
                     style={{ margin: 0, padding: '0.5rem 1rem', fontSize: '0.875rem' }}
-                    disabled={selectedCategory !== null}
+                    disabled={selectedCategories.size > 0}
                   >
                     {hideClassified ? '👁️ הצג הכל' : '🎯 רק לא מסווגים'}
                   </button>
-                  {selectedCategory && (
+                  {selectedCategories.size > 0 && (
                     <button
-                      onClick={() => setSelectedCategory(null)}
+                      onClick={() => setSelectedCategories(new Set())}
                       className="upload-another-btn"
                       style={{
                         margin: 0,
@@ -187,7 +202,7 @@ export default function BudgetPage() {
                         color: 'white',
                       }}
                     >
-                      ✕ נושא: {selectedCategory}
+                      ✕ נושאים ({selectedCategories.size}): {Array.from(selectedCategories).join(', ')}
                     </button>
                   )}
                   <button
@@ -288,14 +303,14 @@ export default function BudgetPage() {
                           outerRadius={100}
                           fill="#8884d8"
                           dataKey="value"
-                          onClick={(data) => handleCategoryClick(data.name)}
+                          onClick={(data, index, event) => handleCategoryClick(data.name, event as any)}
                           style={{ cursor: 'pointer' }}
                         >
                           {categoryData.map((entry, index) => (
                             <Cell
                               key={`cell-${index}`}
                               fill={entry.color}
-                              opacity={selectedCategory === null || selectedCategory === entry.name ? 1 : 0.3}
+                              opacity={selectedCategories.size === 0 || selectedCategories.has(entry.name) ? 1 : 0.3}
                             />
                           ))}
                         </Pie>
@@ -315,26 +330,26 @@ export default function BudgetPage() {
                       {categoryData.map((cat) => (
                         <div
                           key={cat.name}
-                          onClick={() => handleCategoryClick(cat.name)}
+                          onClick={(e) => handleCategoryClick(cat.name, e)}
                           style={{
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'space-between',
                             padding: '0.5rem 1rem',
                             borderRadius: '0.5rem',
-                            background: selectedCategory === cat.name ? '#e0f2fe' : '#f8fafc',
-                            border: selectedCategory === cat.name ? '2px solid #0284c7' : '1px solid #e2e8f0',
+                            background: selectedCategories.has(cat.name) ? '#e0f2fe' : '#f8fafc',
+                            border: selectedCategories.has(cat.name) ? '2px solid #0284c7' : '1px solid #e2e8f0',
                             cursor: 'pointer',
                             transition: 'all 0.2s ease',
-                            opacity: selectedCategory === null || selectedCategory === cat.name ? 1 : 0.5,
+                            opacity: selectedCategories.size === 0 || selectedCategories.has(cat.name) ? 1 : 0.5,
                           }}
                           onMouseEnter={(e) => {
-                            if (selectedCategory !== cat.name) {
+                            if (!selectedCategories.has(cat.name)) {
                               e.currentTarget.style.background = '#f1f5f9'
                             }
                           }}
                           onMouseLeave={(e) => {
-                            if (selectedCategory !== cat.name) {
+                            if (!selectedCategories.has(cat.name)) {
                               e.currentTarget.style.background = '#f8fafc'
                             }
                           }}
@@ -349,7 +364,7 @@ export default function BudgetPage() {
                               }}
                             />
                             <span style={{ fontWeight: 500 }}>{cat.name}</span>
-                            {selectedCategory === cat.name && (
+                            {selectedCategories.has(cat.name) && (
                               <span style={{ fontSize: '0.75rem', color: '#0284c7' }}>✓</span>
                             )}
                           </div>

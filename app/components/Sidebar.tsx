@@ -35,18 +35,11 @@ const tools: Tool[] = [
     available: true,
   },
   {
-    id: 'analyze-transactions',
-    title: 'ניתוח עסקאות',
-    href: '/tools/analyze-transactions',
-    icon: '📈',
-    available: true,
-  },
-  {
     id: 'future-payments',
     title: 'תחזית תשלומים',
     href: '/tools/future-payments',
     icon: '💳',
-    available: true,
+    available: false,
   },
   {
     id: 'settings',

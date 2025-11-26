@@ -182,7 +182,7 @@ const parseTransactions = (rows: SheetRow[] = []): ParseResult => {
     const cardNumber = cardNumberMatch ? cardNumberMatch[1] : null
 
     allTransactions.push({
-      id: `${rowIndex}-${date}-${amount}`,
+      id: `${rowIndex}-${date}-${String(description).slice(0, 30)}-${amount}`,
       date: String(date),
       description: String(description),
       amount,

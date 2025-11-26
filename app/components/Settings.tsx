@@ -10,6 +10,8 @@ import {
   requestDirectoryPermission,
 } from '@/app/utils/directoryStorage'
 import { generateDistinctColors } from '@/app/utils/colorGenerator'
+import YesNoModal from './YesNoModal'
+import Modal from './Modal'
 
 const DEFAULT_CATEGORIES: Category[] = []
 
@@ -22,6 +24,9 @@ export default function Settings() {
   const [dirHandle, setDirHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [dirError, setDirError] = useState('')
   const [dirMeta, setDirMeta] = useState<{ name: string; savedAt: string } | null>(null)
+  const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean; categoryId: string | null }>({ isOpen: false, categoryId: null })
+  const [importConfirm, setImportConfirm] = useState<{ isOpen: boolean; file: File | null }>({ isOpen: false, file: null })
+  const [alertModal, setAlertModal] = useState<{ isOpen: boolean; message: string }>({ isOpen: false, message: '' })
 
   useEffect(() => {
     loadCategories()
@@ -197,13 +202,16 @@ export default function Settings() {
   }
 
   const handleDeleteCategory = (categoryId: string) => {
-    if (!confirm('האם אתה בטוח שברצונך למחוק נושא זה?')) {
-      return
-    }
+    setDeleteConfirm({ isOpen: true, categoryId })
+  }
 
-    const updatedCategories = categories.filter((cat) => cat.id !== categoryId)
+  const confirmDelete = () => {
+    if (!deleteConfirm.categoryId) return
+
+    const updatedCategories = categories.filter((cat) => cat.id !== deleteConfirm.categoryId)
     setCategories(updatedCategories)
     saveCategories(updatedCategories)
+    setDeleteConfirm({ isOpen: false, categoryId: null })
   }
 
   const handleReorganizeColors = () => {
@@ -248,7 +256,7 @@ export default function Settings() {
         setCategories(data.categories || [])
       } catch (err) {
         console.error('Error importing:', err)
-        alert('שגיאה בקריאת הקובץ')
+        setAlertModal({ isOpen: true, message: 'שגיאה בקריאת הקובץ' })
       }
     }
     reader.readAsText(file)
@@ -272,10 +280,10 @@ export default function Settings() {
       a.download = `finance-backup-${new Date().toISOString().split('T')[0]}.json`
       a.click()
       URL.revokeObjectURL(url)
-      alert('הנתונים יוצאו בהצלחה!')
+      setAlertModal({ isOpen: true, message: 'הנתונים יוצאו בהצלחה!' })
     } catch (err) {
       console.error('Error exporting all data:', err)
-      alert('שגיאה בייצוא הנתונים')
+      setAlertModal({ isOpen: true, message: 'שגיאה בייצוא הנתונים' })
     }
   }
 
@@ -283,10 +291,12 @@ export default function Settings() {
     const file = event.target.files?.[0]
     if (!file) return
 
-    if (!confirm('ייבוא נתונים ימחק את כל הנתונים הקיימים. האם להמשיך?')) {
-      event.target.value = '' // Reset file input
-      return
-    }
+    setImportConfirm({ isOpen: true, file })
+    event.target.value = '' // Reset file input
+  }
+
+  const confirmImport = () => {
+    if (!importConfirm.file) return
 
     const reader = new FileReader()
     reader.onload = (e) => {
@@ -296,7 +306,7 @@ export default function Settings() {
 
         // Validate version
         if (!data.version) {
-          alert('פורמט קובץ לא תקין')
+          setAlertModal({ isOpen: true, message: 'פורמט קובץ לא תקין' })
           return
         }
 
@@ -313,15 +323,15 @@ export default function Settings() {
           setCategories(categoriesData.categories || [])
         }
 
-        alert('הנתונים יובאו בהצלחה! הדף יטען מחדש.')
-        window.location.reload()
+        setImportConfirm({ isOpen: false, file: null })
+        setAlertModal({ isOpen: true, message: 'הנתונים יובאו בהצלחה! הדף יטען מחדש.' })
+        setTimeout(() => window.location.reload(), 1500)
       } catch (err) {
         console.error('Error importing all data:', err)
-        alert('שגיאה בקריאת הקובץ')
+        setAlertModal({ isOpen: true, message: 'שגיאה בקריאת הקובץ' })
       }
     }
-    reader.readAsText(file)
-    event.target.value = '' // Reset file input
+    reader.readAsText(importConfirm.file)
   }
 
   return (
@@ -418,7 +428,10 @@ export default function Settings() {
         <div>
           <h2 style={{ fontSize: '1.1rem', marginBottom: '0.75rem', color: '#10b981' }}>נושאי הכנסה</h2>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {categories.filter((cat) => cat.type === 'income').map((category) => (
+            {categories
+              .filter((cat) => cat.type === 'income')
+              .sort((a, b) => a.name.localeCompare(b.name, 'he'))
+              .map((category) => (
               <div
                 key={category.id}
                 style={{
@@ -499,7 +512,10 @@ export default function Settings() {
         <div>
           <h2 style={{ fontSize: '1.1rem', marginBottom: '0.75rem', color: '#ef4444' }}>נושאי הוצאה</h2>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {categories.filter((cat) => cat.type === 'expense').map((category) => (
+            {categories
+              .filter((cat) => cat.type === 'expense')
+              .sort((a, b) => a.name.localeCompare(b.name, 'he'))
+              .map((category) => (
               <div
                 key={category.id}
                 style={{
@@ -639,6 +655,35 @@ export default function Settings() {
           </div>
         </div>
       )}
+
+      <YesNoModal
+        isOpen={deleteConfirm.isOpen}
+        question="האם אתה בטוח שברצונך למחוק נושא זה?"
+        onYes={confirmDelete}
+        onNo={() => setDeleteConfirm({ isOpen: false, categoryId: null })}
+      />
+
+      <YesNoModal
+        isOpen={importConfirm.isOpen}
+        question="ייבוא נתונים ימחק את כל הנתונים הקיימים. האם להמשיך?"
+        onYes={confirmImport}
+        onNo={() => setImportConfirm({ isOpen: false, file: null })}
+      />
+
+      <Modal isOpen={alertModal.isOpen} onClose={() => setAlertModal({ isOpen: false, message: '' })} maxWidth="400px">
+        <div className="modal-body" style={{ textAlign: 'center', padding: '2rem' }}>
+          <p style={{ fontSize: '1.125rem', margin: '0 0 1.5rem 0' }}>
+            {alertModal.message}
+          </p>
+          <button
+            onClick={() => setAlertModal({ isOpen: false, message: '' })}
+            className="file-picker"
+            autoFocus
+          >
+            אישור
+          </button>
+        </div>
+      </Modal>
     </div>
   )
 }

@@ -242,15 +242,9 @@ export function parseCreditCardStatement(rows: SheetRow[]): CreditCardStatement 
         return
       }
 
-      // Determine amount based on section type
-      let amount = 0
-      if (isForeign) {
-        // Foreign: use billing amount
-        amount = toNumber(normalizedRow.billingAmount)
-      } else {
-        // Domestic: use domestic amount, fallback to billing amount
-        amount = toNumber(normalizedRow.domesticAmount || normalizedRow.billingAmount)
-      }
+      // Always use billing amount (סכום חיוב) - this is the actual charged amount
+      // This handles installments, discounts, and foreign currency correctly
+      const amount = toNumber(normalizedRow.billingAmount)
 
       if (!amount || amount === 0) {
         return

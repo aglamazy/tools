@@ -7,21 +7,24 @@ A comprehensive personal finance management tool for analyzing bank transactions
 ### ✅ Current Implementation
 
 - **Transaction Analysis**: Parse and analyze FIBI bank (Israel) XLS statements
-- **Credit Card Integration**: Parse credit card statements with detailed payment breakdown
-- **Multi-File Import**: Load multiple bank and credit card files with automatic deduplication
-- **Category Management**: Define and manage income/expense categories with color coding
-- **Smart Classification**: Automatic category suggestions based on historical patterns
-- **File Browser**: Persistent folder selection with file preview and metadata
-- **Data Persistence**: LocalStorage-based data storage with export/import functionality
-- **Installment Tracking**: Full support for credit card installments (תשלומים)
-- **Historical Snapshots**: Monthly financial summaries with category breakdowns
+- **Credit Card Integration**: Advanced credit card statement parsing with table detection and detailed payment breakdown
+- **Multi-File Import**: Load multiple bank and credit card files with automatic deduplication and import history
+- **Category Management**: Define and manage income/expense categories with color coding and auto-assignment
+- **Smart Classification**: Automatic category suggestions based on historical patterns with warning system
+- **File Browser**: Persistent folder selection with file preview, metadata, and permission management
+- **Data Persistence**: LocalStorage-based data storage with full backup/restore functionality
+- **Backup & Restore**: Export all data to JSON and import from backup with confirmation dialogs
+- **Installment Tracking**: Full support for credit card installments (תשלומים) with total purchase amount display
+- **Custom Modals**: YesNo confirmation dialogs and alert modals (no native browser dialogs)
+- **Duplicate Detection**: Smart duplicate transaction key generation to prevent React errors
 
 ### 📊 Analysis Views
 
-1. **Import Files**: Upload and store bank/credit card statements
-2. **Cash Flow Analysis**: Track when money actually moves (charging dates)
-3. **Budget Tracking**: Monitor spending by category (transaction dates)
-4. **Future Payments**: View upcoming installments and recurring expenses
+1. **Import Files**: Upload and store bank/credit card statements with toast notifications
+2. **Cash Flow Analysis**: Track when money actually moves (charging dates) with intelligent paid charge detection
+3. **Budget Tracking**: Monitor spending by category (transaction dates) with category filtering and sidebar collapse
+4. **Future Payments**: _(Coming soon)_ View upcoming installments and recurring expenses
+5. **Settings**: Manage categories, configure default folder, and backup/restore all data
 
 ### 🎨 Category System
 
@@ -62,17 +65,19 @@ A comprehensive personal finance management tool for analyzing bank transactions
 ### Storage
 
 **LocalStorage Keys**:
-- `finance-transactions` - Transaction data
-- `finance-categories` - Categories and classifications
-- `finance-history` - Monthly snapshots
+- `finance-transactions` - Transaction data with monthly snapshots
+- `finance-categories` - Categories and classifications with historical patterns
+- `finance-imported-files` - Imported file metadata and processing dates
+- `directory-handle` - Persisted folder selection for File System Access API
 
-**Future**: Planned support for Google Drive sync and file-based storage
+**Backup System**: Full export/import of all localStorage data in JSON format
 
 ## Technical Details
 
 ### File Formats Supported
-- FIBI Bank XLS/XLSX statements
-- Isracard credit card statements
+- FIBI Bank XLS/XLSX statements with automatic column detection
+- Isracard credit card statements with table detection and charging date extraction
+- Automatic encoding detection and Hebrew text support
 
 ### Key Insights
 

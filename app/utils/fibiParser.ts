@@ -85,7 +85,7 @@ export function parseFibiTransactions(rows: SheetRow[]): Transaction[] {
     const cardNumber = cardNumberMatch ? cardNumberMatch[1] : null
 
     transactions.push({
-      id: `${rowIndex}-${date}-${amount}`,
+      id: `${rowIndex}-${date}-${String(description)}-${amount}`,
       date: String(date),
       description: String(description),
       amount,

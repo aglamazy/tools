@@ -172,8 +172,43 @@ type Category = {
 ### Phase 5: Polish
 14. ✅ Navigation (Sidebar with all pages)
 15. [ ] Remove debug logs (console.log in cash-flow page)
-16. [ ] Export/import
+16. ✅ Export/import (backup all data feature in Settings)
 17. [ ] Storage abstraction (consider moving to separate service)
+18. ✅ Replace native confirm/alert with custom modals
+19. ✅ Fix duplicate transaction key errors
+20. [ ] Remove "ניתוח עסקאות" page (kept in codebase but removed from sidebar - can be deleted later)
+21. ✅ Hide "תחזית תשלומים" temporarily (marked as unavailable)
+22. ✅ ESLint configuration with flat config (eslint.config.mjs)
+23. ✅ ESLint rules to prevent native alert/confirm/prompt usage
+24. ✅ ESLint rules to enforce localStorage access only through stores
+25. ✅ README updated with all current features
+
+### Phase 6: User Experience 🔜 NEXT
+26. [ ] **Onboarding process for first-time users**
+    - Check localStorage for `finance-onboarding-completed` flag
+    - Show welcome modal/wizard on first visit explaining:
+      - App usage flow (Import → Analyze → Budget)
+      - Privacy: All data stays in browser (localStorage only)
+      - Backup responsibility: User must export/backup their own data
+      - No cloud sync - data is device-specific
+      - Recommended: Set up default folder in Settings
+    - Multi-step onboarding flow:
+      1. Welcome & Privacy notice
+      2. How it works (4-step workflow)
+      3. Backup reminder & data persistence warning
+      4. Optional: Quick setup (categories, default folder)
+    - Set `finance-onboarding-completed: true` in localStorage when done
+    - Add "?" Help icon/menu in header/sidebar with options:
+      - Show tutorial again
+      - Privacy & Data policy
+      - How to use this app
+      - About
+27. [ ] **Help menu component**
+    - Persistent "?" icon in app header or sidebar
+    - Dropdown/modal menu with help options
+    - Re-trigger onboarding wizard from help menu
+    - Show privacy policy and data handling info
+    - Quick reference guide for app features
 
 ---
 
