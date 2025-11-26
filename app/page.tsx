@@ -17,7 +17,6 @@ const currency = (value: number) =>
 export default function HomePage() {
   const [history, setHistory] = useState<MonthSnapshot[]>([])
   const [categories, setCategories] = useState<Category[]>([])
-  const testError: string = 123 // Deliberate type error for testing
 
   useEffect(() => {
     setHistory(historyStore.getAll())
