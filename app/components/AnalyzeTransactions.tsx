@@ -331,7 +331,7 @@ export default function AnalyzeTransactions() {
 
         // Restore credit card data as Map
         const ccMap = new Map<string, CreditCardData>()
-        data.creditCardData?.forEach((cc) => {
+        data.creditCardData?.forEach((cc: CreditCardData) => {
           ccMap.set(cc.cardNumber, cc)
         })
         setCreditCardData(ccMap)
@@ -1105,11 +1105,9 @@ export default function AnalyzeTransactions() {
 
       <YesNoModal
         isOpen={showResetConfirm}
-        title="אישור מחיקה"
-        message="האם אתה בטוח שברצונך למחוק את כל הנתונים?"
+        question="האם אתה בטוח שברצונך למחוק את כל הנתונים?"
         onYes={confirmReset}
         onNo={() => setShowResetConfirm(false)}
-        onClose={() => setShowResetConfirm(false)}
       />
     </div>
   )
