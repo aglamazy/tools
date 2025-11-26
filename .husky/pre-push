@@ -1,10 +1,10 @@
 #!/bin/sh
-echo "🔍 Running TypeScript type check..."
-npx tsc --noEmit
+echo "🔍 Running production build check..."
+npm run build
 
 if [ $? -ne 0 ]; then
-  echo "❌ TypeScript errors found. Please fix them before pushing."
+  echo "❌ Build failed. Please fix the errors before pushing."
   exit 1
 fi
 
-echo "✅ TypeScript check passed"
+echo "✅ Build check passed"
