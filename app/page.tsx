@@ -1,11 +1,10 @@
 "use client"
 
 import { useEffect, useMemo, useState } from 'react'
-import type { MonthSnapshot, HistoryStorage, CategoryBreakdown } from '@/app/types/history'
+import type { MonthSnapshot, CategoryBreakdown } from '@/app/types/history'
 import type { Category } from '@/app/types/category'
-
-const HISTORY_STORAGE_KEY = 'finance-history'
-const CATEGORIES_STORAGE_KEY = 'finance-categories'
+import { historyStore } from '@/app/stores/historyStore'
+import { subjectStore } from '@/app/stores/subjectStore'
 
 const currency = (value: number) =>
   new Intl.NumberFormat('he-IL', {
@@ -14,42 +13,20 @@ const currency = (value: number) =>
     minimumFractionDigits: 0,
   }).format(value)
 
-const loadHistory = (): MonthSnapshot[] => {
-  if (typeof window === 'undefined') return []
-  try {
-    const raw = localStorage.getItem(HISTORY_STORAGE_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as HistoryStorage
-    return parsed.months || []
-  } catch (err) {
-    console.error('Error loading history:', err)
-    return []
-  }
-}
-
-const loadCategories = (): Category[] => {
-  if (typeof window === 'undefined') return []
-  try {
-    const stored = localStorage.getItem(CATEGORIES_STORAGE_KEY)
-    if (!stored) return []
-    const data = JSON.parse(stored)
-    return (data.categories || []).map((cat: Category) => ({
-      ...cat,
-      isFixed: cat.isFixed ?? false,
-    }))
-  } catch (err) {
-    console.error('Error loading categories:', err)
-    return []
-  }
-}
 
 export default function HomePage() {
   const [history, setHistory] = useState<MonthSnapshot[]>([])
   const [categories, setCategories] = useState<Category[]>([])
+  const testError: string = 123 // Deliberate type error for testing
 
   useEffect(() => {
-    setHistory(loadHistory())
-    setCategories(loadCategories())
+    setHistory(historyStore.getAll())
+    const allCategories = subjectStore.getAll()
+    // Apply isFixed default value
+    setCategories(allCategories.map((cat) => ({
+      ...cat,
+      isFixed: cat.isFixed ?? false,
+    })))
   }, [])
 
   const sortedMonths = useMemo(() => {
