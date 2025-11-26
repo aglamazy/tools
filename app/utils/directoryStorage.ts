@@ -97,13 +97,22 @@ export const clearDirectoryHandle = async () => {
 }
 
 export const requestDirectoryPermission = async (handle: FileSystemDirectoryHandle, mode: PermissionMode = 'read') => {
-  if (!handle || !handle.queryPermission) return false
+  if (!handle) return false
 
-  const current = await handle.queryPermission({ mode })
+  // TypeScript doesn't have types for these experimental APIs, so we need to cast
+  const handleWithPermissions = handle as FileSystemDirectoryHandle & {
+    queryPermission?: (descriptor: { mode: PermissionMode }) => Promise<PermissionState>
+    requestPermission?: (descriptor: { mode: PermissionMode }) => Promise<PermissionState>
+  }
+
+  if (!handleWithPermissions.queryPermission) return false
+
+  const current = await handleWithPermissions.queryPermission({ mode })
   if (current === 'granted') return true
   if (current === 'denied') return false
 
-  const result = await handle.requestPermission({ mode })
+  if (!handleWithPermissions.requestPermission) return false
+  const result = await handleWithPermissions.requestPermission({ mode })
   return result === 'granted'
 }
 

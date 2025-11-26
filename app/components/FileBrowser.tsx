@@ -198,11 +198,16 @@ export default function FileBrowser({ onFileSelect, isOpen, savedDirHandle, onDi
       const fileHandles: FileSystemFileHandle[] = []
 
       // Collect all .xls and .xlsx files
-      for await (const entry of dirHandle.values()) {
+      // TypeScript's built-in types don't include entries() for FileSystemDirectoryHandle, so we cast
+      const dirHandleWithEntries = dirHandle as FileSystemDirectoryHandle & {
+        entries(): AsyncIterableIterator<[string, FileSystemHandle]>
+      }
+
+      for await (const [, entry] of dirHandleWithEntries.entries()) {
         if (entry.kind === 'file') {
           const fileName = entry.name.toLowerCase()
           if (fileName.endsWith('.xls') || fileName.endsWith('.xlsx')) {
-            fileHandles.push(entry)
+            fileHandles.push(entry as FileSystemFileHandle)
           }
         }
       }

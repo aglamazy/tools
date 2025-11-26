@@ -8,6 +8,7 @@ import MessageModal from '@/app/components/MessageModal'
 import YesNoModal from '@/app/components/YesNoModal'
 import { useToast } from '@/app/components/ToastContainer'
 import { loadDirectoryHandle, persistDirectoryHandle } from '@/app/utils/directoryStorage'
+import { transactionStore } from '@/app/stores/transactionStore'
 
 export default function ImportPage() {
   const { showToast } = useToast()
@@ -47,23 +48,22 @@ export default function ImportPage() {
       setSavedDirHandle(dirHandle)
 
       // Load imported files from localStorage
-      const stored = localStorage.getItem('finance-imported-files')
-      if (stored) {
-        const data = JSON.parse(stored)
+      const data = transactionStore.getImportedFiles()
+      if (data) {
         const loadedFiles = data.files || []
         setFiles(loadedFiles)
 
         // Auto-select newest month
         if (loadedFiles.length > 0) {
           const months = Array.from(
-            new Set(loadedFiles.map((f: ImportedFile) => f.processingMonth).filter((m): m is string => !!m))
+            new Set<string>(loadedFiles.map((f: ImportedFile) => f.processingMonth).filter((m: string | null | undefined): m is string => !!m))
           ).sort((a, b) => {
             const [aMonth, aYear] = a.split('/').map(Number)
             const [bMonth, bYear] = b.split('/').map(Number)
             return (bYear * 12 + bMonth) - (aYear * 12 + aMonth)
           })
           if (months.length > 0) {
-            setSelectedMonth(months[0]) // Select newest month
+            setSelectedMonth(months[0] as string) // Select newest month
           }
         }
       }
@@ -106,13 +106,11 @@ export default function ImportPage() {
     if (!file) return
 
     // Load transactions from localStorage
-    const transactionsData = localStorage.getItem('finance-transactions')
-    if (!transactionsData) {
+    const data = transactionStore.getData()
+    if (!data) {
       showToast('error', 'No transaction data found')
       return
     }
-
-    const data = JSON.parse(transactionsData)
     let transactions: any[] = []
 
     if (file.fileType === 'bank') {
@@ -143,12 +141,11 @@ export default function ImportPage() {
       question: 'האם אתה בטוח שברצונך למחוק את הקובץ?',
       onConfirm: () => {
         // Remove from localStorage
-        const stored = localStorage.getItem('finance-imported-files')
-        if (stored) {
-          const data = JSON.parse(stored)
+        const data = transactionStore.getImportedFiles()
+        if (data) {
           data.files = data.files.filter((f: ImportedFile) => f.id !== fileId)
           data.lastUpdated = new Date().toISOString()
-          localStorage.setItem('finance-imported-files', JSON.stringify(data))
+          transactionStore.saveImportedFiles(data)
 
           // Update state
           setFiles(data.files)
@@ -205,8 +202,7 @@ export default function ImportPage() {
       }
 
       // Save to localStorage
-      const stored = localStorage.getItem('finance-imported-files')
-      const existingData = stored ? JSON.parse(stored) : { version: '1.0', files: [], lastUpdated: '' }
+      const existingData = transactionStore.getImportedFiles() || { version: '1.0', files: [], lastUpdated: '' }
 
       // Check for duplicates
       const isDuplicate = existingData.files.some(
@@ -225,7 +221,7 @@ export default function ImportPage() {
 
             existingData.files.push(importedFile)
             existingData.lastUpdated = new Date().toISOString()
-            localStorage.setItem('finance-imported-files', JSON.stringify(existingData))
+            transactionStore.saveImportedFiles(existingData)
 
             // Update state
             setFiles(existingData.files)
@@ -245,7 +241,7 @@ export default function ImportPage() {
 
       existingData.files.push(importedFile)
       existingData.lastUpdated = new Date().toISOString()
-      localStorage.setItem('finance-imported-files', JSON.stringify(existingData))
+      transactionStore.saveImportedFiles(existingData)
 
       // Update state
       setFiles(existingData.files)
@@ -279,10 +275,8 @@ export default function ImportPage() {
 
   // Get actual transaction count from storage
   const getActualTransactionCount = (file: ImportedFile): number => {
-    const transactionsData = localStorage.getItem('finance-transactions')
-    if (!transactionsData) return file.transactionCount
-
-    const data = JSON.parse(transactionsData)
+    const data = transactionStore.getData()
+    if (!data) return file.transactionCount
 
     if (file.fileType === 'bank') {
       // Count bank transactions for this month

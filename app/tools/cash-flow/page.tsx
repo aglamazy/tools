@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { formatMonthDisplay } from '@/app/utils/formatters'
+import { transactionStore } from '@/app/stores/transactionStore'
 import type { Transaction } from '@/app/types/transactions'
 
 type CreditCardCharge = {
@@ -19,12 +20,11 @@ export default function CashFlowPage() {
 
   // Load available months from imported files
   useEffect(() => {
-    const stored = localStorage.getItem('finance-imported-files')
-    if (stored) {
-      const data = JSON.parse(stored)
+    const filesData = transactionStore.getImportedFiles()
+    if (filesData) {
       const months = Array.from(
-        new Set(
-          data.files
+        new Set<string>(
+          filesData.files
             .map((f: any) => f.processingMonth)
             .filter((m: string | undefined): m is string => !!m)
         )
@@ -36,7 +36,7 @@ export default function CashFlowPage() {
 
       setAvailableMonths(months)
       if (months.length > 0 && !selectedMonth) {
-        setSelectedMonth(months[0]) // Select newest month by default
+        setSelectedMonth(months[0] as string) // Select newest month by default
       }
     }
     setLoading(false)
@@ -46,9 +46,8 @@ export default function CashFlowPage() {
   useEffect(() => {
     if (!selectedMonth) return
 
-    const stored = localStorage.getItem('finance-transactions')
-    if (stored) {
-      const data = JSON.parse(stored)
+    const data = transactionStore.getData()
+    if (data) {
 
       // Filter bank transactions for selected month
       const monthTransactions = data.transactions.filter((t: Transaction) => {

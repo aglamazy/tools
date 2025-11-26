@@ -1,0 +1,10 @@
+#!/bin/sh
+echo "🔍 Running TypeScript type check..."
+npx tsc --noEmit
+
+if [ $? -ne 0 ]; then
+  echo "❌ TypeScript errors found. Please fix them before pushing."
+  exit 1
+fi
+
+echo "✅ TypeScript check passed"

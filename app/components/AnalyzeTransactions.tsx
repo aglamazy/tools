@@ -2,20 +2,20 @@
 
 import React, { useState, useEffect } from 'react'
 import * as XLSX from 'xlsx'
-import type { SheetRow, Transaction, ParseResult, TransactionStorage } from '@/app/types/transactions'
+import type { SheetRow, SheetCell, Transaction, ParseResult, TransactionStorage } from '@/app/types/transactions'
 import type { Category, Classification } from '@/app/types/category'
-import type { MonthSnapshot, HistoryStorage, CategoryBreakdown } from '@/app/types/history'
+import type { MonthSnapshot, CategoryBreakdown } from '@/app/types/history'
 import FileSelectModal from './FileSelectModal'
+import YesNoModal from './YesNoModal'
 import { parseCreditCardStatement } from '@/app/utils/creditCardParser'
 import {
   clearDirectoryHandle,
   loadDirectoryHandle,
   requestDirectoryPermission,
 } from '@/app/utils/directoryStorage'
-
-const STORAGE_KEY = 'finance-transactions'
-const CATEGORIES_STORAGE_KEY = 'finance-categories'
-const HISTORY_STORAGE_KEY = 'finance-history'
+import { transactionStore } from '@/app/stores/transactionStore'
+import { subjectStore } from '@/app/stores/subjectStore'
+import { historyStore } from '@/app/stores/historyStore'
 
 const currencyFormatter = new Intl.NumberFormat('he-IL', {
   style: 'currency',
@@ -228,7 +228,7 @@ type CreditCardData = {
     amount: number
     currentStep: number
     totalSteps: number
-    chargingDate: string | null // Date when money is debited from bank account (תאריך חיוב)
+    chargingDate?: string // Date when money is debited from bank account (תאריך חיוב)
   }>
 }
 
@@ -246,6 +246,7 @@ export default function AnalyzeTransactions() {
   const [classifications, setClassifications] = useState<Map<string, string>>(new Map()) // transactionId -> categoryId
   const [classificationRecords, setClassificationRecords] = useState<Classification[]>([])
   const [classificationWarnings, setClassificationWarnings] = useState<Map<string, number>>(new Map()) // transactionId -> delta pct
+  const [showResetConfirm, setShowResetConfirm] = useState(false)
 
   // Load from LocalStorage on mount
   useEffect(() => {
@@ -297,7 +298,7 @@ export default function AnalyzeTransactions() {
         loadedFiles,
         lastUpdated: new Date().toISOString(),
       }
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+      transactionStore.saveData(data)
       console.log('Saved transactions to localStorage:', {
         transactionCount: transactions.length,
         creditCards: creditCardData.size,
@@ -322,9 +323,8 @@ export default function AnalyzeTransactions() {
 
   const loadFromStorage = () => {
     try {
-      const stored = localStorage.getItem(STORAGE_KEY)
-      if (stored) {
-        const data: TransactionStorage = JSON.parse(stored)
+      const data = transactionStore.getData()
+      if (data) {
         setTransactions(data.transactions || [])
         setProcessingMonth(data.processingMonth)
         setLoadedFiles(data.loadedFiles || [])
@@ -348,47 +348,33 @@ export default function AnalyzeTransactions() {
   }
 
   const loadCategoriesFromStorage = (): Category[] => {
-    try {
-      const stored = localStorage.getItem(CATEGORIES_STORAGE_KEY)
-      if (stored) {
-        const data = JSON.parse(stored)
-        return (data.categories || []).map((cat: Category) => ({
-          ...cat,
-          isFixed: cat.isFixed ?? false,
-        }))
-      }
-    } catch (err) {
-      console.error('Error loading categories from storage:', err)
-    }
-    return []
+    return subjectStore.getAll().map((cat: Category) => ({
+      ...cat,
+      isFixed: cat.isFixed ?? false,
+    }))
   }
 
   const loadCategories = () => {
     try {
-      const stored = localStorage.getItem(CATEGORIES_STORAGE_KEY)
-      if (stored) {
-        const data = JSON.parse(stored)
-        const normalizedCategories = (data.categories || []).map((cat: Category) => ({
-          ...cat,
-          isFixed: cat.isFixed ?? false,
-        }))
-        setCategories(normalizedCategories)
+      const normalizedCategories = subjectStore.getAll().map((cat: Category) => ({
+        ...cat,
+        isFixed: cat.isFixed ?? false,
+      }))
+      setCategories(normalizedCategories)
 
-        // Load classifications
-        const classMap = new Map<string, string>()
-        const records: Classification[] = []
-        data.classifications?.forEach((c: Classification) => {
-          records.push(c)
-          classMap.set(c.transactionId, c.categoryId)
-        })
-        setClassifications(classMap)
-        setClassificationRecords(records)
+      // Load classifications
+      const classMap = new Map<string, string>()
+      const records = subjectStore.getClassifications()
+      records.forEach((c: Classification) => {
+        classMap.set(c.transactionId, c.categoryId)
+      })
+      setClassifications(classMap)
+      setClassificationRecords(records)
 
-        console.log('Loaded categories:', {
-          categoryCount: data.categories?.length || 0,
-          classificationCount: data.classifications?.length || 0,
-        })
-      }
+      console.log('Loaded categories:', {
+        categoryCount: normalizedCategories.length,
+        classificationCount: records.length,
+      })
     } catch (err) {
       console.error('Error loading categories:', err)
     }
@@ -433,36 +419,27 @@ export default function AnalyzeTransactions() {
         return warnMap
       })
 
-      // Save to localStorage with extended classification records
+      // Save classification to store
       try {
-        const stored = localStorage.getItem(CATEGORIES_STORAGE_KEY)
-        const data = stored ? JSON.parse(stored) : { categories: [], classifications: [] }
-        const existingRecords: Classification[] = data.classifications || []
-
-        const updatedRecord: Classification | null = categoryId
-          ? {
-              transactionId,
-              categoryId,
-              monthYear,
-              classifiedAt: new Date().toISOString(),
-              descriptionKey,
-              amount,
-              sign,
-              matchDeltaPct: meta?.warningDeltaPct,
-              matchSourceMonthYear: meta?.matchSourceMonthYear,
-              amountChangeWarningPct: meta?.warningDeltaPct,
-            }
-          : null
-
-        const nextRecords = existingRecords
-          .filter((rec: Classification) => rec.transactionId !== transactionId)
-
-        if (updatedRecord) {
-          nextRecords.push(updatedRecord)
+        if (categoryId) {
+          const classification: Classification = {
+            transactionId,
+            categoryId,
+            monthYear,
+            classifiedAt: new Date().toISOString(),
+            descriptionKey,
+            amount,
+            sign,
+            matchDeltaPct: meta?.warningDeltaPct,
+            matchSourceMonthYear: meta?.matchSourceMonthYear,
+            amountChangeWarningPct: meta?.warningDeltaPct,
+          }
+          subjectStore.saveClassification(classification)
+        } else {
+          subjectStore.removeClassification(transactionId)
         }
 
-        data.classifications = nextRecords
-        localStorage.setItem(CATEGORIES_STORAGE_KEY, JSON.stringify(data))
+        const nextRecords = subjectStore.getClassifications()
         setClassificationRecords(nextRecords)
         console.log('Saved classification:', {
           transactionId,
@@ -534,7 +511,7 @@ export default function AnalyzeTransactions() {
         if (statement && statement.cardNumber) {
           const chargingDateStr = statement.billingDate ?
             `${String(statement.billingDate.getDate()).padStart(2, '0')}/${String(statement.billingDate.getMonth() + 1).padStart(2, '0')}/${statement.billingDate.getFullYear()}`
-            : null
+            : undefined
 
           // Add charging date to each payment
           const paymentsWithChargingDate = statement.payments.map(p => ({
@@ -651,10 +628,10 @@ export default function AnalyzeTransactions() {
   const netAmount = totalIncome - totalExpenses
 
   const handleReset = () => {
-    if (!confirm('האם אתה בטוח שברצונך למחוק את כל הנתונים?')) {
-      return
-    }
+    setShowResetConfirm(true)
+  }
 
+  const confirmReset = () => {
     setLoadedFiles([])
     setTransactions([])
     setCreditCardData(new Map())
@@ -664,8 +641,9 @@ export default function AnalyzeTransactions() {
     setError('')
 
     // Clear from localStorage
-    localStorage.removeItem(STORAGE_KEY)
+    transactionStore.clearData()
     console.log('Cleared all transaction data')
+    setShowResetConfirm(false)
   }
 
   const formatMonthDisplay = (monthStr: string | null): string => {
@@ -691,29 +669,8 @@ export default function AnalyzeTransactions() {
     return `${parsed.month}/${parsed.year}`
   }
 
-  const loadHistory = (): HistoryStorage => {
-    try {
-      const raw = localStorage.getItem(HISTORY_STORAGE_KEY)
-      if (!raw) {
-        return { version: '1.0', months: [], lastUpdated: new Date().toISOString() }
-      }
-      return JSON.parse(raw) as HistoryStorage
-    } catch (err) {
-      console.error('Error loading history:', err)
-      return { version: '1.0', months: [], lastUpdated: new Date().toISOString() }
-    }
-  }
-
   const saveHistorySnapshot = (snapshot: MonthSnapshot) => {
-    const history = loadHistory()
-    const existingIndex = history.months.findIndex((m) => m.monthYear === snapshot.monthYear)
-    if (existingIndex >= 0) {
-      history.months[existingIndex] = snapshot
-    } else {
-      history.months.push(snapshot)
-    }
-    history.lastUpdated = new Date().toISOString()
-    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history))
+    historyStore.saveSnapshot(snapshot)
   }
 
   const buildSnapshot = (
@@ -1144,6 +1101,15 @@ export default function AnalyzeTransactions() {
         onFileSelect={handleModalFileSelect}
         savedDirHandle={savedDirHandle}
         onDirHandleChange={handleDirHandleChange}
+      />
+
+      <YesNoModal
+        isOpen={showResetConfirm}
+        title="אישור מחיקה"
+        message="האם אתה בטוח שברצונך למחוק את כל הנתונים?"
+        onYes={confirmReset}
+        onNo={() => setShowResetConfirm(false)}
+        onClose={() => setShowResetConfirm(false)}
       />
     </div>
   )

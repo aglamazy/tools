@@ -1,7 +1,4 @@
-import type { Transaction } from '@/app/types/transactions'
-
-type SheetCell = string | number | null | undefined
-type SheetRow = SheetCell[]
+import type { Transaction, SheetCell, SheetRow } from '@/app/types/transactions'
 
 const normalizeCell = (value: SheetCell): string | number => {
   if (value === undefined || value === null) {

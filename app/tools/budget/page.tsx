@@ -22,11 +22,10 @@ export default function BudgetPage() {
 
   // Load available months from imported files and categories
   useEffect(() => {
-    const stored = localStorage.getItem('finance-imported-files')
-    if (stored) {
-      const data = JSON.parse(stored)
+    const data = transactionStore.getImportedFiles()
+    if (data) {
       const months = Array.from(
-        new Set(
+        new Set<string>(
           data.files
             .map((f: any) => f.processingMonth)
             .filter((m: string | undefined): m is string => !!m)
@@ -39,7 +38,7 @@ export default function BudgetPage() {
 
       setAvailableMonths(months)
       if (months.length > 0 && !selectedMonth) {
-        setSelectedMonth(months[0]) // Select newest month by default
+        setSelectedMonth(months[0] as string) // Select newest month by default
       }
     }
 
@@ -299,7 +298,7 @@ export default function BudgetPage() {
                           cx="50%"
                           cy="50%"
                           labelLine={false}
-                          label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                          label={(entry: any) => `${entry.name} ${((entry.percent ?? 0) * 100).toFixed(0)}%`}
                           outerRadius={100}
                           fill="#8884d8"
                           dataKey="value"

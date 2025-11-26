@@ -367,4 +367,19 @@ export const transactionStore = {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
     return { count: classifiedIds.length, classifiedIds }
   },
+
+  // Save complete transaction data
+  saveData: (data: TransactionStorage) => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+  },
+
+  // Clear all transaction data
+  clearData: () => {
+    localStorage.removeItem(STORAGE_KEY)
+  },
+
+  // Save imported files metadata
+  saveImportedFiles: (data: any) => {
+    localStorage.setItem(IMPORTED_FILES_KEY, JSON.stringify(data))
+  },
 }

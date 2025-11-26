@@ -2,9 +2,7 @@
 
 import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
 import * as XLSX from 'xlsx'
-
-type SheetCell = string | number | null | undefined
-type SheetRow = SheetCell[]
+import type { SheetCell, SheetRow } from '@/app/types/transactions'
 
 type Payment = {
   id: string

@@ -1,8 +1,6 @@
 import { parseXlsTables } from './xlsTableParser'
 import { config } from '@/app/config'
-
-type SheetCell = string | number | null | undefined
-type SheetRow = SheetCell[]
+import type { SheetCell, SheetRow } from '@/app/types/transactions'
 
 // Mapping from Hebrew column names to standardized property names
 const COLUMN_MAPPINGS = {
@@ -106,7 +104,7 @@ const toNumber = (value: string | number): number => {
   return NaN
 }
 
-const tryParseDate = (value: string | number): Date | null => {
+const tryParseDate = (value: SheetCell): Date | null => {
   if (typeof value !== 'string') {
     return null
   }
@@ -127,7 +125,7 @@ const tryParseDate = (value: string | number): Date | null => {
   return Number.isNaN(parsed.getTime()) ? null : parsed
 }
 
-const findBillingDate = (rows: Array<Array<string | number>>): Date | null => {
+const findBillingDate = (rows: SheetRow[]): Date | null => {
   // Look for billing date in "חודש החיוב" row
   for (let i = 0; i < Math.min(10, rows.length); i++) {
     for (const cell of rows[i]) {
@@ -156,7 +154,7 @@ const findBillingDate = (rows: Array<Array<string | number>>): Date | null => {
   return null
 }
 
-const extractCardNumber = (rows: Array<Array<string | number>>): string | null => {
+const extractCardNumber = (rows: SheetRow[]): string | null => {
   // Look for card number pattern like "1473 - ישראכרט"
   for (let i = 0; i < Math.min(10, rows.length); i++) {
     for (const cell of rows[i]) {

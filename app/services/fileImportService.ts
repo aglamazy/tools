@@ -12,7 +12,7 @@ export const fileImportService = {
     const workbook = XLSX.read(data, { type: 'array' })
     const sheetName = workbook.SheetNames[0]
     const worksheet = workbook.Sheets[sheetName]
-    const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false })
+    const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false }) as import('@/app/types/transactions').SheetRow[]
 
     // Parse credit card data
     const statement = parseCreditCardStatement(rows)
@@ -42,7 +42,7 @@ export const fileImportService = {
     const workbook = XLSX.read(data, { type: 'array' })
     const sheetName = workbook.SheetNames[0]
     const worksheet = workbook.Sheets[sheetName]
-    const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false })
+    const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false }) as import('@/app/types/transactions').SheetRow[]
 
     // Parse bank transactions
     const transactions = parseFibiTransactions(rows)

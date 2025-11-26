@@ -1,7 +1,6 @@
 import * as XLSX from 'xlsx'
 import { extractCreditCardPreview } from './creditCardParser'
-
-type SheetRow = Array<string | number | null | undefined>
+import type { SheetRow, SheetCell } from '@/app/types/transactions'
 
 const normalizeCell = (value: string | number | null | undefined): string | number => {
   if (value === undefined || value === null) {
