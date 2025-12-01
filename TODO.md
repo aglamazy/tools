@@ -182,6 +182,16 @@ type Category = {
 23. ✅ ESLint rules to prevent native alert/confirm/prompt usage
 24. ✅ ESLint rules to enforce localStorage access only through stores
 25. ✅ README updated with all current features
+26. [ ] **Date handling refactor**: Replace string date parsing with proper Date objects and locale-aware formatting
+    - Currently dates are stored and parsed as strings (DD/MM/YYYY format)
+    - This is fragile and locale-dependent (substring(3) to extract month)
+    - Need to use Date objects throughout the codebase
+    - Add utility functions for date formatting/parsing
+27. [ ] **Credit card data structure reorganization** (IN PROGRESS)
+    - Restructure creditCardData from array to nested object: `{cardNumber: {chargingMonth: [payments]}}`
+    - Benefits: O(1) access by month, prevents overwriting data when importing new month
+    - Migration function created but not fully implemented
+    - Affects: transactionStore, getBudgetTransactions, updateCreditCardPayment, autoClassify
 
 ### Phase 6: User Experience 🔜 NEXT
 26. [ ] **Onboarding process for first-time users**

@@ -11,12 +11,144 @@ import type {
 
 const STORAGE_KEY = 'finance-transactions'
 const IMPORTED_FILES_KEY = 'finance-imported-files'
+const CURRENT_VERSION = '1.3'
+
+/**
+ * Migrate credit card data structure from array to nested object
+ * Old: creditCardData: [{cardNumber, payments: [...]}]
+ * New: creditCardData: {cardNumber: {chargingMonth: [payments]}}
+ */
+function migrateCreditCardStructure(data: TransactionStorage): TransactionStorage {
+  // If already in new format (object), return as is
+  if (!Array.isArray(data.creditCardData)) {
+    return data
+  }
+
+  console.log('🔄 Migrating credit card data structure to nested object format...')
+
+  const newCreditCardData: any = {}
+
+  // Convert from array format to nested object format
+  data.creditCardData.forEach((card: any) => {
+    newCreditCardData[card.cardNumber] = {}
+
+    // Group payments by charging month
+    card.payments.forEach((payment: any) => {
+      const chargingMonth = payment.chargingDate
+        ? payment.chargingDate.substring(3) // Extract MM/YYYY from DD/MM/YYYY
+        : null
+
+      if (chargingMonth) {
+        if (!newCreditCardData[card.cardNumber][chargingMonth]) {
+          newCreditCardData[card.cardNumber][chargingMonth] = []
+        }
+        newCreditCardData[card.cardNumber][chargingMonth].push(payment)
+      } else {
+        console.warn('⚠️ Payment without chargingDate:', payment.id)
+      }
+    })
+  })
+
+  console.log('✅ Migrated credit card data structure')
+
+  return {
+    ...data,
+    creditCardData: newCreditCardData
+  }
+}
+
+/**
+ * Migrate old transaction IDs to new format: <account_id>-<date>-<index>
+ * Old format was: <rowIndex>-<date>-<description>-<amount>
+ */
+function migrateTransactionIds(data: TransactionStorage): TransactionStorage {
+  // Check version - if already current version, no migration needed
+  if (data.version === CURRENT_VERSION) return data
+
+  if (data.transactions.length === 0) {
+    return { ...data, version: CURRENT_VERSION }
+  }
+
+  console.log(`🔄 Migrating transaction IDs from version ${data.version} to ${CURRENT_VERSION}...`)
+
+  // Group transactions by date for generating sequential indices
+  const transactionsByDateAndAccount = new Map<string, Transaction[]>()
+
+  data.transactions.forEach((t: Transaction) => {
+    // Extract account number from transaction if available
+    // For old data without accountNumber, try to extract from imported files
+    let accountNumber = t.accountNumber
+
+    if (!accountNumber) {
+      // Try to get from imported files based on month
+      const month = t.date.substring(3) // MM/YYYY
+      const filesData = transactionStore.getImportedFiles()
+      if (filesData && filesData.files) {
+        const bankFile = filesData.files.find(
+          (f: any) => (f.fileType === 'bank' || f.fileType === 'Bank') && f.processingMonth === month
+        )
+        if (bankFile?.accountNumber) {
+          accountNumber = bankFile.accountNumber
+        } else {
+          console.warn(`⚠️ No account number found for transaction in month ${month}. Transaction: ${t.description}`)
+          accountNumber = 'unknown'
+        }
+      } else {
+        console.warn('⚠️ No imported files data found during migration')
+        accountNumber = 'unknown'
+      }
+    }
+
+    const key = `${accountNumber}-${t.date}`
+
+    if (!transactionsByDateAndAccount.has(key)) {
+      transactionsByDateAndAccount.set(key, [])
+    }
+    transactionsByDateAndAccount.get(key)!.push(t)
+  })
+
+  // Regenerate IDs with sequential indices per date
+  const migratedTransactions: Transaction[] = []
+
+  transactionsByDateAndAccount.forEach((transactions, key) => {
+    const [accountNumber, date] = key.split('-', 2)
+
+    transactions.forEach((t, index) => {
+      migratedTransactions.push({
+        ...t,
+        id: `${accountNumber}-${date}-${index + 1}`,
+        accountNumber: t.accountNumber || accountNumber,
+      })
+    })
+  })
+
+  console.log(`✅ Migrated ${migratedTransactions.length} transaction IDs`)
+
+  const migratedData = {
+    ...data,
+    version: CURRENT_VERSION,
+    transactions: migratedTransactions,
+  }
+
+  // Save migrated data back to localStorage
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(migratedData))
+
+  return migratedData
+}
 
 export const transactionStore = {
   // Get all data from storage
   getData: () => {
     const stored = localStorage.getItem(STORAGE_KEY)
-    return stored ? JSON.parse(stored) : null
+    if (!stored) return null
+
+    let data = JSON.parse(stored)
+
+    // Run migrations
+    data = migrateCreditCardStructure(data)
+    data = migrateTransactionIds(data)
+
+    return data
   },
 
   // Get imported files data
@@ -25,31 +157,34 @@ export const transactionStore = {
     return stored ? JSON.parse(stored) : null
   },
 
-  // Save credit card transactions
+  // Save credit card transactions organized by card number and charging month
   saveCreditCardData: (cardNumber: string, payments: CreditCardPayment[], chargingDate?: string) => {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    const data: TransactionStorage = stored
-      ? JSON.parse(stored)
-      : {
-          version: '1.0',
-          processingMonth: null,
-          transactions: [],
-          creditCardData: [],
-          loadedFiles: [],
-          lastUpdated: '',
-        }
-
-    const cardData: CreditCardData = {
-      cardNumber,
-      payments: payments.map((p) => ({ ...p, chargingDate })),
+    const data = transactionStore.getData() || {
+      version: CURRENT_VERSION,
+      processingMonth: null,
+      transactions: [],
+      creditCardData: {},
+      loadedFiles: [],
+      lastUpdated: '',
     }
 
-    const existingIndex = data.creditCardData.findIndex((cc) => cc.cardNumber === cardNumber)
+    // Ensure creditCardData is an object
+    if (!data.creditCardData || typeof data.creditCardData !== 'object') {
+      data.creditCardData = {}
+    }
 
-    if (existingIndex !== -1) {
-      data.creditCardData[existingIndex] = cardData
-    } else {
-      data.creditCardData.push(cardData)
+    // Initialize card if doesn't exist
+    if (!data.creditCardData[cardNumber]) {
+      data.creditCardData[cardNumber] = {}
+    }
+
+    // Extract charging month from chargingDate (DD/MM/YYYY -> MM/YYYY)
+    // TODO: Replace with proper Date object handling (see TODO.md #26)
+    const chargingMonth = chargingDate ? chargingDate.substring(3) : null
+
+    if (chargingMonth) {
+      // Replace payments for this charging month
+      data.creditCardData[cardNumber][chargingMonth] = payments
     }
 
     data.lastUpdated = new Date().toISOString()
@@ -62,7 +197,7 @@ export const transactionStore = {
     const data: TransactionStorage = stored
       ? JSON.parse(stored)
       : {
-          version: '1.0',
+          version: CURRENT_VERSION,
           processingMonth: null,
           transactions: [],
           creditCardData: [],
@@ -70,10 +205,16 @@ export const transactionStore = {
           lastUpdated: '',
         }
 
-    // Remove old transactions for this month
-    data.transactions = data.transactions.filter((t) => t.date.substring(3) !== processingMonth)
+    // Create a set of new transaction IDs for quick lookup
+    const newTransactionIds = new Set(transactions.map(t => t.id))
 
-    // Add new transactions
+    // Remove transactions that will be replaced (same ID) OR from the same month
+    data.transactions = data.transactions.filter((t) => {
+      // Keep if different month AND not being replaced by new transaction
+      return t.date.substring(3) !== processingMonth && !newTransactionIds.has(t.id)
+    })
+
+    // Add new transactions (deduplicated by ID)
     data.transactions.push(...transactions)
     data.lastUpdated = new Date().toISOString()
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
@@ -115,31 +256,92 @@ export const transactionStore = {
       }
     })
 
-    // Add credit card payments by charging date (when money leaves account)
-    const creditData = data.creditCardData || []
-    creditData.forEach((cc: any) => {
-      cc.payments.forEach((payment: any) => {
-        // Use charging date for filtering budget (when the installment is paid)
-        const chargingMonth = payment.chargingDate ? payment.chargingDate.substring(3) : payment.transactionDate.substring(3)
-        if (chargingMonth === selectedMonth) {
-          // Calculate installment info
+    // Add credit card payments - need to fetch from TWO statements per card
+    const creditData = data.creditCardData || {}
+    const [selectedMonthNum, selectedYear] = selectedMonth.split('/').map(Number)
+
+    // Calculate next month for second statement
+    const nextMonthNum = selectedMonthNum === 12 ? 1 : selectedMonthNum + 1
+    const nextYear = selectedMonthNum === 12 ? selectedYear + 1 : selectedYear
+    const nextMonth = `${String(nextMonthNum).padStart(2, '0')}/${nextYear}`
+
+    // Iterate through cards
+    Object.keys(creditData).forEach((cardNumber) => {
+      const cardMonths = creditData[cardNumber]
+
+      // Get current month and next month statements
+      const currentStatementPayments = cardMonths[selectedMonth] || []
+      const nextStatementPayments = cardMonths[nextMonth] || []
+
+      // Extract cutoff day from current statement's chargingDate
+      let cutoffDay = 15 // Default fallback
+      if (currentStatementPayments.length > 0 && currentStatementPayments[0].chargingDate) {
+        const chargingDate = currentStatementPayments[0].chargingDate // DD/MM/YYYY
+        cutoffDay = parseInt(chargingDate.split('/')[0], 10)
+      }
+
+      // Helper to check if transaction date is in range
+      const isInDateRange = (transactionDate: string, startDay: number, endDay: number) => {
+        const [day, month, year] = transactionDate.split('/').map(Number)
+        if (month !== selectedMonthNum || year !== selectedYear) return false
+        return day >= startDay && day <= endDay
+      }
+
+      // 1. From current month statement (charging in selectedMonth)
+      currentStatementPayments.forEach((payment: any) => {
+        const isInstallment = payment.totalSteps && payment.totalSteps > 1
+        const isSinglePayment = !isInstallment || payment.totalSteps === 1
+
+        // Take ALL installments OR single payments from day 1 to cutoff day
+        if (isInstallment || (isSinglePayment && isInDateRange(payment.transactionDate, 1, cutoffDay))) {
           let installmentInfo: string | undefined
           let totalAmount: number | undefined
 
-          if (payment.totalSteps && payment.totalSteps > 1) {
-            // This is an installment payment
+          if (isInstallment) {
             installmentInfo = `${payment.currentStep}/${payment.totalSteps}`
             totalAmount = -payment.amount * payment.totalSteps
           }
 
           budgetTransactions.push({
             id: payment.id,
-            date: payment.transactionDate, // Show original transaction date (when purchased)
+            date: payment.transactionDate,
             business: payment.merchant,
             category: payment.category || '',
             amount: -payment.amount,
             isFixed: payment.isFixed || false,
-            paymentMethod: cc.cardNumber, // Credit card last 4 digits
+            paymentMethod: cardNumber,
+            installmentInfo,
+            totalAmount,
+          })
+        }
+      })
+
+      // 2. From next month statement (charging in nextMonth)
+      // Only NEW installments (1/N where N>1) + single payments from cutoffDay+1 to end of month
+      const lastDayOfMonth = new Date(selectedYear, selectedMonthNum, 0).getDate()
+
+      nextStatementPayments.forEach((payment: any) => {
+        const isNewInstallment = payment.currentStep === 1 && payment.totalSteps > 1
+        const isSinglePayment = !payment.totalSteps || payment.totalSteps === 1
+        const inSecondHalf = isInDateRange(payment.transactionDate, cutoffDay + 1, lastDayOfMonth)
+
+        if (inSecondHalf && (isNewInstallment || isSinglePayment)) {
+          let installmentInfo: string | undefined
+          let totalAmount: number | undefined
+
+          if (isNewInstallment) {
+            installmentInfo = `${payment.currentStep}/${payment.totalSteps}`
+            totalAmount = -payment.amount * payment.totalSteps
+          }
+
+          budgetTransactions.push({
+            id: payment.id,
+            date: payment.transactionDate,
+            business: payment.merchant,
+            category: payment.category || '',
+            amount: -payment.amount,
+            isFixed: payment.isFixed || false,
+            paymentMethod: cardNumber,
             installmentInfo,
             totalAmount,
           })
@@ -175,13 +377,17 @@ export const transactionStore = {
     const data = transactionStore.getData()
     if (!data) return
 
-    // Update in creditCardData
-    data.creditCardData = data.creditCardData.map((cc: any) => ({
-      ...cc,
-      payments: cc.payments.map((p: any) =>
-        p.id === paymentId ? { ...p, ...updates } : p
-      ),
-    }))
+    const creditData = data.creditCardData || {}
+
+    // Find and update the payment across all cards and months
+    Object.keys(creditData).forEach((cardNumber) => {
+      const cardMonths = creditData[cardNumber]
+      Object.keys(cardMonths).forEach((month) => {
+        cardMonths[month] = cardMonths[month].map((p: any) =>
+          p.id === paymentId ? { ...p, ...updates } : p
+        )
+      })
+    })
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
   },
@@ -203,12 +409,15 @@ export const transactionStore = {
 
     // If not found in transactions, try credit card payments
     if (!found) {
-      data.creditCardData = data.creditCardData.map((cc: any) => ({
-        ...cc,
-        payments: cc.payments.map((p: any) =>
-          p.id === transactionId ? { ...p, ...updates } : p
-        ),
-      }))
+      const creditData = data.creditCardData || {}
+      Object.keys(creditData).forEach((cardNumber) => {
+        const cardMonths = creditData[cardNumber]
+        Object.keys(cardMonths).forEach((month) => {
+          cardMonths[month] = cardMonths[month].map((p: any) =>
+            p.id === transactionId ? { ...p, ...updates } : p
+          )
+        })
+      })
     }
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
@@ -266,25 +475,27 @@ export const transactionStore = {
     })
 
     // Process credit card payments from relevant months
-    const creditData = data.creditCardData || []
-    creditData.forEach((cc: any) => {
-      cc.payments.forEach((payment: any) => {
-        if (!payment.category || payment.category.trim() === '') return
+    const creditData = data.creditCardData || {}
+    Object.keys(creditData).forEach((cardNumber) => {
+      const cardMonths = creditData[cardNumber]
 
-        const chargingMonth = payment.chargingDate
-          ? payment.chargingDate.substring(3)
-          : payment.transactionDate.substring(3)
-        if (!relevantMonths.includes(chargingMonth)) return
+      relevantMonths.forEach((month) => {
+        const payments = cardMonths[month]
+        if (!payments) return
 
-        const business = payment.merchant
+        payments.forEach((payment: any) => {
+          if (!payment.category || payment.category.trim() === '') return
 
-        if (!businessToCategories.has(business)) {
-          businessToCategories.set(business, new Map())
-        }
+          const business = payment.merchant
 
-        const categoryCounts = businessToCategories.get(business)!
-        const currentCount = categoryCounts.get(payment.category) || 0
-        categoryCounts.set(payment.category, currentCount + 1)
+          if (!businessToCategories.has(business)) {
+            businessToCategories.set(business, new Map())
+          }
+
+          const categoryCounts = businessToCategories.get(business)!
+          const currentCount = categoryCounts.get(payment.category) || 0
+          categoryCounts.set(payment.category, currentCount + 1)
+        })
       })
     })
 
@@ -343,25 +554,29 @@ export const transactionStore = {
     })
 
     // Auto-classify credit card payments
-    data.creditCardData = data.creditCardData.map((cc: any) => ({
-      ...cc,
-      payments: cc.payments.map((p: any) => {
-        const chargingMonth = p.chargingDate ? p.chargingDate.substring(3) : p.transactionDate.substring(3)
-        if (chargingMonth === selectedMonth && (!p.category || p.category.trim() === '')) {
-          matchAttempts++
-          const suggestedCategory = businessMap.get(p.merchant)
-          if (suggestedCategory) {
-            successfulMatches++
-            console.log(`✅ Credit: "${p.merchant}" → "${suggestedCategory}"`)
-            classifiedIds.push(p.id)
-            return { ...p, category: suggestedCategory }
-          } else {
-            console.log(`❌ Credit: No match for "${p.merchant}"`)
+    const creditData = data.creditCardData || {}
+    Object.keys(creditData).forEach((cardNumber) => {
+      const cardMonths = creditData[cardNumber]
+      const payments = cardMonths[selectedMonth]
+
+      if (payments) {
+        cardMonths[selectedMonth] = payments.map((p: any) => {
+          if (!p.category || p.category.trim() === '') {
+            matchAttempts++
+            const suggestedCategory = businessMap.get(p.merchant)
+            if (suggestedCategory) {
+              successfulMatches++
+              console.log(`✅ Credit: "${p.merchant}" → "${suggestedCategory}"`)
+              classifiedIds.push(p.id)
+              return { ...p, category: suggestedCategory }
+            } else {
+              console.log(`❌ Credit: No match for "${p.merchant}"`)
+            }
           }
-        }
-        return p
-      }),
-    }))
+          return p
+        })
+      }
+    })
 
     console.log(`📊 Auto-classify results: ${successfulMatches}/${matchAttempts} matched`)
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
@@ -381,5 +596,52 @@ export const transactionStore = {
   // Save imported files metadata
   saveImportedFiles: (data: any) => {
     localStorage.setItem(IMPORTED_FILES_KEY, JSON.stringify(data))
+  },
+
+  // Delete transactions for a specific file
+  deleteTransactionsForFile: (fileType: string, processingMonth: string, cardNumber?: string) => {
+    const data = transactionStore.getData()
+    if (!data) return
+
+    if (fileType === 'bank') {
+      // Remove bank transactions for this month
+      data.transactions = data.transactions.filter((t: any) => {
+        const transactionMonth = t.date.substring(3)
+        return transactionMonth !== processingMonth
+      })
+    } else if (fileType === 'credit-card' && cardNumber) {
+      // Remove credit card data for this card and month
+      const creditData = data.creditCardData || {}
+      if (creditData[cardNumber] && creditData[cardNumber][processingMonth]) {
+        delete creditData[cardNumber][processingMonth]
+
+        // If no months left for this card, remove the card entirely
+        if (Object.keys(creditData[cardNumber]).length === 0) {
+          delete creditData[cardNumber]
+        }
+      }
+    }
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+  },
+
+  // Get transactions with calculated running balances
+  getTransactionsWithBalances: (transactions: Transaction[]): Transaction[] => {
+    if (transactions.length === 0) return []
+
+    const result = [...transactions]
+
+    // Work backwards to calculate missing balances
+    // If balance is 0, take next transaction's balance minus current amount
+    for (let i = result.length - 1; i >= 0; i--) {
+      if (result[i].balance === 0 && i < result.length - 1) {
+        result[i] = {
+          ...result[i],
+          balance: result[i + 1].balance - result[i].amount
+        }
+      }
+    }
+
+    return result
   },
 }

@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { formatMonthDisplay } from '@/app/utils/formatters'
 import { transactionStore } from '@/app/stores/transactionStore'
 import type { Transaction } from '@/app/types/transactions'
+import * as XLSX from 'xlsx'
 
 type CreditCardCharge = {
   cardNumber: string
@@ -36,10 +37,23 @@ export default function CashFlowPage() {
 
       setAvailableMonths(months)
       if (months.length > 0 && !selectedMonth) {
-        setSelectedMonth(months[0] as string) // Select newest month by default
+        // Try to restore from sessionStorage
+        const savedMonth = sessionStorage.getItem('selectedMonth')
+        if (savedMonth && months.includes(savedMonth)) {
+          setSelectedMonth(savedMonth)
+        } else {
+          setSelectedMonth(months[0] as string) // Select newest month by default
+        }
       }
     }
     setLoading(false)
+  }, [selectedMonth])
+
+  // Save selected month to sessionStorage when it changes
+  useEffect(() => {
+    if (selectedMonth) {
+      sessionStorage.setItem('selectedMonth', selectedMonth)
+    }
   }, [selectedMonth])
 
   // Load transactions data from old storage (temporary - will move to import-based loading)
@@ -59,7 +73,7 @@ export default function CashFlowPage() {
 
       // Calculate credit card charges for the selected month
       // Only show charges that haven't appeared in bank transactions yet
-      const creditData = data.creditCardData || []
+      const creditData = data.creditCardData || {}
 
       console.log('=== Cash Flow Debug ===')
       console.log('Selected month:', selectedMonth)
@@ -85,36 +99,32 @@ export default function CashFlowPage() {
 
       const chargesByCard = new Map<string, { totalAmount: number; chargingDate: string }>()
 
-      creditData.forEach((cc: any) => {
-        console.log('Processing card:', cc.cardNumber)
-        cc.payments.forEach((payment: any) => {
-          if (!payment.chargingDate) return
+      // Iterate through cards
+      Object.keys(creditData).forEach((cardNumber) => {
+        const cardMonths = creditData[cardNumber]
+        const payments = cardMonths[selectedMonth]
 
-          const chargingMonth = payment.chargingDate.substring(3) // Extract MM/YYYY
+        if (payments && payments.length > 0) {
+          console.log('Processing card:', cardNumber, 'with', payments.length, 'payments in', selectedMonth)
 
-          // Include charges that are scheduled for the selected month
-          if (chargingMonth === selectedMonth) {
-            console.log('Card', cc.cardNumber, 'has charging date in', selectedMonth)
-            // Calculate total amount for this card
-            const cardTotal = cc.payments
-              .filter((p: any) => p.chargingDate?.substring(3) === selectedMonth)
-              .reduce((sum: number, p: any) => sum + p.amount, 0)
+          // Calculate total amount for this card in this month
+          const cardTotal = payments.reduce((sum: number, p: any) => sum + p.amount, 0)
 
-            console.log('Card', cc.cardNumber, 'total amount:', cardTotal, 'isPaid:', paidCardNumbers.has(cc.cardNumber))
+          console.log('Card', cardNumber, 'total amount:', cardTotal, 'isPaid:', paidCardNumbers.has(cardNumber))
 
-            // Only include if this card hasn't been paid yet (not in bank transactions)
-            if (!paidCardNumbers.has(cc.cardNumber)) {
-              const key = cc.cardNumber
-              if (!chargesByCard.has(key)) {
-                chargesByCard.set(key, {
-                  totalAmount: cardTotal,
-                  chargingDate: payment.chargingDate.substring(0, 10) // Keep full date DD/MM/YYYY
-                })
-                console.log('Added to credit charges:', cc.cardNumber)
-              }
-            }
+          // Only include if this card hasn't been paid yet (not in bank transactions)
+          if (!paidCardNumbers.has(cardNumber)) {
+            // Find first payment with chargingDate
+            const paymentWithDate = payments.find((p: any) => p.chargingDate)
+            const chargingDate = paymentWithDate?.chargingDate?.substring(0, 10) || selectedMonth
+
+            chargesByCard.set(cardNumber, {
+              totalAmount: cardTotal,
+              chargingDate
+            })
+            console.log('Added to credit charges:', cardNumber)
           }
-        })
+        }
       })
 
       console.log('Final credit charges:', Array.from(chargesByCard.entries()))
@@ -131,6 +141,42 @@ export default function CashFlowPage() {
     }
   }, [selectedMonth])
 
+  const handleDownloadExcel = () => {
+    if (!selectedMonth) return
+
+    // Prepare bank transactions data
+    const bankData = bankTransactions.map(t => ({
+      'תאריך': t.date,
+      'תיאור': t.description,
+      'סכום': t.amount,
+      'יתרה': t.balance
+    }))
+
+    // Prepare credit card charges data
+    const creditData = creditCharges.map(c => ({
+      'כרטיס': c.cardNumber,
+      'תאריך חיוב': c.chargingDate,
+      'סכום': -c.totalAmount
+    }))
+
+    // Create workbook
+    const wb = XLSX.utils.book_new()
+
+    // Add bank transactions sheet
+    const wsBank = XLSX.utils.json_to_sheet(bankData)
+    XLSX.utils.book_append_sheet(wb, wsBank, 'עסקאות בנק')
+
+    // Add credit charges sheet if there are any
+    if (creditData.length > 0) {
+      const wsCredit = XLSX.utils.json_to_sheet(creditData)
+      XLSX.utils.book_append_sheet(wb, wsCredit, 'חיובי כרטיסי אשראי')
+    }
+
+    // Download
+    const monthName = formatMonthDisplay(selectedMonth)
+    XLSX.writeFile(wb, `תזרים_מזומנים_${monthName}.xlsx`)
+  }
+
   return (
     <main className="app" dir="rtl">
       <div className="card">
@@ -141,28 +187,39 @@ export default function CashFlowPage() {
 
         {/* Month Selector */}
         {availableMonths.length > 0 && (
-          <div style={{ marginTop: '1.5rem', marginBottom: '1.5rem' }}>
-            <label htmlFor="month-select" style={{ marginLeft: '0.5rem', fontWeight: 500 }}>
-              בחר חודש:
-            </label>
-            <select
-              id="month-select"
-              value={selectedMonth}
-              onChange={(e) => setSelectedMonth(e.target.value)}
-              style={{
-                padding: '0.5rem',
-                borderRadius: '0.375rem',
-                border: '1px solid #d1d5db',
-                fontSize: '0.875rem',
-                minWidth: '200px',
-              }}
-            >
-              {availableMonths.map((month) => (
-                <option key={month} value={month}>
-                  {formatMonthDisplay(month)}
-                </option>
-              ))}
-            </select>
+          <div style={{ marginTop: '1.5rem', marginBottom: '1.5rem', display: 'flex', gap: '1rem', alignItems: 'center' }}>
+            <div>
+              <label htmlFor="month-select" style={{ marginLeft: '0.5rem', fontWeight: 500 }}>
+                בחר חודש:
+              </label>
+              <select
+                id="month-select"
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                style={{
+                  padding: '0.5rem',
+                  borderRadius: '0.375rem',
+                  border: '1px solid #d1d5db',
+                  fontSize: '0.875rem',
+                  minWidth: '200px',
+                }}
+              >
+                {availableMonths.map((month) => (
+                  <option key={month} value={month}>
+                    {formatMonthDisplay(month)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {selectedMonth && (
+              <button
+                onClick={handleDownloadExcel}
+                className="upload-another-btn"
+                style={{ margin: 0, padding: '0.5rem 1rem', fontSize: '0.875rem' }}
+              >
+                📥 ייצוא ל-Excel
+              </button>
+            )}
           </div>
         )}
 
@@ -231,12 +288,13 @@ export default function CashFlowPage() {
                       <th>תאריך</th>
                       <th>תיאור</th>
                       <th>סכום</th>
+                      <th>יתרה</th>
                     </tr>
                   </thead>
                   <tbody>
                     {bankTransactions.length === 0 ? (
                       <tr>
-                        <td colSpan={3} style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>
+                        <td colSpan={4} style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>
                           אין עסקאות בנק עבור חודש זה
                         </td>
                       </tr>
@@ -255,6 +313,16 @@ export default function CashFlowPage() {
                               style: 'currency',
                               currency: 'ILS',
                             }).format(transaction.amount)}
+                          </td>
+                          <td
+                            style={{
+                              fontWeight: 500,
+                            }}
+                          >
+                            {new Intl.NumberFormat('he-IL', {
+                              style: 'currency',
+                              currency: 'ILS',
+                            }).format(transaction.balance)}
                           </td>
                         </tr>
                       ))

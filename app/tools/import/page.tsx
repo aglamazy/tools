@@ -120,10 +120,13 @@ export default function ImportPage() {
         return transactionMonth === file.processingMonth
       })
     } else if (file.fileType === 'credit-card') {
-      // Show ALL credit card payments (not filtered by month)
-      const cardData = data.creditCardData?.find((cc: any) => cc.cardNumber === file.cardNumber)
-      if (cardData) {
-        transactions = cardData.payments
+      // Show ALL credit card payments for this card across all months
+      const creditData = data.creditCardData || {}
+      const cardMonths = creditData[file.cardNumber || '']
+
+      if (cardMonths) {
+        // Flatten all payments from all months
+        transactions = Object.values(cardMonths).flat()
       }
     }
 
@@ -140,7 +143,16 @@ export default function ImportPage() {
       isOpen: true,
       question: 'האם אתה בטוח שברצונך למחוק את הקובץ?',
       onConfirm: () => {
-        // Remove from localStorage
+        if (!fileToDelete) return
+
+        // Delete transactions associated with this file
+        transactionStore.deleteTransactionsForFile(
+          fileToDelete.fileType,
+          fileToDelete.processingMonth || '',
+          fileToDelete.cardNumber
+        )
+
+        // Remove from imported files list
         const data = transactionStore.getImportedFiles()
         if (data) {
           data.files = data.files.filter((f: ImportedFile) => f.id !== fileId)
@@ -158,7 +170,7 @@ export default function ImportPage() {
             }
           }
 
-          showToast('success', `הקובץ "${fileToDelete?.fileName || ''}" נמחק בהצלחה`)
+          showToast('success', `הקובץ "${fileToDelete.fileName}" נמחק בהצלחה`)
         }
         setYesNoModal({ isOpen: false, question: '', onConfirm: () => {} })
       },
@@ -285,9 +297,15 @@ export default function ImportPage() {
         return transactionMonth === file.processingMonth
       }).length
     } else if (file.fileType === 'credit-card') {
-      // Count ALL credit card payments (not just for one month)
-      const cardData = data.creditCardData?.find((cc: any) => cc.cardNumber === file.cardNumber)
-      return cardData?.payments.length || 0
+      // Count ALL credit card payments for this card across all months
+      const creditData = data.creditCardData || {}
+      const cardMonths = creditData[file.cardNumber || '']
+      if (!cardMonths) return 0
+
+      // Sum all payments across all months for this card
+      return Object.values(cardMonths).reduce((total: number, payments: any) => {
+        return total + (payments?.length || 0)
+      }, 0)
     }
 
     return file.transactionCount
