@@ -1,7 +1,10 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import * as XLSX from 'xlsx'
+import { readExcelFile } from '@/app/utils/excelReader'
+import { parseBankTransactions, extractAccountNumber } from '@/app/utils/bankParser'
+import { classifyFile } from '@/app/utils/fileClassifier'
+import { FileType } from '@/app/types/file-type'
 import type { SheetRow, SheetCell, Transaction, ParseResult, TransactionStorage } from '@/app/types/transactions'
 import type { Category, Classification } from '@/app/types/category'
 import type { MonthSnapshot, CategoryBreakdown } from '@/app/types/history'
@@ -74,40 +77,16 @@ const parseTransactionDate = (dateStr: string): { month: string; year: string } 
   return null
 }
 
-const detectFileType = (rows: Array<Array<string | number>>): 'fibi-transactions' | 'credit-card' | 'unknown' => {
-  // Check for FIBI bank transactions (has "חובה" and "זכות" columns)
-  const hasFibiHeaders = rows.some((row) =>
-    row.some((cell) => typeof cell === 'string' && cell.includes('תאריך')) &&
-    row.some((cell) => typeof cell === 'string' && cell.includes('חובה')) &&
-    row.some((cell) => typeof cell === 'string' && cell.includes('זכות'))
-  )
-
-  if (hasFibiHeaders) {
-    return 'fibi-transactions'
-  }
-
-  // Check for credit card statement (has "סכום חיוב" and "פירוט" columns)
-  const hasCreditCardHeaders = rows.some((row) =>
-    row.some((cell) => typeof cell === 'string' && cell.includes('סכום חיוב')) &&
-    row.some((cell) => typeof cell === 'string' && cell.includes('פירוט'))
-  )
-
-  if (hasCreditCardHeaders) {
-    return 'credit-card'
-  }
-
-  return 'unknown'
-}
 
 const parseTransactions = (rows: SheetRow[] = []): ParseResult => {
   const sanitized = rows.map((row) => row.map(normalizeCell)) as Array<Array<string | number>>
 
   // Detect file type
-  const fileType = detectFileType(sanitized)
+  const fileType = classifyFile(rows)
 
   // If it's a credit card file, don't create transactions
   // The data will be stored separately and linked to bank transactions
-  if (fileType === 'credit-card') {
+  if (fileType === FileType.CreditCard) {
     const statement = parseCreditCardStatement(rows)
 
     // Extract month from billing date
@@ -121,78 +100,14 @@ const parseTransactions = (rows: SheetRow[] = []): ParseResult => {
     return { transactions: [], processingMonth }
   }
 
-  // Otherwise, use FIBI bank transaction parser
-  // Find header row (row with "תאריך", "חובה", "זכות", etc.)
-  const headerIndex = sanitized.findIndex((row) =>
-    row.some((cell) => typeof cell === 'string' && cell.includes('תאריך')) &&
-    row.some((cell) => typeof cell === 'string' && cell.includes('חובה'))
-  )
-
-  if (headerIndex === -1) {
-    console.log('Header row not found')
+  // Otherwise, use bank transaction parser
+  const accountNumber = extractAccountNumber(rows)
+  if (!accountNumber) {
+    console.log('Account number not found in file')
     return { transactions: [], processingMonth: null }
   }
 
-  console.log('Header found at index:', headerIndex)
-
-  const headers = sanitized[headerIndex]
-  const findIndex = (text: string) =>
-    headers.findIndex((cell) => typeof cell === 'string' && cell.includes(text))
-
-  const dateIdx = findIndex('תאריך')
-  const descriptionIdx = findIndex('תיאור')
-  const debitIdx = findIndex('חובה')
-  const creditIdx = findIndex('זכות')
-  const typeIdx = findIndex('אסמכתא')
-  const activityIdx = findIndex('סוג פעולה')
-  const balanceIdx = findIndex('יתרה')
-
-  if (dateIdx === -1 || descriptionIdx === -1) {
-    console.log('Required columns not found')
-    return { transactions: [], processingMonth: null }
-  }
-
-  // First pass: collect all transactions
-  const allTransactions: Transaction[] = []
-  const rowsAfterHeader = sanitized.slice(headerIndex + 1)
-
-  rowsAfterHeader.forEach((row, rowIndex) => {
-    const date = row[dateIdx]
-    const description = row[descriptionIdx]
-
-    // Skip empty rows or the "יתרת חודש קודם" row
-    if (!date || !description) {
-      return
-    }
-
-    // Skip if description contains "יתרת חודש קודם"
-    if (typeof description === 'string' && description.includes('יתרת חודש קודם')) {
-      return
-    }
-
-    const debit = debitIdx !== -1 ? toNumber(row[debitIdx]) : 0
-    const credit = creditIdx !== -1 ? toNumber(row[creditIdx]) : 0
-    const amount = debit !== 0 ? -debit : credit
-    const balance = balanceIdx !== -1 ? toNumber(row[balanceIdx]) : 0
-
-    // Detect credit card charges - look for card number in description
-    const descriptionStr = String(description)
-    const cardNumberMatch = descriptionStr.match(/(\d{4})\s*-?\s*ישראכרט/)
-    const isCreditCard = !!cardNumberMatch
-    const cardNumber = cardNumberMatch ? cardNumberMatch[1] : null
-
-    allTransactions.push({
-      id: `${rowIndex}-${date}-${String(description).slice(0, 30)}-${amount}`,
-      date: String(date),
-      description: String(description),
-      amount,
-      type: typeIdx !== -1 ? String(row[typeIdx] || '') : '',
-      activity: activityIdx !== -1 ? String(row[activityIdx] || '') : '',
-      balance,
-      cardNumber,
-      isCreditCardCharge: isCreditCard,
-    })
-  })
+  const allTransactions = parseBankTransactions(rows, accountNumber)
 
   // Extract processing month from first transaction
   const processingMonth = extractProcessingMonth(allTransactions)
@@ -459,25 +374,17 @@ export default function AnalyzeTransactions() {
     setError('')
 
     const reader = new FileReader()
-    reader.onload = (loadEvent) => {
+    reader.onload = async (loadEvent) => {
       try {
         const arrayBuffer = loadEvent.target?.result
         if (!arrayBuffer || !(arrayBuffer instanceof ArrayBuffer)) {
           setError('אירעה שגיאה בקריאת הקובץ. נסה לבחור קובץ XLS תקין.')
           return
         }
-        const data = new Uint8Array(arrayBuffer)
-        const workbook = XLSX.read(data, { type: 'array' })
-        const sheetName = workbook.SheetNames[0]
-        const worksheet = workbook.Sheets[sheetName]
-        const rows = XLSX.utils.sheet_to_json<SheetRow>(worksheet, {
-          header: 1,
-          raw: false,
-        })
+        const rows = await readExcelFile(file)
 
         // Detect file type
-        const sanitized = rows.map((row) => row.map(normalizeCell)) as Array<Array<string | number>>
-        const fileType = detectFileType(sanitized)
+        const fileType = classifyFile(rows)
 
         const result = parseTransactions(rows)
 
@@ -485,7 +392,7 @@ export default function AnalyzeTransactions() {
         if (isAdditional && processingMonth && result.processingMonth) {
           // For credit card files, allow current month or next month (billing cycle)
           // For bank files, must be exact match
-          if (fileType === 'credit-card') {
+          if (fileType === FileType.CreditCard) {
             const [currentMonth, currentYear] = processingMonth.split('/').map(v => parseInt(v, 10))
             const [fileMonth, fileYear] = result.processingMonth.split('/').map(v => parseInt(v, 10))
 
@@ -507,7 +414,7 @@ export default function AnalyzeTransactions() {
         }
 
         // If this is a credit card file, store the credit card data
-        const statement = fileType === 'credit-card' ? parseCreditCardStatement(rows) : null
+        const statement = fileType === FileType.CreditCard ? parseCreditCardStatement(rows) : null
         if (statement && statement.cardNumber) {
           const chargingDateStr = statement.billingDate ?
             `${String(statement.billingDate.getDate()).padStart(2, '0')}/${String(statement.billingDate.getMonth() + 1).padStart(2, '0')}/${statement.billingDate.getFullYear()}`

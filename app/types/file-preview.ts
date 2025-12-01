@@ -1,7 +1,9 @@
+import { FileType } from './file-type'
+
 export type FilePreview = {
   fileName: string
   fileHandle: FileSystemFileHandle
-  fileType: 'fibi-transactions' | 'credit-card' | 'unknown'
+  fileType: FileType
   processingMonth: string | null
   transactionCount: number
   accountNumber: string | null

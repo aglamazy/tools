@@ -1,18 +1,13 @@
-import * as XLSX from 'xlsx'
+import { readExcelFile } from '@/app/utils/excelReader'
 import { parseCreditCardStatement } from '@/app/utils/creditCardParser'
-import { parseFibiTransactions } from '@/app/utils/fibiParser'
+import { parseBankTransactions, extractAccountNumber } from '@/app/utils/bankParser'
 import { transactionStore } from '@/app/stores/transactionStore'
 
 export const fileImportService = {
   // Import credit card file
   importCreditCardFile: async (file: File, cardNumber: string, billingDate: Date | null) => {
     // Read Excel file
-    const arrayBuffer = await file.arrayBuffer()
-    const data = new Uint8Array(arrayBuffer)
-    const workbook = XLSX.read(data, { type: 'array' })
-    const sheetName = workbook.SheetNames[0]
-    const worksheet = workbook.Sheets[sheetName]
-    const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false }) as import('@/app/types/transactions').SheetRow[]
+    const rows = await readExcelFile(file)
 
     // Parse credit card data
     const statement = parseCreditCardStatement(rows)
@@ -37,15 +32,16 @@ export const fileImportService = {
   // Import bank file
   importBankFile: async (file: File, processingMonth: string) => {
     // Read Excel file
-    const arrayBuffer = await file.arrayBuffer()
-    const data = new Uint8Array(arrayBuffer)
-    const workbook = XLSX.read(data, { type: 'array' })
-    const sheetName = workbook.SheetNames[0]
-    const worksheet = workbook.Sheets[sheetName]
-    const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false }) as import('@/app/types/transactions').SheetRow[]
+    const rows = await readExcelFile(file)
+
+    // Extract account number
+    const accountNumber = extractAccountNumber(rows)
+    if (!accountNumber) {
+      throw new Error('Could not extract account number from file')
+    }
 
     // Parse bank transactions
-    const transactions = parseFibiTransactions(rows)
+    const transactions = parseBankTransactions(rows, accountNumber)
 
     // Save to store
     transactionStore.saveBankTransactions(processingMonth, transactions)
