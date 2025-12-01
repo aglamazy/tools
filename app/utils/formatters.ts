@@ -38,3 +38,23 @@ export const formatDateTime = (isoDate: string): string => {
     minute: '2-digit',
   })
 }
+
+/**
+ * Add months to a month string (MM/YYYY format)
+ * @param monthStr - Month string in MM/YYYY format
+ * @param delta - Number of months to add (can be negative)
+ * @returns New month string in MM/YYYY format
+ */
+export const addMonths = (monthStr: string, delta: number): string => {
+  const [month, year] = monthStr.split('/').map(Number)
+
+  // Convert to total months from year 0
+  let totalMonths = year * 12 + (month - 1)
+  totalMonths += delta
+
+  // Convert back to month/year
+  const newYear = Math.floor(totalMonths / 12)
+  const newMonth = (totalMonths % 12) + 1
+
+  return `${String(newMonth).padStart(2, '0')}/${newYear}`
+}

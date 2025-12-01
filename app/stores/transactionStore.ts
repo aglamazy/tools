@@ -8,6 +8,7 @@ import type {
   CreditCardPayment,
   CreditCardData,
 } from '@/app/types/transactions'
+import { addMonths } from '@/app/utils/formatters'
 
 const STORAGE_KEY = 'finance-transactions'
 const IMPORTED_FILES_KEY = 'finance-imported-files'
@@ -423,28 +424,15 @@ export const transactionStore = {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
   },
 
-  // Get relevant months for learning (current, previous, one before, and a year ago)
+  // Get relevant months for learning (current, next, previous months, and a year ago)
   getRelevantMonths: (selectedMonth: string): string[] => {
-    const [month, year] = selectedMonth.split('/').map(Number)
-    const months: string[] = []
-
-    // Current month
-    months.push(selectedMonth)
-
-    // Previous month
-    const prevMonth = month === 1 ? 12 : month - 1
-    const prevYear = month === 1 ? year - 1 : year
-    months.push(`${String(prevMonth).padStart(2, '0')}/${prevYear}`)
-
-    // One before that
-    const prevPrevMonth = prevMonth === 1 ? 12 : prevMonth - 1
-    const prevPrevYear = prevMonth === 1 ? prevYear - 1 : prevYear
-    months.push(`${String(prevPrevMonth).padStart(2, '0')}/${prevPrevYear}`)
-
-    // Same month a year ago
-    months.push(`${String(month).padStart(2, '0')}/${year - 1}`)
-
-    return months
+    return [
+      selectedMonth,                    // Current month
+      addMonths(selectedMonth, 1),      // Next month (for credit card charging month)
+      addMonths(selectedMonth, -1),     // Previous month
+      addMonths(selectedMonth, -2),     // Two months ago
+      addMonths(selectedMonth, -12),    // Same month a year ago
+    ]
   },
 
   // Get business-to-category map from relevant months only
@@ -453,7 +441,6 @@ export const transactionStore = {
     if (!data) return new Map()
 
     const relevantMonths = transactionStore.getRelevantMonths(selectedMonth)
-    console.log('🔍 Auto-classify learning from months:', relevantMonths)
     const businessToCategories = new Map<string, Map<string, number>>()
 
     // Process bank transactions from relevant months
@@ -477,6 +464,7 @@ export const transactionStore = {
     // Process credit card payments from relevant months
     const creditData = data.creditCardData || {}
     Object.keys(creditData).forEach((cardNumber) => {
+      console.log("handling card number", cardNumber)
       const cardMonths = creditData[cardNumber]
 
       relevantMonths.forEach((month) => {
@@ -487,6 +475,7 @@ export const transactionStore = {
           if (!payment.category || payment.category.trim() === '') return
 
           const business = payment.merchant
+          console.log("business:", business)
 
           if (!businessToCategories.has(business)) {
             businessToCategories.set(business, new Map())
@@ -518,68 +507,33 @@ export const transactionStore = {
       }
     })
 
-    console.log('📚 Learned mappings:', businessToCategoryMap.size, 'businesses')
-    console.log('Business → Category map:', Array.from(businessToCategoryMap.entries()).slice(0, 10))
-
     return businessToCategoryMap
   },
 
   // Auto-classify unclassified transactions based on previous classifications
   autoClassify: (selectedMonth: string): { count: number; classifiedIds: string[] } => {
-    console.log('🪄 Starting auto-classify for month:', selectedMonth)
     const businessMap = transactionStore.getBusinessCategoryMap(selectedMonth)
-    const data = transactionStore.getData()
-    if (!data) return { count: 0, classifiedIds: [] }
+    const budgetTransactions = transactionStore.getBudgetTransactions(selectedMonth)
 
     const classifiedIds: string[] = []
-    let matchAttempts = 0
     let successfulMatches = 0
 
-    // Auto-classify bank transactions
-    data.transactions = data.transactions.map((t: any) => {
-      const transactionMonth = t.date.substring(3)
-      if (transactionMonth === selectedMonth && (!t.category || t.category.trim() === '')) {
-        matchAttempts++
-        const suggestedCategory = businessMap.get(t.description)
-        if (suggestedCategory) {
-          successfulMatches++
-          console.log(`✅ Bank: "${t.description}" → "${suggestedCategory}"`)
-          classifiedIds.push(t.id)
-          return { ...t, category: suggestedCategory }
-        } else {
-          console.log(`❌ Bank: No match for "${t.description}"`)
-        }
+    // Filter unclassified transactions
+    const unclassified = budgetTransactions.filter(t => !t.category || t.category.trim() === '')
+
+    for (const transaction of unclassified) {
+      // Search for category in learned map
+      const suggestedCategory = businessMap.get(transaction.business)
+
+      if (suggestedCategory) {
+        // Update transaction with suggested category
+        transactionStore.updateAny(transaction.id, { category: suggestedCategory })
+        classifiedIds.push(transaction.id)
+        successfulMatches++
       }
-      return t
-    })
+    }
 
-    // Auto-classify credit card payments
-    const creditData = data.creditCardData || {}
-    Object.keys(creditData).forEach((cardNumber) => {
-      const cardMonths = creditData[cardNumber]
-      const payments = cardMonths[selectedMonth]
-
-      if (payments) {
-        cardMonths[selectedMonth] = payments.map((p: any) => {
-          if (!p.category || p.category.trim() === '') {
-            matchAttempts++
-            const suggestedCategory = businessMap.get(p.merchant)
-            if (suggestedCategory) {
-              successfulMatches++
-              console.log(`✅ Credit: "${p.merchant}" → "${suggestedCategory}"`)
-              classifiedIds.push(p.id)
-              return { ...p, category: suggestedCategory }
-            } else {
-              console.log(`❌ Credit: No match for "${p.merchant}"`)
-            }
-          }
-          return p
-        })
-      }
-    })
-
-    console.log(`📊 Auto-classify results: ${successfulMatches}/${matchAttempts} matched`)
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+    console.log(`✅ Auto-classified ${successfulMatches}/${unclassified.length} transactions`)
     return { count: classifiedIds.length, classifiedIds }
   },
 
