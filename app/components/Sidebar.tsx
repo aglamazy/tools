@@ -48,6 +48,20 @@ const tools: Tool[] = [
     icon: '⚙️',
     available: true,
   },
+  {
+    id: 'about',
+    title: 'אודות',
+    href: '/about',
+    icon: 'ℹ️',
+    available: true,
+  },
+  {
+    id: 'guide',
+    title: 'מדריך שימוש',
+    href: '/guide',
+    icon: '📖',
+    available: true,
+  },
 ]
 
 export default function Sidebar() {

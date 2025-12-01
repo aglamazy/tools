@@ -38,7 +38,13 @@ export default function BudgetPage() {
 
       setAvailableMonths(months)
       if (months.length > 0 && !selectedMonth) {
-        setSelectedMonth(months[0] as string) // Select newest month by default
+        // Try to restore from sessionStorage
+        const savedMonth = sessionStorage.getItem('selectedMonth')
+        if (savedMonth && months.includes(savedMonth)) {
+          setSelectedMonth(savedMonth)
+        } else {
+          setSelectedMonth(months[0] as string) // Select newest month by default
+        }
       }
     }
 
@@ -46,6 +52,13 @@ export default function BudgetPage() {
     setCategories(subjectStore.getAll())
 
     setLoading(false)
+  }, [selectedMonth])
+
+  // Save selected month to sessionStorage when it changes
+  useEffect(() => {
+    if (selectedMonth) {
+      sessionStorage.setItem('selectedMonth', selectedMonth)
+    }
   }, [selectedMonth])
 
   // Load transactions by transaction date
