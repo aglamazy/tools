@@ -233,6 +233,73 @@ export const transactionStore = {
     return bankFile?.accountNumber || 'Bank'
   },
 
+  // Get cash flow data for a specific month (opening balance, transactions, credit charges)
+  getCashFlowData: (selectedMonth: string) => {
+    const data = transactionStore.getData()
+    if (!data) return { openingBalance: 0, transactions: [], creditCharges: [] }
+
+    // Get bank transactions for the selected month
+    const monthTransactions = data.transactions.filter((t: Transaction) => {
+      const transactionMonth = t.date.substring(3) // Extract MM/YYYY from DD/MM/YYYY
+      return transactionMonth === selectedMonth
+    })
+
+    // Calculate opening balance from previous month's closing balance
+    const prevMonth = addMonths(selectedMonth, -1)
+    const prevMonthTransactions = data.transactions.filter((t: Transaction) => {
+      const transactionMonth = t.date.substring(3)
+      return transactionMonth === prevMonth
+    })
+
+    const openingBalance = prevMonthTransactions.length > 0
+      ? prevMonthTransactions[prevMonthTransactions.length - 1].balance
+      : 0
+
+    // Calculate credit card charges for the selected month
+    const creditData = data.creditCardData || {}
+    const paidCardNumbers = new Set<string>()
+
+    // Identify which cards have been paid (appear in bank transactions)
+    monthTransactions.forEach((t: Transaction) => {
+      if (t.isCreditCardCharge) {
+        const match = t.description.match(/^(\d+) -/)
+        if (match) {
+          paidCardNumbers.add(match[1])
+        }
+      }
+    })
+
+    // Build list of unpaid credit charges
+    const chargesByCard = new Map<string, { totalAmount: number; chargingDate: string }>()
+
+    Object.keys(creditData).forEach((cardNumber) => {
+      const cardMonths = creditData[cardNumber]
+      const payments = cardMonths[selectedMonth]
+
+      if (payments && payments.length > 0 && !paidCardNumbers.has(cardNumber)) {
+        const cardTotal = payments.reduce((sum: number, p: any) => sum + p.amount, 0)
+        const paymentWithDate = payments.find((p: any) => p.chargingDate)
+        const chargingDate = paymentWithDate?.chargingDate?.substring(0, 10) || selectedMonth
+
+        chargesByCard.set(cardNumber, { totalAmount: cardTotal, chargingDate })
+      }
+    })
+
+    const creditCharges = Array.from(chargesByCard.entries()).map(
+      ([cardNumber, { totalAmount, chargingDate }]) => ({
+        cardNumber,
+        chargingDate,
+        totalAmount,
+      })
+    )
+
+    return {
+      openingBalance,
+      transactions: monthTransactions,
+      creditCharges,
+    }
+  },
+
   // Load budget transactions for a specific month
   getBudgetTransactions: (selectedMonth: string): BudgetTransaction[] => {
     const data = transactionStore.getData()

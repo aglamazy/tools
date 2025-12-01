@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { formatMonthDisplay } from '@/app/utils/formatters'
+import { formatMonthDisplay, addMonths } from '@/app/utils/formatters'
 import { transactionStore } from '@/app/stores/transactionStore'
 import type { Transaction } from '@/app/types/transactions'
 import * as XLSX from 'xlsx'
@@ -17,6 +17,7 @@ export default function CashFlowPage() {
   const [availableMonths, setAvailableMonths] = useState<string[]>([])
   const [bankTransactions, setBankTransactions] = useState<Transaction[]>([])
   const [creditCharges, setCreditCharges] = useState<CreditCardCharge[]>([])
+  const [openingBalance, setOpeningBalance] = useState<number>(0)
   const [loading, setLoading] = useState(true)
 
   // Load available months from imported files
@@ -56,89 +57,14 @@ export default function CashFlowPage() {
     }
   }, [selectedMonth])
 
-  // Load transactions data from old storage (temporary - will move to import-based loading)
+  // Load cash flow data
   useEffect(() => {
     if (!selectedMonth) return
 
-    const data = transactionStore.getData()
-    if (data) {
-
-      // Filter bank transactions for selected month
-      const monthTransactions = data.transactions.filter((t: Transaction) => {
-        const transactionMonth = t.date.substring(3) // Extract MM/YYYY from DD/MM/YYYY
-        return transactionMonth === selectedMonth
-      })
-
-      setBankTransactions(monthTransactions)
-
-      // Calculate credit card charges for the selected month
-      // Only show charges that haven't appeared in bank transactions yet
-      const creditData = data.creditCardData || {}
-
-      console.log('=== Cash Flow Debug ===')
-      console.log('Selected month:', selectedMonth)
-      console.log('Month transactions:', monthTransactions)
-
-      // Create a set of card numbers that have been paid (appear in bank transactions)
-      const paidCardNumbers = new Set<string>()
-      monthTransactions.forEach((t: Transaction) => {
-        console.log('Checking transaction:', t.description, 'isCreditCardCharge:', t.isCreditCardCharge)
-        if (t.isCreditCardCharge) {
-          // Extract card number from description (e.g., "1473 - ישראכרט בע"מ")
-          const match = t.description.match(/^(\d+) -/)
-          console.log('Card number match:', match)
-          if (match) {
-            paidCardNumbers.add(match[1])
-            console.log('Added paid card number:', match[1])
-          }
-        }
-      })
-
-      console.log('Paid card numbers:', Array.from(paidCardNumbers))
-      console.log('Credit card data:', creditData)
-
-      const chargesByCard = new Map<string, { totalAmount: number; chargingDate: string }>()
-
-      // Iterate through cards
-      Object.keys(creditData).forEach((cardNumber) => {
-        const cardMonths = creditData[cardNumber]
-        const payments = cardMonths[selectedMonth]
-
-        if (payments && payments.length > 0) {
-          console.log('Processing card:', cardNumber, 'with', payments.length, 'payments in', selectedMonth)
-
-          // Calculate total amount for this card in this month
-          const cardTotal = payments.reduce((sum: number, p: any) => sum + p.amount, 0)
-
-          console.log('Card', cardNumber, 'total amount:', cardTotal, 'isPaid:', paidCardNumbers.has(cardNumber))
-
-          // Only include if this card hasn't been paid yet (not in bank transactions)
-          if (!paidCardNumbers.has(cardNumber)) {
-            // Find first payment with chargingDate
-            const paymentWithDate = payments.find((p: any) => p.chargingDate)
-            const chargingDate = paymentWithDate?.chargingDate?.substring(0, 10) || selectedMonth
-
-            chargesByCard.set(cardNumber, {
-              totalAmount: cardTotal,
-              chargingDate
-            })
-            console.log('Added to credit charges:', cardNumber)
-          }
-        }
-      })
-
-      console.log('Final credit charges:', Array.from(chargesByCard.entries()))
-
-      const charges: CreditCardCharge[] = Array.from(chargesByCard.entries()).map(
-        ([cardNumber, { totalAmount, chargingDate }]) => ({
-          cardNumber,
-          chargingDate,
-          totalAmount,
-        })
-      )
-
-      setCreditCharges(charges)
-    }
+    const cashFlowData = transactionStore.getCashFlowData(selectedMonth)
+    setOpeningBalance(cashFlowData.openingBalance)
+    setBankTransactions(cashFlowData.transactions)
+    setCreditCharges(cashFlowData.creditCharges)
   }, [selectedMonth])
 
   const handleDownloadExcel = () => {
@@ -261,15 +187,19 @@ export default function CashFlowPage() {
                 <div
                   className={
                     'summary-amount ' +
-                    (bankTransactions.reduce((sum, t) => sum + t.amount, 0) +
+                    (bankTransactions.reduce((sum, t) => sum + t.amount, 0) -
                       creditCharges.reduce((sum, c) => sum + c.totalAmount, 0) >
                     0
                       ? 'positive'
                       : 'negative')
                   }
                 >
-                  {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(
-                    bankTransactions.reduce((sum, t) => sum + t.amount, 0) +
+                  {new Intl.NumberFormat('he-IL', {
+                    style: 'currency',
+                    currency: 'ILS',
+                    signDisplay: 'auto'
+                  }).format(
+                    bankTransactions.reduce((sum, t) => sum + t.amount, 0) -
                       creditCharges.reduce((sum, c) => sum + c.totalAmount, 0)
                   )}
                 </div>
@@ -292,6 +222,21 @@ export default function CashFlowPage() {
                     </tr>
                   </thead>
                   <tbody>
+                    {/* Opening balance row */}
+                    <tr style={{ backgroundColor: '#f9fafb' }}>
+                      <td style={{ fontStyle: 'italic', color: '#6b7280' }}>
+                        {addMonths(selectedMonth, -1)}
+                      </td>
+                      <td style={{ fontStyle: 'italic', color: '#6b7280' }}>יתרת פתיחה</td>
+                      <td></td>
+                      <td style={{ fontWeight: 500 }}>
+                        {new Intl.NumberFormat('he-IL', {
+                          style: 'currency',
+                          currency: 'ILS',
+                        }).format(openingBalance)}
+                      </td>
+                    </tr>
+
                     {bankTransactions.length === 0 ? (
                       <tr>
                         <td colSpan={4} style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>
@@ -332,42 +277,68 @@ export default function CashFlowPage() {
               </div>
             </section>
 
-            {/* Credit Card Charges */}
+            {/* Future Forecast */}
             {creditCharges.length > 0 && (
               <section style={{ marginTop: '2rem' }}>
                 <h2 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '1rem' }}>
-                  חיובי כרטיסי אשראי
+                  תחזית (תנועות שטרם בוצעו)
                 </h2>
-                <p style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '1rem' }}>
-                  חיובים שמתוכננים לחודש זה (ייתכן שטרם חויבו בפועל)
-                </p>
                 <div className="table-wrapper">
                   <table>
                     <thead>
                       <tr>
-                        <th>כרטיס</th>
-                        <th>תאריך חיוב</th>
+                        <th>תאריך</th>
+                        <th>תיאור</th>
                         <th>סכום</th>
+                        <th>יתרה צפויה</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {creditCharges.map((charge, index) => (
-                        <tr key={index}>
-                          <td>💳 {charge.cardNumber}</td>
-                          <td>{charge.chargingDate}</td>
-                          <td
-                            style={{
-                              color: '#ef4444',
-                              fontWeight: 500,
-                            }}
-                          >
-                            {new Intl.NumberFormat('he-IL', {
-                              style: 'currency',
-                              currency: 'ILS',
-                            }).format(charge.totalAmount)}
-                          </td>
-                        </tr>
-                      ))}
+                      {creditCharges.map((charge, index) => {
+                        const currentBalance = bankTransactions.length > 0
+                          ? bankTransactions[bankTransactions.length - 1].balance
+                          : openingBalance
+                        const previousCharges = creditCharges.slice(0, index).reduce((sum, c) => sum + c.totalAmount, 0)
+                        const expectedBalance = currentBalance - previousCharges - charge.totalAmount
+
+                        return (
+                          <tr key={index}>
+                            <td>{charge.chargingDate}</td>
+                            <td>💳 {charge.cardNumber}</td>
+                            <td
+                              style={{
+                                color: '#ef4444',
+                                fontWeight: 500,
+                              }}
+                            >
+                              {new Intl.NumberFormat('he-IL', {
+                                style: 'currency',
+                                currency: 'ILS',
+                              }).format(-charge.totalAmount)}
+                            </td>
+                            <td style={{ fontWeight: 500 }}>
+                              {new Intl.NumberFormat('he-IL', {
+                                style: 'currency',
+                                currency: 'ILS',
+                              }).format(expectedBalance)}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                      {/* Expected closing balance */}
+                      <tr style={{ backgroundColor: '#f9fafb', fontWeight: 600, borderTop: '2px solid #d1d5db' }}>
+                        <td colSpan={3} style={{ textAlign: 'left' }}>יתרה צפויה לסגירת החודש</td>
+                        <td style={{ fontWeight: 600 }}>
+                          {new Intl.NumberFormat('he-IL', {
+                            style: 'currency',
+                            currency: 'ILS',
+                          }).format(
+                            (bankTransactions.length > 0
+                              ? bankTransactions[bankTransactions.length - 1].balance
+                              : openingBalance) - creditCharges.reduce((sum, c) => sum + c.totalAmount, 0)
+                          )}
+                        </td>
+                      </tr>
                     </tbody>
                   </table>
                 </div>
