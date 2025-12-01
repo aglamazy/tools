@@ -1,5 +1,11 @@
 import type { Transaction, SheetCell, SheetRow } from '@/app/types/transactions'
 
+export type BankPreview = {
+  accountNumber: string | null
+  processingMonth: string | null
+  transactionCount: number
+}
+
 const normalizeCell = (value: SheetCell): string | number => {
   if (value === undefined || value === null) {
     return ''
@@ -25,7 +31,15 @@ const toNumber = (value: string | number): number => {
   return 0
 }
 
-export function parseFibiTransactions(rows: SheetRow[]): Transaction[] {
+/**
+ * Parse bank transactions from various Israeli banks.
+ * Currently supports FIBI bank format.
+ * Future: Add support for Leumi, Discount, etc.
+ *
+ * @param rows - The sheet rows to parse
+ * @param accountNumber - The bank account number (e.g., "123-456789")
+ */
+export function parseBankTransactions(rows: SheetRow[], accountNumber: string): Transaction[] {
   const sanitized = rows.map((row) => row.map(normalizeCell)) as Array<Array<string | number>>
 
   // Find header row
@@ -57,6 +71,9 @@ export function parseFibiTransactions(rows: SheetRow[]): Transaction[] {
   const transactions: Transaction[] = []
   const rowsAfterHeader = sanitized.slice(headerIndex + 1)
 
+  // Track index per date for generating IDs
+  const dateIndexMap = new Map<string, number>()
+
   rowsAfterHeader.forEach((row, rowIndex) => {
     const date = row[dateIdx]
     const description = row[descriptionIdx]
@@ -81,9 +98,15 @@ export function parseFibiTransactions(rows: SheetRow[]): Transaction[] {
     const isCreditCard = !!cardNumberMatch
     const cardNumber = cardNumberMatch ? cardNumberMatch[1] : null
 
+    // Generate ID in new format: <account_id>-<date>-<index>
+    const dateStr = String(date)
+    const currentIndex = (dateIndexMap.get(dateStr) || 0) + 1
+    dateIndexMap.set(dateStr, currentIndex)
+    const id = `${accountNumber}-${dateStr}-${currentIndex}`
+
     transactions.push({
-      id: `${rowIndex}-${date}-${String(description)}-${amount}`,
-      date: String(date),
+      id,
+      date: dateStr,
       description: String(description),
       amount,
       type: typeIdx !== -1 ? String(row[typeIdx] || '') : '',
@@ -95,4 +118,54 @@ export function parseFibiTransactions(rows: SheetRow[]): Transaction[] {
   })
 
   return transactions
+}
+
+/**
+ * Extract account number from bank transaction file.
+ * Looks in the first few rows for account number pattern.
+ */
+export function extractAccountNumber(rows: SheetRow[]): string | null {
+  const sanitized = rows.map((row) => row.map(normalizeCell)) as Array<Array<string | number>>
+
+  for (let i = 0; i < Math.min(4, sanitized.length); i++) {
+    for (const cell of sanitized[i]) {
+      if (typeof cell === 'string') {
+        const accountMatch = cell.match(/(\d{3}-\d{6})/)
+        if (accountMatch) {
+          return accountMatch[1]
+        }
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * Extract preview information from bank transaction file.
+ * Returns account number, processing month, and transaction count.
+ */
+export function extractBankPreview(rows: SheetRow[]): BankPreview {
+  // Extract account number from header rows
+  const accountNumber = extractAccountNumber(rows)
+
+  // Parse transactions to get count and first transaction date
+  // Use a placeholder account number for preview if not found
+  const transactions = parseBankTransactions(rows, accountNumber || 'unknown')
+
+  // Extract processing month from first transaction
+  let processingMonth: string | null = null
+  if (transactions.length > 0) {
+    const firstDate = transactions[0].date
+    const match = firstDate.match(/(\d{2})\/(\d{2})\/(\d{4})/)
+    if (match) {
+      const [, , month, year] = match
+      processingMonth = `${month}/${year}`
+    }
+  }
+
+  return {
+    accountNumber,
+    processingMonth,
+    transactionCount: transactions.length,
+  }
 }

@@ -18,6 +18,29 @@ This application follows a strict layered architecture. Each layer has specific 
 └─────────────────────────────────────┘
 ```
 
+### Excel File Processing Flow
+
+```
+Excel File (User uploads .xls/.xlsx)
+    ↓
+┌─────────────────────────────────────────────────────────┐
+│  excelReader.ts (ONLY place that imports exceljs)      │
+│  • readExcelFile(file) → SheetRow[]                    │
+└─────────────────────────────────────────────────────────┘
+    ↓
+    ├─→ creditCardParser.ts
+    │   • parseCreditCardStatement(rows) → CreditCardStatement
+    │
+    └─→ bankParser.ts
+        • parseBankTransactions(rows) → Transaction[]
+```
+
+**Key Principle**:
+- Excel files are read **ONLY** by `excelReader.ts` utility
+- Parsers receive `SheetRow[]` (arrays of arrays), never File objects
+- Services use `readExcelFile()` + parser, never import exceljs directly
+- Components call services, never read Excel files directly
+
 ### Layer Responsibilities
 
 #### 1. **Pages** (`/app/tools/*/page.tsx`, `/app/components/*.tsx`)
@@ -51,20 +74,23 @@ const handleFileSelect = async (file: File) => {
 #### 2. **Services** (`/app/services/*.ts`)
 - **DO**:
   - Coordinate between parsers and stores
-  - Handle file operations (reading Excel files)
+  - Handle file operations (reading Excel files via utilities)
   - Implement business workflows
   - Transform data between layers
 - **DON'T**:
   - Access localStorage directly (use stores)
   - Contain parsing logic (use parsers)
   - Handle UI concerns
+  - Import `xlsx` or `exceljs` directly (use `readExcelFile` utility)
 
 **Example:**
 ```typescript
 // ✅ GOOD
+import { readExcelFile } from '@/app/utils/excelReader'
+
 export const fileImportService = {
   importCreditCardFile: async (file: File, cardNumber: string, billingDate: Date | null) => {
-    // Read file
+    // Read file using utility
     const rows = await readExcelFile(file)
 
     // Parse data
@@ -72,6 +98,15 @@ export const fileImportService = {
 
     // Save to storage
     transactionStore.saveCreditCardData(cardNumber, statement.payments, chargingDateStr)
+  }
+}
+
+// ❌ BAD - Service imports Excel library directly
+import ExcelJS from 'exceljs'
+export const fileImportService = {
+  importCreditCardFile: async (file: File, ...) => {
+    const workbook = new ExcelJS.Workbook()  // Should use readExcelFile utility
+    await workbook.xlsx.load(...)
   }
 }
 ```
