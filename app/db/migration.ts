@@ -14,14 +14,12 @@ const LOCALSTORAGE_KEYS = {
 export async function migrateFromLocalStorage(): Promise<{ success: boolean; error?: string }> {
   try {
     // Check if migration already completed
+    // eslint-disable-next-line no-restricted-syntax
     const migrationCompleted = localStorage.getItem(LOCALSTORAGE_KEYS.MIGRATION_COMPLETED)
     if (migrationCompleted === 'true') {
-      console.log('✅ Migration already completed')
       return { success: true }
     }
 
-    console.log('🔄 Starting migration from localStorage to IndexedDB...')
-    console.log('✅ Main migration skipped (no transaction migration needed)')
     return { success: true }
   } catch (error) {
     console.error('❌ Migration failed:', error)
@@ -30,6 +28,7 @@ export async function migrateFromLocalStorage(): Promise<{ success: boolean; err
 }
 
 async function migrateBankTransactions() {
+  // eslint-disable-next-line no-restricted-syntax
   const stored = localStorage.getItem(LOCALSTORAGE_KEYS.TRANSACTIONS)
   if (!stored) {
     console.log('No bank transactions to migrate')
@@ -61,6 +60,7 @@ async function migrateBankTransactions() {
 }
 
 async function migrateCreditCardTransactions() {
+  // eslint-disable-next-line no-restricted-syntax
   const stored = localStorage.getItem(LOCALSTORAGE_KEYS.TRANSACTIONS)
   if (!stored) return
 
@@ -87,7 +87,7 @@ async function migrateCreditCardTransactions() {
         currentStep: p.currentStep,
         totalSteps: p.totalSteps,
         totalAmount: p.totalAmount,
-        processingMonth: chargingMonth,
+        month: p.transactionDate.substring(3), // Extract MM/YYYY from DD/MM/YYYY
         importedAt: data.lastUpdated || new Date().toISOString(),
         fileId: `credit-${cardNumber}-${chargingMonth}`,
       }))
@@ -101,6 +101,7 @@ async function migrateCreditCardTransactions() {
 }
 
 async function migrateImportedFiles() {
+  // eslint-disable-next-line no-restricted-syntax
   const stored = localStorage.getItem(LOCALSTORAGE_KEYS.IMPORTED_FILES)
   if (!stored) {
     console.log('No imported files to migrate')
@@ -133,6 +134,7 @@ async function migrateImportedFiles() {
 }
 
 async function migrateCategories() {
+  // eslint-disable-next-line no-restricted-syntax
   const stored = localStorage.getItem(LOCALSTORAGE_KEYS.CATEGORIES)
   if (!stored) {
     console.log('No categories to migrate')
@@ -159,6 +161,7 @@ async function migrateCategories() {
  * Reset migration flag (for testing purposes)
  */
 export function resetMigration() {
+  // eslint-disable-next-line no-restricted-syntax
   localStorage.removeItem(LOCALSTORAGE_KEYS.MIGRATION_COMPLETED)
   console.log('Migration flag reset')
 }

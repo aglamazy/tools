@@ -45,12 +45,16 @@ export const transactionStore = {
    */
   getAvailableMonths: async (): Promise<string[]> => {
     try {
-      const months = await db.transactions
-        .orderBy('month')
-        .uniqueKeys()
+      // Only use months from bank transactions so the selector reflects loaded bank statements
+      const bankTransactions = await db.transactions
+        .where('type')
+        .equals('bank')
+        .toArray()
+
+      const months = Array.from(new Set(bankTransactions.map((t) => t.month)))
 
       // Sort newest first (MM/YYYY format)
-      return (months as string[]).sort((a, b) => {
+      return months.sort((a, b) => {
         const [aMonth, aYear] = a.split('/').map(Number)
         const [bMonth, bYear] = b.split('/').map(Number)
         return bYear * 12 + bMonth - (aYear * 12 + aMonth)
@@ -355,10 +359,10 @@ export const transactionStore = {
   getBudgetTransactions: async (selectedMonth: string) => {
     try {
       // Get bank transactions - filter by transaction month
-      const bankTransactions = await db.transactions
+      const bankTransactions = (await db.transactions
         .where('[type+month]')
         .equals(['bank', selectedMonth])
-        .toArray()
+        .toArray()).filter((t) => !t.isCreditCardCharge) // Ignore bank-side credit card payments
 
       // Get credit card transactions - filter by chargingDate month
       const allCreditTransactions = await db.transactions
@@ -572,4 +576,3 @@ async function getExpectedFixedTransactions(selectedMonth: string) {
       date: t.date,
     }))
 }
-

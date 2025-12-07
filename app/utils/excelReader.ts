@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx'
-import type { SheetRow } from '@/app/types/transactions'
+import { SheetRow } from "@/app/types/transactions";
 
 /**
  * Centralized Excel file reader.

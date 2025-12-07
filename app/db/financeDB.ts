@@ -3,7 +3,7 @@ import Dexie, { Table } from 'dexie'
 // Transaction type (unified for bank and credit card)
 export interface Transaction {
   id?: number // Auto-increment primary key
-  type: 'bank' | 'credit'
+  type: string
   date: string // Transaction date (DD/MM/YYYY)
   amount: number
   description: string

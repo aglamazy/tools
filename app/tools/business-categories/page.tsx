@@ -6,6 +6,7 @@ import type { BusinessCategory } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import type { Category } from '@/app/types/category'
 import { useToast } from '@/app/components/ToastContainer'
+import YesNoModal from '@/app/components/YesNoModal'
 
 export default function BusinessCategoriesPage() {
   const { showToast } = useToast()
@@ -14,6 +15,7 @@ export default function BusinessCategoriesPage() {
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
   const [filterCategory, setFilterCategory] = useState<string>('')
+  const [clearAllModal, setClearAllModal] = useState<{ isOpen: boolean }>({ isOpen: false })
 
   // Load mappings and categories
   useEffect(() => {
@@ -65,10 +67,10 @@ export default function BusinessCategoriesPage() {
   }
 
   const handleClearAll = async () => {
-    if (!confirm('האם אתה בטוח שברצונך למחוק את כל המיפויים?')) {
-      return
-    }
+    setClearAllModal({ isOpen: true })
+  }
 
+  const confirmClearAll = async () => {
     try {
       await db.businessCategories.clear()
       setMappings([])
@@ -76,6 +78,8 @@ export default function BusinessCategoriesPage() {
     } catch (error) {
       console.error('Error clearing mappings:', error)
       showToast('error', 'שגיאה במחיקת המיפויים', '❌')
+    } finally {
+      setClearAllModal({ isOpen: false })
     }
   }
 
@@ -235,12 +239,19 @@ export default function BusinessCategoriesPage() {
               </table>
             </div>
           </section>
-        )}
+      )}
 
-        {loading && (
-          <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>טוען...</div>
-        )}
-      </div>
-    </main>
-  )
+      {loading && (
+        <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>טוען...</div>
+      )}
+
+      <YesNoModal
+        isOpen={clearAllModal.isOpen}
+        question="האם אתה בטוח שברצונך למחוק את כל המיפויים?"
+        onYes={confirmClearAll}
+        onNo={() => setClearAllModal({ isOpen: false })}
+      />
+    </div>
+  </main>
+)
 }

@@ -407,11 +407,12 @@ export default function BudgetPage() {
                             const radius = outerRadius + 25
                             const x = cx + radius * Math.cos(-midAngle * RADIAN)
                             const y = cy + radius * Math.sin(-midAngle * RADIAN)
-                            const percentValue = ((percent ?? 0) * 100).toFixed(0)
+                            const percentValue = (percent ?? 0) * 100
+                            const percentString = percentValue.toFixed(0)
 
                             if (percentValue < 1) return null
 
-                            const text = percentValue > 3 ? `${name} ${percentValue}%` : `${percentValue}%`
+                            const text = percentValue > 3 ? `${name} ${percentString}%` : `${percentString}%`
 
                             return (
                               <text

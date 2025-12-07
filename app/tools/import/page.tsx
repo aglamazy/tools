@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import type { ImportedFile } from '@/app/types/imported-file'
+import type { ImportedFile } from '@/app/db/financeDB'
 import { formatMonthDisplay, formatDateTime } from '@/app/utils/formatters'
 import FileBrowser from '@/app/components/FileBrowser'
 import MessageModal from '@/app/components/MessageModal'
@@ -51,7 +51,6 @@ export default function ImportPage() {
       const data = await transactionStore.getImportedFiles()
       if (data) {
         const loadedFiles = data.files || []
-        console.log('📂 Loaded files:', loadedFiles)
         setFiles(loadedFiles)
 
         // Auto-select newest month
@@ -102,7 +101,7 @@ export default function ImportPage() {
     }
   }
 
-  const handleViewFile = async (fileId: string) => {
+  const handleViewFile = async (fileId: number) => {
     const file = files.find((f) => f.id === fileId)
     if (!file) return
 
@@ -120,7 +119,7 @@ export default function ImportPage() {
     })
   }
 
-  const handleDeleteFile = (fileId: string) => {
+  const handleDeleteFile = (fileId: number) => {
     const fileToDelete = files.find((f) => f.id === fileId)
     setYesNoModal({
       isOpen: true,
@@ -220,8 +219,11 @@ export default function ImportPage() {
             existingData.lastUpdated = new Date().toISOString()
             await transactionStore.saveImportedFiles(existingData)
 
-            // Update state
-            setFiles(existingData.files)
+            // Reload from DB to include generated IDs
+            const refreshed = await transactionStore.getImportedFiles()
+            if (refreshed) {
+              setFiles(refreshed.files)
+            }
             setShowFileBrowser(false)
 
             // Set filter to the imported file's month
@@ -240,8 +242,11 @@ export default function ImportPage() {
       existingData.lastUpdated = new Date().toISOString()
       await transactionStore.saveImportedFiles(existingData)
 
-      // Update state
-      setFiles(existingData.files)
+      // Reload from DB to include generated IDs
+      const refreshed = await transactionStore.getImportedFiles()
+      if (refreshed) {
+        setFiles(refreshed.files)
+      }
       setShowFileBrowser(false)
 
       // Set filter to the imported file's month
@@ -284,7 +289,7 @@ export default function ImportPage() {
           file.processingMonth,
           file.cardNumber
         )
-        counts[file.id] = transactions?.length || 0
+        if (file.id) counts[file.id] = transactions?.length || 0
       }
 
       setTransactionCounts(counts)
@@ -296,7 +301,7 @@ export default function ImportPage() {
   }, [files])
 
   const getActualTransactionCount = (file: ImportedFile): number => {
-    return transactionCounts[file.id] ?? file.transactionCount
+    return (file.id && transactionCounts[file.id]) ?? file.transactionCount
   }
 
   return (
@@ -328,6 +333,7 @@ export default function ImportPage() {
                   isOpen={showFileBrowser}
                   savedDirHandle={savedDirHandle}
                   onDirHandleChange={handleDirHandleChange}
+                  excludeFileNames={files.map((f) => f.fileName)}
                 />
               </div>
             </div>
@@ -401,14 +407,14 @@ export default function ImportPage() {
                           📂 פתח
                         </button>
                         <button
-                          onClick={() => handleViewFile(file.id)}
+                          onClick={() => file.id && handleViewFile(file.id)}
                           className="file-picker"
                           style={{ padding: '0.25rem 0.5rem', fontSize: '0.875rem' }}
                         >
                           👁️ צפה
                         </button>
                         <button
-                          onClick={() => handleDeleteFile(file.id)}
+                          onClick={() => file.id && handleDeleteFile(file.id)}
                           className="upload-another-btn"
                           style={{ padding: '0.25rem 0.5rem', fontSize: '0.875rem' }}
                         >

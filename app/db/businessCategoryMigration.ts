@@ -9,6 +9,7 @@ const TRANSACTIONS_KEY = 'finance-transactions'
 export async function migrateBusinessCategories(): Promise<{ success: boolean; error?: string }> {
   try {
     // Check if migration already completed
+    // eslint-disable-next-line no-restricted-syntax
     const migrationCompleted = localStorage.getItem(MIGRATION_KEY)
     if (migrationCompleted === 'true') {
       console.log('✅ Business-category migration already completed')
@@ -18,9 +19,10 @@ export async function migrateBusinessCategories(): Promise<{ success: boolean; e
     console.log('🔄 Starting business-category migration...')
 
     // Read old localStorage transactions
+    // eslint-disable-next-line no-restricted-syntax
     const stored = localStorage.getItem(TRANSACTIONS_KEY)
     if (!stored) {
-      console.log('No transactions to migrate')
+      // eslint-disable-next-line no-restricted-syntax
       localStorage.setItem(MIGRATION_KEY, 'true')
       return { success: true }
     }
@@ -71,6 +73,7 @@ export async function migrateBusinessCategories(): Promise<{ success: boolean; e
     console.log(`✅ Migrated ${businessCategories.length} business-category mappings`)
 
     // Mark migration as completed
+    // eslint-disable-next-line no-restricted-syntax
     localStorage.setItem(MIGRATION_KEY, 'true')
 
     return { success: true }
@@ -84,6 +87,7 @@ export async function migrateBusinessCategories(): Promise<{ success: boolean; e
  * Reset migration flag (for testing purposes)
  */
 export function resetBusinessMigration() {
+  // eslint-disable-next-line no-restricted-syntax
   localStorage.removeItem(MIGRATION_KEY)
   console.log('Business-category migration flag reset')
 }

@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
+import Link from 'next/link'
 import type { Category, CategoryType } from '@/app/types/category'
 import {
   clearDirectoryHandle,
@@ -30,11 +31,15 @@ export default function Settings() {
   const [importConfirm, setImportConfirm] = useState<{ isOpen: boolean; file: File | null }>({ isOpen: false, file: null })
   const [alertModal, setAlertModal] = useState<{ isOpen: boolean; message: string }>({ isOpen: false, message: '' })
   const [dbStats, setDbStats] = useState<{ transactions: number; importedFiles: number; businessCategories: number } | null>(null)
+  const [categoryUsage, setCategoryUsage] = useState<Record<string, { bank: number; credit: number }>>({})
+  const [draggingId, setDraggingId] = useState<string | null>(null)
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null)
 
   useEffect(() => {
     loadCategories()
     initDirectoryHandle()
     loadDatabaseStats()
+    loadCategoryUsage()
   }, [])
 
   const loadCategories = () => {
@@ -88,6 +93,68 @@ export default function Settings() {
     } catch (err) {
       console.error('Error loading database stats:', err)
     }
+  }
+
+  const loadCategoryUsage = async () => {
+    try {
+      const transactions = await db.transactions.toArray()
+      const usage: Record<string, { bank: number; credit: number }> = {}
+
+      transactions.forEach((t) => {
+        const name = t.category?.trim()
+        if (!name) return
+        const entry = usage[name] || { bank: 0, credit: 0 }
+        if (t.type === 'bank') entry.bank += 1
+        if (t.type === 'credit') entry.credit += 1
+        usage[name] = entry
+      })
+
+      setCategoryUsage(usage)
+    } catch (err) {
+      console.error('Error loading category usage:', err)
+    }
+  }
+
+  const isDescendant = (candidateId: string, targetAncestorId: string): boolean => {
+    const candidate = categories.find((c) => c.id === candidateId)
+    if (!candidate || !candidate.parentId) return false
+    if (candidate.parentId === targetAncestorId) return true
+    return isDescendant(candidate.parentId, targetAncestorId)
+  }
+
+  const handleReparentCategory = (childId: string, newParentId: string) => {
+    if (childId === newParentId) return
+
+    const child = categories.find((c) => c.id === childId)
+    const parent = categories.find((c) => c.id === newParentId)
+    if (!child || !parent) return
+
+    // Only allow reparenting within the same type and avoid cycles
+    if (child.type !== parent.type) return
+    if (isDescendant(parent.id, child.id)) return
+
+    const updatedCategories = categories.map((cat) => {
+      // Remove child from any current parent's subCategories
+      if (cat.subCategories?.includes(childId)) {
+        return { ...cat, subCategories: cat.subCategories.filter((id) => id !== childId) }
+      }
+      return cat
+    }).map((cat) => {
+      // Update the child to point to the new parent
+      if (cat.id === childId) {
+        return { ...cat, parentId: newParentId, color: parent.color }
+      }
+      return cat
+    }).map((cat) => {
+      // Add child to new parent's subCategories
+      if (cat.id === newParentId) {
+        return { ...cat, subCategories: [...(cat.subCategories || []), childId] }
+      }
+      return cat
+    })
+
+    setCategories(updatedCategories)
+    saveCategories(updatedCategories)
   }
 
   const handlePickDirectory = async () => {
@@ -413,40 +480,107 @@ export default function Settings() {
   }
 
   // Helper to render a category row with its sub-categories
-  const renderCategoryRow = (category: Category, isSubCategory: boolean = false) => (
-    <React.Fragment key={category.id}>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.75rem',
-          padding: '0.5rem 0.75rem',
-          paddingRight: isSubCategory ? '2rem' : '0.75rem',
-          borderRadius: '0.5rem',
-          background: isSubCategory ? '#fafafa' : '#f8fafc',
-          border: isSubCategory ? '1px solid #e5e7eb' : '1px solid #e2e8f0',
-          marginRight: isSubCategory ? '1rem' : '0',
-        }}
-      >
-        <input
-          type="color"
-          value={category.color}
-          onChange={(e) => {
-            const updated = categories.map((cat) =>
-              cat.id === category.id ? { ...cat, color: e.target.value } : cat
-            )
-            setCategories(updated)
-            saveCategories(updated)
+  const renderCategoryRow = (category: Category, isSubCategory: boolean = false) => {
+    const isDropCandidate =
+      draggingId &&
+      draggingId !== category.id &&
+      !isDescendant(category.id, draggingId) &&
+      categories.find((c) => c.id === draggingId)?.type === category.type
+
+    return (
+      <React.Fragment key={category.id}>
+        <div
+          draggable
+          onDragStart={(e) => {
+            setDraggingId(category.id)
+            setDropTargetId(null)
+            e.dataTransfer.effectAllowed = 'move'
           }}
-          style={{ width: '32px', height: '32px', cursor: 'pointer', border: 'none', borderRadius: '4px' }}
-        />
-        <div style={{ flex: 1, fontWeight: isSubCategory ? 400 : 500, fontSize: '0.95rem' }}>
-          {isSubCategory && '┘─ '}
-          {category.name}
-        </div>
-        {!isSubCategory && (
+          onDragEnd={() => {
+            setDraggingId(null)
+            setDropTargetId(null)
+          }}
+          onDragOver={(e) => {
+            if (!isDropCandidate) return
+            e.preventDefault()
+            e.dataTransfer.dropEffect = 'move'
+            setDropTargetId(category.id)
+          }}
+          onDragLeave={() => {
+            if (dropTargetId === category.id) {
+              setDropTargetId(null)
+            }
+          }}
+          onDrop={(e) => {
+            e.preventDefault()
+            if (draggingId) {
+              handleReparentCategory(draggingId, category.id)
+            }
+            setDraggingId(null)
+            setDropTargetId(null)
+          }}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.75rem',
+            padding: '0.5rem 0.75rem',
+            paddingRight: isSubCategory ? '2rem' : '0.75rem',
+            borderRadius: '0.5rem',
+            background:
+              dropTargetId === category.id ? '#e0f2fe' : isSubCategory ? '#fafafa' : '#f8fafc',
+            border:
+              dropTargetId === category.id
+                ? '2px dashed #0ea5e9'
+                : isSubCategory
+                  ? '1px solid #e5e7eb'
+                  : '1px solid #e2e8f0',
+            marginRight: isSubCategory ? '1rem' : '0',
+            cursor: 'grab',
+          }}
+          title="גרור כדי לשנות היררכיה"
+        >
+          <input
+            type="color"
+            value={category.color}
+            onChange={(e) => {
+              const updated = categories.map((cat) =>
+                cat.id === category.id ? { ...cat, color: e.target.value } : cat
+              )
+              setCategories(updated)
+              saveCategories(updated)
+            }}
+            style={{ width: '32px', height: '32px', cursor: 'pointer', border: 'none', borderRadius: '4px' }}
+          />
+          <div style={{ flex: 1, fontWeight: isSubCategory ? 400 : 500, fontSize: '0.95rem' }}>
+            {isSubCategory && '┘─ '}
+            {category.name}
+            <span style={{ marginRight: '0.5rem', color: '#64748b', fontSize: '0.85rem' }}>
+              ({categoryUsage[category.name]?.bank || 0} בנק / {categoryUsage[category.name]?.credit || 0} אשראי)
+            </span>
+          </div>
+          {!isSubCategory && (
+            <button
+              onClick={() => handleAddSubCategory(category.id)}
+              style={{
+                padding: '0.35rem 0.75rem',
+                fontSize: '0.85rem',
+                background: 'transparent',
+                border: '1px solid #cbd5e1',
+                borderRadius: '0.375rem',
+                cursor: 'pointer',
+                color: '#475569',
+              }}
+              title="הוסף תת-נושא"
+            >
+              ➕
+            </button>
+          )}
           <button
-            onClick={() => handleAddSubCategory(category.id)}
+            onClick={() => {
+              setEditingCategory({ ...category, isFixed: category.isFixed ?? false })
+              setIsAddingNew(false)
+              setAddingSubCategoryFor(null)
+            }}
             style={{
               padding: '0.35rem 0.75rem',
               fontSize: '0.85rem',
@@ -456,55 +590,36 @@ export default function Settings() {
               cursor: 'pointer',
               color: '#475569',
             }}
-            title="הוסף תת-נושא"
           >
-            ➕
+            ✏️
           </button>
-        )}
-        <button
-          onClick={() => {
-            setEditingCategory({ ...category, isFixed: category.isFixed ?? false })
-            setIsAddingNew(false)
-            setAddingSubCategoryFor(null)
-          }}
-          style={{
-            padding: '0.35rem 0.75rem',
-            fontSize: '0.85rem',
-            background: 'transparent',
-            border: '1px solid #cbd5e1',
-            borderRadius: '0.375rem',
-            cursor: 'pointer',
-            color: '#475569',
-          }}
-        >
-          ✏️
-        </button>
-        <button
-          onClick={() => handleDeleteCategory(category.id)}
-          style={{
-            padding: '0.35rem 0.75rem',
-            fontSize: '0.85rem',
-            background: 'transparent',
-            border: '1px solid #fecaca',
-            borderRadius: '0.375rem',
-            cursor: 'pointer',
-            color: '#dc2626',
-          }}
-        >
-          🗑️
-        </button>
-      </div>
-      {/* Render sub-categories */}
-      {category.subCategories && category.subCategories.length > 0 && (
-        <div style={{ marginTop: '0.25rem', marginBottom: '0.25rem' }}>
-          {category.subCategories.map((subId) => {
-            const subCategory = categories.find((c) => c.id === subId)
-            return subCategory ? renderCategoryRow(subCategory, true) : null
-          })}
+          <button
+            onClick={() => handleDeleteCategory(category.id)}
+            style={{
+              padding: '0.35rem 0.75rem',
+              fontSize: '0.85rem',
+              background: 'transparent',
+              border: '1px solid #fecaca',
+              borderRadius: '0.375rem',
+              cursor: 'pointer',
+              color: '#dc2626',
+            }}
+          >
+            🗑️
+          </button>
         </div>
-      )}
-    </React.Fragment>
-  )
+        {/* Render sub-categories */}
+        {category.subCategories && category.subCategories.length > 0 && (
+          <div style={{ marginTop: '0.25rem', marginBottom: '0.25rem' }}>
+            {category.subCategories.map((subId) => {
+              const subCategory = categories.find((c) => c.id === subId)
+              return subCategory ? renderCategoryRow(subCategory, true) : null
+            })}
+          </div>
+        )}
+      </React.Fragment>
+    )
+  }
 
   return (
     <div className="card">
@@ -535,12 +650,12 @@ export default function Settings() {
       </header>
 
       <section style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid #e2e8f0', borderRadius: '0.75rem', background: '#f0f9ff' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
-          <div>
-            <h2 style={{ margin: 0, fontSize: '1.05rem' }}>📊 סטטיסטיקות מאגר נתונים</h2>
-            <p style={{ margin: '0.25rem 0 0', color: '#075985', fontSize: '0.95rem' }}>
-              מידע על כמות הרשומות במאגר הנתונים המקומי
-            </p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+            <div>
+              <h2 style={{ margin: 0, fontSize: '1.05rem' }}>📊 סטטיסטיקות מאגר נתונים</h2>
+              <p style={{ margin: '0.25rem 0 0', color: '#075985', fontSize: '0.95rem' }}>
+                מידע על כמות הרשומות במאגר הנתונים המקומי
+              </p>
             {dbStats && (
               <div style={{ marginTop: '0.75rem', display: 'flex', gap: '1.5rem', fontSize: '0.9rem' }}>
                 <div>
@@ -550,12 +665,22 @@ export default function Settings() {
                   <strong>קבצים מיובאים:</strong> {dbStats.importedFiles.toLocaleString('he-IL')}
                 </div>
                 <div>
-                  <strong>מיפוי עסקים-נושאים:</strong> {dbStats.businessCategories.toLocaleString('he-IL')}
+                  <Link href="/tools/business-categories" style={{ fontWeight: 700, color: '#0ea5e9' }}>
+                    מיפוי עסקים-נושאים
+                  </Link>
+                  : {dbStats.businessCategories.toLocaleString('he-IL')}
                 </div>
               </div>
             )}
           </div>
-          <button onClick={loadDatabaseStats} className="file-picker secondary" style={{ flexShrink: 0 }}>
+          <button
+            onClick={() => {
+              loadDatabaseStats()
+              loadCategoryUsage()
+            }}
+            className="file-picker secondary"
+            style={{ flexShrink: 0 }}
+          >
             🔄 רענן
           </button>
         </div>

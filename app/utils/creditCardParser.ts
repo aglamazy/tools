@@ -1,14 +1,14 @@
 import { parseXlsTables } from './xlsTableParser'
 import { config } from '@/app/config'
-import type { SheetCell, SheetRow } from '@/app/types/transactions'
+import { SheetCell, SheetRow } from "@/app/types/transactions";
 
 // Mapping from Hebrew column names to standardized property names
 const COLUMN_MAPPINGS = {
-  merchant: ['שם בית העסק', 'שם', 'שם העסק', 'בית עסק', 'שם העסק'],
-  transactionDate: ['תאריך עסקה', 'תאריך'],
+  merchant: ['שם בית העסק', 'שם', 'שם העסק', 'בית עסק', 'שם העסק', 'שם בית מסחר'],
+  transactionDate: ['תאריך עסקה', 'תאריך', 'תאריך רכישה', 'תאריך רכישת עסקה'],
   domesticAmount: ['סכום עסקה'],
   billingAmount: ['סכום חיוב', 'סכום לחיוב'],
-  detail: ['פירוט', 'פירוט נוסף'],
+  detail: ['פירוט', 'פירוט נוסף', 'פירוט נוסף1'],
   originalAmount: ['סכום מקורי'],
   originalCurrency: ['מטבע מקורי', 'מטבע'],
   billingCurrency: ['מטבע חיוב'],
@@ -33,6 +33,10 @@ function checkUnmappedColumns(headers: string[]): void {
 
   const knownColumns = getAllKnownColumns()
   const unmappedColumns: string[] = []
+  const recognized = headers.filter((h) => knownColumns.has(h))
+
+  // Ignore sections that don't have any recognized columns (likely header/info rows)
+  if (recognized.length === 0) return
 
   for (const header of headers) {
     if (!knownColumns.has(header)) {
@@ -42,7 +46,7 @@ function checkUnmappedColumns(headers: string[]): void {
 
   if (unmappedColumns.length > 0) {
     const message = `⚠️ Unmapped columns detected:\n\n${unmappedColumns.join('\n')}\n\nAdd these to COLUMN_MAPPINGS in creditCardParser.ts`
-    console.error(message)
+    console.warn(message)
   }
 }
 
@@ -126,6 +130,11 @@ const tryParseDate = (value: SheetCell): Date | null => {
 }
 
 const findBillingDate = (rows: SheetRow[]): Date | null => {
+  const hebrewMonths: Record<string, number> = {
+    ינואר: 1, פברואר: 2, מרץ: 3, אפריל: 4, מאי: 5, יוני: 6,
+    יולי: 7, אוגוסט: 8, ספטמבר: 9, אוקטובר: 10, נובמבר: 11, דצמבר: 12,
+  }
+
   // Look for billing date in "חודש החיוב" or "חיוב בתאריך"
   for (let i = 0; i < Math.min(10, rows.length); i++) {
     for (const cell of rows[i]) {
@@ -135,7 +144,28 @@ const findBillingDate = (rows: SheetRow[]): Date | null => {
           const [, day, month, year] = dateMatch
           const parsed = new Date(parseInt(year, 10), parseInt(month, 10) - 1, parseInt(day, 10))
           if (!Number.isNaN(parsed.getTime())) {
-            console.log(`✅ Found billing date: ${day}/${month}/${year} in cell: "${cell}"`)
+            return parsed
+          }
+        }
+      }
+    }
+  }
+
+  // Look for "אוקטובר 2025" style month+year
+  for (let i = 0; i < Math.min(6, rows.length); i++) {
+    for (const cell of rows[i]) {
+      if (typeof cell !== 'string') continue
+      const parts = cell.trim().split(/\s+/)
+      if (parts.length === 2) {
+        const [monthName, yearStr] = parts
+        const month = hebrewMonths[monthName]
+        const year = Number.parseInt(yearStr, 10)
+        if (month && year && year > 1900 && year < 2100) {
+          const parsed = new Date(year, month - 1, 1)
+          if (!Number.isNaN(parsed.getTime())) {
+            if (config.developerMode) {
+              console.log(`✅ Found billing month from header: ${cell} -> ${parsed.toISOString()}`)
+            }
             return parsed
           }
         }
@@ -160,9 +190,21 @@ const extractCardNumber = (rows: SheetRow[]): string | null => {
   for (let i = 0; i < Math.min(10, rows.length); i++) {
     for (const cell of rows[i]) {
       if (typeof cell === 'string') {
-        const match = cell.match(/(\d{4})\s*-\s*ישראכרט/)
-        if (match) {
-          return match[1]
+        const isKnownCardLine = /ישראכרט|כרטיס|ויזה|אמקס|אמריקן|אמריקאן|אמריקן אקספרס|BUSINESS|גולד|זהב/i.test(cell)
+        const fourDigitMatches = cell.match(/\b(\d{4})\b/g) || []
+        const candidates = fourDigitMatches
+          // Avoid years like 2024/2025
+          .map((c) => Number(c))
+          .filter((n) => !(n >= 2000 && n <= 2035))
+          .map((n) => String(n).padStart(4, '0'))
+
+        if (candidates.length > 0 && isKnownCardLine) {
+          return candidates[0]
+        }
+
+        // Fallback: keep the first non-year 4-digit token we see
+        if (candidates.length > 0) {
+          return candidates[0]
         }
       }
     }
@@ -174,43 +216,28 @@ export function parseCreditCardStatement(rows: SheetRow[]): CreditCardStatement 
   const billingDate = findBillingDate(rows)
   const cardNumber = extractCardNumber(rows)
 
-  // Debug: Show first 20 rows
-  console.log('====== RAW ROWS (first 20) ======')
-  rows.slice(0, 20).forEach((row, idx) => {
-    console.log(`Row ${idx}:`, row)
-  })
-  console.log('====== END RAW ROWS ======')
-
   // Use the table parser to detect all sections
   const parsed = parseXlsTables(rows)
 
-  console.log('====== XLS TO JSON DUMP ======')
-  console.log(JSON.stringify(parsed, null, 2))
-  console.log('====== END DUMP ======')
-
-  console.log('🔍 Credit Card Parser - Detected sections:', parsed.sections.length)
-  parsed.sections.forEach((section, idx) => {
-    console.log(`Section ${idx}:`)
-    console.log(`  tableInfo:`, section.tableInfo)
-    console.log(`  headers (${section.headers.length}):`, section.headers)
-    console.log(`  rows: ${section.rows.length}`)
-    if (section.rows.length > 0) {
-      console.log(`  First row sample:`, section.rows[0])
-    }
-  })
 
   const payments: CreditCardPayment[] = []
   let globalRowIndex = 0
 
   // Process each section
   parsed.sections.forEach((section) => {
+    const knownColumns = getAllKnownColumns()
+    const recognizedHeaders = section.headers.filter((h) => knownColumns.has(h))
+
+    // Skip sections that don't look like payment tables
+    if (recognizedHeaders.length === 0) {
+      return
+    }
+
     // Check for unmapped columns in developer mode
     checkUnmappedColumns(section.headers)
 
     // Check if this is a foreign currency section
     const isForeign = section.tableInfo.some(info => info.includes('מט"ח') || info.includes('עסקאות במט"ח'))
-
-    console.log(`📊 Processing section: tableInfo=${section.tableInfo.join(', ')}, isForeign=${isForeign}`)
 
     section.rows.forEach((row, rowIdx) => {
       // Normalize row: extract all known properties
@@ -221,24 +248,6 @@ export function parseCreditCardStatement(rows: SheetRow[]): CreditCardStatement 
         if (value !== null && value !== undefined && String(value).trim() !== '') {
           normalizedRow[key] = value
         }
-      }
-
-      if (config.developerMode && rowIdx === 0) {
-        console.log(`  Normalized first row:`, normalizedRow)
-      }
-
-      // Validate required fields
-      if (!normalizedRow.merchant) {
-        if (config.developerMode && rowIdx < 3) {
-          console.log(`  Row ${rowIdx}: Skipping - no merchant`)
-        }
-        return
-      }
-      if (!normalizedRow.transactionDate) {
-        if (config.developerMode && rowIdx < 3) {
-          console.log(`  Row ${rowIdx}: Skipping - no transactionDate`)
-        }
-        return
       }
 
       // Always use billing amount (סכום חיוב) - this is the actual charged amount
@@ -272,8 +281,6 @@ export function parseCreditCardStatement(rows: SheetRow[]): CreditCardStatement 
       globalRowIndex++
     })
   })
-
-  console.log(`✅ Parsed ${payments.length} total payments`)
 
   return { billingDate, cardNumber, payments }
 }

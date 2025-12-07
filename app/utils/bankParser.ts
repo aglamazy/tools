@@ -1,4 +1,16 @@
-import type { Transaction, SheetCell, SheetRow } from '@/app/types/transactions'
+import { SheetCell, SheetRow } from "@/app/types/transactions";
+
+export type ParsedBankTransaction = {
+  date: string
+  description: string
+  amount: number
+  balance: number
+  accountNumber: string
+  cardNumber?: string
+  isCreditCardCharge?: boolean
+  category?: string
+  isFixed?: boolean
+}
 
 export type BankPreview = {
   accountNumber: string | null
@@ -39,7 +51,7 @@ const toNumber = (value: string | number): number => {
  * @param rows - The sheet rows to parse
  * @param accountNumber - The bank account number (e.g., "123-456789")
  */
-export function parseBankTransactions(rows: SheetRow[], accountNumber: string): Transaction[] {
+export function parseBankTransactions(rows: SheetRow[], accountNumber: string): ParsedBankTransaction[] {
   const sanitized = rows.map((row) => row.map(normalizeCell)) as Array<Array<string | number>>
 
   // Find header row
@@ -68,7 +80,7 @@ export function parseBankTransactions(rows: SheetRow[], accountNumber: string): 
     return []
   }
 
-  const transactions: Transaction[] = []
+  const transactions: ParsedBankTransaction[] = []
   const rowsAfterHeader = sanitized.slice(headerIndex + 1)
 
   // Track index per date for generating IDs
@@ -96,22 +108,18 @@ export function parseBankTransactions(rows: SheetRow[], accountNumber: string): 
     const descriptionStr = String(description)
     const cardNumberMatch = descriptionStr.match(/(\d{4})\s*-?\s*ישראכרט/)
     const isCreditCard = !!cardNumberMatch
-    const cardNumber = cardNumberMatch ? cardNumberMatch[1] : null
+    const cardNumber = cardNumberMatch ? cardNumberMatch[1] : undefined
 
     // Generate ID in new format: <account_id>-<date>-<index>
     const dateStr = String(date)
     const currentIndex = (dateIndexMap.get(dateStr) || 0) + 1
     dateIndexMap.set(dateStr, currentIndex)
-    const id = `${accountNumber}-${dateStr}-${currentIndex}`
-
     transactions.push({
-      id,
       date: dateStr,
       description: String(description),
       amount,
-      type: typeIdx !== -1 ? String(row[typeIdx] || '') : '',
-      activity: activityIdx !== -1 ? String(row[activityIdx] || '') : '',
       balance,
+      accountNumber,
       cardNumber,
       isCreditCardCharge: isCreditCard,
     })

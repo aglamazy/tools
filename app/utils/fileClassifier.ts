@@ -1,5 +1,5 @@
-import type { SheetRow } from '@/app/types/transactions'
 import { FileType } from '@/app/types/file-type'
+import { SheetRow } from "@/app/types/transactions";
 
 /**
  * Detect the type of financial file based on its content.
@@ -8,7 +8,7 @@ import { FileType } from '@/app/types/file-type'
 export function classifyFile(rows: SheetRow[]): FileType {
   // Normalize cells for analysis
   const sanitized = rows.map((row) =>
-    row.map((cell) => {
+    row.map((cell:any) => {
       if (cell === undefined || cell === null) return ''
       if (typeof cell === 'string') return cell.trim()
       if (typeof cell === 'number') return cell

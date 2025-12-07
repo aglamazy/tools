@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { formatMonthDisplay, addMonths } from '@/app/utils/formatters'
 import { transactionStore } from '@/app/stores/transactionStore'
-import type { Transaction } from '@/app/types/transactions'
+import type { Transaction } from '@/app/db/financeDB'
 import * as XLSX from 'xlsx'
 
 type CreditCardCharge = {
@@ -266,14 +266,14 @@ export default function CashFlowPage() {
                               fontWeight: 500,
                             }}
                           >
-                            {new Intl.NumberFormat('he-IL', {
-                              style: 'currency',
-                              currency: 'ILS',
-                            }).format(transaction.balance)}
-                          </td>
-                        </tr>
-                      ))
-                    )}
+                          {new Intl.NumberFormat('he-IL', {
+                            style: 'currency',
+                            currency: 'ILS',
+                          }).format(transaction.balance ?? 0)}
+                        </td>
+                      </tr>
+                    ))
+                  )}
                   </tbody>
                 </table>
               </div>
@@ -297,16 +297,17 @@ export default function CashFlowPage() {
                     </thead>
                     <tbody>
                       {(() => {
-                        let runningBalance = bankTransactions.length > 0
-                          ? bankTransactions[bankTransactions.length - 1].balance
+                        const lastBalance = bankTransactions.length > 0
+                          ? bankTransactions[bankTransactions.length - 1].balance ?? openingBalance
                           : openingBalance
+                        let runningBalance: number = lastBalance ?? 0
 
                         // Combine credit charges and expected fixed into single array
                         const allExpected = [
                           ...creditCharges.map(c => ({
                             date: c.chargingDate,
                             description: `💳 ${c.cardNumber}`,
-                            amount: -c.totalAmount,
+                            amount: -(c.totalAmount ?? 0),
                           })),
                           ...expectedFixed.map(f => {
                             // Extract day from previous month's date (DD/MM/YYYY)
@@ -368,10 +369,10 @@ export default function CashFlowPage() {
                             currency: 'ILS',
                           }).format(
                             (bankTransactions.length > 0
-                              ? bankTransactions[bankTransactions.length - 1].balance
+                              ? bankTransactions[bankTransactions.length - 1].balance ?? openingBalance
                               : openingBalance) -
-                              creditCharges.reduce((sum, c) => sum + c.totalAmount, 0) +
-                              expectedFixed.reduce((sum, f) => sum + f.amount, 0)
+                              creditCharges.reduce((sum, c) => sum + (c.totalAmount ?? 0), 0) +
+                              expectedFixed.reduce((sum, f) => sum + (f.amount ?? 0), 0)
                           )}
                         </td>
                       </tr>

@@ -11,6 +11,7 @@ type FileBrowserProps = {
   isOpen?: boolean
   savedDirHandle: FileSystemDirectoryHandle | null
   onDirHandleChange: (handle: FileSystemDirectoryHandle | null) => void
+  excludeFileNames?: string[]
 }
 
 const extractFilePreview = async (file: File): Promise<Partial<FilePreview>> => {
@@ -24,7 +25,7 @@ const extractFilePreview = async (file: File): Promise<Partial<FilePreview>> => 
   }
 }
 
-export default function FileBrowser({ onFileSelect, isOpen, savedDirHandle, onDirHandleChange }: FileBrowserProps) {
+export default function FileBrowser({ onFileSelect, isOpen, savedDirHandle, onDirHandleChange, excludeFileNames }: FileBrowserProps) {
   const [previews, setPreviews] = useState<FilePreview[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -95,7 +96,10 @@ export default function FileBrowser({ onFileSelect, isOpen, savedDirHandle, onDi
       })
 
       const filePreviews = await Promise.all(previewPromises)
-      const validPreviews = filePreviews.filter((p) => p.fileType === FileType.Bank || p.fileType === FileType.CreditCard)
+      const exclude = new Set((excludeFileNames || []).map((n) => n.toLowerCase()))
+      const validPreviews = filePreviews
+        .filter((p) => p.fileType === FileType.Bank || p.fileType === FileType.CreditCard)
+        .filter((p) => !exclude.has(p.fileName.toLowerCase()))
 
       // Sort by month (descending), then by account
       validPreviews.sort((a, b) => {
