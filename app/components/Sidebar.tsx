@@ -35,6 +35,20 @@ const tools: Tool[] = [
     available: true,
   },
   {
+    id: 'business-categories',
+    title: 'מיפוי עסקים',
+    href: '/tools/business-categories',
+    icon: '🏪',
+    available: true,
+  },
+  {
+    id: 'todo',
+    title: 'משימות',
+    href: '/tools/todo',
+    icon: '✓',
+    available: true,
+  },
+  {
     id: 'future-payments',
     title: 'תחזית תשלומים',
     href: '/tools/future-payments',
