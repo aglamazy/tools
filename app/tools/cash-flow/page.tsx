@@ -12,29 +12,26 @@ type CreditCardCharge = {
   totalAmount: number
 }
 
+type ExpectedFixed = {
+  business: string
+  amount: number
+  category: string
+  date: string
+}
+
 export default function CashFlowPage() {
   const [selectedMonth, setSelectedMonth] = useState<string>('')
   const [availableMonths, setAvailableMonths] = useState<string[]>([])
   const [bankTransactions, setBankTransactions] = useState<Transaction[]>([])
   const [creditCharges, setCreditCharges] = useState<CreditCardCharge[]>([])
+  const [expectedFixed, setExpectedFixed] = useState<ExpectedFixed[]>([])
   const [openingBalance, setOpeningBalance] = useState<number>(0)
   const [loading, setLoading] = useState(true)
 
-  // Load available months from imported files
+  // Load available months from transactions
   useEffect(() => {
-    const filesData = transactionStore.getImportedFiles()
-    if (filesData) {
-      const months = Array.from(
-        new Set<string>(
-          filesData.files
-            .map((f: any) => f.processingMonth)
-            .filter((m: string | undefined): m is string => !!m)
-        )
-      ).sort((a, b) => {
-        const [aMonth, aYear] = a.split('/').map(Number)
-        const [bMonth, bYear] = b.split('/').map(Number)
-        return bYear * 12 + bMonth - (aYear * 12 + aMonth)
-      })
+    const loadMonths = async () => {
+      const months = await transactionStore.getAvailableMonths()
 
       setAvailableMonths(months)
       if (months.length > 0 && !selectedMonth) {
@@ -43,11 +40,12 @@ export default function CashFlowPage() {
         if (savedMonth && months.includes(savedMonth)) {
           setSelectedMonth(savedMonth)
         } else {
-          setSelectedMonth(months[0] as string) // Select newest month by default
+          setSelectedMonth(months[0]) // Select newest month by default
         }
       }
+      setLoading(false)
     }
-    setLoading(false)
+    loadMonths()
   }, [selectedMonth])
 
   // Save selected month to sessionStorage when it changes
@@ -61,10 +59,14 @@ export default function CashFlowPage() {
   useEffect(() => {
     if (!selectedMonth) return
 
-    const cashFlowData = transactionStore.getCashFlowData(selectedMonth)
-    setOpeningBalance(cashFlowData.openingBalance)
-    setBankTransactions(cashFlowData.transactions)
-    setCreditCharges(cashFlowData.creditCharges)
+    const loadCashFlow = async () => {
+      const cashFlowData = await transactionStore.getCashFlowData(selectedMonth)
+      setOpeningBalance(cashFlowData.openingBalance)
+      setBankTransactions(cashFlowData.transactions)
+      setCreditCharges(cashFlowData.creditCharges)
+      setExpectedFixed(cashFlowData.expectedFixed)
+    }
+    loadCashFlow()
   }, [selectedMonth])
 
   const handleDownloadExcel = () => {
@@ -151,7 +153,7 @@ export default function CashFlowPage() {
 
         {availableMonths.length === 0 && (
           <div className="banner" style={{ marginTop: '1rem' }}>
-            לא נמצאו קבצים מיובאים. עבור לעמוד "ייבוא קבצים" כדי להתחיל.
+            לא נמצאו עסקאות במאגר. עבור לעמוד "ייבוא קבצים" כדי להתחיל.
           </div>
         )}
 
@@ -278,7 +280,7 @@ export default function CashFlowPage() {
             </section>
 
             {/* Future Forecast */}
-            {creditCharges.length > 0 && (
+            {(creditCharges.length > 0 || expectedFixed.length > 0) && (
               <section style={{ marginTop: '2rem' }}>
                 <h2 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '1rem' }}>
                   תחזית (תנועות שטרם בוצעו)
@@ -294,37 +296,69 @@ export default function CashFlowPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {creditCharges.map((charge, index) => {
-                        const currentBalance = bankTransactions.length > 0
+                      {(() => {
+                        let runningBalance = bankTransactions.length > 0
                           ? bankTransactions[bankTransactions.length - 1].balance
                           : openingBalance
-                        const previousCharges = creditCharges.slice(0, index).reduce((sum, c) => sum + c.totalAmount, 0)
-                        const expectedBalance = currentBalance - previousCharges - charge.totalAmount
 
-                        return (
-                          <tr key={index}>
-                            <td>{charge.chargingDate}</td>
-                            <td>💳 {charge.cardNumber}</td>
-                            <td
-                              style={{
-                                color: '#ef4444',
-                                fontWeight: 500,
-                              }}
-                            >
-                              {new Intl.NumberFormat('he-IL', {
-                                style: 'currency',
-                                currency: 'ILS',
-                              }).format(-charge.totalAmount)}
-                            </td>
-                            <td style={{ fontWeight: 500 }}>
-                              {new Intl.NumberFormat('he-IL', {
-                                style: 'currency',
-                                currency: 'ILS',
-                              }).format(expectedBalance)}
-                            </td>
-                          </tr>
-                        )
-                      })}
+                        // Combine credit charges and expected fixed into single array
+                        const allExpected = [
+                          ...creditCharges.map(c => ({
+                            date: c.chargingDate,
+                            description: `💳 ${c.cardNumber}`,
+                            amount: -c.totalAmount,
+                          })),
+                          ...expectedFixed.map(f => {
+                            // Extract day from previous month's date (DD/MM/YYYY)
+                            const day = f.date ? f.date.split('/')[0] : '01'
+                            const fullDate = `${day}/${selectedMonth}` // DD/MM/YYYY
+                            return {
+                              date: fullDate,
+                              description: `${f.business} (${f.category})`,
+                              amount: f.amount,
+                            }
+                          }),
+                        ]
+
+                        // Sort by date (DD/MM/YYYY format)
+                        allExpected.sort((a, b) => {
+                          const [aDay, aMonth, aYear] = a.date.split('/').map(Number)
+                          const [bDay, bMonth, bYear] = b.date.split('/').map(Number)
+
+                          const aDate = new Date(aYear, aMonth - 1, aDay)
+                          const bDate = new Date(bYear, bMonth - 1, bDay)
+
+                          return aDate.getTime() - bDate.getTime()
+                        })
+
+                        return allExpected.map((item, index) => {
+                          runningBalance += item.amount
+
+                          return (
+                            <tr key={index}>
+                              <td>{item.date}</td>
+                              <td>{item.description}</td>
+                              <td
+                                style={{
+                                  color: item.amount > 0 ? '#10b981' : '#ef4444',
+                                  fontWeight: 500,
+                                }}
+                              >
+                                {new Intl.NumberFormat('he-IL', {
+                                  style: 'currency',
+                                  currency: 'ILS',
+                                }).format(item.amount)}
+                              </td>
+                              <td style={{ fontWeight: 500 }}>
+                                {new Intl.NumberFormat('he-IL', {
+                                  style: 'currency',
+                                  currency: 'ILS',
+                                }).format(runningBalance)}
+                              </td>
+                            </tr>
+                          )
+                        })
+                      })()}
                       {/* Expected closing balance */}
                       <tr style={{ backgroundColor: '#f9fafb', fontWeight: 600, borderTop: '2px solid #d1d5db' }}>
                         <td colSpan={3} style={{ textAlign: 'left' }}>יתרה צפויה לסגירת החודש</td>
@@ -335,7 +369,9 @@ export default function CashFlowPage() {
                           }).format(
                             (bankTransactions.length > 0
                               ? bankTransactions[bankTransactions.length - 1].balance
-                              : openingBalance) - creditCharges.reduce((sum, c) => sum + c.totalAmount, 0)
+                              : openingBalance) -
+                              creditCharges.reduce((sum, c) => sum + c.totalAmount, 0) +
+                              expectedFixed.reduce((sum, f) => sum + f.amount, 0)
                           )}
                         </td>
                       </tr>

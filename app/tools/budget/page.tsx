@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { formatMonthDisplay } from '@/app/utils/formatters'
 import { transactionStore } from '@/app/stores/transactionStore'
 import { subjectStore } from '@/app/stores/subjectStore'
@@ -19,22 +19,12 @@ export default function BudgetPage() {
   const [autoClassifiedIds, setAutoClassifiedIds] = useState<Set<string>>(new Set())
   const [hideClassified, setHideClassified] = useState(false)
   const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set())
+  const [drillDownCategory, setDrillDownCategory] = useState<string | null>(null)
 
-  // Load available months from imported files and categories
+  // Load available months from transactions and categories
   useEffect(() => {
-    const data = transactionStore.getImportedFiles()
-    if (data) {
-      const months = Array.from(
-        new Set<string>(
-          data.files
-            .map((f: any) => f.processingMonth)
-            .filter((m: string | undefined): m is string => !!m)
-        )
-      ).sort((a, b) => {
-        const [aMonth, aYear] = a.split('/').map(Number)
-        const [bMonth, bYear] = b.split('/').map(Number)
-        return bYear * 12 + bMonth - (aYear * 12 + aMonth)
-      })
+    const loadData = async () => {
+      const months = await transactionStore.getAvailableMonths()
 
       setAvailableMonths(months)
       if (months.length > 0 && !selectedMonth) {
@@ -43,15 +33,16 @@ export default function BudgetPage() {
         if (savedMonth && months.includes(savedMonth)) {
           setSelectedMonth(savedMonth)
         } else {
-          setSelectedMonth(months[0] as string) // Select newest month by default
+          setSelectedMonth(months[0]) // Select newest month by default
         }
       }
+
+      // Load categories from settings
+      setCategories(subjectStore.getAll())
+
+      setLoading(false)
     }
-
-    // Load categories from settings
-    setCategories(subjectStore.getAll())
-
-    setLoading(false)
+    loadData()
   }, [selectedMonth])
 
   // Save selected month to sessionStorage when it changes
@@ -61,49 +52,98 @@ export default function BudgetPage() {
     }
   }, [selectedMonth])
 
-  // Load transactions by transaction date
+  // Load transactions by transaction date (bank) and charging date (credit)
   useEffect(() => {
     if (!selectedMonth) return
 
-    const budgetTransactions = transactionStore.getBudgetTransactions(selectedMonth)
-    setTransactions(budgetTransactions)
+    const loadTransactions = async () => {
+      const budgetTransactions = await transactionStore.getBudgetTransactions(selectedMonth)
+      setTransactions(budgetTransactions)
+    }
+    loadTransactions()
   }, [selectedMonth])
 
-  // Calculate category totals for pie chart
+  // Calculate category totals for pie chart with hierarchical structure
   const getCategoryData = () => {
     const expenses = transactions.filter((t) => t.amount < 0)
-    const categoryTotals = new Map<string, { total: number; color: string }>()
+    const parentTotals = new Map<string, { total: number; color: string; subCategories: Map<string, { total: number; color: string }> }>()
 
     expenses.forEach((t) => {
       if (!t.category) return // Skip uncategorized
 
-      const current = categoryTotals.get(t.category) || { total: 0, color: '#9ca3af' }
-      categoryTotals.set(t.category, {
-        total: current.total + Math.abs(t.amount),
-        color: current.color,
-      })
-    })
+      const category = categories.find((c) => c.name === t.category)
+      if (!category) return
 
-    // Add colors from categories
-    categoryTotals.forEach((value, categoryName) => {
-      const category = categories.find((c) => c.name === categoryName)
-      if (category) {
-        value.color = category.color
+      // If this is a sub-category, add to parent
+      if (category.parentId) {
+        const parent = categories.find((c) => c.id === category.parentId)
+        if (!parent) return
+
+        const parentData = parentTotals.get(parent.name) || { total: 0, color: parent.color, subCategories: new Map() }
+        const subData = parentData.subCategories.get(t.category) || { total: 0, color: category.color }
+
+        subData.total += Math.abs(t.amount)
+        parentData.total += Math.abs(t.amount)
+        parentData.subCategories.set(t.category, subData)
+        parentTotals.set(parent.name, parentData)
+      } else {
+        // This is a parent category
+        const parentData = parentTotals.get(t.category) || { total: 0, color: category.color, subCategories: new Map() }
+        parentData.total += Math.abs(t.amount)
+        parentData.color = category.color
+        parentTotals.set(t.category, parentData)
       }
     })
 
-    return Array.from(categoryTotals.entries())
-      .map(([name, { total, color }]) => ({
-        name,
-        value: total,
-        color,
-      }))
-      .sort((a, b) => b.value - a.value) // Sort by amount descending
+    // Sort parent categories by total (descending)
+    const sortedParents = Array.from(parentTotals.entries())
+      .sort((a, b) => b[1].total - a[1].total)
+
+    // If drilling down into a specific parent, show only its sub-categories
+    if (drillDownCategory) {
+      const parentData = parentTotals.get(drillDownCategory)
+      if (parentData && parentData.subCategories.size > 0) {
+        const subCategoryData = Array.from(parentData.subCategories.entries())
+          .map(([name, { total, color }]) => ({
+            name,
+            value: total,
+            color,
+          }))
+          .sort((a, b) => b.value - a.value)
+
+        return { displayData: subCategoryData, parentTotals }
+      }
+    }
+
+    // Default view: show only parent categories
+    const parentData = sortedParents.map(([name, { total, color }]) => ({
+      name,
+      value: total,
+      color,
+    }))
+
+    return { displayData: parentData, parentTotals }
   }
 
-  const categoryData = getCategoryData()
+  const { displayData: categoryData, parentTotals } = getCategoryData()
 
-  // Handler for category click - supports multi-select with Ctrl/Cmd key
+  // Handler for pie slice click - drill down into parent categories
+  const handlePieClick = (categoryName: string, event: React.MouseEvent) => {
+    // If not in drill-down mode, check if this is a parent with sub-categories
+    if (!drillDownCategory) {
+      const parentData = parentTotals.get(categoryName)
+      if (parentData && parentData.subCategories.size > 0) {
+        // Drill down into this parent category
+        setDrillDownCategory(categoryName)
+        return
+      }
+    }
+
+    // If already in drill-down or no sub-categories, use regular filter behavior
+    handleCategoryClick(categoryName, event)
+  }
+
+  // Handler for category click in legend - supports multi-select with Ctrl/Cmd key
   const handleCategoryClick = (categoryName: string, event: React.MouseEvent) => {
     if (event.ctrlKey || event.metaKey) {
       // Ctrl/Cmd + Click: toggle this category in the selection
@@ -218,11 +258,11 @@ export default function BudgetPage() {
                     </button>
                   )}
                   <button
-                    onClick={() => {
-                      const result = transactionStore.autoClassify(selectedMonth)
+                    onClick={async () => {
+                      const result = await transactionStore.autoClassify(selectedMonth)
                       if (result.count > 0) {
                         // Reload transactions to show the updates
-                        const budgetTransactions = transactionStore.getBudgetTransactions(selectedMonth)
+                        const budgetTransactions = await transactionStore.getBudgetTransactions(selectedMonth)
                         setTransactions(budgetTransactions)
                         setAutoClassifiedIds(new Set(result.classifiedIds))
                         showToast('success', `סווגו ${result.count} עסקאות בהצלחה!`, '✨')
@@ -290,7 +330,7 @@ export default function BudgetPage() {
 
         {availableMonths.length === 0 && (
           <div className="banner" style={{ marginTop: '1rem' }}>
-            לא נמצאו קבצים מיובאים. עבור לעמוד "ייבוא קבצים" כדי להתחיל.
+            לא נמצאו עסקאות במאגר. עבור לעמוד "ייבוא קבצים" כדי להתחיל.
           </div>
         )}
 
@@ -303,26 +343,104 @@ export default function BudgetPage() {
                   פילוח הוצאות לפי נושא
                 </h2>
                 <div style={{ display: 'flex', gap: '2rem', alignItems: 'center' }}>
-                  <div style={{ flex: '0 0 400px', height: '300px' }}>
+                  <div style={{ flex: '0 0 450px', height: '350px', position: 'relative' }}>
+                    {/* Category name badge and back button when in drill-down mode */}
+                    {drillDownCategory && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: '10px',
+                          right: '10px',
+                          left: '10px',
+                          zIndex: 1,
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          gap: '1rem',
+                        }}
+                      >
+                        <button
+                          onClick={() => setDrillDownCategory(null)}
+                          style={{
+                            padding: '0.5rem 1rem',
+                            background: '#3b82f6',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '0.375rem',
+                            cursor: 'pointer',
+                            fontSize: '0.875rem',
+                            fontWeight: 500,
+                          }}
+                        >
+                          → חזרה
+                        </button>
+                        <div
+                          style={{
+                            padding: '0.5rem 1rem',
+                            background: '#f0f9ff',
+                            border: '1px solid #bfdbfe',
+                            borderRadius: '0.375rem',
+                            fontSize: '0.875rem',
+                            fontWeight: 600,
+                            color: '#1e40af',
+                          }}
+                        >
+                          {drillDownCategory}
+                        </div>
+                      </div>
+                    )}
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
                         <Pie
                           data={categoryData}
                           cx="50%"
                           cy="50%"
-                          labelLine={false}
-                          label={(entry: any) => `${entry.name} ${((entry.percent ?? 0) * 100).toFixed(0)}%`}
-                          outerRadius={100}
+                          outerRadius={120}
                           fill="#8884d8"
                           dataKey="value"
-                          onClick={(data, index, event) => handleCategoryClick(data.name, event as any)}
+                          onClick={(data, index, event) => handlePieClick(data.name, event as any)}
                           style={{ cursor: 'pointer' }}
+                          labelLine={true}
+                          label={(props: any) => {
+                            const { cx, cy, midAngle, outerRadius, name, percent } = props
+                            const RADIAN = Math.PI / 180
+                            const radius = outerRadius + 25
+                            const x = cx + radius * Math.cos(-midAngle * RADIAN)
+                            const y = cy + radius * Math.sin(-midAngle * RADIAN)
+                            const percentValue = ((percent ?? 0) * 100).toFixed(0)
+
+                            if (percentValue < 1) return null
+
+                            const text = percentValue > 3 ? `${name} ${percentValue}%` : `${percentValue}%`
+
+                            return (
+                              <text
+                                x={x}
+                                y={y}
+                                fill="#1f2937"
+                                textAnchor={x > cx ? 'start' : 'end'}
+                                dominantBaseline="central"
+                                style={{
+                                  fontSize: '14px',
+                                  fontWeight: 600,
+                                  stroke: '#ffffff',
+                                  strokeWidth: 3,
+                                  paintOrder: 'stroke',
+                                }}
+                              >
+                                {text}
+                              </text>
+                            )
+                          }}
+                          isAnimationActive={false}
                         >
                           {categoryData.map((entry, index) => (
                             <Cell
                               key={`cell-${index}`}
                               fill={entry.color}
                               opacity={selectedCategories.size === 0 || selectedCategories.has(entry.name) ? 1 : 0.3}
+                              stroke="#fff"
+                              strokeWidth={2}
                             />
                           ))}
                         </Pie>
@@ -436,14 +554,16 @@ export default function BudgetPage() {
                         <td>
                           <select
                             value={transaction.category}
-                            onChange={(e) => {
+                            onChange={async (e) => {
                               const newCategory = e.target.value
                               // Update local state
                               setTransactions((prev) =>
                                 prev.map((t) => (t.id === transaction.id ? { ...t, category: newCategory } : t))
                               )
                               // Save to storage
-                              transactionStore.updateAny(transaction.id, { category: newCategory })
+                              await transactionStore.updateAny(transaction.id, { category: newCategory })
+                              // Save business-category mapping for auto-classification
+                              await transactionStore.saveBusinessCategory(transaction.business, newCategory)
                             }}
                             style={{
                               padding: '0.25rem',
@@ -451,6 +571,7 @@ export default function BudgetPage() {
                               border: '1px solid #d1d5db',
                               fontSize: '0.875rem',
                               width: '100%',
+                              direction: 'rtl',
                             }}
                           >
                             <option value="">בחר נושא</option>
@@ -458,11 +579,27 @@ export default function BudgetPage() {
                               .filter((cat) =>
                                 transaction.amount > 0 ? cat.type === 'income' : cat.type === 'expense'
                               )
-                              .map((cat) => (
-                                <option key={cat.id} value={cat.name}>
-                                  {cat.name}
-                                </option>
-                              ))}
+                              .map((cat) => {
+                                // For parent categories, render them and their sub-categories
+                                if (!cat.parentId) {
+                                  const subCats = cat.subCategories?.map((subId) =>
+                                    categories.find((c) => c.id === subId)
+                                  ).filter(Boolean) || []
+
+                                  return (
+                                    <React.Fragment key={cat.id}>
+                                      <option value={cat.name}>{cat.name}</option>
+                                      {subCats.map((subCat) => (
+                                        <option key={subCat!.id} value={subCat!.name}>
+                                          {'  ┘─ ' + subCat!.name}
+                                        </option>
+                                      ))}
+                                    </React.Fragment>
+                                  )
+                                }
+                                // Sub-categories are already rendered with their parents
+                                return null
+                              })}
                           </select>
                         </td>
                         <td

@@ -47,10 +47,11 @@ export default function ImportPage() {
       const dirHandle = await loadDirectoryHandle()
       setSavedDirHandle(dirHandle)
 
-      // Load imported files from localStorage
-      const data = transactionStore.getImportedFiles()
+      // Load imported files from IndexedDB
+      const data = await transactionStore.getImportedFiles()
       if (data) {
         const loadedFiles = data.files || []
+        console.log('📂 Loaded files:', loadedFiles)
         setFiles(loadedFiles)
 
         // Auto-select newest month
@@ -101,33 +102,15 @@ export default function ImportPage() {
     }
   }
 
-  const handleViewFile = (fileId: string) => {
+  const handleViewFile = async (fileId: string) => {
     const file = files.find((f) => f.id === fileId)
     if (!file) return
 
-    // Load transactions from localStorage
-    const data = transactionStore.getData()
-    if (!data) {
+    // Load transactions from IndexedDB
+    const transactions = await transactionStore.getData(file.fileType, file.processingMonth, file.cardNumber)
+    if (!transactions) {
       showToast('error', 'No transaction data found')
       return
-    }
-    let transactions: any[] = []
-
-    if (file.fileType === 'bank') {
-      // Show ALL bank transactions (not filtered by month for the view)
-      transactions = data.transactions.filter((t: any) => {
-        const transactionMonth = t.date.substring(3) // Extract MM/YYYY
-        return transactionMonth === file.processingMonth
-      })
-    } else if (file.fileType === 'credit-card') {
-      // Show ALL credit card payments for this card across all months
-      const creditData = data.creditCardData || {}
-      const cardMonths = creditData[file.cardNumber || '']
-
-      if (cardMonths) {
-        // Flatten all payments from all months
-        transactions = Object.values(cardMonths).flat()
-      }
     }
 
     setViewModal({
@@ -142,22 +125,22 @@ export default function ImportPage() {
     setYesNoModal({
       isOpen: true,
       question: 'האם אתה בטוח שברצונך למחוק את הקובץ?',
-      onConfirm: () => {
+      onConfirm: async () => {
         if (!fileToDelete) return
 
         // Delete transactions associated with this file
-        transactionStore.deleteTransactionsForFile(
+        await transactionStore.deleteTransactionsForFile(
           fileToDelete.fileType,
           fileToDelete.processingMonth || '',
           fileToDelete.cardNumber
         )
 
         // Remove from imported files list
-        const data = transactionStore.getImportedFiles()
+        const data = await transactionStore.getImportedFiles()
         if (data) {
           data.files = data.files.filter((f: ImportedFile) => f.id !== fileId)
           data.lastUpdated = new Date().toISOString()
-          transactionStore.saveImportedFiles(data)
+          await transactionStore.saveImportedFiles(data)
 
           // Update state
           setFiles(data.files)
@@ -192,29 +175,31 @@ export default function ImportPage() {
         return
       }
 
+      // Create file ID first (before importing)
+      const fileId = `${Date.now()}-${file.name}`
+
       // Import and save transactions
       const { fileImportService } = await import('@/app/services/fileImportService')
 
       if (metadata.fileType === 'credit-card' && metadata.cardNumber) {
-        await fileImportService.importCreditCardFile(file, metadata.cardNumber, null)
+        await fileImportService.importCreditCardFile(file, metadata.cardNumber, null, fileId)
       } else if (metadata.fileType === 'bank' && metadata.processingMonth) {
-        await fileImportService.importBankFile(file, metadata.processingMonth)
+        await fileImportService.importBankFile(file, metadata.processingMonth, fileId)
       }
 
       // Create imported file record
-      const importedFile: ImportedFile = {
-        id: `${Date.now()}-${file.name}`,
+      const importedFile: any = {
         fileName: file.name,
-        importDate: new Date().toISOString(),
+        importedAt: new Date().toISOString(),
         fileType: metadata.fileType,
-        processingMonth: metadata.processingMonth,
+        processingMonth: metadata.processingMonth || '',
         accountNumber: metadata.accountNumber,
         cardNumber: metadata.cardNumber,
         transactionCount: metadata.transactionCount,
       }
 
-      // Save to localStorage
-      const existingData = transactionStore.getImportedFiles() || { version: '1.0', files: [], lastUpdated: '' }
+      // Save to IndexedDB
+      const existingData = await transactionStore.getImportedFiles() || { files: [], lastUpdated: '' }
 
       // Check for duplicates
       const isDuplicate = existingData.files.some(
@@ -225,7 +210,7 @@ export default function ImportPage() {
         setYesNoModal({
           isOpen: true,
           question: `הקובץ "${file.name}" כבר קיים. האם להחליף אותו?`,
-          onConfirm: () => {
+          onConfirm: async () => {
             // Remove old version
             existingData.files = existingData.files.filter(
               (f: ImportedFile) => !(f.fileName === importedFile.fileName && f.processingMonth === importedFile.processingMonth)
@@ -233,7 +218,7 @@ export default function ImportPage() {
 
             existingData.files.push(importedFile)
             existingData.lastUpdated = new Date().toISOString()
-            transactionStore.saveImportedFiles(existingData)
+            await transactionStore.saveImportedFiles(existingData)
 
             // Update state
             setFiles(existingData.files)
@@ -253,7 +238,7 @@ export default function ImportPage() {
 
       existingData.files.push(importedFile)
       existingData.lastUpdated = new Date().toISOString()
-      transactionStore.saveImportedFiles(existingData)
+      await transactionStore.saveImportedFiles(existingData)
 
       // Update state
       setFiles(existingData.files)
@@ -286,29 +271,32 @@ export default function ImportPage() {
     : files
 
   // Get actual transaction count from storage
-  const getActualTransactionCount = (file: ImportedFile): number => {
-    const data = transactionStore.getData()
-    if (!data) return file.transactionCount
+  const [transactionCounts, setTransactionCounts] = useState<Record<string, number>>({})
 
-    if (file.fileType === 'bank') {
-      // Count bank transactions for this month
-      return data.transactions.filter((t: any) => {
-        const transactionMonth = t.date.substring(3)
-        return transactionMonth === file.processingMonth
-      }).length
-    } else if (file.fileType === 'credit-card') {
-      // Count ALL credit card payments for this card across all months
-      const creditData = data.creditCardData || {}
-      const cardMonths = creditData[file.cardNumber || '']
-      if (!cardMonths) return 0
+  // Load transaction counts for all files
+  useEffect(() => {
+    const loadCounts = async () => {
+      const counts: Record<string, number> = {}
 
-      // Sum all payments across all months for this card
-      return Object.values(cardMonths).reduce((total: number, payments: any) => {
-        return total + (payments?.length || 0)
-      }, 0)
+      for (const file of files) {
+        const transactions = await transactionStore.getData(
+          file.fileType,
+          file.processingMonth,
+          file.cardNumber
+        )
+        counts[file.id] = transactions?.length || 0
+      }
+
+      setTransactionCounts(counts)
     }
 
-    return file.transactionCount
+    if (files.length > 0) {
+      loadCounts()
+    }
+  }, [files])
+
+  const getActualTransactionCount = (file: ImportedFile): number => {
+    return transactionCounts[file.id] ?? file.transactionCount
   }
 
   return (
@@ -389,15 +377,15 @@ export default function ImportPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredFiles.map((file) => (
-                  <tr key={file.id}>
+                {filteredFiles.map((file, index) => (
+                  <tr key={file.id || `${file.fileName}-${index}`}>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <span>{file.fileType === 'credit-card' ? '💳' : '📄'}</span>
                         <span>{file.fileName}</span>
                       </div>
                     </td>
-                    <td>{formatDateTime(file.importDate)}</td>
+                    <td>{formatDateTime(file.importedAt || '')}</td>
                     <td>{file.fileType === 'bank' ? 'בנק' : 'כרטיס אשראי'}</td>
                     <td>{file.processingMonth ? formatMonthDisplay(file.processingMonth) : '—'}</td>
                     <td>{file.accountNumber || file.cardNumber || '—'}</td>
@@ -521,19 +509,19 @@ export default function ImportPage() {
                   <tbody>
                     {viewModal.transactions.map((t: any, idx) => (
                       <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                        <td style={{ padding: '0.5rem' }}>{t.transactionDate}</td>
-                        <td style={{ padding: '0.5rem' }}>{t.merchant}</td>
+                        <td style={{ padding: '0.5rem' }}>{t.date}</td>
+                        <td style={{ padding: '0.5rem' }}>{t.merchant || t.description}</td>
                         <td style={{ padding: '0.5rem', color: '#ef4444', fontWeight: 500 }}>
-                          {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(t.amount)}
+                          {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(Math.abs(t.amount))}
                         </td>
                         <td style={{ padding: '0.5rem', fontSize: '0.875rem' }}>
-                          {t.totalSteps > 1 ? (
+                          {t.totalSteps && t.totalSteps > 1 ? (
                             <div>
                               <div style={{ fontWeight: 500 }}>
                                 {t.currentStep}/{t.totalSteps}
                               </div>
                               <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
-                                Total: {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(t.amount * t.totalSteps)}
+                                Total: {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(Math.abs(t.totalAmount || t.amount))}
                               </div>
                             </div>
                           ) : (
