@@ -184,8 +184,14 @@ export const transactionStore = {
     const chargingMonth = chargingDate ? chargingDate.substring(3) : null
 
     if (chargingMonth) {
+      // Add chargingDate to each payment
+      const paymentsWithChargingDate = payments.map(p => ({
+        ...p,
+        chargingDate: chargingDate,
+      }))
+
       // Replace payments for this charging month
-      data.creditCardData[cardNumber][chargingMonth] = payments
+      data.creditCardData[cardNumber][chargingMonth] = paymentsWithChargingDate
     }
 
     data.lastUpdated = new Date().toISOString()
@@ -233,10 +239,10 @@ export const transactionStore = {
     return bankFile?.accountNumber || 'Bank'
   },
 
-  // Get cash flow data for a specific month (opening balance, transactions, credit charges)
+  // Get cash flow data for a specific month (opening balance, transactions, credit charges, expected fixed)
   getCashFlowData: (selectedMonth: string) => {
     const data = transactionStore.getData()
-    if (!data) return { openingBalance: 0, transactions: [], creditCharges: [] }
+    if (!data) return { openingBalance: 0, transactions: [], creditCharges: [], expectedFixed: [] }
 
     // Get bank transactions for the selected month
     const monthTransactions = data.transactions.filter((t: Transaction) => {
@@ -279,9 +285,12 @@ export const transactionStore = {
       if (payments && payments.length > 0 && !paidCardNumbers.has(cardNumber)) {
         const cardTotal = payments.reduce((sum: number, p: any) => sum + p.amount, 0)
         const paymentWithDate = payments.find((p: any) => p.chargingDate)
-        const chargingDate = paymentWithDate?.chargingDate?.substring(0, 10) || selectedMonth
 
-        chargesByCard.set(cardNumber, { totalAmount: cardTotal, chargingDate })
+        // Only include if we have a valid charging date
+        if (paymentWithDate?.chargingDate) {
+          const chargingDate = paymentWithDate.chargingDate
+          chargesByCard.set(cardNumber, { totalAmount: cardTotal, chargingDate })
+        }
       }
     })
 
@@ -293,10 +302,27 @@ export const transactionStore = {
       })
     )
 
+    // Find fixed transactions from previous month that haven't occurred in current month
+    const budgetTransactions = transactionStore.getBudgetTransactions(selectedMonth)
+    const currentMonthBusinesses = new Set(budgetTransactions.map(t => t.business))
+
+    // Get fixed transactions from previous month (both income and expenses)
+    const prevMonthBudget = transactionStore.getBudgetTransactions(prevMonth)
+    const expectedFixed = prevMonthBudget
+      .filter(t => t.isFixed) // Only fixed transactions
+      .filter(t => !currentMonthBusinesses.has(t.business)) // Not yet in current month
+      .map(t => ({
+        business: t.business,
+        amount: t.amount,
+        category: t.category,
+        date: t.date, // Keep original date to extract day
+      }))
+
     return {
       openingBalance,
       transactions: monthTransactions,
       creditCharges,
+      expectedFixed,
     }
   },
 
