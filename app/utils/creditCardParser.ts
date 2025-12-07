@@ -126,15 +126,16 @@ const tryParseDate = (value: SheetCell): Date | null => {
 }
 
 const findBillingDate = (rows: SheetRow[]): Date | null => {
-  // Look for billing date in "חודש החיוב" row
+  // Look for billing date in "חודש החיוב" or "חיוב בתאריך"
   for (let i = 0; i < Math.min(10, rows.length); i++) {
     for (const cell of rows[i]) {
-      if (typeof cell === 'string' && cell.includes('חודש החיוב')) {
+      if (typeof cell === 'string' && (cell.includes('חודש החיוב') || cell.includes('חיוב בתאריך'))) {
         const dateMatch = cell.match(/(\d{2})\/(\d{2})\/(\d{4})/)
         if (dateMatch) {
           const [, day, month, year] = dateMatch
           const parsed = new Date(parseInt(year, 10), parseInt(month, 10) - 1, parseInt(day, 10))
           if (!Number.isNaN(parsed.getTime())) {
+            console.log(`✅ Found billing date: ${day}/${month}/${year} in cell: "${cell}"`)
             return parsed
           }
         }

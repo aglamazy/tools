@@ -5,7 +5,7 @@ import { transactionStore } from '@/app/stores/transactionStore'
 
 export const fileImportService = {
   // Import credit card file
-  importCreditCardFile: async (file: File, cardNumber: string, billingDate: Date | null) => {
+  importCreditCardFile: async (file: File, cardNumber: string, billingDate: Date | null, fileId?: string) => {
     // Read Excel file
     const rows = await readExcelFile(file)
 
@@ -21,16 +21,24 @@ export const fileImportService = {
       ? `${String(effectiveBillingDate.getDate()).padStart(2, '0')}/${String(effectiveBillingDate.getMonth() + 1).padStart(2, '0')}/${effectiveBillingDate.getFullYear()}`
       : undefined
 
-    console.log('💳 Importing credit card file with charging date:', chargingDateStr)
+    // Extract processing month from billing date (MM/YYYY)
+    const processingMonth = effectiveBillingDate
+      ? `${String(effectiveBillingDate.getMonth() + 1).padStart(2, '0')}/${effectiveBillingDate.getFullYear()}`
+      : ''
+
+    console.log('💳 Importing credit card file with charging date:', chargingDateStr, 'processing month:', processingMonth)
+
+    // Generate fileId if not provided
+    const effectiveFileId = fileId || `credit-${cardNumber}-${processingMonth}`
 
     // Save to store - all payments get the same charging date
-    transactionStore.saveCreditCardData(cardNumber, statement.payments, chargingDateStr)
+    await transactionStore.saveCreditCardData(cardNumber, statement.payments, chargingDateStr || '', processingMonth, effectiveFileId)
 
     return statement.payments.length
   },
 
   // Import bank file
-  importBankFile: async (file: File, processingMonth: string) => {
+  importBankFile: async (file: File, processingMonth: string, fileId?: string) => {
     // Read Excel file
     const rows = await readExcelFile(file)
 
@@ -43,8 +51,11 @@ export const fileImportService = {
     // Parse bank transactions
     const transactions = parseBankTransactions(rows, accountNumber)
 
+    // Generate fileId if not provided
+    const effectiveFileId = fileId || `bank-${processingMonth}`
+
     // Save to store
-    transactionStore.saveBankTransactions(processingMonth, transactions)
+    await transactionStore.saveBankTransactions(processingMonth, transactions, accountNumber, effectiveFileId)
 
     return transactions.length
   },
