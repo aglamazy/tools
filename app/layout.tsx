@@ -5,6 +5,7 @@ import './globals.css'
 import Sidebar from './components/Sidebar'
 import PageHeader from './components/PageHeader'
 import { ToastProvider } from './components/ToastContainer'
+import MigrationRunner from './components/MigrationRunner'
 
 if (!process.env.NEXT_PUBLIC_SITE_URL) {
   throw new Error('Missing NEXT_PUBLIC_SITE_URL environment variable')
@@ -47,6 +48,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="he">
       <body>
         <ToastProvider>
+          <MigrationRunner />
           <PageHeader />
           <div className="app-layout">
             <Sidebar />
