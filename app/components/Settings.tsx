@@ -12,6 +12,7 @@ import {
 import { generateDistinctColors } from '@/app/utils/colorGenerator'
 import YesNoModal from './YesNoModal'
 import Modal from './Modal'
+import { db } from '@/app/db/financeDB'
 
 const DEFAULT_CATEGORIES: Category[] = []
 
@@ -21,16 +22,19 @@ export default function Settings() {
   const [categories, setCategories] = useState<Category[]>([])
   const [editingCategory, setEditingCategory] = useState<Category | null>(null)
   const [isAddingNew, setIsAddingNew] = useState(false)
+  const [addingSubCategoryFor, setAddingSubCategoryFor] = useState<string | null>(null)
   const [dirHandle, setDirHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [dirError, setDirError] = useState('')
   const [dirMeta, setDirMeta] = useState<{ name: string; savedAt: string } | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean; categoryId: string | null }>({ isOpen: false, categoryId: null })
   const [importConfirm, setImportConfirm] = useState<{ isOpen: boolean; file: File | null }>({ isOpen: false, file: null })
   const [alertModal, setAlertModal] = useState<{ isOpen: boolean; message: string }>({ isOpen: false, message: '' })
+  const [dbStats, setDbStats] = useState<{ transactions: number; importedFiles: number; businessCategories: number } | null>(null)
 
   useEffect(() => {
     loadCategories()
     initDirectoryHandle()
+    loadDatabaseStats()
   }, [])
 
   const loadCategories = () => {
@@ -66,6 +70,23 @@ export default function Settings() {
       } else {
         setDirHandle(null)
       }
+    }
+  }
+
+  const loadDatabaseStats = async () => {
+    try {
+      const [transactionsCount, importedFilesCount, businessCategoriesCount] = await Promise.all([
+        db.transactions.count(),
+        db.importedFiles.count(),
+        db.businessCategories.count(),
+      ])
+      setDbStats({
+        transactions: transactionsCount,
+        importedFiles: importedFilesCount,
+        businessCategories: businessCategoriesCount,
+      })
+    } catch (err) {
+      console.error('Error loading database stats:', err)
     }
   }
 
@@ -179,6 +200,25 @@ export default function Settings() {
     }
     setEditingCategory(newCategory)
     setIsAddingNew(true)
+    setAddingSubCategoryFor(null)
+  }
+
+  const handleAddSubCategory = (parentId: string) => {
+    const parent = categories.find((c) => c.id === parentId)
+    if (!parent) return
+
+    const newSubCategory: Category = {
+      id: `custom-${Date.now()}`,
+      name: '',
+      type: parent.type,
+      color: parent.color, // Inherit parent color
+      createdAt: new Date().toISOString(),
+      isFixed: false,
+      parentId: parentId,
+    }
+    setEditingCategory(newSubCategory)
+    setIsAddingNew(true)
+    setAddingSubCategoryFor(parentId)
   }
 
   const handleSaveCategory = () => {
@@ -189,6 +229,19 @@ export default function Settings() {
     let updatedCategories: Category[]
     if (isAddingNew) {
       updatedCategories = [...categories, editingCategory]
+
+      // If adding a sub-category, update parent's subCategories array
+      if (editingCategory.parentId) {
+        updatedCategories = updatedCategories.map((cat) => {
+          if (cat.id === editingCategory.parentId) {
+            return {
+              ...cat,
+              subCategories: [...(cat.subCategories || []), editingCategory.id],
+            }
+          }
+          return cat
+        })
+      }
     } else {
       updatedCategories = categories.map((cat) =>
         cat.id === editingCategory.id ? editingCategory : cat
@@ -199,6 +252,7 @@ export default function Settings() {
     saveCategories(updatedCategories)
     setEditingCategory(null)
     setIsAddingNew(false)
+    setAddingSubCategoryFor(null)
   }
 
   const handleDeleteCategory = (categoryId: string) => {
@@ -208,7 +262,31 @@ export default function Settings() {
   const confirmDelete = () => {
     if (!deleteConfirm.categoryId) return
 
-    const updatedCategories = categories.filter((cat) => cat.id !== deleteConfirm.categoryId)
+    const categoryToDelete = categories.find((c) => c.id === deleteConfirm.categoryId)
+    if (!categoryToDelete) return
+
+    // Remove the category and all its sub-categories
+    let updatedCategories = categories.filter((cat) => {
+      // Remove the category itself
+      if (cat.id === deleteConfirm.categoryId) return false
+      // Remove sub-categories of this category
+      if (cat.parentId === deleteConfirm.categoryId) return false
+      return true
+    })
+
+    // If deleting a sub-category, remove it from parent's subCategories array
+    if (categoryToDelete.parentId) {
+      updatedCategories = updatedCategories.map((cat) => {
+        if (cat.id === categoryToDelete.parentId) {
+          return {
+            ...cat,
+            subCategories: (cat.subCategories || []).filter((id) => id !== deleteConfirm.categoryId),
+          }
+        }
+        return cat
+      })
+    }
+
     setCategories(updatedCategories)
     saveCategories(updatedCategories)
     setDeleteConfirm({ isOpen: false, categoryId: null })
@@ -334,6 +412,100 @@ export default function Settings() {
     reader.readAsText(importConfirm.file)
   }
 
+  // Helper to render a category row with its sub-categories
+  const renderCategoryRow = (category: Category, isSubCategory: boolean = false) => (
+    <React.Fragment key={category.id}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.75rem',
+          padding: '0.5rem 0.75rem',
+          paddingRight: isSubCategory ? '2rem' : '0.75rem',
+          borderRadius: '0.5rem',
+          background: isSubCategory ? '#fafafa' : '#f8fafc',
+          border: isSubCategory ? '1px solid #e5e7eb' : '1px solid #e2e8f0',
+          marginRight: isSubCategory ? '1rem' : '0',
+        }}
+      >
+        <input
+          type="color"
+          value={category.color}
+          onChange={(e) => {
+            const updated = categories.map((cat) =>
+              cat.id === category.id ? { ...cat, color: e.target.value } : cat
+            )
+            setCategories(updated)
+            saveCategories(updated)
+          }}
+          style={{ width: '32px', height: '32px', cursor: 'pointer', border: 'none', borderRadius: '4px' }}
+        />
+        <div style={{ flex: 1, fontWeight: isSubCategory ? 400 : 500, fontSize: '0.95rem' }}>
+          {isSubCategory && '┘─ '}
+          {category.name}
+        </div>
+        {!isSubCategory && (
+          <button
+            onClick={() => handleAddSubCategory(category.id)}
+            style={{
+              padding: '0.35rem 0.75rem',
+              fontSize: '0.85rem',
+              background: 'transparent',
+              border: '1px solid #cbd5e1',
+              borderRadius: '0.375rem',
+              cursor: 'pointer',
+              color: '#475569',
+            }}
+            title="הוסף תת-נושא"
+          >
+            ➕
+          </button>
+        )}
+        <button
+          onClick={() => {
+            setEditingCategory({ ...category, isFixed: category.isFixed ?? false })
+            setIsAddingNew(false)
+            setAddingSubCategoryFor(null)
+          }}
+          style={{
+            padding: '0.35rem 0.75rem',
+            fontSize: '0.85rem',
+            background: 'transparent',
+            border: '1px solid #cbd5e1',
+            borderRadius: '0.375rem',
+            cursor: 'pointer',
+            color: '#475569',
+          }}
+        >
+          ✏️
+        </button>
+        <button
+          onClick={() => handleDeleteCategory(category.id)}
+          style={{
+            padding: '0.35rem 0.75rem',
+            fontSize: '0.85rem',
+            background: 'transparent',
+            border: '1px solid #fecaca',
+            borderRadius: '0.375rem',
+            cursor: 'pointer',
+            color: '#dc2626',
+          }}
+        >
+          🗑️
+        </button>
+      </div>
+      {/* Render sub-categories */}
+      {category.subCategories && category.subCategories.length > 0 && (
+        <div style={{ marginTop: '0.25rem', marginBottom: '0.25rem' }}>
+          {category.subCategories.map((subId) => {
+            const subCategory = categories.find((c) => c.id === subId)
+            return subCategory ? renderCategoryRow(subCategory, true) : null
+          })}
+        </div>
+      )}
+    </React.Fragment>
+  )
+
   return (
     <div className="card">
       <header>
@@ -361,6 +533,33 @@ export default function Settings() {
           </div>
         </div>
       </header>
+
+      <section style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid #e2e8f0', borderRadius: '0.75rem', background: '#f0f9ff' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: '1.05rem' }}>📊 סטטיסטיקות מאגר נתונים</h2>
+            <p style={{ margin: '0.25rem 0 0', color: '#075985', fontSize: '0.95rem' }}>
+              מידע על כמות הרשומות במאגר הנתונים המקומי
+            </p>
+            {dbStats && (
+              <div style={{ marginTop: '0.75rem', display: 'flex', gap: '1.5rem', fontSize: '0.9rem' }}>
+                <div>
+                  <strong>עסקאות:</strong> {dbStats.transactions.toLocaleString('he-IL')}
+                </div>
+                <div>
+                  <strong>קבצים מיובאים:</strong> {dbStats.importedFiles.toLocaleString('he-IL')}
+                </div>
+                <div>
+                  <strong>מיפוי עסקים-נושאים:</strong> {dbStats.businessCategories.toLocaleString('he-IL')}
+                </div>
+              </div>
+            )}
+          </div>
+          <button onClick={loadDatabaseStats} className="file-picker secondary" style={{ flexShrink: 0 }}>
+            🔄 רענן
+          </button>
+        </div>
+      </section>
 
       <section style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid #e2e8f0', borderRadius: '0.75rem', background: '#fef3c7' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
@@ -429,67 +628,9 @@ export default function Settings() {
           <h2 style={{ fontSize: '1.1rem', marginBottom: '0.75rem', color: '#10b981' }}>נושאי הכנסה</h2>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             {categories
-              .filter((cat) => cat.type === 'income')
+              .filter((cat) => cat.type === 'income' && !cat.parentId) // Only show parent categories
               .sort((a, b) => a.name.localeCompare(b.name, 'he'))
-              .map((category) => (
-              <div
-                key={category.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.75rem',
-                  padding: '0.5rem 0.75rem',
-                  borderRadius: '0.5rem',
-                  background: '#f8fafc',
-                  border: '1px solid #e2e8f0',
-                }}
-              >
-                <input
-                  type="color"
-                  value={category.color}
-                  onChange={(e) => {
-                    const updated = categories.map((cat) =>
-                      cat.id === category.id ? { ...cat, color: e.target.value } : cat
-                    )
-                    setCategories(updated)
-                    saveCategories(updated)
-                  }}
-                  style={{ width: '32px', height: '32px', cursor: 'pointer', border: 'none', borderRadius: '4px' }}
-                />
-                <div style={{ flex: 1, fontWeight: 500, fontSize: '0.95rem' }}>{category.name}</div>
-                <button
-                  onClick={() => {
-                    setEditingCategory({ ...category, isFixed: category.isFixed ?? false })
-                    setIsAddingNew(false)
-                  }}
-                  style={{
-                    padding: '0.35rem 0.75rem',
-                    fontSize: '0.85rem',
-                    background: 'transparent',
-                    border: '1px solid #cbd5e1',
-                    borderRadius: '0.375rem',
-                    cursor: 'pointer',
-                    color: '#475569',
-                  }}
-                >
-                  ✏️
-                </button>
-                <button
-                  onClick={() => handleDeleteCategory(category.id)}
-                  style={{
-                    padding: '0.35rem 0.75rem',
-                    fontSize: '0.85rem',
-                    background: 'transparent',
-                    border: '1px solid #fecaca',
-                    borderRadius: '0.375rem',
-                    cursor: 'pointer',
-                    color: '#dc2626',
-                  }}
-                >
-                  🗑️
-                </button>
-              </div>
-            ))}
+              .map((category) => renderCategoryRow(category))}
             <button
               onClick={() => handleAddCategory('income')}
               style={{
@@ -513,67 +654,9 @@ export default function Settings() {
           <h2 style={{ fontSize: '1.1rem', marginBottom: '0.75rem', color: '#ef4444' }}>נושאי הוצאה</h2>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             {categories
-              .filter((cat) => cat.type === 'expense')
+              .filter((cat) => cat.type === 'expense' && !cat.parentId) // Only show parent categories
               .sort((a, b) => a.name.localeCompare(b.name, 'he'))
-              .map((category) => (
-              <div
-                key={category.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.75rem',
-                  padding: '0.5rem 0.75rem',
-                  borderRadius: '0.5rem',
-                  background: '#f8fafc',
-                  border: '1px solid #e2e8f0',
-                }}
-              >
-                <input
-                  type="color"
-                  value={category.color}
-                  onChange={(e) => {
-                    const updated = categories.map((cat) =>
-                      cat.id === category.id ? { ...cat, color: e.target.value } : cat
-                    )
-                    setCategories(updated)
-                    saveCategories(updated)
-                  }}
-                  style={{ width: '32px', height: '32px', cursor: 'pointer', border: 'none', borderRadius: '4px' }}
-                />
-                <div style={{ flex: 1, fontWeight: 500, fontSize: '0.95rem' }}>{category.name}</div>
-                <button
-                  onClick={() => {
-                    setEditingCategory({ ...category, isFixed: category.isFixed ?? false })
-                    setIsAddingNew(false)
-                  }}
-                  style={{
-                    padding: '0.35rem 0.75rem',
-                    fontSize: '0.85rem',
-                    background: 'transparent',
-                    border: '1px solid #cbd5e1',
-                    borderRadius: '0.375rem',
-                    cursor: 'pointer',
-                    color: '#475569',
-                  }}
-                >
-                  ✏️
-                </button>
-                <button
-                  onClick={() => handleDeleteCategory(category.id)}
-                  style={{
-                    padding: '0.35rem 0.75rem',
-                    fontSize: '0.85rem',
-                    background: 'transparent',
-                    border: '1px solid #fecaca',
-                    borderRadius: '0.375rem',
-                    cursor: 'pointer',
-                    color: '#dc2626',
-                  }}
-                >
-                  🗑️
-                </button>
-              </div>
-            ))}
+              .map((category) => renderCategoryRow(category))}
             <button
               onClick={() => handleAddCategory('expense')}
               style={{
@@ -598,13 +681,28 @@ export default function Settings() {
         <div className="modal-overlay" onClick={() => setEditingCategory(null)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '500px' }}>
             <div className="modal-header">
-              <h2>{isAddingNew ? 'הוספת נושא חדש' : 'עריכת נושא'}</h2>
+              <h2>
+                {isAddingNew
+                  ? editingCategory.parentId
+                    ? 'הוספת תת-נושא'
+                    : 'הוספת נושא חדש'
+                  : editingCategory.parentId
+                  ? 'עריכת תת-נושא'
+                  : 'עריכת נושא'}
+              </h2>
               <button className="modal-close" onClick={() => setEditingCategory(null)}>
                 ✕
               </button>
             </div>
             <div className="modal-body">
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {editingCategory.parentId && (
+                  <div style={{ padding: '0.75rem', background: '#f0f9ff', borderRadius: '0.5rem', border: '1px solid #bfdbfe' }}>
+                    <span style={{ fontSize: '0.875rem', color: '#075985' }}>
+                      תת-נושא של: <strong>{categories.find((c) => c.id === editingCategory.parentId)?.name}</strong>
+                    </span>
+                  </div>
+                )}
                 <div>
                   <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>
                     שם הנושא
