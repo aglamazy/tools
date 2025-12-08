@@ -1,5 +1,6 @@
 import { SheetCell, SheetRow } from '@/app/types/transactions'
 import type { Parser, ParsedBankResult } from '../types'
+import { getCardTypeIndicators } from '@/app/services/appSettingsService'
 
 export type ParsedBankTransaction = {
   date: string
@@ -51,8 +52,13 @@ const toNumber = (value: string | number): number => {
  *
  * @param rows - The sheet rows to parse
  * @param accountNumber - The bank account number (e.g., "123-456789")
+ * @param cardTypeIndicators - Card type indicators to match (e.g., ['ישראכרט', 'פרימים אקספרס'])
  */
-export function parseBankTransactions(rows: SheetRow[], accountNumber: string): ParsedBankTransaction[] {
+export function parseBankTransactions(
+  rows: SheetRow[],
+  accountNumber: string,
+  cardTypeIndicators: string[] = ['ישראכרט']
+): ParsedBankTransaction[] {
   const sanitized = rows.map((row) => row.map(normalizeCell)) as Array<Array<string | number>>
 
   // Find header row
@@ -87,6 +93,11 @@ export function parseBankTransactions(rows: SheetRow[], accountNumber: string): 
   // Track index per date for generating IDs
   const dateIndexMap = new Map<string, number>()
 
+  // Build regex pattern from card type indicators
+  const escapedIndicators = cardTypeIndicators.map((ind) => ind.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  const cardPatternString = escapedIndicators.join('|')
+  const cardPattern = new RegExp(`(\\d{4})?\\s*-?\\s*(${cardPatternString})`)
+
   rowsAfterHeader.forEach((row, rowIndex) => {
     const date = row[dateIdx]
     const description = row[descriptionIdx]
@@ -106,8 +117,9 @@ export function parseBankTransactions(rows: SheetRow[], accountNumber: string): 
     const balance = balanceIdx !== -1 ? toNumber(row[balanceIdx]) : 0
 
     // Detect credit card charges
-    const descriptionStr = String(description)
-    const cardNumberMatch = descriptionStr.match(/(\d{4})\s*-?\s*ישראכרט/)
+    const descriptionStr = String(description).trim().replace(/\s+/g, ' ');
+
+    const cardNumberMatch = descriptionStr.match(cardPattern)
     const isCreditCard = !!cardNumberMatch
     const cardNumber = cardNumberMatch ? cardNumberMatch[1] : undefined
 
@@ -152,14 +164,15 @@ export function extractAccountNumber(rows: SheetRow[]): string | null {
 /**
  * Extract preview information from bank transaction file.
  * Returns account number, processing month, and transaction count.
+ * Uses provided card indicators or defaults to ['ישראכרט']
  */
-export function extractBankPreview(rows: SheetRow[]): BankPreview {
+export function extractBankPreview(rows: SheetRow[], cardTypeIndicators?: string[]): BankPreview {
   // Extract account number from header rows
   const accountNumber = extractAccountNumber(rows)
 
   // Parse transactions to get count and first transaction date
   // Use a placeholder account number for preview if not found
-  const transactions = parseBankTransactions(rows, accountNumber || 'unknown')
+  const transactions = parseBankTransactions(rows, accountNumber || 'unknown', cardTypeIndicators)
 
   // Extract processing month from first transaction
   let processingMonth: string | null = null
@@ -177,6 +190,15 @@ export function extractBankPreview(rows: SheetRow[]): BankPreview {
     processingMonth,
     transactionCount: transactions.length,
   }
+}
+
+/**
+ * Extract preview information from bank transaction file asynchronously.
+ * Fetches card type indicators from app settings.
+ */
+export async function extractBankPreviewAsync(rows: SheetRow[]): Promise<BankPreview> {
+  const cardTypeIndicators = await getCardTypeIndicators()
+  return extractBankPreview(rows, cardTypeIndicators)
 }
 
 const detectFibi = (rows: SheetRow[]): { match: boolean; confidence: number } => {
@@ -197,10 +219,10 @@ export const genericFibiParser: Parser = {
     const { match, confidence } = detectFibi(rows)
     return { match, confidence, issuer: 'fibi', kind: 'bank' }
   },
-  parse: (rows: SheetRow[]): ParsedBankResult => {
+  parse: (rows: SheetRow[], cardTypeIndicators?: string[]): ParsedBankResult => {
     const detection = detectFibi(rows)
     const accountNumber = extractAccountNumber(rows)
-    const transactions = parseBankTransactions(rows, accountNumber || 'unknown')
+    const transactions = parseBankTransactions(rows, accountNumber || 'unknown', cardTypeIndicators)
 
     // Derive processing month from first transaction if present
     let processingMonth: string | null = null

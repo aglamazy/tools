@@ -55,6 +55,7 @@ export type BudgetTransaction = {
   paymentMethod: string
   installmentInfo?: string
   totalAmount?: number
+  isCreditCardCharge?: boolean
 }
 
 export type TransactionUpdate = {
