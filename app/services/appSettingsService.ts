@@ -5,7 +5,7 @@ export interface CardTypeIndicatorsSettings {
 }
 
 const DEFAULT_CARD_INDICATORS: CardTypeIndicatorsSettings = {
-  indicators: ['ישראכרט', 'פרימים אקספרס'],
+  indicators: ['ישראכרט', 'פרימיום אקספרס'],
 }
 
 /**

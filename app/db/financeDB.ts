@@ -64,12 +64,20 @@ export interface Task {
   createdAt: string
 }
 
+export interface AppSettings {
+  id?: number
+  key: string // e.g., 'cardTypeIndicators'
+  value: any // Store any JSON-serializable value
+  updatedAt: string
+}
+
 class FinanceDB extends Dexie {
   transactions!: Table<Transaction, number>
   importedFiles!: Table<ImportedFile, number>
   categories!: Table<Category, number>
   businessCategories!: Table<BusinessCategory, number>
   tasks!: Table<Task, number>
+  appSettings!: Table<AppSettings, number>
 
   constructor() {
     super('FinanceDB')
@@ -101,6 +109,16 @@ class FinanceDB extends Dexie {
       categories: '++id, name, type',
       businessCategories: '++id, &business',
       tasks: '++id, createdAt, priority',
+    })
+
+    // Define schema version 4 - add app settings
+    this.version(4).stores({
+      transactions: '++id, type, month, accountNumber, cardNumber, date, chargingDate, [type+month], [cardNumber+month], [accountNumber+month], fileId',
+      importedFiles: '++id, fileName, fileType, processingMonth, [fileType+processingMonth], [cardNumber+processingMonth]',
+      categories: '++id, name, type',
+      businessCategories: '++id, &business',
+      tasks: '++id, createdAt, priority',
+      appSettings: '++id, &key',
     })
   }
 }
