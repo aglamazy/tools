@@ -65,7 +65,7 @@ export default function BudgetPage() {
 
   // Calculate category totals for pie chart with hierarchical structure
   const getCategoryData = () => {
-    const expenses = transactions.filter((t) => t.amount < 0)
+    const expenses = transactions.filter((t) => t.amount < 0 && !t.isCreditCardCharge)
     const parentTotals = new Map<string, { total: number; color: string; subCategories: Map<string, { total: number; color: string }> }>()
 
     expenses.forEach((t) => {
@@ -171,6 +171,11 @@ export default function BudgetPage() {
 
   // Filter transactions based on hideClassified toggle and selected categories
   const displayedTransactions = transactions.filter((t) => {
+    // Skip credit card charges (they appear in the breakdown, not in main list)
+    if (t.isCreditCardCharge) {
+      return false
+    }
+
     // First apply category filter if any are selected
     if (selectedCategories.size > 0) {
       return t.category && selectedCategories.has(t.category)
