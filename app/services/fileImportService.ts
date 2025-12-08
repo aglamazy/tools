@@ -2,6 +2,7 @@ import { readExcelFile } from '@/app/utils/excelReader'
 import { parseCreditWithRegistry } from '@/app/utils/creditCardParser'
 import { parseBankWithRegistry } from '@/app/utils/bankParser'
 import { transactionStore } from '@/app/stores/transactionStore'
+import { getCardTypeIndicators } from '@/app/services/appSettingsService'
 
 export const fileImportService = {
   // Import credit card file
@@ -37,8 +38,6 @@ export const fileImportService = {
         ? `${String(effectiveBillingDate.getMonth() + 1).padStart(2, '0')}/${effectiveBillingDate.getFullYear()}`
         : '')
 
-    console.log('💳 Importing credit card file with charging date:', chargingDateStr, 'processing month:', processingMonth)
-
     // Generate fileId if not provided
     const effectiveFileId = fileId || `credit-${cardNumberToUse}-${processingMonth}`
 
@@ -53,8 +52,11 @@ export const fileImportService = {
     // Read Excel file
     const rows = await readExcelFile(file)
 
+    // Get card type indicators from settings
+    const cardTypeIndicators = await getCardTypeIndicators()
+
     // Parse bank transactions via registry (issuer-aware)
-    const parsed = parseBankWithRegistry(rows)
+    const parsed = parseBankWithRegistry(rows, cardTypeIndicators)
     const accountNumber = parsed.accountNumber
 
     if (!accountNumber) {

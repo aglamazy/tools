@@ -551,6 +551,7 @@ const handleDeleteFile = (file: ImportedFile) => {
                       <th style={{ padding: '0.5rem', textAlign: 'right' }}>Description</th>
                       <th style={{ padding: '0.5rem', textAlign: 'right' }}>Amount</th>
                       <th style={{ padding: '0.5rem', textAlign: 'right' }}>Balance</th>
+                      <th style={{ padding: '0.5rem', textAlign: 'right' }}>Card Charge</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -569,6 +570,9 @@ const handleDeleteFile = (file: ImportedFile) => {
                         </td>
                         <td style={{ padding: '0.5rem' }}>
                           {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(t.balance)}
+                        </td>
+                        <td style={{ padding: '0.5rem', textAlign: 'center' }}>
+                          {t.isCreditCardCharge ? '✓' : ''}
                         </td>
                       </tr>
                     ))}
