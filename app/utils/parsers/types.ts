@@ -31,7 +31,7 @@ export type ParsedResult = ParsedBankResult | ParsedCreditResult
 
 export interface Parser {
   canParse: (rows: SheetRow[]) => ParserDetectResult
-  parse: (rows: SheetRow[]) => ParsedResult
+  parse: (rows: SheetRow[], options?: any) => ParsedResult
 }
 
 export type { SheetRow, SheetCell }

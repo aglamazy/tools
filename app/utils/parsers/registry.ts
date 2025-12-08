@@ -30,9 +30,9 @@ export function parseCreditWithRegistry(rows: SheetRow[]): ParsedCreditResult {
   return { ...parsed, issuer: parsed.issuer ?? result.issuer, confidence: parsed.confidence ?? result.confidence }
 }
 
-export function parseBankWithRegistry(rows: SheetRow[]): ParsedBankResult {
+export function parseBankWithRegistry(rows: SheetRow[], cardTypeIndicators?: string[]): ParsedBankResult {
   const { parser, result } = pickBest(bankParsers, rows)
-  const parsed = parser.parse(rows) as ParsedBankResult
+  const parsed = parser.parse(rows, cardTypeIndicators) as ParsedBankResult
   return { ...parsed, issuer: parsed.issuer ?? result.issuer, confidence: parsed.confidence ?? result.confidence }
 }
 

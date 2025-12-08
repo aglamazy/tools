@@ -2,6 +2,7 @@ export {
   parseBankTransactions,
   extractAccountNumber,
   extractBankPreview,
+  extractBankPreviewAsync,
   type ParsedBankTransaction,
   type BankPreview,
 } from './parsers/bank/genericFibi'
