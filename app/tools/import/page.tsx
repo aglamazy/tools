@@ -71,7 +71,7 @@ export default function ImportPage() {
         const loadedFiles = data.files || []
         setFiles(loadedFiles)
 
-        // Auto-select newest month
+        // Auto-select month from sessionStorage or newest
         if (loadedFiles.length > 0) {
           const months = Array.from(
             new Set<string>(loadedFiles.map((f: ImportedFile) => f.processingMonth).filter((m: string | null | undefined): m is string => !!m))
@@ -81,13 +81,27 @@ export default function ImportPage() {
             return (bYear * 12 + bMonth) - (aYear * 12 + aMonth)
           })
           if (months.length > 0) {
-            setSelectedMonth(months[0] as string) // Select newest month
+            // Try to restore from sessionStorage first
+            const savedMonth = sessionStorage.getItem('selectedMonth')
+            if (savedMonth && months.includes(savedMonth)) {
+              setSelectedMonth(savedMonth)
+            } else {
+              // Otherwise use newest month
+              setSelectedMonth(months[0] as string)
+            }
           }
         }
       }
     }
     loadData()
   }, [])
+
+  // Save selected month to sessionStorage when it changes
+  useEffect(() => {
+    if (selectedMonth) {
+      sessionStorage.setItem('selectedMonth', selectedMonth)
+    }
+  }, [selectedMonth])
 
   const handleDirHandleChange = async (handle: FileSystemDirectoryHandle | null) => {
     setSavedDirHandle(handle)

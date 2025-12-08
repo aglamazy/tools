@@ -46,7 +46,7 @@ export default function CashFlowPage() {
       setLoading(false)
     }
     loadMonths()
-  }, [selectedMonth])
+  }, [])
 
   // Save selected month to sessionStorage when it changes
   useEffect(() => {

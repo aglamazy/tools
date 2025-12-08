@@ -43,7 +43,7 @@ export default function BudgetPage() {
       setLoading(false)
     }
     loadData()
-  }, [selectedMonth])
+  }, [])
 
   // Save selected month to sessionStorage when it changes
   useEffect(() => {
