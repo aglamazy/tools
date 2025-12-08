@@ -179,7 +179,7 @@ async function checkUncategorizedTransactions(currentMonth: string): Promise<Aut
       description: `נמצאו עסקאות בחודש ${currentMonth} שטרם סווגו לנושאים`,
       type: 'uncategorized',
       priority: uncategorized.length > 20 ? 'high' : 'medium',
-      link: '/tools/budget',
+      link: '/tools/budget?filter=unclassified',
       createdAt: new Date().toISOString(),
     })
   }

@@ -272,7 +272,12 @@ export function parseCreditCardStatement(rows: SheetRow[]): CreditCardStatement 
 
       const merchantName = normalizedRow.merchant ? String(normalizedRow.merchant) : ''
       const detailText = typeof normalizedRow.detail === 'string' ? normalizedRow.detail : ''
-      const isSummary = /סה'?כ|סך הכל/i.test(merchantName) || /סה'?כ|סך הכל/i.test(detailText)
+      const summaryPatterns = /סה\"?כ|סך הכל|חיובים במט\"ח|סיכום חיובים/i
+      const dateText = normalizedRow.transactionDate ? String(normalizedRow.transactionDate) : ''
+      const isSummary =
+        summaryPatterns.test(merchantName) ||
+        summaryPatterns.test(detailText) ||
+        summaryPatterns.test(dateText)
       if (isSummary || !normalizedRow.transactionDate) {
         return
       }

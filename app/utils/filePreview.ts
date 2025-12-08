@@ -1,7 +1,7 @@
 import { readExcelFile } from './excelReader'
 import { classifyFile } from './fileClassifier'
 import { extractCreditCardPreview } from './creditCardParser'
-import { extractBankPreview } from './bankParser'
+import { extractBankPreview, extractBankPreviewAsync } from './bankParser'
 import { FileType } from '@/app/types/file-type'
 
 export type FileMetadata = {
@@ -37,7 +37,7 @@ export const extractFileMetadata = async (file: File): Promise<FileMetadata> => 
       }
 
       case FileType.Bank: {
-        const preview = extractBankPreview(rows)
+        const preview = await extractBankPreviewAsync(rows)
         return {
           fileType: FileType.Bank,
           processingMonth: preview.processingMonth || undefined,
