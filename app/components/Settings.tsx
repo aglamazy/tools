@@ -14,6 +14,7 @@ import { generateDistinctColors } from '@/app/utils/colorGenerator'
 import YesNoModal from './YesNoModal'
 import Modal from './Modal'
 import { db } from '@/app/db/financeDB'
+import { getCardTypeIndicators, setCardTypeIndicators, initializeAppSettings } from '@/app/services/appSettingsService'
 
 const DEFAULT_CATEGORIES: Category[] = []
 
@@ -34,12 +35,17 @@ export default function Settings() {
   const [categoryUsage, setCategoryUsage] = useState<Record<string, { bank: number; credit: number }>>({})
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
+  const [cardTypeIndicators, setCardTypeIndicatorsState] = useState<string[]>([])
+  const [newIndicator, setNewIndicator] = useState('')
+  const [editingIndicator, setEditingIndicator] = useState<{ index: number; value: string } | null>(null)
 
   useEffect(() => {
     loadCategories()
     initDirectoryHandle()
     loadDatabaseStats()
     loadCategoryUsage()
+    loadCardTypeIndicators()
+    initializeAppSettings()
   }, [])
 
   const loadCategories = () => {
@@ -113,6 +119,43 @@ export default function Settings() {
     } catch (err) {
       console.error('Error loading category usage:', err)
     }
+  }
+
+  const loadCardTypeIndicators = async () => {
+    try {
+      const indicators = await getCardTypeIndicators()
+      setCardTypeIndicatorsState(indicators)
+    } catch (err) {
+      console.error('Error loading card type indicators:', err)
+    }
+  }
+
+  const handleAddIndicator = async () => {
+    if (!newIndicator.trim()) return
+
+    const updated = [...cardTypeIndicators, newIndicator.trim()]
+    setCardTypeIndicatorsState(updated)
+    await setCardTypeIndicators(updated)
+    setNewIndicator('')
+    setAlertModal({ isOpen: true, message: 'הוסף סוג כרטיס חדש בהצלחה!' })
+  }
+
+  const handleRemoveIndicator = async (index: number) => {
+    const updated = cardTypeIndicators.filter((_, i) => i !== index)
+    setCardTypeIndicatorsState(updated)
+    await setCardTypeIndicators(updated)
+  }
+
+  const handleEditIndicator = async () => {
+    if (!editingIndicator || !editingIndicator.value.trim()) return
+
+    const updated = cardTypeIndicators.map((ind, i) =>
+      i === editingIndicator.index ? editingIndicator.value.trim() : ind
+    )
+    setCardTypeIndicatorsState(updated)
+    await setCardTypeIndicators(updated)
+    setEditingIndicator(null)
+    setAlertModal({ isOpen: true, message: 'עודכן בהצלחה!' })
   }
 
   const isDescendant = (candidateId: string, targetAncestorId: string): boolean => {
@@ -707,6 +750,148 @@ export default function Settings() {
                 style={{ display: 'none' }}
               />
             </label>
+          </div>
+        </div>
+      </section>
+
+      <section style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid #e2e8f0', borderRadius: '0.75rem', background: '#f3f4f6' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: '1.05rem' }}>🏦 סוגי כרטיסי אשראי</h2>
+            <p style={{ margin: '0.25rem 0 0', color: '#4b5563', fontSize: '0.95rem' }}>
+              ניהול טקסטים לזיהוי תשלומי כרטיסי אשראי בחשבון הבנק
+            </p>
+            <p style={{ margin: '0.5rem 0 0', color: '#64748b', fontSize: '0.9rem' }}>
+              כרטיסי אשראי שתמצא במשפחת המערכת: {cardTypeIndicators.join(', ') || 'אין'}
+            </p>
+          </div>
+        </div>
+
+        <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          {cardTypeIndicators.map((indicator, index) => (
+            <div
+              key={index}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                padding: '0.75rem',
+                background: '#ffffff',
+                border: '1px solid #e2e8f0',
+                borderRadius: '0.5rem',
+              }}
+            >
+              {editingIndicator?.index === index ? (
+                <>
+                  <input
+                    type="text"
+                    value={editingIndicator.value}
+                    onChange={(e) =>
+                      setEditingIndicator({ ...editingIndicator, value: e.target.value })
+                    }
+                    style={{
+                      flex: 1,
+                      padding: '0.5rem',
+                      borderRadius: '0.375rem',
+                      border: '1px solid #cbd5e1',
+                      fontSize: '0.95rem',
+                      direction: 'rtl',
+                    }}
+                    placeholder="הזן טקסט לזיהוי..."
+                    autoFocus
+                  />
+                  <button
+                    onClick={handleEditIndicator}
+                    style={{
+                      padding: '0.35rem 0.75rem',
+                      fontSize: '0.85rem',
+                      background: '#10b981',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '0.375rem',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ✓
+                  </button>
+                  <button
+                    onClick={() => setEditingIndicator(null)}
+                    style={{
+                      padding: '0.35rem 0.75rem',
+                      fontSize: '0.85rem',
+                      background: '#ef4444',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '0.375rem',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ✕
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span style={{ flex: 1, fontWeight: 500, fontSize: '0.95rem' }}>{indicator}</span>
+                  <button
+                    onClick={() => setEditingIndicator({ index, value: indicator })}
+                    style={{
+                      padding: '0.35rem 0.75rem',
+                      fontSize: '0.85rem',
+                      background: 'transparent',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '0.375rem',
+                      cursor: 'pointer',
+                      color: '#475569',
+                    }}
+                  >
+                    ✏️
+                  </button>
+                  <button
+                    onClick={() => handleRemoveIndicator(index)}
+                    style={{
+                      padding: '0.35rem 0.75rem',
+                      fontSize: '0.85rem',
+                      background: 'transparent',
+                      border: '1px solid #fecaca',
+                      borderRadius: '0.375rem',
+                      cursor: 'pointer',
+                      color: '#dc2626',
+                    }}
+                  >
+                    🗑️
+                  </button>
+                </>
+              )}
+            </div>
+          ))}
+
+          <div style={{ display: 'flex', gap: '0.5rem', paddingTop: '0.5rem' }}>
+            <input
+              type="text"
+              value={newIndicator}
+              onChange={(e) => setNewIndicator(e.target.value)}
+              onKeyPress={(e) => {
+                if (e.key === 'Enter') {
+                  handleAddIndicator()
+                }
+              }}
+              style={{
+                flex: 1,
+                padding: '0.75rem',
+                borderRadius: '0.375rem',
+                border: '1px dashed #cbd5e1',
+                fontSize: '0.95rem',
+                direction: 'rtl',
+              }}
+              placeholder="הזן סוג כרטיס חדש..."
+            />
+            <button
+              onClick={handleAddIndicator}
+              className="file-picker"
+              style={{ flexShrink: 0 }}
+            >
+              + הוסף
+            </button>
           </div>
         </div>
       </section>
