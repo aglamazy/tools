@@ -92,4 +92,29 @@ export const subjectStore = {
       console.error('Error removing classification:', err)
     }
   },
+
+  // Export store data for backup
+  export: async (): Promise<any> => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY)
+      if (stored) {
+        return JSON.parse(stored)
+      }
+      return null
+    } catch (err) {
+      console.error('Error exporting subject store:', err)
+      return null
+    }
+  },
+
+  // Import store data from backup
+  import: async (data: any): Promise<void> => {
+    try {
+      if (data) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+      }
+    } catch (err) {
+      console.error('Error importing subject store:', err)
+    }
+  },
 }

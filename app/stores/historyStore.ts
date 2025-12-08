@@ -52,4 +52,31 @@ export const historyStore = {
     history.lastUpdated = new Date().toISOString()
     localStorage.setItem(STORAGE_KEY, JSON.stringify(history))
   },
+
+  // Export store data for backup
+  export: async (): Promise<HistoryStorage | null> => {
+    if (typeof window === 'undefined') return null
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (raw) {
+        return JSON.parse(raw) as HistoryStorage
+      }
+      return null
+    } catch (err) {
+      console.error('Error exporting history store:', err)
+      return null
+    }
+  },
+
+  // Import store data from backup
+  import: async (data: HistoryStorage): Promise<void> => {
+    if (typeof window === 'undefined') return
+    try {
+      if (data) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+      }
+    } catch (err) {
+      console.error('Error importing history store:', err)
+    }
+  },
 }

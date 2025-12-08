@@ -15,6 +15,7 @@ import YesNoModal from './YesNoModal'
 import Modal from './Modal'
 import { db } from '@/app/db/financeDB'
 import { getCardTypeIndicators, setCardTypeIndicators, initializeAppSettings } from '@/app/services/appSettingsService'
+import { exportAllStores, importAllStores, type BackupData } from '@/app/services/backupService'
 
 const DEFAULT_CATEGORIES: Category[] = []
 
@@ -380,8 +381,8 @@ export default function Settings() {
       // Remove the category itself
       if (cat.id === deleteConfirm.categoryId) return false
       // Remove sub-categories of this category
-      if (cat.parentId === deleteConfirm.categoryId) return false
-      return true
+      return cat.parentId !== deleteConfirm.categoryId;
+
     })
 
     // If deleting a sub-category, remove it from parent's subCategories array
@@ -450,18 +451,10 @@ export default function Settings() {
     reader.readAsText(file)
   }
 
-  const handleExportAllData = () => {
+  const handleExportAllData = async () => {
     try {
-      // Gather all data from localStorage
-      const allData = {
-        version: '2.0',
-        exportDate: new Date().toISOString(),
-        transactions: localStorage.getItem('finance-transactions'),
-        importedFiles: localStorage.getItem('finance-imported-files'),
-        categories: localStorage.getItem('finance-categories'),
-      }
-
-      const blob = new Blob([JSON.stringify(allData, null, 2)], { type: 'application/json' })
+      const backup = await exportAllStores()
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -487,28 +480,23 @@ export default function Settings() {
     if (!importConfirm.file) return
 
     const reader = new FileReader()
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
         const content = e.target?.result as string
-        const data = JSON.parse(content)
+        const backup = JSON.parse(content) as BackupData
 
         // Validate version
-        if (!data.version) {
+        if (!backup.version || !backup.stores) {
           setAlertModal({ isOpen: true, message: 'פורמט קובץ לא תקין' })
           return
         }
 
         // Import all data
-        if (data.transactions) {
-          localStorage.setItem('finance-transactions', data.transactions)
-        }
-        if (data.importedFiles) {
-          localStorage.setItem('finance-imported-files', data.importedFiles)
-        }
-        if (data.categories) {
-          localStorage.setItem('finance-categories', data.categories)
-          const categoriesData = JSON.parse(data.categories)
-          setCategories(categoriesData.categories || [])
+        await importAllStores(backup)
+
+        // Update categories in UI
+        if (backup.stores.subjectStore?.categories) {
+          setCategories(backup.stores.subjectStore.categories)
         }
 
         setImportConfirm({ isOpen: false, file: null })
@@ -870,7 +858,7 @@ export default function Settings() {
               type="text"
               value={newIndicator}
               onChange={(e) => setNewIndicator(e.target.value)}
-              onKeyPress={(e) => {
+              onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   handleAddIndicator()
                 }
