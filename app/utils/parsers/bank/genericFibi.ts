@@ -1,4 +1,5 @@
-import { SheetCell, SheetRow } from "@/app/types/transactions";
+import { SheetCell, SheetRow } from '@/app/types/transactions'
+import type { Parser, ParsedBankResult } from '../types'
 
 export type ParsedBankTransaction = {
   date: string
@@ -176,4 +177,49 @@ export function extractBankPreview(rows: SheetRow[]): BankPreview {
     processingMonth,
     transactionCount: transactions.length,
   }
+}
+
+const detectFibi = (rows: SheetRow[]): { match: boolean; confidence: number } => {
+  const lookAt = rows.slice(0, 8)
+  for (const row of lookAt) {
+    const asStrings = row.map((c) => (typeof c === 'string' ? c : '')).join(' ')
+    const hasDate = asStrings.includes('תאריך')
+    const hasDebit = asStrings.includes('חובה')
+    if (hasDate && hasDebit) {
+      return { match: true, confidence: 0.8 }
+    }
+  }
+  return { match: false, confidence: 0 }
+}
+
+export const genericFibiParser: Parser = {
+  canParse: (rows: SheetRow[]) => {
+    const { match, confidence } = detectFibi(rows)
+    return { match, confidence, issuer: 'fibi', kind: 'bank' }
+  },
+  parse: (rows: SheetRow[]): ParsedBankResult => {
+    const detection = detectFibi(rows)
+    const accountNumber = extractAccountNumber(rows)
+    const transactions = parseBankTransactions(rows, accountNumber || 'unknown')
+
+    // Derive processing month from first transaction if present
+    let processingMonth: string | null = null
+    if (transactions.length > 0) {
+      const firstDate = transactions[0].date
+      const match = firstDate.match(/(\d{2})\/(\d{2})\/(\d{4})/)
+      if (match) {
+        const [, , month, year] = match
+        processingMonth = `${month}/${year}`
+      }
+    }
+
+    return {
+      kind: 'bank',
+      issuer: 'fibi',
+      confidence: detection.match ? detection.confidence : 0.2,
+      accountNumber,
+      processingMonth,
+      transactions,
+    }
+  },
 }

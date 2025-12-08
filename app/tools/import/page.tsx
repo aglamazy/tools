@@ -9,6 +9,13 @@ import YesNoModal from '@/app/components/YesNoModal'
 import { useToast } from '@/app/components/ToastContainer'
 import { loadDirectoryHandle, persistDirectoryHandle } from '@/app/utils/directoryStorage'
 import { transactionStore } from '@/app/stores/transactionStore'
+import { config } from '@/app/config'
+import { extractFileMetadata } from '@/app/utils/filePreview'
+import { readExcelFile } from '@/app/utils/excelReader'
+import { parseBankWithRegistry } from '@/app/utils/bankParser'
+import { parseCreditWithRegistry } from '@/app/utils/creditCardParser'
+import type { FilePreview } from '@/app/types/file-preview'
+import { parseXlsTables } from '@/app/utils/xlsTableParser'
 
 export default function ImportPage() {
   const { showToast } = useToast()
@@ -39,6 +46,17 @@ export default function ImportPage() {
     isOpen: false,
     file: null,
     transactions: [],
+  })
+  const [debugModal, setDebugModal] = useState<{
+    isOpen: boolean
+    title: string
+    metadata?: any
+    parsed?: any
+    tables?: any
+    transactions?: any[]
+  }>({
+    isOpen: false,
+    title: '',
   })
 
   // Load directory handle and imported files from storage
@@ -101,27 +119,31 @@ export default function ImportPage() {
     }
   }
 
-  const handleViewFile = async (fileId: number) => {
-    const file = files.find((f) => f.id === fileId)
-    if (!file) return
+const handleViewFile = async (fileId: number | null, fileKey?: string) => {
+  const file = fileId ? files.find((f) => f.id === fileId) : files.find((f) => f.fileKey === fileKey)
+  if (!file) return
 
-    // Load transactions from IndexedDB
-    const transactions = await transactionStore.getData(file.fileType, file.processingMonth, file.cardNumber)
-    if (!transactions) {
-      showToast('error', 'No transaction data found')
-      return
-    }
+  // Load transactions from IndexedDB
+  const transactions = fileKey
+    ? await transactionStore.getTransactionsByFileKey(fileKey)
+    : await transactionStore.getData(file.fileType, file.processingMonth, file.cardNumber)
 
-    setViewModal({
-      isOpen: true,
-      file,
-      transactions,
-    })
+  if (!transactions) {
+    showToast('error', 'No transaction data found')
+    return
   }
 
-  const handleDeleteFile = (fileId: number) => {
-    const fileToDelete = files.find((f) => f.id === fileId)
-    setYesNoModal({
+  setViewModal({
+    isOpen: true,
+    file,
+    transactions,
+  })
+}
+
+const handleDeleteFile = (file: ImportedFile) => {
+  const fileId = file.id
+  const fileToDelete = file
+  setYesNoModal({
       isOpen: true,
       question: 'האם אתה בטוח שברצונך למחוק את הקובץ?',
       onConfirm: async () => {
@@ -131,29 +153,37 @@ export default function ImportPage() {
         await transactionStore.deleteTransactionsForFile(
           fileToDelete.fileType,
           fileToDelete.processingMonth || '',
-          fileToDelete.cardNumber
+          fileToDelete.cardNumber,
+          fileToDelete.fileKey,
+          fileToDelete.fileName
         )
 
         // Remove from imported files list
-        const data = await transactionStore.getImportedFiles()
-        if (data) {
-          data.files = data.files.filter((f: ImportedFile) => f.id !== fileId)
-          data.lastUpdated = new Date().toISOString()
-          await transactionStore.saveImportedFiles(data)
+        if (fileId) {
+          const data = await transactionStore.getImportedFiles()
+          if (data) {
+            data.files = data.files.filter((f: ImportedFile) => f.id !== fileId)
+            data.lastUpdated = new Date().toISOString()
+            await transactionStore.saveImportedFiles(data)
 
-          // Update state
-          setFiles(data.files)
-
-          // Clear month filter if no files for selected month
-          if (selectedMonth) {
-            const hasFilesInMonth = data.files.some((f: ImportedFile) => f.processingMonth === selectedMonth)
-            if (!hasFilesInMonth) {
-              setSelectedMonth('')
-            }
+            // Update state
+            setFiles(data.files)
           }
-
-          showToast('success', `הקובץ "${fileToDelete.fileName}" נמחק בהצלחה`)
+        } else {
+          // Remove from state only (inferred file)
+          setFiles((prev) => prev.filter((f) => f !== fileToDelete))
         }
+
+        // Clear month filter if no files for selected month
+        if (selectedMonth) {
+          const remaining = fileId ? files.filter((f) => f.id !== fileId) : files.filter((f) => f !== fileToDelete)
+          const hasFilesInMonth = remaining.some((f: ImportedFile) => f.processingMonth === selectedMonth)
+          if (!hasFilesInMonth) {
+            setSelectedMonth('')
+          }
+        }
+
+        showToast('success', `הקובץ "${fileToDelete.fileName}" נמחק בהצלחה`)
         setYesNoModal({ isOpen: false, question: '', onConfirm: () => {} })
       },
     })
@@ -192,6 +222,7 @@ export default function ImportPage() {
         importedAt: new Date().toISOString(),
         fileType: metadata.fileType,
         processingMonth: metadata.processingMonth || '',
+        fileKey: fileId,
         accountNumber: metadata.accountNumber,
         cardNumber: metadata.cardNumber,
         transactionCount: metadata.transactionCount,
@@ -270,7 +301,7 @@ export default function ImportPage() {
     return (bYear * 12 + bMonth) - (aYear * 12 + aMonth) // Descending order (newest first)
   })
 
-  // Filter files by selected month
+  // Filter files by selected month (credit uses chargingDate month; processingMonth is already set from billing/charging)
   const filteredFiles = selectedMonth
     ? files.filter((f) => f.processingMonth === selectedMonth)
     : files
@@ -334,6 +365,34 @@ export default function ImportPage() {
                   savedDirHandle={savedDirHandle}
                   onDirHandleChange={handleDirHandleChange}
                   excludeFileNames={files.map((f) => f.fileName)}
+                  showDebug={config.developerMode}
+                  onDebugInspect={async (preview: FilePreview, file: File) => {
+                    try {
+                      const metadata = await extractFileMetadata(file)
+                      const rows = await readExcelFile(file)
+                      const tables = parseXlsTables(rows)
+                      let parsed: any = null
+                      let transactions: any[] | undefined
+                      if (metadata.fileType === 'bank') {
+                        parsed = parseBankWithRegistry(rows)
+                        transactions = parsed.transactions
+                      } else if (metadata.fileType === 'credit-card') {
+                        parsed = parseCreditWithRegistry(rows)
+                        transactions = parsed.statement?.payments
+                      }
+                      setDebugModal({
+                        isOpen: true,
+                        title: preview.fileName,
+                        metadata,
+                        parsed,
+                        tables,
+                        transactions,
+                      })
+                    } catch (err) {
+                      console.error('Debug inspect failed:', err)
+                      showToast('error', 'שגיאה בקריאת הקובץ לצורכי דיבוג')
+                    }
+                  }}
                 />
               </div>
             </div>
@@ -384,7 +443,7 @@ export default function ImportPage() {
               </thead>
               <tbody>
                 {filteredFiles.map((file, index) => (
-                  <tr key={file.id || `${file.fileName}-${index}`}>
+                  <tr key={file.id || file.fileKey || `${file.fileName}-${index}`}>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <span>{file.fileType === 'credit-card' ? '💳' : '📄'}</span>
@@ -407,14 +466,14 @@ export default function ImportPage() {
                           📂 פתח
                         </button>
                         <button
-                          onClick={() => file.id && handleViewFile(file.id)}
+                          onClick={() => handleViewFile(file.id ?? null, file.fileKey)}
                           className="file-picker"
                           style={{ padding: '0.25rem 0.5rem', fontSize: '0.875rem' }}
                         >
                           👁️ צפה
                         </button>
                         <button
-                          onClick={() => file.id && handleDeleteFile(file.id)}
+                          onClick={() => handleDeleteFile(file)}
                           className="upload-another-btn"
                           style={{ padding: '0.25rem 0.5rem', fontSize: '0.875rem' }}
                         >
@@ -544,6 +603,73 @@ export default function ImportPage() {
               )}
               <div style={{ marginTop: '1rem', padding: '0.75rem', background: '#f8fafc', borderRadius: '0.5rem' }}>
                 <strong>Total Transactions:</strong> {viewModal.transactions.length}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Debug modal */}
+      {debugModal.isOpen && (
+        <div className="modal-overlay" onClick={() => setDebugModal({ isOpen: false, title: '' })}>
+          <div
+            className="modal-content"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '90vw', width: '1200px' }}
+          >
+            <div className="modal-header">
+              <h2>Debug: {debugModal.title}</h2>
+              <button className="modal-close" onClick={() => setDebugModal({ isOpen: false, title: '' })}>
+                ✕
+              </button>
+            </div>
+            <div className="modal-body" style={{ maxHeight: '70vh', overflow: 'auto', display: 'grid', gap: '1rem' }}>
+              <div>
+                <h3>זיהוי קובץ</h3>
+                <pre style={{ background: '#f8fafc', padding: '0.75rem', borderRadius: '0.5rem', overflowX: 'auto' }}>
+                  {JSON.stringify(debugModal.metadata, null, 2)}
+                </pre>
+              </div>
+              <div>
+                <h3>פלט פרסר</h3>
+                <pre style={{ background: '#f8fafc', padding: '0.75rem', borderRadius: '0.5rem', overflowX: 'auto' }}>
+                  {JSON.stringify(debugModal.parsed, null, 2)}
+                </pre>
+              </div>
+              {Array.isArray(debugModal.transactions) && debugModal.transactions.length > 0 && (
+                <div>
+                  <h3>מה ייכנס למאגר</h3>
+                  <div className="table-wrapper">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>תאריך</th>
+                          <th>עסק</th>
+                          <th>סכום</th>
+                          <th>תשלומים</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {debugModal.transactions.map((t, idx) => (
+                          <tr key={idx}>
+                            <td>{t.transactionDate || t.date || '—'}</td>
+                            <td>{t.merchant || t.business || t.description || '—'}</td>
+                            <td style={{ color: (t.amount || 0) > 0 ? '#10b981' : '#ef4444', fontWeight: 500 }}>
+                              {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(Math.abs(t.amount || 0))}
+                            </td>
+                            <td>{`${t.currentStep || 1}/${t.totalSteps || 1}`}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              <div>
+                <h3>XLS parse (tables)</h3>
+                <pre style={{ background: '#f8fafc', padding: '0.75rem', borderRadius: '0.5rem', overflowX: 'auto' }}>
+                  {JSON.stringify(debugModal.tables, null, 2)}
+                </pre>
               </div>
             </div>
           </div>

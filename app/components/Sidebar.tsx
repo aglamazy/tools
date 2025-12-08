@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { config } from '@/app/config'
 
 type Tool = {
   id: string
@@ -70,6 +71,16 @@ const tools: Tool[] = [
     available: true,
   },
 ]
+
+if (config.developerMode) {
+  tools.splice(3, 0, {
+    id: 'dev-db',
+    title: 'Dev DB',
+    href: '/tools/dev-db',
+    icon: '🛠️',
+    available: true,
+  })
+}
 
 export default function Sidebar() {
   const pathname = usePathname()

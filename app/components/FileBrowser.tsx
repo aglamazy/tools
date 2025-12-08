@@ -12,6 +12,8 @@ type FileBrowserProps = {
   savedDirHandle: FileSystemDirectoryHandle | null
   onDirHandleChange: (handle: FileSystemDirectoryHandle | null) => void
   excludeFileNames?: string[]
+  showDebug?: boolean
+  onDebugInspect?: (preview: FilePreview, file: File) => void
 }
 
 const extractFilePreview = async (file: File): Promise<Partial<FilePreview>> => {
@@ -25,7 +27,15 @@ const extractFilePreview = async (file: File): Promise<Partial<FilePreview>> => 
   }
 }
 
-export default function FileBrowser({ onFileSelect, isOpen, savedDirHandle, onDirHandleChange, excludeFileNames }: FileBrowserProps) {
+export default function FileBrowser({
+  onFileSelect,
+  isOpen,
+  savedDirHandle,
+  onDirHandleChange,
+  excludeFileNames,
+  showDebug,
+  onDebugInspect,
+}: FileBrowserProps) {
   const [previews, setPreviews] = useState<FilePreview[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -137,6 +147,12 @@ export default function FileBrowser({ onFileSelect, isOpen, savedDirHandle, onDi
     onFileSelect(file)
   }
 
+  const handleDebug = async (preview: FilePreview) => {
+    if (!onDebugInspect) return
+    const file = await preview.fileHandle.getFile()
+    onDebugInspect(preview, file)
+  }
+
   const formatMonthDisplay = (monthStr: string | null): string => {
     if (!monthStr) return 'לא זוהה'
     const [month, year] = monthStr.split('/')
@@ -171,6 +187,7 @@ export default function FileBrowser({ onFileSelect, isOpen, savedDirHandle, onDi
                 <th>תאריך</th>
                 <th>חשבון</th>
                 <th>מספר עסקה</th>
+                {showDebug && <th>Dev</th>}
               </tr>
             </thead>
             <tbody>
@@ -191,6 +208,21 @@ export default function FileBrowser({ onFileSelect, isOpen, savedDirHandle, onDi
                   <td>{formatMonthDisplay(preview.processingMonth)}</td>
                   <td>{preview.accountNumber || preview.cardNumber || '—'}</td>
                   <td>{preview.transactionCount}</td>
+                  {showDebug && (
+                    <td>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleDebug(preview)
+                        }}
+                        className="upload-another-btn"
+                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.85rem' }}
+                      >
+                        🔍
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

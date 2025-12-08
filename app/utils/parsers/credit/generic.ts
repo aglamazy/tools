@@ -1,10 +1,11 @@
-import { parseXlsTables } from './xlsTableParser'
+import { parseXlsTables } from '../../xlsTableParser'
 import { config } from '@/app/config'
-import { SheetCell, SheetRow } from "@/app/types/transactions";
+import { SheetCell, SheetRow } from '@/app/types/transactions'
+import type { Parser, ParsedCreditResult } from '../types'
 
 // Mapping from Hebrew column names to standardized property names
 const COLUMN_MAPPINGS = {
-  merchant: ['שם בית העסק', 'שם', 'שם העסק', 'בית עסק', 'שם העסק', 'שם בית מסחר'],
+  merchant: ['שם בית העסק', 'שם בית עסק', 'שם', 'שם העסק', 'בית עסק', 'שם העסק', 'שם בית מסחר'],
   transactionDate: ['תאריך עסקה', 'תאריך', 'תאריך רכישה', 'תאריך רכישת עסקה'],
   domesticAmount: ['סכום עסקה'],
   billingAmount: ['סכום חיוב', 'סכום לחיוב'],
@@ -269,10 +270,17 @@ export function parseCreditCardStatement(rows: SheetRow[]): CreditCardStatement 
         }
       }
 
+      const merchantName = normalizedRow.merchant ? String(normalizedRow.merchant) : ''
+      const detailText = typeof normalizedRow.detail === 'string' ? normalizedRow.detail : ''
+      const isSummary = /סה'?כ|סך הכל/i.test(merchantName) || /סה'?כ|סך הכל/i.test(detailText)
+      if (isSummary || !normalizedRow.transactionDate) {
+        return
+      }
+
       payments.push({
         id: `${cardNumber || 'unknown'}-${globalRowIndex}-${String(normalizedRow.transactionDate)}-${String(normalizedRow.merchant)}-${amount}-${currentStep}-${totalSteps}`,
         transactionDate: String(normalizedRow.transactionDate),
-        merchant: String(normalizedRow.merchant),
+        merchant: merchantName || 'עסקה ללא שם',
         amount,
         currentStep,
         totalSteps,
@@ -283,6 +291,30 @@ export function parseCreditCardStatement(rows: SheetRow[]): CreditCardStatement 
   })
 
   return { billingDate, cardNumber, payments }
+}
+
+export const genericCreditParser: Parser = {
+  canParse: () => ({
+    match: true,
+    confidence: 0.2,
+    issuer: 'generic',
+    kind: 'credit',
+  }),
+  parse: (rows: SheetRow[]): ParsedCreditResult => {
+    const statement = parseCreditCardStatement(rows)
+    const processingMonth = statement.billingDate
+      ? `${String(statement.billingDate.getMonth() + 1).padStart(2, '0')}/${statement.billingDate.getFullYear()}`
+      : null
+
+    return {
+      kind: 'credit',
+      issuer: 'generic',
+      confidence: 0.2,
+      cardNumber: statement.cardNumber,
+      processingMonth,
+      statement,
+    }
+  },
 }
 
 const extractProcessingMonth = (rows: Array<Array<string | number>>): string | null => {

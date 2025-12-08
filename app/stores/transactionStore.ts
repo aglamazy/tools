@@ -70,7 +70,30 @@ export const transactionStore = {
    */
   getImportedFiles: async (): Promise<{ files: ImportedFile[]; lastUpdated: string } | null> => {
     try {
-      const files = await db.importedFiles.toArray()
+      // Build file list directly from transactions (single source of truth)
+      const txns = await db.transactions.toArray()
+      const byFile = new Map<string, ImportedFile>()
+      txns.forEach((t) => {
+        const inferredMonth = t.chargingDate ? t.chargingDate.substring(3) : t.month || ''
+        const key = t.fileId || `${t.type}-${inferredMonth || 'unknown'}-${t.cardNumber || t.accountNumber || 'n/a'}`
+        const existing = byFile.get(key)
+        if (existing) {
+          existing.transactionCount += 1
+        } else {
+          byFile.set(key, {
+            fileName: key,
+            fileKey: key,
+            fileType: t.type === 'credit' ? 'credit-card' : 'bank',
+            processingMonth: inferredMonth,
+            accountNumber: t.accountNumber,
+            cardNumber: t.cardNumber,
+            transactionCount: 1,
+            importedAt: t.importedAt || new Date().toISOString(),
+          })
+        }
+      })
+
+      const files = Array.from(byFile.values())
       const lastUpdated = files.length > 0
         ? files.reduce((latest, f) => (f.importedAt > latest ? f.importedAt : latest), files[0].importedAt)
         : new Date().toISOString()
@@ -87,7 +110,10 @@ export const transactionStore = {
    */
   saveImportedFile: async (file: Omit<ImportedFile, 'id'>): Promise<number | null> => {
     try {
-      const id = await db.importedFiles.add(file)
+      const id = await db.importedFiles.add({
+        ...file,
+        fileName: file.fileName || file.fileKey || 'unknown-file',
+      })
       return id
     } catch (error) {
       console.error('Error saving imported file:', error)
@@ -100,7 +126,7 @@ export const transactionStore = {
    */
   deleteImportedFile: async (fileId: number): Promise<boolean> => {
     try {
-      // Delete associated transactions
+      // Delete associated transactions first
       await db.transactions.where('fileId').equals(String(fileId)).delete()
 
       // Delete file record
@@ -114,14 +140,38 @@ export const transactionStore = {
   },
 
   /**
+   * Get transactions by fileId/fileKey
+   */
+  getTransactionsByFileKey: async (fileKey: string): Promise<Transaction[]> => {
+    try {
+      return await db.transactions.where('fileId').equals(fileKey).toArray()
+    } catch (error) {
+      console.error('Error getting transactions by file key:', error)
+      return []
+    }
+  },
+
+  /**
    * Delete transactions for a file (by type, month, and optional card number)
    */
   deleteTransactionsForFile: async (
     fileType: string,
     month: string,
-    cardNumber?: string
+    cardNumber?: string,
+    fileKey?: string,
+    fileNameHint?: string
   ): Promise<boolean> => {
     try {
+      if (fileKey) {
+        await db.transactions.where('fileId').equals(fileKey).delete()
+      }
+
+      if (fileNameHint) {
+        await db.transactions
+          .filter((t) => typeof t.fileId === 'string' && t.fileId.includes(fileNameHint))
+          .delete()
+      }
+
       if (fileType === 'bank') {
         await db.transactions
           .where('[type+month]')

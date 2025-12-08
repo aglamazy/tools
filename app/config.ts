@@ -2,5 +2,5 @@
 
 export const config = {
   // Developer mode - enables additional validation and debugging
-  developerMode: true,
+  developerMode: process.env.NEXT_PUBLIC_DEVELOPER_MODE === 'true',
 }

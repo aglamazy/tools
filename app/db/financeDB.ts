@@ -34,6 +34,7 @@ export interface ImportedFile {
   fileName: string
   fileType: 'bank' | 'credit-card'
   processingMonth: string
+  fileKey?: string
   accountNumber?: string
   cardNumber?: string
   transactionCount: number
