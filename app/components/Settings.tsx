@@ -23,10 +23,24 @@ import {
   type DriveSyncSettings,
 } from '@/app/services/appSettingsService'
 import { exportAllStores, importAllStores, type BackupData } from '@/app/services/backupService'
-import { exportBackupToDrive, interactiveConnectAndExport, clearDriveAuth, fetchBackupFromDrive, getDriveBackupMetadata } from '@/app/services/driveSyncService'
+import {
+  exportBackupToDrive,
+  interactiveConnectAndExport,
+  clearDriveAuth,
+  fetchBackupFromDrive,
+  getDriveBackupMetadata,
+} from '@/app/services/driveSyncService'
 import { config } from '@/app/config'
 
 const DEFAULT_CATEGORIES: Category[] = []
+
+type DriveBackupInfo = {
+  fileId?: string
+  modifiedTime?: string
+  fetchedAt?: string
+  error?: string
+  loading?: boolean
+}
 
 const STORAGE_KEY = 'finance-categories'
 
@@ -51,6 +65,7 @@ export default function Settings() {
   const [driveSyncSettings, setDriveSyncSettingsState] = useState<DriveSyncSettings | null>(null)
   const [syncStatus, setSyncStatus] = useState<'idle' | 'connecting' | 'saving' | 'error'>('idle')
   const [syncMessage, setSyncMessage] = useState('')
+  const [driveBackupInfo, setDriveBackupInfo] = useState<DriveBackupInfo | null>(null)
 
   const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || ''
 
@@ -229,20 +244,23 @@ export default function Settings() {
         fileName: 'finance-backup.json',
       })
 
-        if (result.success) {
-          const updated: DriveSyncSettings = {
-            ...driveSyncSettings,
-            driveFileId: result.fileId || driveSyncSettings.driveFileId,
-            lastSyncAt: new Date().toISOString(),
-            remoteModifiedAt: new Date().toISOString(),
-            lastSyncError: undefined,
-          }
-          await persistDriveSyncSettingsSafe(updated)
-          setAlertModal({ isOpen: true, message: 'החיבור ל-Google Drive הצליח והגיבוי נשמר!' })
-        } else {
+      if (result.success) {
+        const updated: DriveSyncSettings = {
+          ...driveSyncSettings,
+          driveFileId: result.fileId || driveSyncSettings.driveFileId,
+          lastSyncAt: new Date().toISOString(),
+          remoteModifiedAt: new Date().toISOString(),
+          lastSyncError: undefined,
+        }
+        await persistDriveSyncSettingsSafe(updated)
+        setAlertModal({ isOpen: true, message: 'החיבור ל-Google Drive הצליח והגיבוי נשמר!' })
+      } else {
+        const msg = result.error === 'empty-backup'
+          ? 'הגיבוי ריק (אין עסקאות/קבצים). שמירה בוטלה.'
+          : 'חיבור ל-Google Drive נכשל. נסה שוב.'
         setSyncStatus('error')
         setSyncMessage(result.error || 'שגיאה לא ידועה')
-        setAlertModal({ isOpen: true, message: 'חיבור ל-Google Drive נכשל. נסה שוב.' })
+        setAlertModal({ isOpen: true, message: msg })
       }
     } catch (err: any) {
       console.error('Drive connect failed:', err)
@@ -313,7 +331,9 @@ export default function Settings() {
     } else {
       const msg = result.error === 'no-token'
         ? 'נדרש חיבור ל-Google Drive. לחץ על התחברות.'
-        : 'שגיאה בשמירת הגיבוי ל-Drive.'
+        : result.error === 'empty-backup'
+          ? 'הגיבוי ריק (אין עסקאות/קבצים). שמירה בוטלה.'
+          : 'שגיאה בשמירת הגיבוי ל-Drive.'
       setSyncStatus('error')
       setSyncMessage(result.error || 'unknown-error')
       setAlertModal({ isOpen: true, message: msg })
@@ -431,6 +451,49 @@ export default function Settings() {
     }
     await persistDriveSyncSettingsSafe(updated)
     setAlertModal({ isOpen: true, message: 'החיבור נותק. תידרש התחברות מחדש לגיבוי.' })
+  }
+
+  const handleCheckDriveBackupInfo = async () => {
+    if (!googleClientId) {
+      setAlertModal({ isOpen: true, message: 'חסר GOOGLE CLIENT ID (NEXT_PUBLIC_GOOGLE_CLIENT_ID)' })
+      return
+    }
+    if (!driveSyncSettings) {
+      setAlertModal({ isOpen: true, message: 'חסר חיבור ל-Drive או הגדרות סנכרון.' })
+      return
+    }
+    setDriveBackupInfo((prev) => ({ ...prev, loading: true, error: undefined }))
+    try {
+      const meta = await getDriveBackupMetadata({
+        clientId: googleClientId,
+        fileId: driveSyncSettings.driveFileId,
+        fileName: 'finance-backup.json',
+      })
+      if (meta.success) {
+        setDriveBackupInfo({
+          fileId: meta.fileId,
+          modifiedTime: meta.modifiedTime,
+          fetchedAt: new Date().toISOString(),
+          loading: false,
+        })
+        console.log('[DriveSync] metadata check', meta)
+      } else {
+        setDriveBackupInfo({
+          error: meta.error || 'unknown-error',
+          fetchedAt: new Date().toISOString(),
+          loading: false,
+        })
+        setAlertModal({ isOpen: true, message: 'שגיאה באחזור פרטי הגיבוי מ-Drive.' })
+      }
+    } catch (err: any) {
+      console.error('Error checking Drive backup metadata:', err)
+      setDriveBackupInfo({
+        error: err?.message || 'unknown-error',
+        fetchedAt: new Date().toISOString(),
+        loading: false,
+      })
+      setAlertModal({ isOpen: true, message: 'שגיאה באחזור פרטי הגיבוי מ-Drive.' })
+    }
   }
 
   const isDescendant = (candidateId: string, targetAncestorId: string): boolean => {
@@ -1086,6 +1149,29 @@ export default function Settings() {
               מצב: {syncStatus === 'connecting' ? 'מתחבר...' : syncStatus === 'saving' ? 'שומר...' : 'שגיאה'}
             </span>
           )}
+        </div>
+
+        <div style={{ marginTop: '1rem', padding: '0.75rem', background: '#f8fafc', borderRadius: '0.5rem', border: '1px solid #e2e8f0' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <div style={{ fontSize: '0.95rem', color: '#0f172a' }}>
+              מידע על קובץ הגיבוי ב-Drive
+            </div>
+            <button
+              onClick={handleCheckDriveBackupInfo}
+              className="file-picker secondary"
+              style={{ flexShrink: 0 }}
+              disabled={syncStatus !== 'idle'}
+            >
+              🔍 בדוק קובץ ב-Drive
+            </button>
+          </div>
+          <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: '#111827' }}>
+            <div>מזהה קובץ: {driveBackupInfo?.fileId || driveSyncSettings?.driveFileId || '—'}</div>
+            <div>עודכן ב-Drive: {formatTime(driveBackupInfo?.modifiedTime || driveSyncSettings?.remoteModifiedAt)}</div>
+            <div>בדיקה אחרונה: {formatTime(driveBackupInfo?.fetchedAt)}</div>
+            {driveBackupInfo?.loading && <div style={{ color: '#2563eb' }}>טוען פרטי גיבוי...</div>}
+            {driveBackupInfo?.error && <div style={{ color: '#b91c1c' }}>שגיאה: {driveBackupInfo.error}</div>}
+          </div>
         </div>
       </section>
 

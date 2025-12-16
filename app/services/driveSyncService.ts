@@ -1,11 +1,20 @@
 // Google Drive Sync Service (client-side only)
 // Handles GIS token acquisition and uploading backups to Drive appData
 
-import { exportAllStores } from '@/app/services/backupService'
+import { exportAllStores, type BackupData } from '@/app/services/backupService'
 import { driveAuthStore, type DriveAuthState } from '@/app/stores/driveAuthStore'
 
 const GSI_SCRIPT_URL = 'https://accounts.google.com/gsi/client'
 const DRIVE_SCOPES = ['https://www.googleapis.com/auth/drive.appdata']
+
+type StoreCounts = {
+  transactions: number
+  importedFiles: number
+  categories: number
+  businessCategories: number
+  tasks: number
+  appSettings: number
+}
 
 type SyncResult = {
   success: boolean
@@ -21,6 +30,23 @@ type FetchResult = {
 }
 
 let gsiLoaderPromise: Promise<void> | null = null
+
+function summarizeStoreCounts(data: BackupData | any): StoreCounts | null {
+  if (!data?.stores) return null
+  return {
+    transactions: data.stores.transactions?.length ?? 0,
+    importedFiles: data.stores.importedFiles?.length ?? 0,
+    categories: data.stores.categories?.length ?? 0,
+    businessCategories: data.stores.businessCategories?.length ?? 0,
+    tasks: data.stores.tasks?.length ?? 0,
+    appSettings: data.stores.appSettings?.length ?? 0,
+  }
+}
+
+function hasCoreBackupData(counts: StoreCounts | null): boolean {
+  if (!counts) return false
+  return counts.transactions > 0 && counts.importedFiles > 0
+}
 
 export function clearDriveAuth() {
   driveAuthStore.clear()
@@ -267,6 +293,11 @@ export async function exportBackupToDrive(options: {
     }
 
     const backup = await exportAllStores()
+    const storeCounts = summarizeStoreCounts(backup)
+    if (!hasCoreBackupData(storeCounts)) {
+      console.warn('[DriveSync] skip upload: backup missing core data', storeCounts)
+      return { success: false, error: 'empty-backup' }
+    }
 
     const metadata: Record<string, any> = {
       name: fileName,
@@ -297,6 +328,11 @@ export async function interactiveConnectAndExport(options: {
     if (!token) return { success: false, error: 'consent-denied' }
 
     const backup = await exportAllStores()
+    const storeCounts = summarizeStoreCounts(backup)
+    if (!hasCoreBackupData(storeCounts)) {
+      console.warn('[DriveSync] skip upload (interactive): backup missing core data', storeCounts)
+      return { success: false, error: 'empty-backup' }
+    }
     const metadata: Record<string, any> = { name: fileName || 'finance-backup.json' }
     if (useAppData) metadata.parents = ['appDataFolder']
 
