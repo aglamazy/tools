@@ -40,6 +40,17 @@ type DriveBackupInfo = {
   fetchedAt?: string
   error?: string
   loading?: boolean
+  storeCounts?: {
+    transactions: number
+    importedFiles: number
+    categories: number
+    businessCategories: number
+    tasks: number
+    appSettings: number
+  }
+  totalSizeBytes?: number
+  backupVersion?: string
+  backupTimestamp?: string
 }
 
 const STORAGE_KEY = 'finance-categories'
@@ -469,14 +480,44 @@ export default function Settings() {
         fileId: driveSyncSettings.driveFileId,
         fileName: 'finance-backup.json',
       })
-      if (meta.success) {
-        setDriveBackupInfo({
+      if (meta.success && meta.fileId) {
+        // Fetch actual backup content to get store counts
+        const backupResult = await fetchBackupFromDrive({
+          clientId: googleClientId,
           fileId: meta.fileId,
-          modifiedTime: meta.modifiedTime,
-          fetchedAt: new Date().toISOString(),
-          loading: false,
+          fileName: 'finance-backup.json',
         })
-        console.log('[DriveSync] metadata check', meta)
+
+        if (backupResult.success && backupResult.data) {
+          const backup = backupResult.data as BackupData
+          const storeCounts = {
+            transactions: backup.stores?.transactions?.length ?? 0,
+            importedFiles: backup.stores?.importedFiles?.length ?? 0,
+            categories: backup.stores?.categories?.length ?? 0,
+            businessCategories: backup.stores?.businessCategories?.length ?? 0,
+            tasks: backup.stores?.tasks?.length ?? 0,
+            appSettings: backup.stores?.appSettings?.length ?? 0,
+          }
+          setDriveBackupInfo({
+            fileId: meta.fileId,
+            modifiedTime: meta.modifiedTime,
+            fetchedAt: new Date().toISOString(),
+            loading: false,
+            storeCounts,
+            totalSizeBytes: JSON.stringify(backup).length,
+            backupVersion: backup.version,
+            backupTimestamp: backup.timestamp,
+          })
+          console.log('[DriveSync] backup info', { meta, storeCounts, version: backup.version })
+        } else {
+          setDriveBackupInfo({
+            fileId: meta.fileId,
+            modifiedTime: meta.modifiedTime,
+            fetchedAt: new Date().toISOString(),
+            loading: false,
+            error: backupResult.error || 'failed-to-fetch-content',
+          })
+        }
       } else {
         setDriveBackupInfo({
           error: meta.error || 'unknown-error',
@@ -828,6 +869,23 @@ export default function Settings() {
           return
         }
 
+        const storeCounts = {
+          transactions: backup.stores.transactions?.length ?? 0,
+          importedFiles: backup.stores.importedFiles?.length ?? 0,
+          categories: backup.stores.categories?.length ?? 0,
+          businessCategories: backup.stores.businessCategories?.length ?? 0,
+          tasks: backup.stores.tasks?.length ?? 0,
+          appSettings: backup.stores.appSettings?.length ?? 0,
+        }
+        console.log('[BackupRestore] local import candidate', storeCounts)
+        if (storeCounts.transactions === 0 || storeCounts.importedFiles === 0) {
+          setAlertModal({
+            isOpen: true,
+            message: 'קובץ הגיבוי חסר עסקאות או קבצים מיובאים. שחזור בוטל.',
+          })
+          return
+        }
+
         // Import all data
         await importAllStores(backup)
 
@@ -1169,6 +1227,25 @@ export default function Settings() {
             <div>מזהה קובץ: {driveBackupInfo?.fileId || driveSyncSettings?.driveFileId || '—'}</div>
             <div>עודכן ב-Drive: {formatTime(driveBackupInfo?.modifiedTime || driveSyncSettings?.remoteModifiedAt)}</div>
             <div>בדיקה אחרונה: {formatTime(driveBackupInfo?.fetchedAt)}</div>
+            {driveBackupInfo?.backupVersion && (
+              <div>גרסת גיבוי: {driveBackupInfo.backupVersion} | נוצר: {formatTime(driveBackupInfo.backupTimestamp)}</div>
+            )}
+            {driveBackupInfo?.totalSizeBytes && (
+              <div>גודל: {(driveBackupInfo.totalSizeBytes / 1024).toFixed(1)} KB</div>
+            )}
+            {driveBackupInfo?.storeCounts && (
+              <div style={{ marginTop: '0.5rem', padding: '0.5rem', background: '#e0f2fe', borderRadius: '0.375rem' }}>
+                <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>תוכן הגיבוי:</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.25rem' }}>
+                  <span>עסקאות: {driveBackupInfo.storeCounts.transactions.toLocaleString('he-IL')}</span>
+                  <span>קבצים: {driveBackupInfo.storeCounts.importedFiles.toLocaleString('he-IL')}</span>
+                  <span>קטגוריות: {driveBackupInfo.storeCounts.categories.toLocaleString('he-IL')}</span>
+                  <span>מיפוי עסקים: {driveBackupInfo.storeCounts.businessCategories.toLocaleString('he-IL')}</span>
+                  <span>משימות: {driveBackupInfo.storeCounts.tasks.toLocaleString('he-IL')}</span>
+                  <span>הגדרות: {driveBackupInfo.storeCounts.appSettings.toLocaleString('he-IL')}</span>
+                </div>
+              </div>
+            )}
             {driveBackupInfo?.loading && <div style={{ color: '#2563eb' }}>טוען פרטי גיבוי...</div>}
             {driveBackupInfo?.error && <div style={{ color: '#b91c1c' }}>שגיאה: {driveBackupInfo.error}</div>}
           </div>

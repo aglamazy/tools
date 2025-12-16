@@ -6,6 +6,7 @@
 import { db } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { historyStore } from '@/app/stores/historyStore'
+import { initializeAppSettings } from '@/app/services/appSettingsService'
 
 export interface BackupData {
   version: string
@@ -78,6 +79,20 @@ export async function importAllStores(backup: BackupData): Promise<void> {
   try {
     const { stores } = backup
 
+    const counts = {
+      transactions: stores.transactions?.length ?? 0,
+      importedFiles: stores.importedFiles?.length ?? 0,
+      categories: stores.categories?.length ?? 0,
+      businessCategories: stores.businessCategories?.length ?? 0,
+      tasks: stores.tasks?.length ?? 0,
+      appSettings: stores.appSettings?.length ?? 0,
+    }
+    console.log('[BackupRestore] importing backup', counts)
+
+    if (counts.transactions === 0 || counts.importedFiles === 0) {
+      throw new Error('Backup missing core data (transactions/importedFiles)')
+    }
+
     // Clear all IndexedDB tables
     await Promise.all([
       db.transactions.clear(),
@@ -113,6 +128,9 @@ export async function importAllStores(backup: BackupData): Promise<void> {
       stores.subjectStore ? subjectStore.import(stores.subjectStore) : Promise.resolve(),
       stores.historyStore ? historyStore.import(stores.historyStore) : Promise.resolve(),
     ])
+
+    // Ensure new settings keys exist even if backup predates them
+    await initializeAppSettings()
 
     console.log('✅ All data restored successfully')
   } catch (error) {
