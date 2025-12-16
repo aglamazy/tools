@@ -14,8 +14,17 @@ import { generateDistinctColors } from '@/app/utils/colorGenerator'
 import YesNoModal from './YesNoModal'
 import Modal from './Modal'
 import { db } from '@/app/db/financeDB'
-import { getCardTypeIndicators, setCardTypeIndicators, initializeAppSettings } from '@/app/services/appSettingsService'
+import {
+  getCardTypeIndicators,
+  setCardTypeIndicators,
+  initializeAppSettings,
+  getDriveSyncSettings,
+  setDriveSyncSettings,
+  type DriveSyncSettings,
+} from '@/app/services/appSettingsService'
 import { exportAllStores, importAllStores, type BackupData } from '@/app/services/backupService'
+import { exportBackupToDrive, interactiveConnectAndExport, clearDriveAuth, fetchBackupFromDrive, getDriveBackupMetadata } from '@/app/services/driveSyncService'
+import { config } from '@/app/config'
 
 const DEFAULT_CATEGORIES: Category[] = []
 
@@ -39,6 +48,13 @@ export default function Settings() {
   const [cardTypeIndicators, setCardTypeIndicatorsState] = useState<string[]>([])
   const [newIndicator, setNewIndicator] = useState('')
   const [editingIndicator, setEditingIndicator] = useState<{ index: number; value: string } | null>(null)
+  const [driveSyncSettings, setDriveSyncSettingsState] = useState<DriveSyncSettings | null>(null)
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'connecting' | 'saving' | 'error'>('idle')
+  const [syncMessage, setSyncMessage] = useState('')
+
+  const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || ''
+
+  const formatTime = (iso?: string) => (iso ? new Date(iso).toLocaleString('he-IL') : '—')
 
   useEffect(() => {
     loadCategories()
@@ -46,6 +62,7 @@ export default function Settings() {
     loadDatabaseStats()
     loadCategoryUsage()
     loadCardTypeIndicators()
+    loadDriveSyncSettings()
     initializeAppSettings()
   }, [])
 
@@ -131,6 +148,15 @@ export default function Settings() {
     }
   }
 
+  const loadDriveSyncSettings = async () => {
+    try {
+      const settings = await getDriveSyncSettings()
+      setDriveSyncSettingsState(settings)
+    } catch (err) {
+      console.error('Error loading Drive sync settings:', err)
+    }
+  }
+
   const handleAddIndicator = async () => {
     if (!newIndicator.trim()) return
 
@@ -157,6 +183,254 @@ export default function Settings() {
     await setCardTypeIndicators(updated)
     setEditingIndicator(null)
     setAlertModal({ isOpen: true, message: 'עודכן בהצלחה!' })
+  }
+
+  const persistDriveSyncSettingsSafe = async (settings: DriveSyncSettings) => {
+    try {
+      setDriveSyncSettingsState(settings)
+      await setDriveSyncSettings(settings)
+    } catch (err) {
+      console.error('Error saving Drive sync settings:', err)
+      setAlertModal({ isOpen: true, message: 'שגיאה בשמירת הגדרות הסנכרון' })
+    }
+  }
+
+  const handleDriveFrequencyChange = async (value: number) => {
+    if (!driveSyncSettings) return
+    const minMinutes = config.syncIntervalSeconds / 60
+    await persistDriveSyncSettingsSafe({
+      ...driveSyncSettings,
+      frequencyMinutes: minMinutes,
+    })
+  }
+
+  const handleToggleAutoSync = async () => {
+    if (!driveSyncSettings) return
+    await persistDriveSyncSettingsSafe({
+      ...driveSyncSettings,
+      autoSyncEnabled: !driveSyncSettings.autoSyncEnabled,
+    })
+  }
+
+  const handleConnectDrive = async () => {
+    if (!googleClientId) {
+      setAlertModal({ isOpen: true, message: 'חסר GOOGLE CLIENT ID (NEXT_PUBLIC_GOOGLE_CLIENT_ID)' })
+      return
+    }
+    if (!driveSyncSettings) return
+
+    setSyncStatus('connecting')
+    setSyncMessage('')
+    try {
+      const result = await interactiveConnectAndExport({
+        clientId: googleClientId,
+        existingFileId: driveSyncSettings.driveFileId,
+        useAppData: true,
+        fileName: 'finance-backup.json',
+      })
+
+        if (result.success) {
+          const updated: DriveSyncSettings = {
+            ...driveSyncSettings,
+            driveFileId: result.fileId || driveSyncSettings.driveFileId,
+            lastSyncAt: new Date().toISOString(),
+            remoteModifiedAt: new Date().toISOString(),
+            lastSyncError: undefined,
+          }
+          await persistDriveSyncSettingsSafe(updated)
+          setAlertModal({ isOpen: true, message: 'החיבור ל-Google Drive הצליח והגיבוי נשמר!' })
+        } else {
+        setSyncStatus('error')
+        setSyncMessage(result.error || 'שגיאה לא ידועה')
+        setAlertModal({ isOpen: true, message: 'חיבור ל-Google Drive נכשל. נסה שוב.' })
+      }
+    } catch (err: any) {
+      console.error('Drive connect failed:', err)
+      setSyncStatus('error')
+      setSyncMessage(err?.message || 'שגיאה לא ידועה')
+      setAlertModal({ isOpen: true, message: 'חיבור ל-Google Drive נכשל. בדוק הרשאות ונסה שוב.' })
+    } finally {
+      setSyncStatus('idle')
+    }
+  }
+
+  const handleManualDriveSync = async () => {
+    if (!googleClientId) {
+      setAlertModal({ isOpen: true, message: 'חסר GOOGLE CLIENT ID (NEXT_PUBLIC_GOOGLE_CLIENT_ID)' })
+      return
+    }
+    if (!driveSyncSettings) return
+
+    setSyncStatus('saving')
+    setSyncMessage('')
+
+    // Pull if remote is newer
+    const meta = await getDriveBackupMetadata({ clientId: googleClientId, fileId: driveSyncSettings.driveFileId, fileName: 'finance-backup.json' })
+    if (meta.success && meta.fileId && meta.modifiedTime) {
+      const remoteNewer = !driveSyncSettings.lastSyncAt || new Date(meta.modifiedTime) > new Date(driveSyncSettings.lastSyncAt)
+      if (remoteNewer) {
+        const pull = await fetchBackupFromDrive({ clientId: googleClientId, fileId: meta.fileId, fileName: 'finance-backup.json' })
+        if (pull.success && pull.data) {
+          await importAllStores(pull.data as BackupData)
+          await persistDriveSyncSettingsSafe({
+            ...driveSyncSettings,
+            driveFileId: meta.fileId,
+            lastSyncAt: new Date().toISOString(),
+            remoteModifiedAt: meta.modifiedTime,
+            lastSyncError: undefined,
+          })
+        } else if (pull.error === 'no-token') {
+          setAlertModal({ isOpen: true, message: 'נדרש חיבור ל-Google Drive. לחץ על התחברות.' })
+          setSyncStatus('idle')
+          return
+        } else {
+          setSyncStatus('error')
+          setSyncMessage(pull.error || '')
+          setAlertModal({ isOpen: true, message: 'שגיאה בהורדת הגיבוי לפני שמירה.' })
+          setSyncStatus('idle')
+          return
+        }
+      }
+    }
+
+    const result = await exportBackupToDrive({
+      clientId: googleClientId,
+      fileId: driveSyncSettings.driveFileId,
+      useAppData: true,
+      fileName: 'finance-backup.json',
+    })
+
+    if (result.success) {
+      const updated: DriveSyncSettings = {
+        ...driveSyncSettings,
+        driveFileId: result.fileId || driveSyncSettings.driveFileId,
+        lastSyncAt: new Date().toISOString(),
+        remoteModifiedAt: new Date().toISOString(),
+        lastSyncError: undefined,
+      }
+      await persistDriveSyncSettingsSafe(updated)
+      setAlertModal({ isOpen: true, message: 'הגיבוי נשמר ל-Google Drive בהצלחה!' })
+    } else {
+      const msg = result.error === 'no-token'
+        ? 'נדרש חיבור ל-Google Drive. לחץ על התחברות.'
+        : 'שגיאה בשמירת הגיבוי ל-Drive.'
+      setSyncStatus('error')
+      setSyncMessage(result.error || 'unknown-error')
+      setAlertModal({ isOpen: true, message: msg })
+    }
+
+    setSyncStatus('idle')
+  }
+
+  const handleRestoreFromDrive = async () => {
+    if (!googleClientId) {
+      setAlertModal({ isOpen: true, message: 'חסר GOOGLE CLIENT ID (NEXT_PUBLIC_GOOGLE_CLIENT_ID)' })
+      return
+    }
+    if (!driveSyncSettings) {
+      setAlertModal({ isOpen: true, message: 'חסר חיבור ל-Drive או הגדרות סנכרון.' })
+      return
+    }
+    console.log('[DriveRestore] starting restore from Drive', {
+      driveFileId: driveSyncSettings?.driveFileId,
+      hasClientId: Boolean(googleClientId),
+    })
+    setSyncStatus('saving')
+    setSyncMessage('')
+    const result = await fetchBackupFromDrive({
+      clientId: googleClientId,
+      fileId: driveSyncSettings?.driveFileId,
+      fileName: 'finance-backup.json',
+    })
+    const storeCounts =
+      result.data?.stores
+        ? {
+            transactions: result.data.stores.transactions?.length ?? 0,
+            importedFiles: result.data.stores.importedFiles?.length ?? 0,
+            categories: result.data.stores.categories?.length ?? 0,
+            businessCategories: result.data.stores.businessCategories?.length ?? 0,
+            tasks: result.data.stores.tasks?.length ?? 0,
+            appSettings: result.data.stores.appSettings?.length ?? 0,
+          }
+        : null
+    const totalIndexedRecords =
+      storeCounts == null
+        ? 0
+        : Object.values(storeCounts).reduce((sum, val) => sum + (typeof val === 'number' ? val : 0), 0)
+    const hasStoreSnapshots =
+      Boolean(result.data?.stores?.subjectStore) || Boolean(result.data?.stores?.historyStore)
+    console.log('[DriveRestore] fetch result', {
+      success: result.success,
+      error: result.error,
+      fileId: result.fileId || driveSyncSettings?.driveFileId,
+      storeCounts,
+      hasData: Boolean(result.data),
+      totalIndexedRecords,
+      hasStoreSnapshots,
+    })
+
+    if (result.success && result.data) {
+      try {
+        if (totalIndexedRecords === 0 && !hasStoreSnapshots) {
+          console.warn('[DriveRestore] backup appears empty; aborting import')
+          setSyncStatus('error')
+          setSyncMessage('empty-backup')
+          setAlertModal({ isOpen: true, message: 'הגיבוי מ-Drive ריק או פגום. שחזור בוטל.' })
+          setSyncStatus('idle')
+          return
+        }
+        if ((storeCounts?.transactions ?? 0) === 0 || (storeCounts?.importedFiles ?? 0) === 0) {
+          console.warn('[DriveRestore] missing core data (transactions/importedFiles); aborting import')
+          setSyncStatus('error')
+          setSyncMessage('missing-core-data')
+          setAlertModal({
+            isOpen: true,
+            message: 'קובץ הגיבוי חסר עסקאות או קבצים מיובאים. שחזור בוטל.',
+          })
+          setSyncStatus('idle')
+          return
+        }
+        await importAllStores(result.data as BackupData)
+        await persistDriveSyncSettingsSafe({
+          ...driveSyncSettings,
+          driveFileId: result.fileId || driveSyncSettings?.driveFileId,
+          lastSyncAt: new Date().toISOString(),
+          remoteModifiedAt: new Date().toISOString(),
+          lastSyncError: undefined,
+        })
+        console.log('[DriveRestore] import finished', {
+          fileId: result.fileId || driveSyncSettings?.driveFileId,
+          storeCounts,
+        })
+        setAlertModal({ isOpen: true, message: 'שוחזר בהצלחה מ-Google Drive!' })
+      } catch (err) {
+        console.error('Error importing backup from Drive:', err)
+        setAlertModal({ isOpen: true, message: 'שגיאה בייבוא הגיבוי מה-Drive.' })
+      }
+    } else {
+      const msg = result.error === 'no-token'
+        ? 'נדרש חיבור ל-Google Drive (התחברות + שמירה) לפני שחזור.'
+        : result.error === 'no-file'
+          ? 'לא נמצא קובץ גיבוי ב-Drive. בצע שמירה פעם אחת ואז נסה שוב.'
+          : 'שגיאה בטעינת הגיבוי מה-Drive.'
+      setSyncStatus('error')
+      setSyncMessage(result.error || 'unknown-error')
+      setAlertModal({ isOpen: true, message: msg })
+    }
+
+    setSyncStatus('idle')
+  }
+
+  const handleDisconnectDrive = async () => {
+    if (!driveSyncSettings) return
+    clearDriveAuth()
+    const updated: DriveSyncSettings = {
+      ...driveSyncSettings,
+      autoSyncEnabled: false,
+      driveFileId: driveSyncSettings.driveFileId,
+    }
+    await persistDriveSyncSettingsSafe(updated)
+    setAlertModal({ isOpen: true, message: 'החיבור נותק. תידרש התחברות מחדש לגיבוי.' })
   }
 
   const isDescendant = (candidateId: string, targetAncestorId: string): boolean => {
@@ -714,6 +988,104 @@ export default function Settings() {
           >
             🔄 רענן
           </button>
+        </div>
+      </section>
+
+      <section style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid #e2e8f0', borderRadius: '0.75rem', background: '#ecfdf3' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: '260px' }}>
+            <h2 style={{ margin: 0, fontSize: '1.05rem' }}>☁️ סנכרון ל-Google Drive</h2>
+            <p style={{ margin: '0.25rem 0 0', color: '#166534', fontSize: '0.95rem' }}>
+              גיבוי שקט לתיקיית appData בחשבון Google Drive שלך. הנתונים לא יוצאים מהדפדפן חוץ מהעברה המאובטחת ל-Drive.
+            </p>
+            {!googleClientId && (
+              <p style={{ margin: '0.35rem 0 0', color: '#b91c1c', fontSize: '0.9rem' }}>
+                חסר NEXT_PUBLIC_GOOGLE_CLIENT_ID בקובץ הסביבה. הוסף Client ID כדי להתחבר.
+              </p>
+            )}
+            {driveSyncSettings?.lastSyncAt && (
+              <p style={{ margin: '0.35rem 0 0', color: '#065f46', fontSize: '0.9rem' }}>
+                סנכרון אחרון: {new Date(driveSyncSettings.lastSyncAt).toLocaleString('he-IL')}
+              </p>
+            )}
+            {driveSyncSettings?.lastSyncError && (
+              <p style={{ margin: '0.35rem 0 0', color: '#b91c1c', fontSize: '0.9rem' }}>
+                שגיאה אחרונה: {driveSyncSettings.lastSyncError}
+              </p>
+            )}
+            {syncMessage && (
+              <p style={{ margin: '0.35rem 0 0', color: '#b91c1c', fontSize: '0.9rem' }}>
+                {syncMessage}
+              </p>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0, flexWrap: 'wrap' }}>
+            <button
+              onClick={handleConnectDrive}
+              className="file-picker"
+              style={{ background: '#0ea5e9', color: 'white' }}
+              disabled={syncStatus !== 'idle'}
+            >
+              🔐 התחברות + שמירה
+            </button>
+            <button
+              onClick={handleManualDriveSync}
+              className="file-picker"
+              style={{ background: '#10b981', color: 'white' }}
+              disabled={syncStatus !== 'idle'}
+            >
+              💾 שמור עכשיו
+            </button>
+            <button
+              onClick={handleRestoreFromDrive}
+              className="file-picker"
+              style={{ background: '#f97316', color: 'white' }}
+              disabled={syncStatus !== 'idle'}
+            >
+              ♻️ שחזר מגיבוי
+            </button>
+            <button
+              onClick={handleDisconnectDrive}
+              className="file-picker secondary"
+              style={{ background: '#e5e7eb', color: '#111827' }}
+            >
+              ⏏️ נתק חיבור
+            </button>
+          </div>
+        </div>
+
+        <div style={{ marginTop: '1rem', display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.95rem' }}>
+            <input
+              type="checkbox"
+              checked={driveSyncSettings?.autoSyncEnabled ?? false}
+              onChange={handleToggleAutoSync}
+            />
+            הפעל סנכרון אוטומטי (ברירת מחדל {config.syncIntervalSeconds / 60} דק')
+          </label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+            <span style={{ fontSize: '0.95rem' }}>תדירות (דקות):</span>
+            <input
+              type="number"
+              min={config.syncIntervalSeconds / 60}
+              value={driveSyncSettings?.frequencyMinutes ?? config.syncIntervalSeconds / 60}
+              onChange={(e) => handleDriveFrequencyChange(Number(e.target.value))}
+              style={{ width: '90px', padding: '0.35rem', borderRadius: '0.375rem', border: '1px solid #cbd5e1', direction: 'ltr' }}
+            />
+          </div>
+          {driveSyncSettings?.driveFileId && (
+            <span style={{ fontSize: '0.85rem', color: '#475569' }}>
+              מזהה קובץ: {driveSyncSettings.driveFileId}
+            </span>
+          )}
+          <span style={{ fontSize: '0.9rem', color: '#111827' }}>
+            מקומי: {formatTime(driveSyncSettings?.lastSyncAt)} | Drive: {formatTime(driveSyncSettings?.remoteModifiedAt)}
+          </span>
+          {syncStatus !== 'idle' && (
+            <span style={{ fontSize: '0.9rem', color: '#2563eb' }}>
+              מצב: {syncStatus === 'connecting' ? 'מתחבר...' : syncStatus === 'saving' ? 'שומר...' : 'שגיאה'}
+            </span>
+          )}
         </div>
       </section>
 
