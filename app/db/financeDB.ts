@@ -71,6 +71,16 @@ export interface AppSettings {
   updatedAt: string
 }
 
+export interface Business {
+  id?: number
+  name: string
+  type: 'personal' | 'business'
+  driveFolderId?: string
+  driveFolderName?: string
+  createdAt: string
+  updatedAt: string
+}
+
 class FinanceDB extends Dexie {
   transactions!: Table<Transaction, number>
   importedFiles!: Table<ImportedFile, number>
@@ -78,6 +88,7 @@ class FinanceDB extends Dexie {
   businessCategories!: Table<BusinessCategory, number>
   tasks!: Table<Task, number>
   appSettings!: Table<AppSettings, number>
+  businesses!: Table<Business, number>
 
   constructor() {
     super('FinanceDB')
@@ -119,6 +130,17 @@ class FinanceDB extends Dexie {
       businessCategories: '++id, &business',
       tasks: '++id, createdAt, priority',
       appSettings: '++id, &key',
+    })
+
+    // Define schema version 5 - add businesses
+    this.version(5).stores({
+      transactions: '++id, type, month, accountNumber, cardNumber, date, chargingDate, [type+month], [cardNumber+month], [accountNumber+month], fileId',
+      importedFiles: '++id, fileName, fileType, processingMonth, [fileType+processingMonth], [cardNumber+processingMonth]',
+      categories: '++id, name, type',
+      businessCategories: '++id, &business',
+      tasks: '++id, createdAt, priority',
+      appSettings: '++id, &key',
+      businesses: '++id, &name, type',
     })
   }
 }

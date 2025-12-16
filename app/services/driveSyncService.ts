@@ -5,7 +5,9 @@ import { exportAllStores, type BackupData } from '@/app/services/backupService'
 import { driveAuthStore, type DriveAuthState } from '@/app/stores/driveAuthStore'
 
 const GSI_SCRIPT_URL = 'https://accounts.google.com/gsi/client'
-const DRIVE_SCOPES = ['https://www.googleapis.com/auth/drive.appdata']
+export const DRIVE_APPDATA_SCOPE = 'https://www.googleapis.com/auth/drive.appdata'
+export const DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file'
+const DEFAULT_SCOPES = [DRIVE_APPDATA_SCOPE]
 
 type StoreCounts = {
   transactions: number
@@ -77,14 +79,22 @@ async function loadGsiClient(): Promise<void> {
   return gsiLoaderPromise
 }
 
-function isTokenValid(auth: DriveAuthState | null): boolean {
+function hasRequiredScopes(auth: DriveAuthState | null, scopes: string[]): boolean {
+  if (!auth) return false
+  if (!auth.scope) return false
+  const granted = new Set(auth.scope.split(/\s+/).filter(Boolean))
+  return scopes.every((scope) => granted.has(scope))
+}
+
+function isTokenValid(auth: DriveAuthState | null, scopes: string[]): boolean {
   if (!auth) return false
   const now = Date.now()
   // Renew one minute before expiry
-  return auth.expiresAt - 60_000 > now
+  if (auth.expiresAt - 60_000 <= now) return false
+  return hasRequiredScopes(auth, scopes)
 }
 
-async function requestAccessToken(clientId: string, prompt: 'consent' | 'none'): Promise<DriveAuthState> {
+async function requestAccessToken(clientId: string, prompt: 'consent' | 'none', scopes: string[]): Promise<DriveAuthState> {
   await loadGsiClient()
 
   if (!window.google?.accounts?.oauth2) {
@@ -94,7 +104,7 @@ async function requestAccessToken(clientId: string, prompt: 'consent' | 'none'):
   return new Promise((resolve, reject) => {
     const tokenClient = window.google!.accounts.oauth2.initTokenClient({
       client_id: clientId,
-      scope: DRIVE_SCOPES.join(' '),
+      scope: scopes.join(' '),
       prompt,
       callback: (response: any) => {
         if (response.error) {
@@ -121,16 +131,17 @@ async function requestAccessToken(clientId: string, prompt: 'consent' | 'none'):
   })
 }
 
-export async function ensureDriveAccessToken(clientId: string, opts?: { prompt?: 'consent' | 'none' }): Promise<string | null> {
+export async function ensureDriveAccessToken(clientId: string, opts?: { prompt?: 'consent' | 'none'; scopes?: string[] }): Promise<string | null> {
   const prompt = opts?.prompt ?? 'none'
+  const scopes = opts?.scopes && opts.scopes.length > 0 ? opts.scopes : DEFAULT_SCOPES
   const stored = driveAuthStore.get()
 
-  if (isTokenValid(stored)) {
+  if (isTokenValid(stored, scopes)) {
     return stored!.accessToken
   }
 
   try {
-    const auth = await requestAccessToken(clientId, prompt)
+    const auth = await requestAccessToken(clientId, prompt, scopes)
     return auth.accessToken
   } catch (err) {
     console.error('Error acquiring Drive token:', err)

@@ -1,6 +1,7 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 
 export type TabItem = {
   id: string
@@ -15,7 +16,29 @@ type SettingsTabsProps = {
 }
 
 export default function SettingsTabs({ tabs, defaultTab, children }: SettingsTabsProps) {
-  const [activeTab, setActiveTab] = useState(defaultTab || tabs[0]?.id || '')
+  const searchParams = useSearchParams()
+  const pathname = usePathname()
+  const router = useRouter()
+
+  const fallbackTab = defaultTab || tabs[0]?.id || ''
+  const tabFromQuery = searchParams.get('tab')
+  const initialTab = tabs.some((t) => t.id === tabFromQuery) ? tabFromQuery! : fallbackTab
+
+  const [activeTab, setActiveTab] = useState(initialTab)
+
+  useEffect(() => {
+    const tabParam = searchParams.get('tab')
+    if (tabParam && tabParam !== activeTab && tabs.some((t) => t.id === tabParam)) {
+      setActiveTab(tabParam)
+    }
+  }, [searchParams, tabs, activeTab])
+
+  const handleTabChange = (tabId: string) => {
+    setActiveTab(tabId)
+    const params = new URLSearchParams(Array.from(searchParams.entries()))
+    params.set('tab', tabId)
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+  }
 
   const tabStyle = (tabId: string) => ({
     padding: '0.75rem 1.5rem',
@@ -47,7 +70,7 @@ export default function SettingsTabs({ tabs, defaultTab, children }: SettingsTab
           <button
             key={tab.id}
             style={tabStyle(tab.id)}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => handleTabChange(tab.id)}
           >
             <span>{tab.icon}</span>
             <span>{tab.label}</span>
