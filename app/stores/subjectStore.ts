@@ -93,6 +93,33 @@ export const subjectStore = {
     }
   },
 
+  // Save all categories
+  saveAll: (categories: Category[]): void => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY)
+      const data = stored ? JSON.parse(stored) : { categories: [], classifications: [] }
+      data.categories = categories
+      data.lastUpdated = new Date().toISOString()
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+    } catch (err) {
+      console.error('Error saving categories:', err)
+    }
+  },
+
+  // Get raw stored data
+  getRaw: (): { categories: Category[]; classifications: Classification[]; lastUpdated?: string } | null => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY)
+      if (stored) {
+        return JSON.parse(stored)
+      }
+      return null
+    } catch (err) {
+      console.error('Error loading raw data:', err)
+      return null
+    }
+  },
+
   // Export store data for backup
   export: async (): Promise<any> => {
     try {

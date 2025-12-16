@@ -6,6 +6,7 @@ import Sidebar from './components/Sidebar'
 import PageHeader from './components/PageHeader'
 import { ToastProvider } from './components/ToastContainer'
 import MigrationRunner from './components/MigrationRunner'
+import DriveSyncManager from './components/DriveSyncManager'
 
 if (!process.env.NEXT_PUBLIC_SITE_URL) {
   throw new Error('Missing NEXT_PUBLIC_SITE_URL environment variable')
@@ -49,6 +50,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body>
         <ToastProvider>
           <MigrationRunner />
+          <DriveSyncManager />
           <PageHeader />
           <div className="app-layout">
             <Sidebar />

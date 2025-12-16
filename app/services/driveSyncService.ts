@@ -92,7 +92,7 @@ async function requestAccessToken(clientId: string, prompt: 'consent' | 'none'):
   }
 
   return new Promise((resolve, reject) => {
-    const tokenClient = window.google.accounts.oauth2.initTokenClient({
+    const tokenClient = window.google!.accounts.oauth2.initTokenClient({
       client_id: clientId,
       scope: DRIVE_SCOPES.join(' '),
       prompt,
