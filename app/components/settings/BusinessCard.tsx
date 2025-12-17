@@ -10,9 +10,10 @@ type BusinessCardProps = {
   onEdit: (business: BusinessUI) => void
   onDelete: (id: number) => void
   onSelectFolder: (business: BusinessUI) => void
+  onTogglePin: (business: BusinessUI) => void
 }
 
-export default function BusinessCard({ business, onEdit, onDelete, onSelectFolder }: BusinessCardProps) {
+export default function BusinessCard({ business, onEdit, onDelete, onSelectFolder, onTogglePin }: BusinessCardProps) {
   return (
     <div
       style={{
@@ -25,6 +26,20 @@ export default function BusinessCard({ business, onEdit, onDelete, onSelectFolde
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+            <button
+              onClick={() => onTogglePin(business)}
+              title={business.pinnedToSidebar ? 'הסר מהתפריט' : 'הצמד לתפריט'}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: '1.1rem',
+                padding: '0.1rem',
+                opacity: business.pinnedToSidebar ? 1 : 0.4,
+              }}
+            >
+              📌
+            </button>
             <span style={{ fontSize: '1.25rem' }}>
               {business.type === 'personal' ? '🏠' : '🏢'}
             </span>

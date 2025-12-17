@@ -40,6 +40,7 @@ export default function BusinessesTab() {
             type: b.type,
             driveFolderId: b.driveFolderId,
             driveFolderName: b.driveFolderName,
+            pinnedToSidebar: b.pinnedToSidebar,
           } as BusinessUI
         })
         .filter((b): b is BusinessUI => Boolean(b))
@@ -142,6 +143,23 @@ export default function BusinessesTab() {
     setDeleteConfirm({ isOpen: false, id: null })
   }
 
+  const handleTogglePin = async (business: BusinessUI) => {
+    try {
+      const newPinned = !business.pinnedToSidebar
+      const updated = await businessStore.update(business.id, { pinnedToSidebar: newPinned })
+      if (!updated) {
+        setAlertMessage('עדכון העסק נכשל')
+        return
+      }
+      setBusinesses(sortBusinesses(businesses.map((b) =>
+        b.id === business.id ? { ...b, pinnedToSidebar: newPinned } : b
+      )))
+    } catch (err) {
+      console.error('Error toggling pin:', err)
+      setAlertMessage('עדכון העסק נכשל')
+    }
+  }
+
   const handleSelectFolder = async (business: BusinessUI) => {
     if (!googleClientId) {
       setAlertMessage('חסר GOOGLE CLIENT ID (NEXT_PUBLIC_GOOGLE_CLIENT_ID)')
@@ -223,6 +241,7 @@ export default function BusinessesTab() {
             onEdit={handleEdit}
             onDelete={handleDelete}
             onSelectFolder={() => void handleSelectFolder(business)}
+            onTogglePin={handleTogglePin}
           />
         ))}
 

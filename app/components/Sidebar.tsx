@@ -1,9 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { config } from '@/app/config'
+import { businessStore } from '@/app/stores/businessStore'
+import type { Business } from '@/app/db/financeDB'
 
 type Tool = {
   id: string
@@ -85,6 +87,15 @@ if (config.developerMode) {
 export default function Sidebar() {
   const pathname = usePathname()
   const [isCollapsed, setIsCollapsed] = useState(false)
+  const [pinnedBusinesses, setPinnedBusinesses] = useState<Business[]>([])
+
+  useEffect(() => {
+    const loadPinnedBusinesses = async () => {
+      const all = await businessStore.getAll()
+      setPinnedBusinesses(all.filter(b => b.pinnedToSidebar))
+    }
+    void loadPinnedBusinesses()
+  }, [])
 
   return (
     <aside className={`sidebar ${isCollapsed ? 'collapsed' : ''}`}>
@@ -122,6 +133,24 @@ export default function Sidebar() {
               )}
             </li>
           ))}
+
+          {pinnedBusinesses.length > 0 && (
+            <>
+              <li style={{ borderTop: '1px solid #e2e8f0', margin: '0.5rem 0' }} />
+              {pinnedBusinesses.map((business) => (
+                <li key={`business-${business.id}`}>
+                  <Link
+                    href={`/business/${business.id}`}
+                    className={`nav-item ${pathname === `/business/${business.id}` ? 'active' : ''}`}
+                    title={isCollapsed ? business.name : undefined}
+                  >
+                    <span className="nav-icon">{business.type === 'personal' ? '🏠' : '🏢'}</span>
+                    {!isCollapsed && <span className="nav-title">{business.name}</span>}
+                  </Link>
+                </li>
+              ))}
+            </>
+          )}
         </ul>
       </nav>
     </aside>

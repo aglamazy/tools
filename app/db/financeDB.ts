@@ -77,6 +77,38 @@ export interface Business {
   type: 'personal' | 'business'
   driveFolderId?: string
   driveFolderName?: string
+  pinnedToSidebar?: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+// Harvest (Time Tracking) interfaces
+export interface Project {
+  id?: number
+  businessId: number
+  name: string
+  color?: string
+  archived: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface HarvestTask {
+  id?: number
+  projectId: number
+  name: string
+  hourlyRate?: number
+  archived: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface TimeEntry {
+  id?: number
+  taskId: number
+  date: string // YYYY-MM-DD
+  hours: number
+  notes?: string
   createdAt: string
   updatedAt: string
 }
@@ -89,6 +121,9 @@ class FinanceDB extends Dexie {
   tasks!: Table<Task, number>
   appSettings!: Table<AppSettings, number>
   businesses!: Table<Business, number>
+  projects!: Table<Project, number>
+  harvestTasks!: Table<HarvestTask, number>
+  timeEntries!: Table<TimeEntry, number>
 
   constructor() {
     super('FinanceDB')
@@ -141,6 +176,20 @@ class FinanceDB extends Dexie {
       tasks: '++id, createdAt, priority',
       appSettings: '++id, &key',
       businesses: '++id, &name, type',
+    })
+
+    // Define schema version 6 - add harvest (time tracking) tables
+    this.version(6).stores({
+      transactions: '++id, type, month, accountNumber, cardNumber, date, chargingDate, [type+month], [cardNumber+month], [accountNumber+month], fileId',
+      importedFiles: '++id, fileName, fileType, processingMonth, [fileType+processingMonth], [cardNumber+processingMonth]',
+      categories: '++id, name, type',
+      businessCategories: '++id, &business',
+      tasks: '++id, createdAt, priority',
+      appSettings: '++id, &key',
+      businesses: '++id, &name, type',
+      projects: '++id, businessId, name, archived',
+      harvestTasks: '++id, projectId, name, archived',
+      timeEntries: '++id, taskId, date, [taskId+date]',
     })
   }
 }

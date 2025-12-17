@@ -7,6 +7,7 @@ export type Business = {
   type: BusinessType
   driveFolderId?: string
   driveFolderName?: string
+  pinnedToSidebar?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -14,4 +15,5 @@ export type Business = {
 // UI type (id always present for display/edit)
 export type BusinessUI = Omit<Business, 'id' | 'createdAt' | 'updatedAt'> & {
   id: number
+  pinnedToSidebar?: boolean
 }

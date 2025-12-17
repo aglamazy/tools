@@ -267,3 +267,9 @@ Import Files → localStorage (finance-imported-files + finance-transactions)
 - `/app/tools/budget/page.tsx` - Budget analysis
 - `/app/components/Settings.tsx` - Category management
 - `/app/types/transactions.ts` - Type definitions
+
+---
+
+## I. FUTURE FEATURES
+
+- [ ] Allow user customization (if more than one user uses the same database)
