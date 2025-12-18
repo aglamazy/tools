@@ -69,11 +69,13 @@ export default function BusinessSettingsTab({ businessId }: BusinessSettingsTabP
         businessId: editingProject.businessId,
         name: editingProject.name.trim(),
         color: editingProject.color,
+        defaultHourlyRate: editingProject.defaultHourlyRate,
       })
     } else {
       await projectStore.update(editingProject.id!, {
         name: editingProject.name.trim(),
         color: editingProject.color,
+        defaultHourlyRate: editingProject.defaultHourlyRate,
       })
     }
 
@@ -87,9 +89,11 @@ export default function BusinessSettingsTab({ businessId }: BusinessSettingsTabP
   }
 
   const handleAddTask = (projectId: number) => {
+    const project = projects.find((p) => p.id === projectId)
     setEditingTask({
       projectId,
       name: '',
+      hourlyRate: project?.defaultHourlyRate,
       archived: false,
       createdAt: '',
       updatedAt: '',
@@ -189,6 +193,12 @@ export default function BusinessSettingsTab({ businessId }: BusinessSettingsTabP
                 }} />
 
                 <span style={{ flex: 1, fontWeight: 500 }}>{project.name}</span>
+
+                {project.defaultHourlyRate && (
+                  <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                    {project.defaultHourlyRate}₪/שעה
+                  </span>
+                )}
 
                 {project.archived && (
                   <span style={{ fontSize: '0.75rem', color: '#64748b' }}>בארכיון</span>
@@ -358,6 +368,19 @@ export default function BusinessSettingsTab({ businessId }: BusinessSettingsTabP
                 cursor: 'pointer',
               }}
             />
+          </FormField>
+
+          <FormField label="תעריף שעתי ברירת מחדל">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                type="number"
+                value={editingProject.defaultHourlyRate || ''}
+                onChange={(e) => setEditingProject({ ...editingProject, defaultHourlyRate: e.target.value ? Number(e.target.value) : undefined })}
+                placeholder="0"
+                style={{ ...inputStyle, flex: 1 }}
+              />
+              <span style={{ color: '#64748b', whiteSpace: 'nowrap' }}>₪ / שעה</span>
+            </div>
           </FormField>
         </FormModal>
       )}

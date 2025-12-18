@@ -88,6 +88,7 @@ export interface Project {
   businessId: number
   name: string
   color?: string
+  defaultHourlyRate?: number
   archived: boolean
   createdAt: string
   updatedAt: string

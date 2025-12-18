@@ -18,19 +18,31 @@ type WeekEntry = TimeEntry & {
 }
 
 
+function formatLocalDate(d: Date): string {
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function formatDisplayDate(dateStr: string): string {
+  const [year, month, day] = dateStr.split('-')
+  return `${day}/${month}/${year}`
+}
+
 function getWeekDates(weekOffset: number = 0): { start: string; end: string; days: string[] } {
   const now = new Date()
   const dayOfWeek = now.getDay()
   // Start from Sunday (day 0)
   const sunday = new Date(now)
   sunday.setDate(now.getDate() - dayOfWeek + (weekOffset * 7))
-  sunday.setHours(0, 0, 0, 0)
+  sunday.setHours(12, 0, 0, 0) // Use noon to avoid timezone issues
 
   const days: string[] = []
   for (let i = 0; i < 7; i++) {
     const d = new Date(sunday)
     d.setDate(sunday.getDate() + i)
-    days.push(d.toISOString().split('T')[0])
+    days.push(formatLocalDate(d))
   }
 
   return {
@@ -152,6 +164,24 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     timerStore.set(timer)
   }
 
+  const handleStartFromEntry = async (entry: WeekEntry) => {
+    if (activeTimer) return
+    // Find the project for this task
+    const task = await harvestTaskStore.getById(entry.taskId)
+    if (!task) return
+
+    setSelectedProjectId(task.projectId)
+    setSelectedTaskId(entry.taskId)
+
+    const timer: ActiveTimer = {
+      projectId: task.projectId,
+      taskId: entry.taskId,
+      startedAt: new Date().toISOString(),
+    }
+    setActiveTimer(timer)
+    timerStore.set(timer)
+  }
+
   const loadWeekEntries = async () => {
     const { start, end } = getWeekDates(weekOffset)
     const entries = await timeEntryStore.getByDateRange(start, end)
@@ -179,7 +209,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     if (!activeTimer) return
 
     const hours = elapsedSeconds / 3600
-    const today = new Date().toISOString().split('T')[0]
+    const today = formatLocalDate(new Date())
 
     await timeEntryStore.add({
       taskId: activeTimer.taskId,
@@ -194,7 +224,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
   }
 
   const handleOpenManualEntry = () => {
-    const today = new Date().toISOString().split('T')[0]
+    const today = formatLocalDate(new Date())
     setEditingEntry(null)
     setFormData({
       projectId: selectedProjectId,
@@ -477,7 +507,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
           {days.map((day, i) => {
             const dayEntries = weekEntries.filter(e => e.date === day)
             const dayTotal = dayEntries.reduce((sum, e) => sum + e.hours, 0)
-            const isToday = day === new Date().toISOString().split('T')[0]
+            const isToday = day === formatLocalDate(new Date())
 
             return (
               <div
@@ -505,7 +535,6 @@ export default function TimingTab({ businessId }: TimingTabProps) {
             {weekEntries.map((entry) => (
               <div
                 key={entry.id}
-                onClick={() => handleEditEntry(entry)}
                 style={{
                   display: 'flex',
                   justifyContent: 'space-between',
@@ -515,22 +544,36 @@ export default function TimingTab({ businessId }: TimingTabProps) {
                   border: '1px solid #e2e8f0',
                   borderRadius: '0.5rem',
                   fontSize: '0.9rem',
-                  cursor: 'pointer',
-                  transition: 'background 0.15s',
                 }}
-                onMouseEnter={(e) => e.currentTarget.style.background = '#f1f5f9'}
-                onMouseLeave={(e) => e.currentTarget.style.background = '#f8fafc'}
               >
-                <div>
+                <div
+                  onClick={() => handleEditEntry(entry)}
+                  style={{ flex: 1, cursor: 'pointer' }}
+                >
                   <span style={{ fontWeight: 500 }}>{entry.projectName}</span>
                   <span style={{ color: '#64748b', margin: '0 0.5rem' }}>›</span>
-                  <span title={entry.taskName}>
-                    {entry.taskName.length > 10 ? entry.taskName.slice(0, 10) + '…' : entry.taskName}
-                  </span>
+                  <span>{entry.taskName}</span>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                  <span style={{ color: '#64748b' }}>{entry.date}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <span style={{ color: '#64748b' }}>{formatDisplayDate(entry.date)}</span>
                   <span style={{ fontWeight: 600 }}>{formatHours(entry.hours)}</span>
+                  <button
+                    onClick={() => handleStartFromEntry(entry)}
+                    disabled={!!activeTimer}
+                    title="התחל טיימר עם אותו פרויקט ומשימה"
+                    style={{
+                      padding: '0.25rem 0.5rem',
+                      fontSize: '0.8rem',
+                      background: activeTimer ? '#e5e7eb' : '#ecfdf5',
+                      border: '1px solid #6ee7b7',
+                      borderRadius: '0.25rem',
+                      cursor: activeTimer ? 'not-allowed' : 'pointer',
+                      color: '#059669',
+                      opacity: activeTimer ? 0.5 : 1,
+                    }}
+                  >
+                    ▶
+                  </button>
                 </div>
               </div>
             ))}
