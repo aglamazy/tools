@@ -154,6 +154,8 @@ export default function BusinessesTab() {
       setBusinesses(sortBusinesses(businesses.map((b) =>
         b.id === business.id ? { ...b, pinnedToSidebar: newPinned } : b
       )))
+      // Notify sidebar to refresh
+      window.dispatchEvent(new CustomEvent('sidebar-refresh'))
     } catch (err) {
       console.error('Error toggling pin:', err)
       setAlertMessage('עדכון העסק נכשל')

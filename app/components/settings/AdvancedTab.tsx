@@ -17,7 +17,18 @@ import {
 import Modal from '../Modal'
 
 export default function AdvancedTab() {
-  const [dbStats, setDbStats] = useState<{ transactions: number; importedFiles: number; businessCategories: number } | null>(null)
+  const [dbStats, setDbStats] = useState<{
+    transactions: number
+    importedFiles: number
+    categories: number
+    businessCategories: number
+    tasks: number
+    appSettings: number
+    businesses: number
+    projects: number
+    harvestTasks: number
+    timeEntries: number
+  } | null>(null)
   const [cardTypeIndicators, setCardTypeIndicatorsState] = useState<string[]>([])
   const [newIndicator, setNewIndicator] = useState('')
   const [editingIndicator, setEditingIndicator] = useState<{ index: number; value: string } | null>(null)
@@ -34,15 +45,40 @@ export default function AdvancedTab() {
 
   const loadDatabaseStats = async () => {
     try {
-      const [transactionsCount, importedFilesCount, businessCategoriesCount] = await Promise.all([
+      const [
+        transactionsCount,
+        importedFilesCount,
+        categoriesCount,
+        businessCategoriesCount,
+        tasksCount,
+        appSettingsCount,
+        businessesCount,
+        projectsCount,
+        harvestTasksCount,
+        timeEntriesCount,
+      ] = await Promise.all([
         db.transactions.count(),
         db.importedFiles.count(),
+        db.categories.count(),
         db.businessCategories.count(),
+        db.tasks.count(),
+        db.appSettings.count(),
+        db.businesses.count(),
+        db.projects.count(),
+        db.harvestTasks.count(),
+        db.timeEntries.count(),
       ])
       setDbStats({
         transactions: transactionsCount,
         importedFiles: importedFilesCount,
+        categories: categoriesCount,
         businessCategories: businessCategoriesCount,
+        tasks: tasksCount,
+        appSettings: appSettingsCount,
+        businesses: businessesCount,
+        projects: projectsCount,
+        harvestTasks: harvestTasksCount,
+        timeEntries: timeEntriesCount,
       })
     } catch (err) {
       console.error('Error loading database stats:', err)
@@ -153,15 +189,22 @@ export default function AdvancedTab() {
               מידע על כמות הרשומות במאגר הנתונים המקומי
             </p>
             {dbStats && (
-              <div style={{ marginTop: '0.75rem', display: 'flex', gap: '1.5rem', fontSize: '0.9rem' }}>
+              <div style={{ marginTop: '0.75rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '0.5rem 1rem', fontSize: '0.9rem' }}>
                 <div><strong>עסקאות:</strong> {dbStats.transactions.toLocaleString('he-IL')}</div>
                 <div><strong>קבצים מיובאים:</strong> {dbStats.importedFiles.toLocaleString('he-IL')}</div>
+                <div><strong>קטגוריות:</strong> {dbStats.categories.toLocaleString('he-IL')}</div>
                 <div>
                   <Link href="/tools/business-categories" style={{ fontWeight: 700, color: '#0ea5e9' }}>
                     מיפוי עסקים-נושאים
                   </Link>
                   : {dbStats.businessCategories.toLocaleString('he-IL')}
                 </div>
+                <div><strong>משימות:</strong> {dbStats.tasks.toLocaleString('he-IL')}</div>
+                <div><strong>הגדרות:</strong> {dbStats.appSettings.toLocaleString('he-IL')}</div>
+                <div><strong>עסקים:</strong> {dbStats.businesses.toLocaleString('he-IL')}</div>
+                <div><strong>פרויקטים:</strong> {dbStats.projects.toLocaleString('he-IL')}</div>
+                <div><strong>משימות זמן:</strong> {dbStats.harvestTasks.toLocaleString('he-IL')}</div>
+                <div><strong>רישומי זמן:</strong> {dbStats.timeEntries.toLocaleString('he-IL')}</div>
               </div>
             )}
           </div>

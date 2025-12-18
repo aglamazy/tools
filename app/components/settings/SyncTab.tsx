@@ -31,6 +31,10 @@ type DriveBackupInfo = {
     businessCategories: number
     tasks: number
     appSettings: number
+    businesses: number
+    projects: number
+    harvestTasks: number
+    timeEntries: number
   }
   totalSizeBytes?: number
   backupVersion?: string
@@ -228,6 +232,10 @@ export default function SyncTab() {
           businessCategories: result.data.stores.businessCategories?.length ?? 0,
           tasks: result.data.stores.tasks?.length ?? 0,
           appSettings: result.data.stores.appSettings?.length ?? 0,
+          businesses: result.data.stores.businesses?.length ?? 0,
+          projects: result.data.stores.projects?.length ?? 0,
+          harvestTasks: result.data.stores.harvestTasks?.length ?? 0,
+          timeEntries: result.data.stores.timeEntries?.length ?? 0,
         }
       : null
 
@@ -323,6 +331,10 @@ export default function SyncTab() {
             businessCategories: backup.stores?.businessCategories?.length ?? 0,
             tasks: backup.stores?.tasks?.length ?? 0,
             appSettings: backup.stores?.appSettings?.length ?? 0,
+            businesses: backup.stores?.businesses?.length ?? 0,
+            projects: backup.stores?.projects?.length ?? 0,
+            harvestTasks: backup.stores?.harvestTasks?.length ?? 0,
+            timeEntries: backup.stores?.timeEntries?.length ?? 0,
           }
           setDriveBackupInfo({
             fileId: meta.fileId,
@@ -407,6 +419,10 @@ export default function SyncTab() {
           businessCategories: backup.stores.businessCategories?.length ?? 0,
           tasks: backup.stores.tasks?.length ?? 0,
           appSettings: backup.stores.appSettings?.length ?? 0,
+          businesses: backup.stores.businesses?.length ?? 0,
+          projects: backup.stores.projects?.length ?? 0,
+          harvestTasks: backup.stores.harvestTasks?.length ?? 0,
+          timeEntries: backup.stores.timeEntries?.length ?? 0,
         }
         console.log('[BackupRestore] local import candidate', storeCounts)
 
@@ -524,6 +540,10 @@ export default function SyncTab() {
                   <span>מיפוי עסקים: {driveBackupInfo.storeCounts.businessCategories.toLocaleString('he-IL')}</span>
                   <span>משימות: {driveBackupInfo.storeCounts.tasks.toLocaleString('he-IL')}</span>
                   <span>הגדרות: {driveBackupInfo.storeCounts.appSettings.toLocaleString('he-IL')}</span>
+                  <span>עסקים: {driveBackupInfo.storeCounts.businesses.toLocaleString('he-IL')}</span>
+                  <span>פרויקטים: {driveBackupInfo.storeCounts.projects.toLocaleString('he-IL')}</span>
+                  <span>משימות זמן: {driveBackupInfo.storeCounts.harvestTasks.toLocaleString('he-IL')}</span>
+                  <span>רישומי זמן: {driveBackupInfo.storeCounts.timeEntries.toLocaleString('he-IL')}</span>
                 </div>
               </div>
             )}

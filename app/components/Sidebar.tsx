@@ -95,6 +95,11 @@ export default function Sidebar() {
       setPinnedBusinesses(all.filter(b => b.pinnedToSidebar))
     }
     void loadPinnedBusinesses()
+
+    // Listen for pin changes
+    const handleRefresh = () => void loadPinnedBusinesses()
+    window.addEventListener('sidebar-refresh', handleRefresh)
+    return () => window.removeEventListener('sidebar-refresh', handleRefresh)
   }, [])
 
   return (

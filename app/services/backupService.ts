@@ -19,6 +19,10 @@ export interface BackupData {
     businessCategories: any[]
     tasks: any[]
     appSettings: any[]
+    businesses: any[]
+    projects: any[]
+    harvestTasks: any[]
+    timeEntries: any[]
     // localStorage data
     subjectStore: any
     historyStore: any
@@ -37,6 +41,10 @@ export async function exportAllStores(): Promise<BackupData> {
       businessCategories,
       tasks,
       appSettings,
+      businesses,
+      projects,
+      harvestTasks,
+      timeEntries,
     ] = await Promise.all([
       db.transactions.toArray(),
       db.importedFiles.toArray(),
@@ -44,6 +52,10 @@ export async function exportAllStores(): Promise<BackupData> {
       db.businessCategories.toArray(),
       db.tasks.toArray(),
       db.appSettings.toArray(),
+      db.businesses.toArray(),
+      db.projects.toArray(),
+      db.harvestTasks.toArray(),
+      db.timeEntries.toArray(),
     ])
 
     // Let stores export their own data
@@ -62,6 +74,10 @@ export async function exportAllStores(): Promise<BackupData> {
         businessCategories,
         tasks,
         appSettings,
+        businesses,
+        projects,
+        harvestTasks,
+        timeEntries,
         subjectStore: subjectStoreData,
         historyStore: historyStoreData,
       },
@@ -86,6 +102,10 @@ export async function importAllStores(backup: BackupData): Promise<void> {
       businessCategories: stores.businessCategories?.length ?? 0,
       tasks: stores.tasks?.length ?? 0,
       appSettings: stores.appSettings?.length ?? 0,
+      businesses: stores.businesses?.length ?? 0,
+      projects: stores.projects?.length ?? 0,
+      harvestTasks: stores.harvestTasks?.length ?? 0,
+      timeEntries: stores.timeEntries?.length ?? 0,
     }
     console.log('[BackupRestore] importing backup', counts)
 
@@ -93,34 +113,47 @@ export async function importAllStores(backup: BackupData): Promise<void> {
       throw new Error('Backup missing core data (transactions/importedFiles)')
     }
 
-    // Clear all IndexedDB tables
-    await Promise.all([
-      db.transactions.clear(),
-      db.importedFiles.clear(),
-      db.categories.clear(),
-      db.businessCategories.clear(),
-      db.tasks.clear(),
-      db.appSettings.clear(),
-    ])
-
-    // Import IndexedDB data
+    // Clear and import IndexedDB tables - only clear if backup has data for that table
+    // This preserves local data for stores that don't exist in older backups
     if (stores.transactions?.length > 0) {
+      await db.transactions.clear()
       await db.transactions.bulkAdd(stores.transactions)
     }
     if (stores.importedFiles?.length > 0) {
+      await db.importedFiles.clear()
       await db.importedFiles.bulkAdd(stores.importedFiles)
     }
     if (stores.categories?.length > 0) {
+      await db.categories.clear()
       await db.categories.bulkAdd(stores.categories)
     }
     if (stores.businessCategories?.length > 0) {
+      await db.businessCategories.clear()
       await db.businessCategories.bulkAdd(stores.businessCategories)
     }
     if (stores.tasks?.length > 0) {
+      await db.tasks.clear()
       await db.tasks.bulkAdd(stores.tasks)
     }
     if (stores.appSettings?.length > 0) {
+      await db.appSettings.clear()
       await db.appSettings.bulkAdd(stores.appSettings)
+    }
+    if (stores.businesses?.length > 0) {
+      await db.businesses.clear()
+      await db.businesses.bulkAdd(stores.businesses)
+    }
+    if (stores.projects?.length > 0) {
+      await db.projects.clear()
+      await db.projects.bulkAdd(stores.projects)
+    }
+    if (stores.harvestTasks?.length > 0) {
+      await db.harvestTasks.clear()
+      await db.harvestTasks.bulkAdd(stores.harvestTasks)
+    }
+    if (stores.timeEntries?.length > 0) {
+      await db.timeEntries.clear()
+      await db.timeEntries.bulkAdd(stores.timeEntries)
     }
 
     // Let stores import their own data

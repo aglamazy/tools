@@ -33,7 +33,8 @@
   "lint-staged": {
     "*.{ts,tsx}": [
       "eslint --fix",
-      "bash -c 'tsc --noEmit'"
+      "bash -c 'tsc --noEmit'",
+      "node scripts/check-backup-stores.js"
     ]
   }
 }
