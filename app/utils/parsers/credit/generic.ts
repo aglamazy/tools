@@ -2,6 +2,7 @@ import { parseXlsTables } from '../../xlsTableParser'
 import { config } from '@/app/config'
 import { SheetCell, SheetRow } from '@/app/types/transactions'
 import type { Parser, ParsedCreditResult } from '../types'
+import { normalizeCell, toNumber, getRowValue } from '../shared'
 
 // Mapping from Hebrew column names to standardized property names
 const COLUMN_MAPPINGS = {
@@ -51,18 +52,6 @@ function checkUnmappedColumns(headers: string[]): void {
   }
 }
 
-/**
- * Gets a value from a row using multiple possible column names
- */
-function getRowValue(row: Record<string, any>, possibleNames: string[]): any {
-  for (const name of possibleNames) {
-    if (row[name] !== undefined && row[name] !== null) {
-      return row[name]
-    }
-  }
-  return null
-}
-
 export type CreditCardPayment = {
   id: string
   transactionDate: string
@@ -82,31 +71,6 @@ export type CreditCardPreview = {
   cardNumber: string | null
   processingMonth: string | null
   paymentCount: number
-}
-
-const normalizeCell = (value: SheetCell): string | number => {
-  if (value === undefined || value === null) {
-    return ''
-  }
-  if (typeof value === 'string') {
-    return value.trim()
-  }
-  if (typeof value === 'number') {
-    return value
-  }
-  return ''
-}
-
-const toNumber = (value: string | number): number => {
-  if (typeof value === 'number') {
-    return value
-  }
-  if (typeof value === 'string') {
-    const cleaned = value.replace(/[^0-9.-]+/g, '')
-    const parsed = parseFloat(cleaned)
-    return Number.isFinite(parsed) ? parsed : NaN
-  }
-  return NaN
 }
 
 const tryParseDate = (value: SheetCell): Date | null => {

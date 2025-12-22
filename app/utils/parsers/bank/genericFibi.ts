@@ -1,6 +1,19 @@
 import { SheetCell, SheetRow } from '@/app/types/transactions'
 import type { Parser, ParsedBankResult } from '../types'
 import { getCardTypeIndicators } from '@/app/services/appSettingsService'
+import { normalizeCell, toNumber, findColumnIndex } from '../shared'
+
+// Mapping from Hebrew column names to standardized property names
+const COLUMN_MAPPINGS = {
+  date: ['תאריך'],
+  description: ['תאור', 'תיאור'],
+  debit: ['חובה'],
+  credit: ['זכות'],
+  reference: ['אסמכתא'],
+  activityType: ['סוג פעולה'],
+  balance: ['יתרה'],
+  valueDate: ['תאריך ערך'],
+}
 
 export type ParsedBankTransaction = {
   date: string
@@ -18,31 +31,6 @@ export type BankPreview = {
   accountNumber: string | null
   processingMonth: string | null
   transactionCount: number
-}
-
-const normalizeCell = (value: SheetCell): string | number => {
-  if (value === undefined || value === null) {
-    return ''
-  }
-  if (typeof value === 'string') {
-    return value.trim()
-  }
-  if (typeof value === 'number') {
-    return value
-  }
-  return ''
-}
-
-const toNumber = (value: string | number): number => {
-  if (typeof value === 'number') {
-    return value
-  }
-  if (typeof value === 'string') {
-    const cleaned = value.replace(/[^0-9.-]+/g, '')
-    const parsed = parseFloat(cleaned)
-    return Number.isFinite(parsed) ? parsed : 0
-  }
-  return 0
 }
 
 /**
@@ -72,16 +60,14 @@ export function parseBankTransactions(
   }
 
   const headers = sanitized[headerIndex]
-  const findIndex = (text: string) =>
-    headers.findIndex((cell) => typeof cell === 'string' && cell.includes(text))
 
-  const dateIdx = findIndex('תאריך')
-  const descriptionIdx = findIndex('תיאור')
-  const debitIdx = findIndex('חובה')
-  const creditIdx = findIndex('זכות')
-  const typeIdx = findIndex('אסמכתא')
-  const activityIdx = findIndex('סוג פעולה')
-  const balanceIdx = findIndex('יתרה')
+  const dateIdx = findColumnIndex(headers, COLUMN_MAPPINGS.date)
+  const descriptionIdx = findColumnIndex(headers, COLUMN_MAPPINGS.description)
+  const debitIdx = findColumnIndex(headers, COLUMN_MAPPINGS.debit)
+  const creditIdx = findColumnIndex(headers, COLUMN_MAPPINGS.credit)
+  const typeIdx = findColumnIndex(headers, COLUMN_MAPPINGS.reference)
+  const activityIdx = findColumnIndex(headers, COLUMN_MAPPINGS.activityType)
+  const balanceIdx = findColumnIndex(headers, COLUMN_MAPPINGS.balance)
 
   if (dateIdx === -1 || descriptionIdx === -1) {
     return []

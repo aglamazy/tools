@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { formatMonthDisplay } from '@/app/utils/formatters'
 import { transactionStore } from '@/app/stores/transactionStore'
 import { subjectStore } from '@/app/stores/subjectStore'
@@ -11,6 +12,7 @@ import { useToast } from '@/app/components/ToastContainer'
 
 export default function BudgetPage() {
   const { showToast } = useToast()
+  const searchParams = useSearchParams()
   const [selectedMonth, setSelectedMonth] = useState<string>('')
   const [availableMonths, setAvailableMonths] = useState<string[]>([])
   const [transactions, setTransactions] = useState<BudgetTransaction[]>([])
@@ -20,6 +22,7 @@ export default function BudgetPage() {
   const [hideClassified, setHideClassified] = useState(false)
   const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set())
   const [drillDownCategory, setDrillDownCategory] = useState<string | null>(null)
+  const [isPieChartCollapsed, setIsPieChartCollapsed] = useState(false)
 
   // Load available months from transactions and categories
   useEffect(() => {
@@ -28,13 +31,26 @@ export default function BudgetPage() {
 
       setAvailableMonths(months)
       if (months.length > 0 && !selectedMonth) {
-        // Try to restore from sessionStorage
-        const savedMonth = sessionStorage.getItem('selectedMonth')
-        if (savedMonth && months.includes(savedMonth)) {
-          setSelectedMonth(savedMonth)
+        // Check URL parameter first
+        const monthParam = searchParams.get('month')
+        if (monthParam && months.includes(monthParam)) {
+          setSelectedMonth(monthParam)
         } else {
-          setSelectedMonth(months[0]) // Select newest month by default
+          // Try to restore from sessionStorage
+          const savedMonth = sessionStorage.getItem('selectedMonth')
+          if (savedMonth && months.includes(savedMonth)) {
+            setSelectedMonth(savedMonth)
+          } else {
+            setSelectedMonth(months[0]) // Select newest month by default
+          }
         }
+      }
+
+      // Check for filter parameter
+      const filterParam = searchParams.get('filter')
+      if (filterParam === 'unclassified') {
+        setHideClassified(true)
+        setIsPieChartCollapsed(true) // Collapse pie chart when showing unclassified
       }
 
       // Load categories from settings
@@ -43,7 +59,7 @@ export default function BudgetPage() {
       setLoading(false)
     }
     loadData()
-  }, [])
+  }, [searchParams])
 
   // Save selected month to sessionStorage when it changes
   useEffect(() => {
@@ -344,9 +360,28 @@ export default function BudgetPage() {
             {/* Category Breakdown - Pie Chart */}
             {categoryData.length > 0 && (
               <section style={{ marginTop: '2rem' }}>
-                <h2 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '1rem' }}>
+                <h2
+                  onClick={() => setIsPieChartCollapsed(!isPieChartCollapsed)}
+                  style={{
+                    fontSize: '1.125rem',
+                    fontWeight: 600,
+                    marginBottom: '1rem',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    userSelect: 'none',
+                  }}
+                >
+                  <span style={{
+                    transition: 'transform 0.2s',
+                    transform: isPieChartCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+                  }}>
+                    ▼
+                  </span>
                   פילוח הוצאות לפי נושא
                 </h2>
+                {!isPieChartCollapsed && (
                 <div style={{ display: 'flex', gap: '2rem', alignItems: 'center' }}>
                   <div style={{ flex: '0 0 450px', height: '350px', position: 'relative' }}>
                     {/* Category name badge and back button when in drill-down mode */}
@@ -520,6 +555,7 @@ export default function BudgetPage() {
                     </div>
                   </div>
                 </div>
+                )}
               </section>
             )}
 
