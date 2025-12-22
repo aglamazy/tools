@@ -2,11 +2,11 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { getDriveSyncSettings, setDriveSyncSettings, type DriveSyncSettings } from '@/app/services/appSettingsService'
-import { config } from '@/app/config'
-import { exportBackupToDrive, fetchBackupFromDrive, getDriveBackupMetadata } from '@/app/services/driveSyncService'
-import { importAllStores, type BackupData } from '@/app/services/backupService'
+import { exportBackupToDrive } from '@/app/services/driveSyncService'
+import { lockModeStore } from '@/app/stores/lockModeStore'
 
 // Background manager that periodically syncs data to Google Drive appData
+// Only runs when station is in MASTER mode
 export default function DriveSyncManager() {
   const [settings, setSettings] = useState<DriveSyncSettings | null>(null)
   const syncingRef = useRef(false)
@@ -30,10 +30,10 @@ export default function DriveSyncManager() {
     }
 
     if (!clientId) return
-    if (!driveSettings.autoSyncEnabled) return
+    // In standalone mode, don't auto-sync
+    if (driveSettings.standaloneMode === true) return
 
-    const minMinutes = config.syncIntervalSeconds / 60
-    const intervalMs = minMinutes * 60 * 1000
+    const intervalMs = driveSettings.frequencyMinutes * 60 * 1000
 
     // Run once immediately
     triggerSync(driveSettings)
@@ -42,43 +42,21 @@ export default function DriveSyncManager() {
   }
 
   const triggerSync = async (driveSettings: DriveSyncSettings) => {
+    // Only sync if we're MASTER - slaves never upload
+    if (!lockModeStore.isMaster()) {
+      console.log('[DriveSync] Skipping sync - not master')
+      return
+    }
+
     if (syncingRef.current) return
     if (!clientId) return
     syncingRef.current = true
 
     try {
-      // Step 1: check remote metadata and pull if newer
-      const meta = await getDriveBackupMetadata({ clientId, fileId: driveSettings.driveFileId, fileName: 'finance-backup.json' })
-      let workingSettings = { ...driveSettings }
-
-      if (meta.success && meta.fileId && meta.modifiedTime) {
-        const remoteNewer = !driveSettings.lastSyncAt || new Date(meta.modifiedTime) > new Date(driveSettings.lastSyncAt)
-        if (remoteNewer) {
-          const pull = await fetchBackupFromDrive({ clientId, fileId: meta.fileId, fileName: 'finance-backup.json' })
-          if (pull.success && pull.data) {
-            await importAllStores(pull.data as BackupData)
-            workingSettings = {
-              ...workingSettings,
-              driveFileId: meta.fileId,
-              lastSyncAt: new Date().toISOString(),
-              remoteModifiedAt: meta.modifiedTime,
-              lastSyncError: undefined,
-            }
-          } else if (pull.error === 'no-token') {
-            console.log('Drive pull skipped: no token')
-          } else {
-            workingSettings = { ...workingSettings, lastSyncError: pull.error }
-            console.error('Drive pull failed:', pull.error)
-          }
-        } else {
-          workingSettings = { ...workingSettings, remoteModifiedAt: meta.modifiedTime }
-        }
-      }
-
-      // Step 2: push current state to Drive
+      // Master mode: only upload, never download
       const result = await exportBackupToDrive({
         clientId,
-        fileId: workingSettings.driveFileId,
+        fileId: driveSettings.driveFileId,
         useAppData: true,
         fileName: 'finance-backup.json',
       })
@@ -86,8 +64,8 @@ export default function DriveSyncManager() {
       if (result.success) {
         const now = new Date().toISOString()
         const updated: DriveSyncSettings = {
-          ...workingSettings,
-          driveFileId: result.fileId || workingSettings.driveFileId,
+          ...driveSettings,
+          driveFileId: result.fileId || driveSettings.driveFileId,
           lastSyncAt: now,
           remoteModifiedAt: now,
           lastSyncError: undefined,
@@ -98,7 +76,7 @@ export default function DriveSyncManager() {
         console.log('Drive sync skipped: no token (user not connected)')
       } else {
         const updated: DriveSyncSettings = {
-          ...workingSettings,
+          ...driveSettings,
           lastSyncError: result.error,
         }
         setSettings(updated)

@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { getDriveSyncSettings, type DriveSyncSettings } from '@/app/services/appSettingsService'
-import { config } from '@/app/config'
 
 type StatusKind = 'ok' | 'stale' | 'error' | 'off' | 'idle'
 
@@ -30,10 +29,9 @@ export default function SyncStatusBadge() {
       }
 
       const ageMinutes = (Date.now() - new Date(s.lastSyncAt).getTime()) / 60000
-      const base = config.syncIntervalSeconds / 60
-      const threshold = s.autoSyncEnabled
-        ? Math.max(base * 1.5, 2)
-        : Math.max(base * 5, 10) // less strict when only manual sync is used
+      const threshold = s.standaloneMode === true
+        ? Math.max(s.frequencyMinutes * 5, 10) // less strict when standalone (manual sync)
+        : Math.max(s.frequencyMinutes * 1.5, 2) // stricter when in sync mode
       setStatus(ageMinutes <= threshold ? 'ok' : 'stale')
     } catch (err) {
       console.error('Error loading sync status:', err)
@@ -95,22 +93,22 @@ export default function SyncStatusBadge() {
   }, [settings?.lastSyncAt])
 
   const nextSyncText = useMemo(() => {
-    if (!settings?.autoSyncEnabled || !settings.frequencyMinutes || !settings.lastSyncAt) return null
-    const minMinutes = config.syncIntervalSeconds / 60
-    const next = new Date(new Date(settings.lastSyncAt).getTime() + minMinutes * 60_000)
+    // Only show next sync if in sync mode (not standalone)
+    if (settings?.standaloneMode === true || !settings?.frequencyMinutes || !settings?.lastSyncAt) return null
+    const next = new Date(new Date(settings.lastSyncAt).getTime() + settings.frequencyMinutes * 60_000)
     const diffMs = next.getTime() - Date.now()
     if (diffMs <= 0) return 'מיידית'
     const mins = Math.max(1, Math.round(diffMs / 60_000))
     return `${mins} דק'`
-  }, [settings?.autoSyncEnabled, settings?.frequencyMinutes, settings?.lastSyncAt])
+  }, [settings?.standaloneMode, settings?.frequencyMinutes, settings?.lastSyncAt])
 
   const progress = useMemo(() => {
-    if (!settings?.autoSyncEnabled || !settings.frequencyMinutes || !settings.lastSyncAt) return null
-    const minMinutes = config.syncIntervalSeconds / 60
-    const intervalMs = minMinutes * 60_000
+    // Only show progress if in sync mode (not standalone)
+    if (settings?.standaloneMode === true || !settings?.frequencyMinutes || !settings?.lastSyncAt) return null
+    const intervalMs = settings.frequencyMinutes * 60_000
     const elapsed = now - new Date(settings.lastSyncAt).getTime()
     return Math.max(0, Math.min(1, elapsed / intervalMs))
-  }, [settings?.autoSyncEnabled, settings?.frequencyMinutes, settings?.lastSyncAt, now])
+  }, [settings?.standaloneMode, settings?.frequencyMinutes, settings?.lastSyncAt, now])
 
   const icon = (() => {
     switch (status) {
