@@ -108,8 +108,9 @@ export interface TimeEntry {
   id?: number
   taskId: number
   date: string // YYYY-MM-DD
+  startTime: string // HH:MM
+  endTime: string // HH:MM
   hours: number
-  notes?: string
   createdAt: string
   updatedAt: string
 }
@@ -191,6 +192,42 @@ class FinanceDB extends Dexie {
       projects: '++id, businessId, name, archived',
       harvestTasks: '++id, projectId, name, archived',
       timeEntries: '++id, taskId, date, [taskId+date]',
+    })
+
+    // Define schema version 7 - add startTime and endTime to timeEntries
+    this.version(7).stores({
+      transactions: '++id, type, month, accountNumber, cardNumber, date, chargingDate, [type+month], [cardNumber+month], [accountNumber+month], fileId',
+      importedFiles: '++id, fileName, fileType, processingMonth, [fileType+processingMonth], [cardNumber+processingMonth]',
+      categories: '++id, name, type',
+      businessCategories: '++id, &business',
+      tasks: '++id, createdAt, priority',
+      appSettings: '++id, &key',
+      businesses: '++id, &name, type',
+      projects: '++id, businessId, name, archived',
+      harvestTasks: '++id, projectId, name, archived',
+      timeEntries: '++id, taskId, date, startTime, endTime, [taskId+date]',
+    }).upgrade(async (trans) => {
+      // Migrate existing entries: parse notes field to extract startTime/endTime
+      const entries = await trans.table('timeEntries').toArray()
+      for (const entry of entries) {
+        if (entry.notes) {
+          const match = entry.notes.match(/^(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})$/)
+          if (match) {
+            entry.startTime = match[1]
+            entry.endTime = match[2]
+          } else {
+            // Default values if no valid time format
+            entry.startTime = '09:00'
+            entry.endTime = '17:00'
+          }
+        } else {
+          // Default values for entries without notes
+          entry.startTime = '09:00'
+          entry.endTime = '17:00'
+        }
+        delete entry.notes
+        await trans.table('timeEntries').put(entry)
+      }
     })
   }
 }
