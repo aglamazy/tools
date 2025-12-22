@@ -6,6 +6,8 @@ import Sidebar from './components/Sidebar'
 import PageHeader from './components/PageHeader'
 import { ToastProvider } from './components/ToastContainer'
 import MigrationRunner from './components/MigrationRunner'
+import DriveSetupGate from './components/DriveSetupGate'
+import StationLockManager from './components/StationLockManager'
 import DriveSyncManager from './components/DriveSyncManager'
 
 if (!process.env.NEXT_PUBLIC_SITE_URL) {
@@ -50,14 +52,17 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body>
         <ToastProvider>
           <MigrationRunner />
-          <DriveSyncManager />
-          <PageHeader />
-          <div className="app-layout">
-            <Sidebar />
-            <div className="main-content">
-              {children}
+          <DriveSetupGate>
+            <StationLockManager />
+            <DriveSyncManager />
+            <PageHeader />
+            <div className="app-layout">
+              <Sidebar />
+              <div className="main-content">
+                {children}
+              </div>
             </div>
-          </div>
+          </DriveSetupGate>
           <Analytics />
         </ToastProvider>
       </body>

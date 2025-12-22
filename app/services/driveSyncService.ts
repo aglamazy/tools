@@ -9,6 +9,13 @@ export const DRIVE_APPDATA_SCOPE = 'https://www.googleapis.com/auth/drive.appdat
 export const DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file'
 const DEFAULT_SCOPES = [DRIVE_APPDATA_SCOPE]
 
+export type StationLock = {
+  stationId: string
+  acquiredAt: string // ISO timestamp
+  lastActivity: string // ISO timestamp
+  ttlSeconds: number // Lock expires after this many seconds of inactivity
+}
+
 type StoreCounts = {
   transactions: number
   importedFiles: number
@@ -108,7 +115,12 @@ async function requestAccessToken(clientId: string, prompt: 'consent' | 'none', 
       prompt,
       callback: (response: any) => {
         if (response.error) {
-          reject(response)
+          // Check for popup blocked error
+          if (response.error === 'popup_closed_by_user' || response.error === 'popup_blocked_by_browser') {
+            reject(new Error('popup-blocked'))
+          } else {
+            reject(new Error(response.error))
+          }
           return
         }
 
@@ -121,12 +133,21 @@ async function requestAccessToken(clientId: string, prompt: 'consent' | 'none', 
         driveAuthStore.save(auth)
         resolve(auth)
       },
+      error_callback: (error: any) => {
+        // Handle popup blocked or other errors
+        console.error('GIS error:', error)
+        if (error?.type === 'popup_closed' || error?.type === 'popup_failed_to_open') {
+          reject(new Error('popup-blocked'))
+        } else {
+          reject(new Error('popup-blocked'))
+        }
+      },
     })
 
     try {
       tokenClient.requestAccessToken({ prompt })
     } catch (err) {
-      reject(err)
+      reject(new Error('popup-blocked'))
     }
   })
 }
@@ -351,6 +372,10 @@ export async function interactiveConnectAndExport(options: {
     return { success: true, fileId: uploadedId }
   } catch (err: any) {
     console.error('Drive interactive export failed:', err)
+    // Pass through popup-blocked error for UI to handle
+    if (err?.message === 'popup-blocked') {
+      return { success: false, error: 'popup-blocked' }
+    }
     return { success: false, error: err?.message || 'unknown-error' }
   }
 }
