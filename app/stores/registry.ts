@@ -28,11 +28,11 @@ export const INDEXEDDB_TABLES = [
 export const LOCALSTORAGE_STORES = [
   'subjectStore',
   'historyStore',
+  'timerStore',
 ] as const
 
 // Stores that are transient/session-only (don't need backup)
 export const TRANSIENT_STORES = [
-  'timerStore',      // Active timer state - user can restart
   'driveAuthStore',  // OAuth tokens - user re-authenticates
 ] as const
 

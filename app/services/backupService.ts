@@ -6,6 +6,7 @@
 import { db } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { historyStore } from '@/app/stores/historyStore'
+import { timerStore } from '@/app/stores/timerStore'
 import { initializeAppSettings } from '@/app/services/appSettingsService'
 
 export interface BackupData {
@@ -26,6 +27,7 @@ export interface BackupData {
     // localStorage data
     subjectStore: any
     historyStore: any
+    timerStore: any
   }
 }
 
@@ -59,9 +61,10 @@ export async function exportAllStores(): Promise<BackupData> {
     ])
 
     // Let stores export their own data
-    const [subjectStoreData, historyStoreData] = await Promise.all([
+    const [subjectStoreData, historyStoreData, timerStoreData] = await Promise.all([
       subjectStore.export(),
       historyStore.export(),
+      Promise.resolve(timerStore.export()),
     ])
 
     return {
@@ -80,6 +83,7 @@ export async function exportAllStores(): Promise<BackupData> {
         timeEntries,
         subjectStore: subjectStoreData,
         historyStore: historyStoreData,
+        timerStore: timerStoreData,
       },
     }
   } catch (error) {
@@ -161,6 +165,9 @@ export async function importAllStores(backup: BackupData): Promise<void> {
       stores.subjectStore ? subjectStore.import(stores.subjectStore) : Promise.resolve(),
       stores.historyStore ? historyStore.import(stores.historyStore) : Promise.resolve(),
     ])
+
+    // Import timer (sync, not async)
+    timerStore.import(stores.timerStore ?? null)
 
     // Ensure new settings keys exist even if backup predates them
     await initializeAppSettings()

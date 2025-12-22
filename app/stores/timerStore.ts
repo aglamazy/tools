@@ -29,4 +29,16 @@ export const timerStore = {
   clear: (): void => {
     localStorage.removeItem(TIMER_STORAGE_KEY)
   },
+
+  export: (): ActiveTimer | null => {
+    return timerStore.get()
+  },
+
+  import: (data: ActiveTimer | null): void => {
+    if (data) {
+      timerStore.set(data)
+    } else {
+      timerStore.clear()
+    }
+  },
 }
