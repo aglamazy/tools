@@ -5,8 +5,10 @@ import { projectStore } from '@/app/stores/projectStore'
 import { harvestTaskStore } from '@/app/stores/harvestTaskStore'
 import { timeEntryStore } from '@/app/stores/timeEntryStore'
 import { timerStore, type ActiveTimer } from '@/app/stores/timerStore'
-import type { Project, HarvestTask, TimeEntry } from '@/app/db/financeDB'
+import { businessStore } from '@/app/stores/businessStore'
+import type { Project, HarvestTask, TimeEntry, Business } from '@/app/db/financeDB'
 import TimeEntryForm, { type TimeEntryFormData } from './TimeEntryForm'
+import * as XLSX from 'xlsx'
 
 type TimingTabProps = {
   businessId: number
@@ -73,7 +75,29 @@ function formatHours(hours: number): string {
   return `${h}:${m.toString().padStart(2, '0')}`
 }
 
+function getMonthDates(monthOffset: number = 0): { start: string; end: string; monthName: string } {
+  const now = new Date()
+  const targetDate = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1)
+
+  const year = targetDate.getFullYear()
+  const month = targetDate.getMonth()
+
+  const firstDay = new Date(year, month, 1)
+  const lastDay = new Date(year, month + 1, 0)
+
+  const monthNames = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר']
+
+  return {
+    start: formatLocalDate(firstDay),
+    end: formatLocalDate(lastDay),
+    monthName: `${monthNames[month]} ${year}`,
+  }
+}
+
+type ViewMode = 'daily' | 'weekly' | 'monthly'
+
 export default function TimingTab({ businessId }: TimingTabProps) {
+  const [business, setBusiness] = useState<Business | null>(null)
   const [projects, setProjects] = useState<Project[]>([])
   const [tasks, setTasks] = useState<HarvestTask[]>([])
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
@@ -87,6 +111,18 @@ export default function TimingTab({ businessId }: TimingTabProps) {
   const [formTasks, setFormTasks] = useState<HarvestTask[]>([])
   const [weekOffset, setWeekOffset] = useState(0)
   const [editingEntry, setEditingEntry] = useState<WeekEntry | null>(null)
+  const [viewMode, setViewMode] = useState<ViewMode>('weekly')
+  const [selectedDate, setSelectedDate] = useState(formatLocalDate(new Date()))
+  const [monthOffset, setMonthOffset] = useState(0)
+
+  // Load business
+  useEffect(() => {
+    const load = async () => {
+      const b = await businessStore.getById(businessId)
+      setBusiness(b || null)
+    }
+    void load()
+  }, [businessId])
 
   // Load projects
   useEffect(() => {
@@ -148,13 +184,19 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     }
   }, [activeTimer])
 
-  // Load week entries
+  // Load entries based on view mode
   useEffect(() => {
     void loadWeekEntries()
-  }, [businessId, weekOffset])
+  }, [businessId, weekOffset, monthOffset, selectedDate, viewMode])
 
-  const handleStart = () => {
+  const handleStart = async () => {
     if (!selectedTaskId) return
+
+    // If there's an active timer, stop it first
+    if (activeTimer) {
+      await handleStop()
+    }
+
     const timer: ActiveTimer = {
       projectId: selectedProjectId!,
       taskId: selectedTaskId,
@@ -165,7 +207,11 @@ export default function TimingTab({ businessId }: TimingTabProps) {
   }
 
   const handleStartFromEntry = async (entry: WeekEntry) => {
-    if (activeTimer) return
+    // If there's an active timer, stop it first
+    if (activeTimer) {
+      await handleStop()
+    }
+
     // Find the project for this task
     const task = await harvestTaskStore.getById(entry.taskId)
     if (!task) return
@@ -183,7 +229,22 @@ export default function TimingTab({ businessId }: TimingTabProps) {
   }
 
   const loadWeekEntries = async () => {
-    const { start, end } = getWeekDates(weekOffset)
+    let start: string
+    let end: string
+
+    if (viewMode === 'daily') {
+      start = selectedDate
+      end = selectedDate
+    } else if (viewMode === 'monthly') {
+      const dates = getMonthDates(monthOffset)
+      start = dates.start
+      end = dates.end
+    } else {
+      const dates = getWeekDates(weekOffset)
+      start = dates.start
+      end = dates.end
+    }
+
     const entries = await timeEntryStore.getByDateRange(start, end)
     const allProjects = await projectStore.getByBusinessId(businessId)
     const projectIds = allProjects.map(p => p.id!)
@@ -211,11 +272,18 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     const hours = elapsedSeconds / 3600
     const today = formatLocalDate(new Date())
 
+    // Calculate start and end times
+    const startDate = new Date(activeTimer.startedAt)
+    const endDate = new Date()
+    const startTime = `${startDate.getHours().toString().padStart(2, '0')}:${startDate.getMinutes().toString().padStart(2, '0')}`
+    const endTime = `${endDate.getHours().toString().padStart(2, '0')}:${endDate.getMinutes().toString().padStart(2, '0')}`
+
     await timeEntryStore.add({
       taskId: activeTimer.taskId,
       date: today,
+      startTime,
+      endTime,
       hours,
-      notes: '',
     })
 
     setActiveTimer(null)
@@ -257,17 +325,20 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     if (editingEntry) {
       // Update existing
       await timeEntryStore.update(editingEntry.id!, {
+        taskId: formData.taskId,
         date: formData.date,
+        startTime: formData.startTime,
+        endTime: formData.endTime,
         hours,
-        notes: `${formData.startTime} - ${formData.endTime}`,
       })
     } else {
       // Create new
       await timeEntryStore.add({
         taskId: formData.taskId,
         date: formData.date,
+        startTime: formData.startTime,
+        endTime: formData.endTime,
         hours,
-        notes: `${formData.startTime} - ${formData.endTime}`,
       })
     }
 
@@ -276,32 +347,22 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     await loadWeekEntries()
   }
 
-  const handleEditEntry = (entry: WeekEntry) => {
-    // Parse hours back to start/end times (approximate, using 09:00 as base)
-    const totalMinutes = Math.round(entry.hours * 60)
-    const endMinutes = 9 * 60 + totalMinutes
-    const endH = Math.floor(endMinutes / 60)
-    const endM = endMinutes % 60
-
-    // Try to parse from notes if available (format: "HH:MM - HH:MM")
-    let startTime = '09:00'
-    let endTime = `${endH.toString().padStart(2, '0')}:${endM.toString().padStart(2, '0')}`
-
-    if (entry.notes) {
-      const match = entry.notes.match(/^(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})$/)
-      if (match) {
-        startTime = match[1]
-        endTime = match[2]
-      }
-    }
-
+  const handleEditEntry = async (entry: WeekEntry) => {
     setEditingEntry(entry)
+    // Get the task to find its projectId
+    const task = await harvestTaskStore.getById(entry.taskId)
+    if (!task) return
+
+    // Load tasks for this project
+    const projectTasks = await harvestTaskStore.getActiveByProjectId(task.projectId)
+    setFormTasks(projectTasks)
+
     setFormData({
-      projectId: null,
+      projectId: task.projectId,
       taskId: entry.taskId,
       date: entry.date,
-      startTime,
-      endTime,
+      startTime: entry.startTime || '09:00',
+      endTime: entry.endTime || '10:00',
     })
   }
 
@@ -311,6 +372,99 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     setEditingEntry(null)
     setFormData(null)
     await loadWeekEntries()
+  }
+
+  const handleExportToExcel = (projectName: string, projectEntries: WeekEntry[]) => {
+    if (!business) return
+
+    const monthData = getMonthDates(monthOffset)
+
+    // Sort entries by date ascending
+    const sortedEntries = [...projectEntries].sort((a, b) => a.date.localeCompare(b.date))
+
+    // Group entries by task
+    const taskGroups = new Map<string, { taskName: string; entries: WeekEntry[]; total: number }>()
+
+    sortedEntries.forEach(entry => {
+      if (!taskGroups.has(entry.taskName)) {
+        taskGroups.set(entry.taskName, {
+          taskName: entry.taskName,
+          entries: [],
+          total: 0,
+        })
+      }
+      const task = taskGroups.get(entry.taskName)!
+      task.entries.push(entry)
+      task.total += entry.hours
+    })
+
+    // Create worksheet data
+    const wsData: any[][] = []
+
+    // Header
+    wsData.push([projectName])
+    wsData.push([monthData.monthName])
+    wsData.push([]) // Empty row
+
+    // Summary header (RTL order)
+    wsData.push(['סה"כ שעות', 'שעות סיום', 'שעות התחלה', 'תאריך', 'משימה'])
+
+    // Data rows
+    let projectTotal = 0
+
+    Array.from(taskGroups.values()).forEach(task => {
+      task.entries.forEach(entry => {
+        // RTL order: Hours, End Time, Start Time, Date, Task
+        wsData.push([
+          formatHours(entry.hours),
+          entry.endTime,
+          entry.startTime,
+          formatDisplayDate(entry.date),
+          task.taskName,
+        ])
+        projectTotal += entry.hours
+      })
+    })
+
+    // Project total
+    wsData.push([formatHours(projectTotal), '', '', `סה"כ ${projectName}:`, ''])
+
+    // Create workbook
+    const wb = XLSX.utils.book_new()
+    const ws = XLSX.utils.aoa_to_sheet(wsData)
+
+    // Set RTL mode
+    if (!ws['!views']) ws['!views'] = []
+    ws['!views'][0] = { rightToLeft: true }
+
+    // Set column widths (RTL order)
+    ws['!cols'] = [
+      { wch: 12 }, // Hours
+      { wch: 12 }, // End time
+      { wch: 12 }, // Start time
+      { wch: 12 }, // Date
+      { wch: 25 }, // Task
+    ]
+
+    // Style the header rows
+    if (!ws['!rows']) ws['!rows'] = []
+    ws['!rows'][0] = { hpt: 20 } // Project name row height
+    ws['!rows'][1] = { hpt: 18 } // Month row height
+
+    // Merge cells for header
+    ws['!merges'] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }, // Project name across all columns
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 4 } }, // Month across all columns
+    ]
+
+    // Add worksheet to workbook
+    XLSX.utils.book_append_sheet(wb, ws, monthData.monthName)
+
+    // Generate file name
+    const fileName = `${projectName}_${monthData.monthName.replace(' ', '_')}.xlsx`
+
+    // Download file
+    XLSX.writeFile(wb, fileName)
   }
 
   const { days } = getWeekDates(weekOffset)
@@ -393,7 +547,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
             </button>
           ) : (
             <button
-              onClick={handleStart}
+              onClick={() => void handleStart()}
               disabled={!selectedTaskId}
               style={{
                 padding: '0.75rem 2rem',
@@ -440,41 +594,170 @@ export default function TimingTab({ businessId }: TimingTabProps) {
         )}
       </div>
 
-      {/* Week Summary */}
-      <div style={{ marginBottom: '1rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <button
-              onClick={() => setWeekOffset(weekOffset - 1)}
-              style={{
-                padding: '0.25rem 0.5rem',
-                background: '#f1f5f9',
-                border: '1px solid #cbd5e1',
-                borderRadius: '0.25rem',
-                cursor: 'pointer',
-                fontSize: '0.9rem',
-              }}
-            >
-              ►
-            </button>
-            <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>
-              {isCurrentWeek ? 'השבוע הנוכחי' : formatWeekRange(days)}
-            </h3>
-            <button
-              onClick={() => setWeekOffset(weekOffset + 1)}
-              disabled={isCurrentWeek}
-              style={{
-                padding: '0.25rem 0.5rem',
-                background: '#f1f5f9',
-                border: '1px solid #cbd5e1',
-                borderRadius: '0.25rem',
-                cursor: isCurrentWeek ? 'not-allowed' : 'pointer',
-                fontSize: '0.9rem',
-                opacity: isCurrentWeek ? 0.5 : 1,
-              }}
-            >
-              ◄
-            </button>
+      {/* View Mode Selector */}
+      <div style={{ marginBottom: '1rem', display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+        {(['daily', 'weekly', 'monthly'] as const).map((mode) => (
+          <button
+            key={mode}
+            onClick={() => setViewMode(mode)}
+            style={{
+              padding: '0.5rem 1rem',
+              background: viewMode === mode ? '#3b82f6' : '#f1f5f9',
+              color: viewMode === mode ? 'white' : '#475569',
+              border: `1px solid ${viewMode === mode ? '#3b82f6' : '#cbd5e1'}`,
+              borderRadius: '0.5rem',
+              cursor: 'pointer',
+              fontSize: '0.9rem',
+              fontWeight: viewMode === mode ? 600 : 400,
+            }}
+          >
+            {mode === 'daily' ? 'יומי' : mode === 'weekly' ? 'שבועי' : 'חודשי'}
+          </button>
+        ))}
+      </div>
+
+      {/* Daily View */}
+      {viewMode === 'daily' && (
+        <div style={{ marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                style={{
+                  padding: '0.5rem',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '0.5rem',
+                  fontSize: '0.9rem',
+                }}
+              />
+              <button
+                onClick={() => setSelectedDate(formatLocalDate(new Date()))}
+                style={{
+                  padding: '0.5rem 1rem',
+                  background: '#dbeafe',
+                  border: '1px solid #93c5fd',
+                  borderRadius: '0.5rem',
+                  cursor: 'pointer',
+                  fontSize: '0.9rem',
+                  color: '#1e40af',
+                }}
+              >
+                היום
+              </button>
+            </div>
+            <span style={{ fontWeight: 500, color: '#64748b' }}>
+              {formatHours(weekTotal)} שעות
+            </span>
+          </div>
+
+          {/* Daily entries list */}
+          {weekEntries.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              {(() => {
+                // Sort entries by start time
+                const sortedEntries = [...weekEntries].sort((a, b) => {
+                  // Handle entries without startTime (sort them to the end)
+                  if (!a.startTime && !b.startTime) return 0
+                  if (!a.startTime) return 1
+                  if (!b.startTime) return -1
+                  return a.startTime.localeCompare(b.startTime)
+                })
+
+                return sortedEntries.map((entry) => (
+                  <div
+                    key={entry.id}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '1rem',
+                      background: '#f8fafc',
+                      border: '1px solid #e2e8f0',
+                      borderRadius: '0.5rem',
+                      fontSize: '0.95rem',
+                    }}
+                  >
+                    <div
+                      onClick={() => handleEditEntry(entry)}
+                      style={{ flex: 1, cursor: 'pointer' }}
+                    >
+                      <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>
+                        {entry.projectName}
+                        <span style={{ color: '#64748b', margin: '0 0.5rem' }}>›</span>
+                        {entry.taskName}
+                      </div>
+                      <div style={{ color: '#64748b', fontSize: '0.85rem' }}>
+                        {entry.startTime && entry.endTime ? `${entry.startTime} - ${entry.endTime}` : formatHours(entry.hours) + ' שעות'}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                      <span style={{ fontWeight: 600, fontSize: '1.1rem' }}>{formatHours(entry.hours)}</span>
+                      <button
+                        onClick={() => void handleStartFromEntry(entry)}
+                        title="התחל טיימר עם אותו פרויקט ומשימה"
+                        style={{
+                          padding: '0.25rem 0.5rem',
+                          fontSize: '0.8rem',
+                          background: '#ecfdf5',
+                          border: '1px solid #6ee7b7',
+                          borderRadius: '0.25rem',
+                          cursor: 'pointer',
+                          color: '#059669',
+                        }}
+                      >
+                        ▶
+                      </button>
+                    </div>
+                  </div>
+                ))
+              })()}
+            </div>
+          ) : (
+            <p style={{ color: '#64748b', textAlign: 'center' }}>
+              אין רישומי זמן ביום זה
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Weekly View */}
+      {viewMode === 'weekly' && (
+        <div style={{ marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <button
+                onClick={() => setWeekOffset(weekOffset - 1)}
+                style={{
+                  padding: '0.25rem 0.5rem',
+                  background: '#f1f5f9',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '0.25rem',
+                  cursor: 'pointer',
+                  fontSize: '0.9rem',
+                }}
+              >
+                ►
+              </button>
+              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>
+                {isCurrentWeek ? 'השבוע הנוכחי' : formatWeekRange(days)}
+              </h3>
+              <button
+                onClick={() => setWeekOffset(weekOffset + 1)}
+                disabled={isCurrentWeek}
+                style={{
+                  padding: '0.25rem 0.5rem',
+                  background: '#f1f5f9',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '0.25rem',
+                  cursor: isCurrentWeek ? 'not-allowed' : 'pointer',
+                  fontSize: '0.9rem',
+                  opacity: isCurrentWeek ? 0.5 : 1,
+                }}
+              >
+                ◄
+              </button>
             {!isCurrentWeek && (
               <button
                 onClick={() => setWeekOffset(0)}
@@ -558,18 +841,16 @@ export default function TimingTab({ businessId }: TimingTabProps) {
                   <span style={{ color: '#64748b' }}>{formatDisplayDate(entry.date)}</span>
                   <span style={{ fontWeight: 600 }}>{formatHours(entry.hours)}</span>
                   <button
-                    onClick={() => handleStartFromEntry(entry)}
-                    disabled={!!activeTimer}
+                    onClick={() => void handleStartFromEntry(entry)}
                     title="התחל טיימר עם אותו פרויקט ומשימה"
                     style={{
                       padding: '0.25rem 0.5rem',
                       fontSize: '0.8rem',
-                      background: activeTimer ? '#e5e7eb' : '#ecfdf5',
+                      background: '#ecfdf5',
                       border: '1px solid #6ee7b7',
                       borderRadius: '0.25rem',
-                      cursor: activeTimer ? 'not-allowed' : 'pointer',
+                      cursor: 'pointer',
                       color: '#059669',
-                      opacity: activeTimer ? 0.5 : 1,
                     }}
                   >
                     ▶
@@ -583,7 +864,202 @@ export default function TimingTab({ businessId }: TimingTabProps) {
             אין רישומי זמן השבוע
           </p>
         )}
-      </div>
+        </div>
+      )}
+
+      {/* Monthly View */}
+      {viewMode === 'monthly' && (
+        <div style={{ marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <button
+                onClick={() => setMonthOffset(monthOffset - 1)}
+                style={{
+                  padding: '0.25rem 0.5rem',
+                  background: '#f1f5f9',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '0.25rem',
+                  cursor: 'pointer',
+                  fontSize: '0.9rem',
+                }}
+              >
+                ►
+              </button>
+              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>
+                {getMonthDates(monthOffset).monthName}
+              </h3>
+              <button
+                onClick={() => setMonthOffset(monthOffset + 1)}
+                disabled={monthOffset === 0}
+                style={{
+                  padding: '0.25rem 0.5rem',
+                  background: '#f1f5f9',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '0.25rem',
+                  cursor: monthOffset === 0 ? 'not-allowed' : 'pointer',
+                  fontSize: '0.9rem',
+                  opacity: monthOffset === 0 ? 0.5 : 1,
+                }}
+              >
+                ◄
+              </button>
+              {monthOffset !== 0 && (
+                <button
+                  onClick={() => setMonthOffset(0)}
+                  style={{
+                    padding: '0.25rem 0.5rem',
+                    background: '#dbeafe',
+                    border: '1px solid #93c5fd',
+                    borderRadius: '0.25rem',
+                    cursor: 'pointer',
+                    fontSize: '0.8rem',
+                    color: '#1e40af',
+                  }}
+                >
+                  חודש נוכחי
+                </button>
+              )}
+            </div>
+            <span style={{ fontWeight: 500, color: '#64748b' }}>
+              {formatHours(weekTotal)} שעות
+            </span>
+          </div>
+
+          {/* Group entries by project */}
+          {weekEntries.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {(() => {
+                const projectGroups = new Map<string, { projectName: string; tasks: Map<string, { taskName: string; entries: WeekEntry[]; total: number }> }>()
+
+                weekEntries.forEach(entry => {
+                  if (!projectGroups.has(entry.projectName)) {
+                    projectGroups.set(entry.projectName, {
+                      projectName: entry.projectName,
+                      tasks: new Map(),
+                    })
+                  }
+                  const project = projectGroups.get(entry.projectName)!
+                  if (!project.tasks.has(entry.taskName)) {
+                    project.tasks.set(entry.taskName, {
+                      taskName: entry.taskName,
+                      entries: [],
+                      total: 0,
+                    })
+                  }
+                  const task = project.tasks.get(entry.taskName)!
+                  task.entries.push(entry)
+                  task.total += entry.hours
+                })
+
+                return Array.from(projectGroups.values()).map(project => {
+                  const projectTotal = Array.from(project.tasks.values()).reduce((sum, task) => sum + task.total, 0)
+                  const projectEntries = Array.from(project.tasks.values()).flatMap(task => task.entries)
+
+                  return (
+                    <div
+                      key={project.projectName}
+                      style={{
+                        background: '#f8fafc',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: '0.5rem',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <div style={{
+                        padding: '1rem',
+                        background: '#e0f2fe',
+                        borderBottom: '1px solid #bae6fd',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                      }}>
+                        <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>
+                          {project.projectName}
+                        </h4>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                          <span style={{ fontWeight: 600, fontSize: '1.1rem' }}>
+                            {formatHours(projectTotal)}
+                          </span>
+                          <button
+                            onClick={() => handleExportToExcel(project.projectName, projectEntries)}
+                            title="ייצא ל-Excel"
+                            style={{
+                              padding: '0.375rem 0.75rem',
+                              background: '#10b981',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '0.375rem',
+                              cursor: 'pointer',
+                              fontSize: '0.85rem',
+                              fontWeight: 500,
+                            }}
+                          >
+                            📊 Excel
+                          </button>
+                        </div>
+                      </div>
+                      <div style={{ padding: '0.5rem' }}>
+                        {Array.from(project.tasks.values()).map(task => (
+                          <div
+                            key={task.taskName}
+                            style={{
+                              padding: '0.75rem',
+                              marginBottom: '0.5rem',
+                              background: 'white',
+                              borderRadius: '0.375rem',
+                              border: '1px solid #e2e8f0',
+                            }}
+                          >
+                            <div style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              marginBottom: '0.5rem',
+                            }}>
+                              <span style={{ fontWeight: 500, fontSize: '0.95rem' }}>
+                                {task.taskName}
+                              </span>
+                              <span style={{ fontWeight: 600 }}>
+                                {formatHours(task.total)}
+                              </span>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                              {task.entries.map(entry => (
+                                <div
+                                  key={entry.id}
+                                  onClick={() => handleEditEntry(entry)}
+                                  style={{
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    padding: '0.375rem 0.5rem',
+                                    fontSize: '0.85rem',
+                                    color: '#64748b',
+                                    cursor: 'pointer',
+                                    borderRadius: '0.25rem',
+                                  }}
+                                  onMouseEnter={(e) => e.currentTarget.style.background = '#f1f5f9'}
+                                  onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                                >
+                                  <span>{formatDisplayDate(entry.date)}</span>
+                                  <span>{formatHours(entry.hours)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })
+              })()}
+            </div>
+          ) : (
+            <p style={{ color: '#64748b', textAlign: 'center' }}>
+              אין רישומי זמן בחודש זה
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Time Entry Form Modal */}
       {formData && (
@@ -598,9 +1074,6 @@ export default function TimingTab({ businessId }: TimingTabProps) {
           projects={projects}
           tasks={formTasks}
           onProjectChange={handleFormProjectChange}
-          showProjectTask={!editingEntry}
-          projectName={editingEntry?.projectName}
-          taskName={editingEntry?.taskName}
         />
       )}
     </div>
