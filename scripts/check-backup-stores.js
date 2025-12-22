@@ -28,6 +28,7 @@ const INDEXEDDB_TABLES = [
 const LOCALSTORAGE_STORES = [
   'subjectStore',
   'historyStore',
+  'timerStore',
 ]
 
 let hasErrors = false
