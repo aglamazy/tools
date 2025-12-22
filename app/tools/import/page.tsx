@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useSearchParams } from 'next/navigation'
 import type { ImportedFile } from '@/app/db/financeDB'
 import { formatMonthDisplay, formatDateTime } from '@/app/utils/formatters'
 import FileBrowser from '@/app/components/FileBrowser'
@@ -18,6 +19,7 @@ import type { FilePreview } from '@/app/types/file-preview'
 import { parseXlsTables } from '@/app/utils/xlsTableParser'
 
 export default function ImportPage() {
+  const searchParams = useSearchParams()
   const { showToast } = useToast()
   const [files, setFiles] = useState<ImportedFile[]>([])
   const [selectedMonth, setSelectedMonth] = useState<string>('')
@@ -81,20 +83,26 @@ export default function ImportPage() {
             return (bYear * 12 + bMonth) - (aYear * 12 + aMonth)
           })
           if (months.length > 0) {
-            // Try to restore from sessionStorage first
-            const savedMonth = sessionStorage.getItem('selectedMonth')
-            if (savedMonth && months.includes(savedMonth)) {
-              setSelectedMonth(savedMonth)
+            // Check URL parameter first
+            const monthParam = searchParams.get('month')
+            if (monthParam && months.includes(monthParam)) {
+              setSelectedMonth(monthParam)
             } else {
-              // Otherwise use newest month
-              setSelectedMonth(months[0] as string)
+              // Try to restore from sessionStorage
+              const savedMonth = sessionStorage.getItem('selectedMonth')
+              if (savedMonth && months.includes(savedMonth)) {
+                setSelectedMonth(savedMonth)
+              } else {
+                // Otherwise use newest month
+                setSelectedMonth(months[0] as string)
+              }
             }
           }
         }
       }
     }
     loadData()
-  }, [])
+  }, [searchParams])
 
   // Save selected month to sessionStorage when it changes
   useEffect(() => {

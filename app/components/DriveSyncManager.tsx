@@ -11,19 +11,23 @@ export default function DriveSyncManager() {
   const [settings, setSettings] = useState<DriveSyncSettings | null>(null)
   const syncingRef = useRef(false)
   const timerRef = useRef<NodeJS.Timeout | null>(null)
+  const settingsRefreshRef = useRef<NodeJS.Timeout | null>(null)
+  const isMountedRef = useRef<boolean>(true)
   const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID
 
-  const loadSettings = async () => {
+  const loadSettings = async (runImmediately = false) => {
+    if (!isMountedRef.current) return
     try {
       const nextSettings = await getDriveSyncSettings()
+      if (!isMountedRef.current) return
       setSettings(nextSettings)
-      configureTimer(nextSettings)
+      configureTimer(nextSettings, runImmediately)
     } catch (err) {
       console.error('Error loading Drive sync settings (manager):', err)
     }
   }
 
-  const configureTimer = (driveSettings: DriveSyncSettings) => {
+  const configureTimer = (driveSettings: DriveSyncSettings, runImmediately = false) => {
     if (timerRef.current) {
       clearInterval(timerRef.current)
       timerRef.current = null
@@ -35,13 +39,17 @@ export default function DriveSyncManager() {
 
     const intervalMs = driveSettings.frequencyMinutes * 60 * 1000
 
-    // Run once immediately
-    triggerSync(driveSettings)
+    // Run once immediately only on first load
+    if (runImmediately) {
+      triggerSync(driveSettings)
+    }
 
     timerRef.current = setInterval(() => triggerSync(driveSettings), intervalMs)
   }
 
   const triggerSync = async (driveSettings: DriveSyncSettings) => {
+    if (!isMountedRef.current) return
+
     // Only sync if we're MASTER - slaves never upload
     if (!lockModeStore.isMaster()) {
       console.log('[DriveSync] Skipping sync - not master')
@@ -62,6 +70,7 @@ export default function DriveSyncManager() {
       })
 
       if (result.success) {
+        if (!isMountedRef.current) return
         const now = new Date().toISOString()
         const updated: DriveSyncSettings = {
           ...driveSettings,
@@ -75,6 +84,7 @@ export default function DriveSyncManager() {
       } else if (result.error === 'no-token') {
         console.log('Drive sync skipped: no token (user not connected)')
       } else {
+        if (!isMountedRef.current) return
         const updated: DriveSyncSettings = {
           ...driveSettings,
           lastSyncError: result.error,
@@ -92,24 +102,34 @@ export default function DriveSyncManager() {
 
   useEffect(() => {
     if (!clientId) return
-    loadSettings()
 
-    const settingsRefresh = setInterval(loadSettings, 60 * 1000)
+    isMountedRef.current = true
 
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible' && settings) {
-        triggerSync(settings)
+    // Load settings once on mount, trigger immediate sync
+    loadSettings(true)
+
+    // Refresh settings every 60 seconds (without triggering immediate sync)
+    settingsRefreshRef.current = setInterval(() => loadSettings(false), 60 * 1000)
+
+    const handleVisibility = async () => {
+      if (document.visibilityState === 'visible') {
+        // Reload settings and trigger sync when tab becomes visible
+        const currentSettings = await getDriveSyncSettings()
+        if (isMountedRef.current) {
+          triggerSync(currentSettings)
+        }
       }
     }
 
     document.addEventListener('visibilitychange', handleVisibility)
 
     return () => {
+      isMountedRef.current = false
       if (timerRef.current) clearInterval(timerRef.current)
-      clearInterval(settingsRefresh)
+      if (settingsRefreshRef.current) clearInterval(settingsRefreshRef.current)
       document.removeEventListener('visibilitychange', handleVisibility)
     }
-  }, [clientId, settings])
+  }, [clientId])
 
   return null
 }

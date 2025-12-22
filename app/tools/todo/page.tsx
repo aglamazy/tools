@@ -114,6 +114,12 @@ export default function TodoPage() {
   }
 
   const getAllTasks = () => {
+    // Helper to convert MM/YYYY to comparable timestamp
+    const monthToTimestamp = (month: string): number => {
+      const [mm, yyyy] = month.split('/')
+      return new Date(`${yyyy}-${mm}-01`).getTime()
+    }
+
     // Combine user tasks and auto tasks with type indicator
     type CombinedTask = (UserTask & { taskType: 'user' }) | ({
       id: string | number
@@ -124,6 +130,7 @@ export default function TodoPage() {
       taskType: 'auto'
       autoType: AutoTask['type']
       link: string
+      month: string
     })
 
     const allTasks: CombinedTask[] = [
@@ -137,6 +144,7 @@ export default function TodoPage() {
         taskType: 'auto' as const,
         autoType: t.type,
         link: t.link,
+        month: t.month,
       })),
     ]
 
@@ -145,11 +153,22 @@ export default function TodoPage() {
     return filtered.sort((a, b) => {
       let comparison = 0
       if (sortBy === 'date') {
-        comparison = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        // Auto tasks: always sort by month oldest first
+        // User tasks: sort by createdAt respecting sortOrder
+        if (a.taskType === 'auto' && b.taskType === 'auto') {
+          comparison = monthToTimestamp(a.month) - monthToTimestamp(b.month) // Oldest first
+        } else if (a.taskType === 'user' && b.taskType === 'user') {
+          comparison = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          comparison = sortOrder === 'desc' ? comparison : -comparison
+        } else {
+          // Mixed: auto tasks come before user tasks
+          return a.taskType === 'auto' ? -1 : 1
+        }
       } else {
         comparison = getPriorityValue(b.priority) - getPriorityValue(a.priority)
+        return sortOrder === 'desc' ? comparison : -comparison
       }
-      return sortOrder === 'desc' ? comparison : -comparison
+      return comparison
     })
   }
 

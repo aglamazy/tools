@@ -29,6 +29,7 @@ export default function StationLockManager() {
   const [mode, setMode] = useState<LockMode>('initializing')
   const [lockFileId, setLockFileId] = useState<string | undefined>()
   const timerRef = useRef<NodeJS.Timeout | null>(null)
+  const isMountedRef = useRef<boolean>(true)
   const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID
   const stationId = getStationId()
 
@@ -50,7 +51,7 @@ export default function StationLockManager() {
   }
 
   const becomeMaster = async () => {
-    if (!clientId || !stationId) return
+    if (!clientId || !stationId || !isMountedRef.current) return
 
     console.log('[StationLock] Becoming MASTER')
     setMode('master')
@@ -77,20 +78,21 @@ export default function StationLockManager() {
     // Update lock every 30 seconds
     clearTimer()
     timerRef.current = setInterval(async () => {
+      if (!isMountedRef.current) return
       const updatedLock = createLock() // Fresh timestamp
       const updateResult = await uploadStationLock({
         clientId,
         lock: updatedLock,
         fileId: lockFileId,
       })
-      if (updateResult.success && updateResult.fileId) {
+      if (updateResult.success && updateResult.fileId && isMountedRef.current) {
         setLockFileId(updateResult.fileId)
       }
     }, MASTER_UPDATE_INTERVAL_MS)
   }
 
   const becomeSlave = async (existingLockFileId: string) => {
-    if (!clientId || !stationId) return
+    if (!clientId || !stationId || !isMountedRef.current) return
 
     console.log('[StationLock] Becoming SLAVE')
     setMode('slave')
@@ -100,7 +102,9 @@ export default function StationLockManager() {
     // Poll lock every 10 seconds
     clearTimer()
     timerRef.current = setInterval(async () => {
+      if (!isMountedRef.current) return
       const result = await downloadStationLock({ clientId, fileId: existingLockFileId })
+      if (!isMountedRef.current) return
 
       if (!result.success || !result.lock) {
         // Lock disappeared - become master
@@ -114,11 +118,14 @@ export default function StationLockManager() {
 
         // Download backup before becoming master
         const driveSyncSettings = await getDriveSyncSettings()
+        if (!isMountedRef.current) return
+
         const backupResult = await fetchBackupFromDrive({
           clientId,
           fileId: driveSyncSettings.driveFileId,
           fileName: 'finance-backup.json',
         })
+        if (!isMountedRef.current) return
 
         if (backupResult.success && backupResult.data) {
           console.log('[StationLock] Importing backup from Drive')
@@ -141,6 +148,8 @@ export default function StationLockManager() {
 
     // Check if user chose standalone mode
     const settings = await getDriveSyncSettings()
+    if (!isMountedRef.current) return
+
     if (settings.standaloneMode === true) {
       console.log('[StationLock] Standalone mode - no multi-device sync')
       setMode('master')
@@ -152,6 +161,7 @@ export default function StationLockManager() {
 
     // Try to download existing lock
     const result = await downloadStationLock({ clientId })
+    if (!isMountedRef.current) return
 
     if (!result.success) {
       if (result.error === 'no-token') {
@@ -196,9 +206,11 @@ export default function StationLockManager() {
   useEffect(() => {
     if (!clientId || !stationId) return
 
+    isMountedRef.current = true
     initializeLockState()
 
     return () => {
+      isMountedRef.current = false
       clearTimer()
     }
   }, [clientId, stationId])
