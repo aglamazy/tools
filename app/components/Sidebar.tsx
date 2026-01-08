@@ -38,6 +38,13 @@ const tools: Tool[] = [
     available: true,
   },
   {
+    id: 'capital',
+    title: 'הון',
+    href: '/tools/capital',
+    icon: '💎',
+    available: true,
+  },
+  {
     id: 'todo',
     title: 'משימות',
     href: '/tools/todo',
