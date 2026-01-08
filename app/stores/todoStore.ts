@@ -75,8 +75,8 @@ export const todoStore = {
     const month3 = getPreviousMonth(month2)
     const defaultPeriod = [latestMonth, month2, month3]
 
-    // Check for missing files (bank and credit cards) for default 3-month period
-    const missingFileTasks = await checkMissingFiles(defaultPeriod)
+    // Check for missing files (bank and credit cards) for ALL months since first import
+    const missingFileTasks = await checkMissingFiles()
     autoTasks.push(...missingFileTasks)
 
     // Check for uncategorized transactions in default 3-month period
@@ -99,9 +99,79 @@ function getPreviousMonth(monthYear: string): string {
   return `${String(month - 1).padStart(2, '0')}/${year}`
 }
 
-async function checkMissingFiles(months: string[]): Promise<AutoTask[]> {
+function getAllMonthsInRange(startMonth: string, endMonth: string): string[] {
+  const months: string[] = []
+  let current = startMonth
+
+  while (current !== endMonth) {
+    months.push(current)
+    current = getNextMonth(current)
+  }
+  months.push(endMonth) // Include the end month
+
+  return months
+}
+
+function getNextMonth(monthYear: string): string {
+  const [month, year] = monthYear.split('/').map(Number)
+  if (month === 12) {
+    return `01/${year + 1}`
+  }
+  return `${String(month + 1).padStart(2, '0')}/${year}`
+}
+
+function getCurrentMonth(): string {
+  const now = new Date()
+  return `${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`
+}
+
+function compareMonths(month1: string, month2: string): number {
+  const [m1, y1] = month1.split('/').map(Number)
+  const [m2, y2] = month2.split('/').map(Number)
+
+  if (y1 !== y2) return y1 - y2
+  return m1 - m2
+}
+
+async function checkMissingFiles(): Promise<AutoTask[]> {
   const tasks: AutoTask[] = []
   const importedFiles = await db.importedFiles.toArray()
+
+  console.log('[TodoStore] checkMissingFiles - Total imported files:', importedFiles.length)
+
+  // Determine the range of months to check
+  let monthsToCheck: string[]
+
+  if (importedFiles.length === 0) {
+    // No data - check last 3 months from today
+    const currentMonth = getCurrentMonth()
+    const month2 = getPreviousMonth(currentMonth)
+    const month3 = getPreviousMonth(month2)
+    monthsToCheck = [month3, month2, currentMonth]
+    console.log('[TodoStore] No imported files - checking last 3 months:', monthsToCheck)
+  } else {
+    // Find earliest month from imported files
+    const allMonths = importedFiles
+      .map(f => f.processingMonth)
+      .filter((m): m is string => !!m)
+
+    console.log('[TodoStore] All unique months from imports:', allMonths)
+
+    if (allMonths.length === 0) {
+      console.log('[TodoStore] No valid months found in imported files')
+      return tasks // No valid months
+    }
+
+    allMonths.sort(compareMonths)
+    const earliestMonth = allMonths[0]
+    const currentMonth = getCurrentMonth()
+
+    console.log('[TodoStore] Month range:', earliestMonth, 'to', currentMonth, '(current)')
+
+    // Generate all months from earliest to current month
+    monthsToCheck = getAllMonthsInRange(earliestMonth, currentMonth)
+    console.log('[TodoStore] Checking months:', monthsToCheck)
+  }
 
   // Get unique bank accounts and credit cards from all imported files
   const bankAccounts = new Set<string>()
@@ -115,20 +185,37 @@ async function checkMissingFiles(months: string[]): Promise<AutoTask[]> {
     }
   })
 
+  // If no accounts/cards exist yet, suggest checking imports for recent months
+  if (bankAccounts.size === 0 && creditCards.size === 0) {
+    const currentMonth = getCurrentMonth()
+    tasks.push({
+      id: `missing-initial-${currentMonth}`,
+      title: `[${currentMonth}] לא נמצאו קבצים מיובאים`,
+      description: 'יש להתחיל לייבא קבצי בנק וכרטיסי אשראי',
+      type: 'missing-file',
+      priority: 'high',
+      link: '/tools/import',
+      createdAt: new Date().toISOString(),
+      month: currentMonth,
+    })
+    return tasks
+  }
+
+  const latestMonthInRange = monthsToCheck[monthsToCheck.length - 1]
+
   // Check for missing bank files for each month
   for (const account of bankAccounts) {
-    for (let i = 0; i < months.length; i++) {
-      const month = months[i]
+    for (const month of monthsToCheck) {
       const hasFile = importedFiles.some(
         f => f.fileType === 'bank' && f.accountNumber === account && f.processingMonth === month
       )
 
       if (!hasFile) {
         // Priority: high for latest month, medium for older months
-        const priority: Priority = i === 0 ? 'high' : 'medium'
+        const priority: Priority = month === latestMonthInRange ? 'high' : 'medium'
         tasks.push({
           id: `missing-bank-${account}-${month}`,
-          title: `[${month}] חסר קובץ בנק`,
+          title: `[${month}] חסר קובץ בנק ${account}`,
           description: `לא נמצא קובץ בנק מיובא עבור חשבון ${account} לחודש ${month}`,
           type: 'missing-file',
           priority,
@@ -142,15 +229,14 @@ async function checkMissingFiles(months: string[]): Promise<AutoTask[]> {
 
   // Check for missing credit card files for each month
   for (const card of creditCards) {
-    for (let i = 0; i < months.length; i++) {
-      const month = months[i]
+    for (const month of monthsToCheck) {
       const hasFile = importedFiles.some(
         f => f.fileType === 'credit-card' && f.cardNumber === card && f.processingMonth === month
       )
 
       if (!hasFile) {
         // Priority: high for latest month, medium for older months
-        const priority: Priority = i === 0 ? 'high' : 'medium'
+        const priority: Priority = month === latestMonthInRange ? 'high' : 'medium'
         tasks.push({
           id: `missing-credit-${card}-${month}`,
           title: `[${month}] חסר קובץ כרטיס אשראי ${card}`,
