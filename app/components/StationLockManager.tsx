@@ -15,7 +15,7 @@ import { getDriveSyncSettings } from '@/app/services/appSettingsService'
 
 type LockMode = 'initializing' | 'master' | 'slave'
 
-const LOCK_TTL_SECONDS = 300 // 5 minutes
+const LOCK_TTL_SECONDS = 90 // 90 seconds (master updates every 30s, so 3 missed updates = stale)
 const MASTER_UPDATE_INTERVAL_MS = 30_000 // 30 seconds
 const SLAVE_POLL_INTERVAL_MS = 10_000 // 10 seconds
 
@@ -28,7 +28,10 @@ const SLAVE_POLL_INTERVAL_MS = 10_000 // 10 seconds
 export default function StationLockManager() {
   const [mode, setMode] = useState<LockMode>('initializing')
   const [lockFileId, setLockFileId] = useState<string | undefined>()
+  const [currentLock, setCurrentLock] = useState<StationLock | null>(null)
+  const [countdown, setCountdown] = useState<number>(0)
   const timerRef = useRef<NodeJS.Timeout | null>(null)
+  const countdownTimerRef = useRef<NodeJS.Timeout | null>(null)
   const isMountedRef = useRef<boolean>(true)
   const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID
   const stationId = getStationId()
@@ -38,6 +41,46 @@ export default function StationLockManager() {
       clearInterval(timerRef.current)
       timerRef.current = null
     }
+    if (countdownTimerRef.current) {
+      clearInterval(countdownTimerRef.current)
+      countdownTimerRef.current = null
+    }
+  }
+
+  const calculateCountdown = (lock: StationLock): number => {
+    const lastActivity = new Date(lock.lastActivity).getTime()
+    const expiresAt = lastActivity + lock.ttlSeconds * 1000
+    const now = Date.now()
+    const remaining = Math.max(0, Math.ceil((expiresAt - now) / 1000))
+    console.log('[StationLock] Countdown calculation:', { lastActivity: lock.lastActivity, ttl: lock.ttlSeconds, remaining })
+    return remaining
+  }
+
+  const startCountdownTimer = (lock: StationLock) => {
+    if (countdownTimerRef.current) {
+      clearInterval(countdownTimerRef.current)
+    }
+
+    setCurrentLock(lock)
+    const initial = calculateCountdown(lock)
+    setCountdown(initial)
+    console.log('[StationLock] Starting countdown timer, initial:', initial)
+
+    // Update countdown every second
+    countdownTimerRef.current = setInterval(() => {
+      if (!isMountedRef.current) return
+      const remaining = calculateCountdown(lock)
+      setCountdown(remaining)
+    }, 1000)
+  }
+
+  const formatCountdown = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    if (mins > 0) {
+      return `${mins}:${secs.toString().padStart(2, '0')}`
+    }
+    return `${secs} שניות`
   }
 
   const createLock = (): StationLock => {
@@ -91,13 +134,18 @@ export default function StationLockManager() {
     }, MASTER_UPDATE_INTERVAL_MS)
   }
 
-  const becomeSlave = async (existingLockFileId: string) => {
+  const becomeSlave = async (existingLockFileId: string, initialLock?: StationLock) => {
     if (!clientId || !stationId || !isMountedRef.current) return
 
     console.log('[StationLock] Becoming SLAVE')
     setMode('slave')
     lockModeStore.set('slave')
     setLockFileId(existingLockFileId)
+
+    // Start countdown with initial lock if provided
+    if (initialLock) {
+      startCountdownTimer(initialLock)
+    }
 
     // Poll lock every 10 seconds
     clearTimer()
@@ -112,6 +160,9 @@ export default function StationLockManager() {
         await becomeMaster()
         return
       }
+
+      // Update countdown with latest lock info
+      startCountdownTimer(result.lock)
 
       if (isLockStale(result.lock)) {
         console.log('[StationLock] Lock is stale, transitioning to MASTER')
@@ -200,7 +251,7 @@ export default function StationLockManager() {
     // Lock belongs to another station
     // Even if stale, start as slave (as per design)
     console.log('[StationLock] Lock belongs to another station, becoming SLAVE')
-    await becomeSlave(fileId!)
+    await becomeSlave(fileId!, lock!)
   }
 
   useEffect(() => {
@@ -234,6 +285,7 @@ export default function StationLockManager() {
         }}
       >
         <div
+          dir="rtl"
           style={{
             background: 'white',
             padding: '2rem',
@@ -250,6 +302,24 @@ export default function StationLockManager() {
             <br />
             כאשר התחנה האחרת תשוחרר, העריכה תתאפשר כאן אוטומטית.
           </p>
+
+          <div
+            style={{
+              marginTop: '1.5rem',
+              padding: '1rem',
+              background: '#fef3c7',
+              borderRadius: '0.5rem',
+              border: '2px solid #fbbf24',
+            }}
+          >
+            <div style={{ fontSize: '0.875rem', color: '#92400e', marginBottom: '0.5rem' }}>
+              זמן משוער עד שחרור:
+            </div>
+            <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#92400e' }}>
+              {countdown > 0 ? formatCountdown(countdown) : '...מחשב'}
+            </div>
+          </div>
+
           <div
             style={{
               marginTop: '1.5rem',
