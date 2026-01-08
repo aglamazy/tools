@@ -3,8 +3,8 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { config } from '@/app/config'
 import { businessStore } from '@/app/stores/businessStore'
+import { userTierStore, UserTier } from '@/app/stores/userTierStore'
 import type { Business } from '@/app/db/financeDB'
 
 type Tool = {
@@ -13,15 +13,18 @@ type Tool = {
   href: string
   icon: string
   available: boolean
+  requiredTier: UserTier
 }
 
-const tools: Tool[] = [
+const allTools: Tool[] = [
+  // Freemium features
   {
     id: 'import',
     title: 'ייבוא קבצים',
     href: '/tools/import',
     icon: '📥',
     available: true,
+    requiredTier: UserTier.FREEMIUM,
   },
   {
     id: 'cash-flow',
@@ -29,6 +32,7 @@ const tools: Tool[] = [
     href: '/tools/cash-flow',
     icon: '💰',
     available: true,
+    requiredTier: UserTier.FREEMIUM,
   },
   {
     id: 'budget',
@@ -36,13 +40,7 @@ const tools: Tool[] = [
     href: '/tools/budget',
     icon: '📊',
     available: true,
-  },
-  {
-    id: 'capital',
-    title: 'הון',
-    href: '/tools/capital',
-    icon: '💎',
-    available: true,
+    requiredTier: UserTier.FREEMIUM,
   },
   {
     id: 'todo',
@@ -50,13 +48,15 @@ const tools: Tool[] = [
     href: '/tools/todo',
     icon: '✓',
     available: true,
+    requiredTier: UserTier.FREEMIUM,
   },
   {
     id: 'future-payments',
     title: 'תחזית תשלומים',
     href: '/tools/future-payments',
     icon: '💳',
-    available: false,
+    available: true,
+    requiredTier: UserTier.LOCAL,
   },
   {
     id: 'settings',
@@ -64,6 +64,7 @@ const tools: Tool[] = [
     href: '/tools/settings',
     icon: '⚙️',
     available: true,
+    requiredTier: UserTier.FREEMIUM,
   },
   {
     id: 'about',
@@ -71,6 +72,7 @@ const tools: Tool[] = [
     href: '/about',
     icon: 'ℹ️',
     available: true,
+    requiredTier: UserTier.FREEMIUM,
   },
   {
     id: 'guide',
@@ -78,23 +80,38 @@ const tools: Tool[] = [
     href: '/guide',
     icon: '📖',
     available: true,
+    requiredTier: UserTier.FREEMIUM,
   },
-]
 
-if (config.developerMode) {
-  tools.splice(3, 0, {
+  // Business features
+  {
+    id: 'capital',
+    title: 'הון',
+    href: '/tools/capital',
+    icon: '💎',
+    available: true,
+    requiredTier: UserTier.BUSINESS,
+  },
+
+  // Local/developer features
+  {
     id: 'dev-db',
     title: 'Dev DB',
     href: '/tools/dev-db',
     icon: '🛠️',
     available: true,
-  })
-}
+    requiredTier: UserTier.LOCAL,
+  },
+]
 
 export default function Sidebar() {
   const pathname = usePathname()
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [pinnedBusinesses, setPinnedBusinesses] = useState<Business[]>([])
+  const [userTier, setUserTier] = useState<UserTier>(userTierStore.get())
+
+  // Filter tools based on user tier
+  const tools = allTools.filter(tool => userTierStore.hasAccess(tool.requiredTier))
 
   useEffect(() => {
     const loadPinnedBusinesses = async () => {
@@ -106,7 +123,16 @@ export default function Sidebar() {
     // Listen for pin changes
     const handleRefresh = () => void loadPinnedBusinesses()
     window.addEventListener('sidebar-refresh', handleRefresh)
-    return () => window.removeEventListener('sidebar-refresh', handleRefresh)
+
+    // Subscribe to tier changes
+    const unsubscribeTier = userTierStore.subscribe((tier) => {
+      setUserTier(tier)
+    })
+
+    return () => {
+      window.removeEventListener('sidebar-refresh', handleRefresh)
+      unsubscribeTier()
+    }
   }, [])
 
   return (
@@ -146,7 +172,7 @@ export default function Sidebar() {
             </li>
           ))}
 
-          {pinnedBusinesses.length > 0 && (
+          {userTierStore.hasAccess(UserTier.BUSINESS) && pinnedBusinesses.length > 0 && (
             <>
               <li style={{ borderTop: '1px solid #e2e8f0', margin: '0.5rem 0' }} />
               {pinnedBusinesses.map((business) => (
