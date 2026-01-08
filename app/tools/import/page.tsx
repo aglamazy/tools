@@ -370,6 +370,99 @@ const handleDeleteFile = (file: ImportedFile) => {
           <span>📥 ייבא קובץ חדש</span>
         </button>
 
+        {/* Demo files section */}
+        <div style={{
+          marginTop: '1.5rem',
+          padding: '1rem',
+          background: '#eff6ff',
+          border: '1px solid #93c5fd',
+          borderRadius: '0.5rem',
+        }}>
+          <h3 style={{ margin: '0 0 0.75rem 0', fontSize: '1rem', fontWeight: 600, color: '#1e40af' }}>
+            🎯 קבצים לדוגמה
+          </h3>
+          <p style={{ margin: '0 0 1rem 0', fontSize: '0.875rem', color: '#1e3a8a' }}>
+            רוצה לנסות את המערכת? הורד קבצי דמו עם נתונים מזויפים לחודשים נובמבר ודצמבר 2025
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem' }}>
+            <a
+              href="/demo_files/2025-11.xlsx"
+              download="2025-11.xlsx"
+              style={{
+                display: 'block',
+                padding: '0.75rem',
+                background: 'white',
+                border: '1px solid #bfdbfe',
+                borderRadius: '0.375rem',
+                textDecoration: 'none',
+                color: '#1e40af',
+                fontSize: '0.875rem',
+                textAlign: 'center',
+                fontWeight: 500,
+              }}
+            >
+              🏦 בנק - נובמבר 2025
+            </a>
+            <a
+              href="/demo_files/2025-12.xlsx"
+              download="2025-12.xlsx"
+              style={{
+                display: 'block',
+                padding: '0.75rem',
+                background: 'white',
+                border: '1px solid #bfdbfe',
+                borderRadius: '0.375rem',
+                textDecoration: 'none',
+                color: '#1e40af',
+                fontSize: '0.875rem',
+                textAlign: 'center',
+                fontWeight: 500,
+              }}
+            >
+              🏦 בנק - דצמבר 2025
+            </a>
+            <a
+              href="/demo_files/4256_11_2025.xlsx"
+              download="4256_11_2025.xlsx"
+              style={{
+                display: 'block',
+                padding: '0.75rem',
+                background: 'white',
+                border: '1px solid #bfdbfe',
+                borderRadius: '0.375rem',
+                textDecoration: 'none',
+                color: '#1e40af',
+                fontSize: '0.875rem',
+                textAlign: 'center',
+                fontWeight: 500,
+              }}
+            >
+              💳 כרטיס - נובמבר 2025
+            </a>
+            <a
+              href="/demo_files/4256_12_2025.xlsx"
+              download="4256_12_2025.xlsx"
+              style={{
+                display: 'block',
+                padding: '0.75rem',
+                background: 'white',
+                border: '1px solid #bfdbfe',
+                borderRadius: '0.375rem',
+                textDecoration: 'none',
+                color: '#1e40af',
+                fontSize: '0.875rem',
+                textAlign: 'center',
+                fontWeight: 500,
+              }}
+            >
+              💳 כרטיס - דצמבר 2025
+            </a>
+          </div>
+          <p style={{ margin: '0.75rem 0 0 0', fontSize: '0.75rem', color: '#6b7280' }}>
+            💡 לאחר ההורדה, לחץ על "ייבא קובץ חדש" וטען את הקבצים
+          </p>
+        </div>
+
         {/* File browser modal */}
         {showFileBrowser && (
           <div className="modal-overlay" onClick={() => setShowFileBrowser(false)}>

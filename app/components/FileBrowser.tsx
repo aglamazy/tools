@@ -45,7 +45,7 @@ export default function FileBrowser({
     const run = async () => {
       if (!isOpen) return
       if (!savedDirHandle) {
-        setError('לא הוגדרה תיקייה בהגדרות. עבור למסך ההגדרות כדי לבחור תיקייה.')
+        // No folder selected yet - show folder selection UI
         setPreviews([])
         return
       }
@@ -153,6 +153,27 @@ export default function FileBrowser({
     onDebugInspect(preview, file)
   }
 
+  const handleSelectFolder = async () => {
+    try {
+      // Request directory picker
+      const dirHandle = await (window as any).showDirectoryPicker({
+        mode: 'read',
+        startIn: 'downloads', // Suggest Downloads folder
+      })
+
+      if (dirHandle) {
+        onDirHandleChange(dirHandle)
+      }
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        // User cancelled - that's ok
+        return
+      }
+      console.error('Error selecting folder:', err)
+      setError('שגיאה בבחירת תיקייה')
+    }
+  }
+
   const formatMonthDisplay = (monthStr: string | null): string => {
     if (!monthStr) return 'לא זוהה'
     const [month, year] = monthStr.split('/')
@@ -167,8 +188,28 @@ export default function FileBrowser({
   return (
     <div>
       {!savedDirHandle && (
-        <div className="banner warning" style={{ marginBottom: '1rem' }}>
-          לא הוגדרה תיקייה. עבור למסך ההגדרות כדי לבחור תיקייה עבור קבצי הבנק/אשראי.
+        <div style={{
+          padding: '2rem',
+          textAlign: 'center',
+          background: '#eff6ff',
+          border: '1px solid #93c5fd',
+          borderRadius: '0.5rem',
+          marginBottom: '1rem',
+        }}>
+          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📁</div>
+          <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.125rem', color: '#1e40af' }}>
+            בחר תיקייה לקבצים
+          </h3>
+          <p style={{ margin: '0 0 1.5rem 0', fontSize: '0.875rem', color: '#1e3a8a' }}>
+            בחר את תיקיית ההורדות (Downloads) שבה נמצאים קבצי הבנק וכרטיסי האשראי שלך
+          </p>
+          <button
+            onClick={handleSelectFolder}
+            className="file-picker"
+            style={{ margin: '0 auto' }}
+          >
+            📂 בחר תיקייה
+          </button>
         </div>
       )}
       {loading && (
