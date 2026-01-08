@@ -86,6 +86,7 @@ async function loadGsiClient(): Promise<void> {
   return gsiLoaderPromise
 }
 
+
 function hasRequiredScopes(auth: DriveAuthState | null, scopes: string[]): boolean {
   if (!auth) return false
   if (!auth.scope) return false
@@ -102,8 +103,6 @@ function isTokenValid(auth: DriveAuthState | null, scopes: string[]): boolean {
 }
 
 async function requestAccessToken(clientId: string, prompt: 'consent' | 'none', scopes: string[]): Promise<DriveAuthState> {
-  await loadGsiClient()
-
   if (!window.google?.accounts?.oauth2) {
     throw new Error('Google Identity Services not available')
   }
@@ -115,12 +114,7 @@ async function requestAccessToken(clientId: string, prompt: 'consent' | 'none', 
       prompt,
       callback: (response: any) => {
         if (response.error) {
-          // Check for popup blocked error
-          if (response.error === 'popup_closed_by_user' || response.error === 'popup_blocked_by_browser') {
-            reject(new Error('popup-blocked'))
-          } else {
-            reject(new Error(response.error))
-          }
+          reject(new Error(response.error))
           return
         }
 
@@ -133,21 +127,12 @@ async function requestAccessToken(clientId: string, prompt: 'consent' | 'none', 
         driveAuthStore.save(auth)
         resolve(auth)
       },
-      error_callback: (error: any) => {
-        // Handle popup blocked or other errors
-        console.error('GIS error:', error)
-        if (error?.type === 'popup_closed' || error?.type === 'popup_failed_to_open') {
-          reject(new Error('popup-blocked'))
-        } else {
-          reject(new Error('popup-blocked'))
-        }
-      },
     })
 
     try {
       tokenClient.requestAccessToken({ prompt })
     } catch (err) {
-      reject(new Error('popup-blocked'))
+      reject(err)
     }
   })
 }
@@ -161,11 +146,22 @@ export async function ensureDriveAccessToken(clientId: string, opts?: { prompt?:
     return stored!.accessToken
   }
 
+  // Load GSI script synchronously if needed (returns immediately if already loaded)
+  await loadGsiClient()
+
   try {
     const auth = await requestAccessToken(clientId, prompt, scopes)
     return auth.accessToken
-  } catch (err) {
+  } catch (err: any) {
     console.error('Error acquiring Drive token:', err)
+
+    // If interaction is required and we were trying silent auth,
+    // clear the stored auth and return null so the UI can prompt the user
+    if (err.message === 'interaction_required' && prompt === 'none') {
+      console.log('Interaction required - clearing stored auth')
+      driveAuthStore.clear()
+    }
+
     return null
   }
 }
@@ -321,7 +317,7 @@ export async function exportBackupToDrive(options: {
     // Try silent token; if missing, abort (UI should call again with prompt: 'consent')
     const token = await ensureDriveAccessToken(clientId, { prompt: 'none' })
     if (!token) {
-      return { success: false, error: 'no-token' }
+      return { success: false, error: 'auth-required' }
     }
 
     const backup = await exportAllStores()
@@ -372,10 +368,6 @@ export async function interactiveConnectAndExport(options: {
     return { success: true, fileId: uploadedId }
   } catch (err: any) {
     console.error('Drive interactive export failed:', err)
-    // Pass through popup-blocked error for UI to handle
-    if (err?.message === 'popup-blocked') {
-      return { success: false, error: 'popup-blocked' }
-    }
     return { success: false, error: err?.message || 'unknown-error' }
   }
 }
