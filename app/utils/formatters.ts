@@ -58,3 +58,43 @@ export const addMonths = (monthStr: string, delta: number): string => {
 
   return `${String(newMonth).padStart(2, '0')}/${newYear}`
 }
+
+/**
+ * Compare two dates in DD/MM/YYYY format
+ * @param a - First date
+ * @param b - Second date
+ * @returns negative if a < b, 0 if equal, positive if a > b
+ */
+export const compareDates = (a: string, b: string): number => {
+  const [aDay, aMonth, aYear] = a.split('/').map(Number)
+  const [bDay, bMonth, bYear] = b.split('/').map(Number)
+
+  const aDate = new Date(aYear, aMonth - 1, aDay)
+  const bDate = new Date(bYear, bMonth - 1, bDay)
+
+  return aDate.getTime() - bDate.getTime()
+}
+
+/**
+ * Format currency with symbol
+ * @param amount - The amount to format
+ * @param currency - Currency code (ILS, USD, EUR)
+ * @returns Formatted currency string
+ */
+export const formatCurrency = (amount: number, currency: 'ILS' | 'USD' | 'EUR'): string => {
+  const symbols = {
+    ILS: '₪',
+    USD: '$',
+    EUR: '€',
+  }
+
+  return (
+    new Intl.NumberFormat('he-IL', {
+      style: 'decimal',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    }).format(amount) +
+    ' ' +
+    symbols[currency]
+  )
+}
