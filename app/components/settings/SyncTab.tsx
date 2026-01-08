@@ -125,7 +125,7 @@ export default function SyncTab() {
         let msg = 'חיבור ל-Google Drive נכשל. נסה שוב.'
         if (result.error === 'empty-backup') {
           msg = 'הגיבוי ריק (אין עסקאות/קבצים). שמירה בוטלה.'
-        } else if (result.error === 'popup-blocked') {
+        } else if (result.error?.includes('popup')) {
           msg = 'הדפדפן חסם את חלון ההתחברות. אנא אפשר חלונות קופצים (popups) עבור אתר זה ונסה שוב.'
         }
         setSyncStatus('error')
@@ -136,7 +136,7 @@ export default function SyncTab() {
       console.error('Drive connect failed:', err)
       setSyncStatus('error')
       setSyncMessage(err?.message || 'שגיאה לא ידועה')
-      const msg = err?.message === 'popup-blocked'
+      const msg = err?.message?.includes('popup')
         ? 'הדפדפן חסם את חלון ההתחברות. אנא אפשר חלונות קופצים (popups) עבור אתר זה ונסה שוב.'
         : 'חיבור ל-Google Drive נכשל. בדוק הרשאות ונסה שוב.'
       setAlertModal({ isOpen: true, message: msg })

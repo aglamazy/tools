@@ -81,8 +81,15 @@ export default function DriveSyncManager() {
         }
         setSettings(updated)
         await setDriveSyncSettings(updated)
-      } else if (result.error === 'no-token') {
-        console.log('Drive sync skipped: no token (user not connected)')
+      } else if (result.error === 'no-token' || result.error === 'auth-required') {
+        console.log('Drive sync skipped: authentication required (user needs to re-authorize)')
+        if (!isMountedRef.current) return
+        const updated: DriveSyncSettings = {
+          ...driveSettings,
+          lastSyncError: 'auth-required',
+        }
+        setSettings(updated)
+        await setDriveSyncSettings(updated)
       } else {
         if (!isMountedRef.current) return
         const updated: DriveSyncSettings = {

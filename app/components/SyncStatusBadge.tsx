@@ -64,6 +64,10 @@ export default function SyncStatusBadge() {
       case 'stale':
         return 'דורש רענון'
       case 'error':
+        // Check if it's an auth error
+        if (settings?.lastSyncError === 'auth-required') {
+          return 'נדרשת התחברות מחדש'
+        }
         return 'שגיאה בסנכרון'
       case 'off':
         return 'לא מחובר ל-Drive'
@@ -125,10 +129,26 @@ export default function SyncStatusBadge() {
     }
   })()
 
+  const tooltipText = (() => {
+    if (settings?.lastSyncError === 'auth-required') {
+      return `${label} • לחץ כדי להתחבר מחדש ל-Google Drive`
+    }
+    return `${label} • אחרון: ${lastSyncText}${nextSyncText ? ` • סנכרון הבא: ${nextSyncText}` : ''}`
+  })()
+
+  const handleClick = () => {
+    if (settings?.lastSyncError === 'auth-required') {
+      // Navigate to sync settings to re-authenticate
+      window.location.href = '/tools/settings#sync'
+    }
+  }
+
   return (
     <div
-      title={`${label} • אחרון: ${lastSyncText}${nextSyncText ? ` • סנכרון הבא: ${nextSyncText}` : ''}`}
+      title={tooltipText}
+      onClick={handleClick}
       style={{
+        cursor: settings?.lastSyncError === 'auth-required' ? 'pointer' : 'default',
         display: 'flex',
         alignItems: 'center',
         gap: '0.4rem',

@@ -77,7 +77,7 @@ export default function DriveSetupGate({ children }: { children: React.ReactNode
         })
         setMode('ready')
       } else {
-        if (result.error === 'popup-blocked') {
+        if (result.error?.includes('popup')) {
           setError('הדפדפן חסם את חלון ההתחברות. אנא אפשר חלונות קופצים ונסה שוב.')
         } else if (result.error === 'empty-backup') {
           setError('הגיבוי ריק. זהו התקנה חדשה - תמשיך.')
