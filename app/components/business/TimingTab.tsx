@@ -19,6 +19,11 @@ type WeekEntry = TimeEntry & {
   taskName: string
 }
 
+type ProjectSummary = {
+  projectName: string
+  totalHours: number
+}
+
 
 function formatLocalDate(d: Date): string {
   const year = d.getFullYear()
@@ -73,6 +78,19 @@ function formatHours(hours: number): string {
   const h = Math.floor(hours)
   const m = Math.round((hours - h) * 60)
   return `${h}:${m.toString().padStart(2, '0')}`
+}
+
+function calculateProjectSummaries(entries: WeekEntry[]): ProjectSummary[] {
+  const projectMap = new Map<string, number>()
+
+  entries.forEach(entry => {
+    const current = projectMap.get(entry.projectName) || 0
+    projectMap.set(entry.projectName, current + entry.hours)
+  })
+
+  return Array.from(projectMap.entries())
+    .map(([projectName, totalHours]) => ({ projectName, totalHours }))
+    .sort((a, b) => b.totalHours - a.totalHours)
 }
 
 function getMonthDates(monthOffset: number = 0): { start: string; end: string; monthName: string } {
@@ -615,6 +633,42 @@ export default function TimingTab({ businessId }: TimingTabProps) {
           </button>
         ))}
       </div>
+
+      {/* Project Summary */}
+      {weekEntries.length > 0 && (
+        <div style={{
+          background: '#fef3c7',
+          border: '1px solid #fbbf24',
+          borderRadius: '0.5rem',
+          padding: '1rem',
+          marginBottom: '1.5rem',
+        }}>
+          <h3 style={{ margin: '0 0 0.75rem 0', fontSize: '0.95rem', fontWeight: 600, color: '#92400e' }}>
+            סיכום לפי פרויקט
+          </h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            {calculateProjectSummaries(weekEntries).map(summary => (
+              <div
+                key={summary.projectName}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '0.5rem 0.75rem',
+                  background: 'white',
+                  borderRadius: '0.375rem',
+                  fontSize: '0.9rem',
+                }}
+              >
+                <span style={{ fontWeight: 500 }}>{summary.projectName}</span>
+                <span style={{ fontWeight: 600, color: '#92400e' }}>
+                  {formatHours(summary.totalHours)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Daily View */}
       {viewMode === 'daily' && (
