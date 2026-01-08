@@ -1,4 +1,10 @@
 import Dexie, { Table } from 'dexie'
+import type { CapitalEntry } from '@/app/types/capital'
+import type { FinancialInstitution } from '@/app/types/financialInstitution'
+
+// Re-export types for convenience
+export type { CapitalEntry } from '@/app/types/capital'
+export type { FinancialInstitution } from '@/app/types/financialInstitution'
 
 // Transaction type (unified for bank and credit card)
 export interface Transaction {
@@ -126,6 +132,8 @@ class FinanceDB extends Dexie {
   projects!: Table<Project, number>
   harvestTasks!: Table<HarvestTask, number>
   timeEntries!: Table<TimeEntry, number>
+  capitalEntries!: Table<CapitalEntry, number>
+  financialInstitutions!: Table<FinancialInstitution, number>
 
   constructor() {
     super('FinanceDB')
@@ -228,6 +236,37 @@ class FinanceDB extends Dexie {
         delete entry.notes
         await trans.table('timeEntries').put(entry)
       }
+    })
+
+    // Define schema version 8 - add capital entries
+    this.version(8).stores({
+      transactions: '++id, type, month, accountNumber, cardNumber, date, chargingDate, [type+month], [cardNumber+month], [accountNumber+month], fileId',
+      importedFiles: '++id, fileName, fileType, processingMonth, [fileType+processingMonth], [cardNumber+processingMonth]',
+      categories: '++id, name, type',
+      businessCategories: '++id, &business',
+      tasks: '++id, createdAt, priority',
+      appSettings: '++id, &key',
+      businesses: '++id, &name, type',
+      projects: '++id, businessId, name, archived',
+      harvestTasks: '++id, projectId, name, archived',
+      timeEntries: '++id, taskId, date, startTime, endTime, [taskId+date]',
+      capitalEntries: '++id, date, institution, accountNumber, description, assetType, currency, employer, investmentTrack, agent, soldDate, [institution+accountNumber+description], fileId',
+    })
+
+    // Define schema version 9 - add financial institutions
+    this.version(9).stores({
+      transactions: '++id, type, month, accountNumber, cardNumber, date, chargingDate, [type+month], [cardNumber+month], [accountNumber+month], fileId',
+      importedFiles: '++id, fileName, fileType, processingMonth, [fileType+processingMonth], [cardNumber+processingMonth]',
+      categories: '++id, name, type',
+      businessCategories: '++id, &business',
+      tasks: '++id, createdAt, priority',
+      appSettings: '++id, &key',
+      businesses: '++id, &name, type',
+      projects: '++id, businessId, name, archived',
+      harvestTasks: '++id, projectId, name, archived',
+      timeEntries: '++id, taskId, date, startTime, endTime, [taskId+date]',
+      capitalEntries: '++id, date, institution, accountNumber, description, assetType, currency, employer, investmentTrack, agent, soldDate, [institution+accountNumber+description], fileId',
+      financialInstitutions: '++id, name, type',
     })
   }
 }
