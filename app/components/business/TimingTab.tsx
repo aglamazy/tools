@@ -8,6 +8,7 @@ import { timerStore, type ActiveTimer } from '@/app/stores/timerStore'
 import { businessStore } from '@/app/stores/businessStore'
 import type { Project, HarvestTask, TimeEntry, Business } from '@/app/db/financeDB'
 import TimeEntryForm, { type TimeEntryFormData } from './TimeEntryForm'
+import FormModal, { FormField, inputStyle } from '../FormModal'
 import * as XLSX from 'xlsx'
 
 type TimingTabProps = {
@@ -132,6 +133,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('weekly')
   const [selectedDate, setSelectedDate] = useState(formatLocalDate(new Date()))
   const [monthOffset, setMonthOffset] = useState(0)
+  const [editingTask, setEditingTask] = useState<HarvestTask | null>(null)
 
   // Load business
   useEffect(() => {
@@ -392,6 +394,38 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     await loadWeekEntries()
   }
 
+  const handleAddTask = () => {
+    if (!selectedProjectId) return
+
+    const project = projects.find((p) => p.id === selectedProjectId)
+    setEditingTask({
+      projectId: selectedProjectId,
+      name: '',
+      hourlyRate: project?.defaultHourlyRate,
+      archived: false,
+      createdAt: '',
+      updatedAt: '',
+    })
+  }
+
+  const handleSaveNewTask = async () => {
+    if (!editingTask || !editingTask.name.trim()) return
+
+    const taskId = await harvestTaskStore.add({
+      projectId: editingTask.projectId,
+      name: editingTask.name.trim(),
+      hourlyRate: editingTask.hourlyRate,
+    })
+
+    if (taskId) {
+      // Reload tasks for this project
+      const updatedTasks = await harvestTaskStore.getActiveByProjectId(editingTask.projectId)
+      setTasks(updatedTasks)
+      setSelectedTaskId(taskId)
+      setEditingTask(null)
+    }
+  }
+
   const handleExportToExcel = (projectName: string, projectEntries: WeekEntry[]) => {
     if (!business) return
 
@@ -535,6 +569,23 @@ export default function TimingTab({ businessId }: TimingTabProps) {
               <option key={t.id} value={t.id}>{t.name}</option>
             ))}
           </select>
+
+          <button
+            onClick={handleAddTask}
+            disabled={!selectedProjectId || !!activeTimer}
+            style={{
+              padding: '0.5rem 1rem',
+              fontSize: '0.875rem',
+              background: '#3b82f6',
+              color: 'white',
+              border: 'none',
+              borderRadius: '0.375rem',
+              cursor: selectedProjectId && !activeTimer ? 'pointer' : 'not-allowed',
+              opacity: selectedProjectId && !activeTimer ? 1 : 0.5,
+            }}
+          >
+            + הוסף משימה
+          </button>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
@@ -1129,6 +1180,40 @@ export default function TimingTab({ businessId }: TimingTabProps) {
           tasks={formTasks}
           onProjectChange={handleFormProjectChange}
         />
+      )}
+
+      {/* Add Task Modal */}
+      {editingTask && (
+        <FormModal
+          isOpen={!!editingTask}
+          onClose={() => setEditingTask(null)}
+          onSave={handleSaveNewTask}
+          title="משימה חדשה"
+        >
+          <FormField label="שם">
+            <input
+              type="text"
+              value={editingTask.name}
+              onChange={(e) => setEditingTask({ ...editingTask, name: e.target.value })}
+              placeholder="לדוגמה: פיתוח, עיצוב, ניהול"
+              autoFocus
+              style={inputStyle}
+            />
+          </FormField>
+
+          <FormField label="תעריף שעתי (אופציונלי)">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                type="number"
+                value={editingTask.hourlyRate || ''}
+                onChange={(e) => setEditingTask({ ...editingTask, hourlyRate: e.target.value ? Number(e.target.value) : undefined })}
+                placeholder="0"
+                style={{ ...inputStyle, flex: 1 }}
+              />
+              <span style={{ color: '#64748b', whiteSpace: 'nowrap' }}>₪ / שעה</span>
+            </div>
+          </FormField>
+        </FormModal>
       )}
     </div>
   )
