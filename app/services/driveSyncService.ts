@@ -97,8 +97,8 @@ function hasRequiredScopes(auth: DriveAuthState | null, scopes: string[]): boole
 function isTokenValid(auth: DriveAuthState | null, scopes: string[]): boolean {
   if (!auth) return false
   const now = Date.now()
-  // Renew one minute before expiry
-  if (auth.expiresAt - 60_000 <= now) return false
+  // Renew 10 minutes before expiry to allow proactive refresh
+  if (auth.expiresAt - 10 * 60_000 <= now) return false
   return hasRequiredScopes(auth, scopes)
 }
 
@@ -163,6 +163,40 @@ export async function ensureDriveAccessToken(clientId: string, opts?: { prompt?:
     }
 
     return null
+  }
+}
+
+// Proactive silent token refresh - call periodically to keep token fresh
+// Returns true if token is valid (either already valid or successfully refreshed)
+export async function refreshDriveTokenSilently(clientId: string): Promise<boolean> {
+  if (typeof window === 'undefined') return false
+
+  const stored = driveAuthStore.get()
+  if (!stored) return false // No token to refresh
+
+  const now = Date.now()
+  // Only attempt refresh if token exists and will expire within 30 minutes
+  // but is not yet expired (still has some validity left for silent refresh to work)
+  const expiresIn = stored.expiresAt - now
+  if (expiresIn <= 0) {
+    // Token already expired, silent refresh won't work
+    return false
+  }
+  if (expiresIn > 30 * 60_000) {
+    // Token still valid for more than 30 minutes, no need to refresh yet
+    return true
+  }
+
+  // Token will expire soon, try silent refresh
+  try {
+    await loadGsiClient()
+    const auth = await requestAccessToken(clientId, 'none', DEFAULT_SCOPES)
+    console.log('[DriveSync] Proactive token refresh successful')
+    return !!auth.accessToken
+  } catch (err: any) {
+    // Silent refresh failed, but token might still be usable
+    console.log('[DriveSync] Proactive token refresh failed:', err.message)
+    return expiresIn > 10 * 60_000 // Still valid if more than 10 minutes left
   }
 }
 

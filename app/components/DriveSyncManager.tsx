@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { getDriveSyncSettings, setDriveSyncSettings, type DriveSyncSettings } from '@/app/services/appSettingsService'
-import { exportBackupToDrive } from '@/app/services/driveSyncService'
+import { exportBackupToDrive, refreshDriveTokenSilently } from '@/app/services/driveSyncService'
 import { lockModeStore } from '@/app/stores/lockModeStore'
 
 // Background manager that periodically syncs data to Google Drive appData
@@ -12,8 +12,24 @@ export default function DriveSyncManager() {
   const syncingRef = useRef(false)
   const timerRef = useRef<NodeJS.Timeout | null>(null)
   const settingsRefreshRef = useRef<NodeJS.Timeout | null>(null)
+  const tokenRefreshRef = useRef<NodeJS.Timeout | null>(null)
   const isMountedRef = useRef<boolean>(true)
   const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID
+
+  // Proactive token refresh every 20 minutes to prevent auth popups
+  const startTokenRefresh = () => {
+    if (tokenRefreshRef.current) return // Already running
+    if (!clientId) return
+
+    const refreshToken = async () => {
+      if (!isMountedRef.current) return
+      await refreshDriveTokenSilently(clientId)
+    }
+
+    // Run immediately and then every 20 minutes
+    refreshToken()
+    tokenRefreshRef.current = setInterval(refreshToken, 20 * 60 * 1000)
+  }
 
   const loadSettings = async (runImmediately = false) => {
     if (!isMountedRef.current) return
@@ -112,6 +128,9 @@ export default function DriveSyncManager() {
 
     isMountedRef.current = true
 
+    // Start proactive token refresh to prevent auth popups
+    startTokenRefresh()
+
     // Load settings once on mount, trigger immediate sync
     loadSettings(true)
 
@@ -120,6 +139,10 @@ export default function DriveSyncManager() {
 
     const handleVisibility = async () => {
       if (document.visibilityState === 'visible') {
+        // Refresh token when tab becomes visible
+        if (clientId) {
+          await refreshDriveTokenSilently(clientId)
+        }
         // Reload settings and trigger sync when tab becomes visible
         const currentSettings = await getDriveSyncSettings()
         if (isMountedRef.current) {
@@ -134,6 +157,7 @@ export default function DriveSyncManager() {
       isMountedRef.current = false
       if (timerRef.current) clearInterval(timerRef.current)
       if (settingsRefreshRef.current) clearInterval(settingsRefreshRef.current)
+      if (tokenRefreshRef.current) clearInterval(tokenRefreshRef.current)
       document.removeEventListener('visibilitychange', handleVisibility)
     }
   }, [clientId])
