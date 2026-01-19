@@ -10,6 +10,34 @@ type BusinessSettingsTabProps = {
   businessId: number
 }
 
+// Distinct color palette for projects
+const PROJECT_COLORS = [
+  '#3b82f6', // blue
+  '#10b981', // green
+  '#f59e0b', // amber
+  '#ef4444', // red
+  '#8b5cf6', // purple
+  '#ec4899', // pink
+  '#06b6d4', // cyan
+  '#f97316', // orange
+  '#6366f1', // indigo
+  '#14b8a6', // teal
+  '#84cc16', // lime
+  '#a855f7', // violet
+]
+
+function getNextProjectColor(existingColors: (string | undefined)[]): string {
+  const usedColors = new Set(existingColors.filter(Boolean).map(c => c?.toLowerCase()))
+  // Find first unused color
+  for (const color of PROJECT_COLORS) {
+    if (!usedColors.has(color.toLowerCase())) {
+      return color
+    }
+  }
+  // All colors used, cycle back with the least used
+  return PROJECT_COLORS[existingColors.length % PROJECT_COLORS.length]
+}
+
 export default function BusinessSettingsTab({ businessId }: BusinessSettingsTabProps) {
   const [projects, setProjects] = useState<Project[]>([])
   const [tasks, setTasks] = useState<Record<number, HarvestTask[]>>({})
@@ -46,9 +74,12 @@ export default function BusinessSettingsTab({ businessId }: BusinessSettingsTabP
   }
 
   const handleAddProject = () => {
+    const existingColors = projects.map(p => p.color)
+    const nextColor = getNextProjectColor(existingColors)
     setEditingProject({
       businessId,
       name: '',
+      color: nextColor,
       archived: false,
       createdAt: '',
       updatedAt: '',

@@ -93,6 +93,14 @@ export async function exportAllStores(): Promise<BackupData> {
 }
 
 /**
+ * Check if local data is empty (no transactions)
+ */
+export async function isLocalDataEmpty(): Promise<boolean> {
+  const count = await db.transactions.count()
+  return count === 0
+}
+
+/**
  * Import all data from backup
  */
 export async function importAllStores(backup: BackupData): Promise<void> {

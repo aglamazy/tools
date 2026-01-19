@@ -11,6 +11,17 @@ const IV_LENGTH = 12
 const KEY_LENGTH = 256
 
 /**
+ * Convert Uint8Array to base64 string (handles large arrays)
+ */
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return btoa(binary)
+}
+
+/**
  * Derive encryption key from password using PBKDF2
  */
 async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
@@ -61,7 +72,7 @@ export async function encrypt(data: string, password: string): Promise<string> {
   combined.set(new Uint8Array(ciphertext), salt.length + iv.length)
 
   // Convert to base64
-  return btoa(String.fromCharCode(...combined))
+  return uint8ArrayToBase64(combined)
 }
 
 /**

@@ -9,6 +9,7 @@ import { businessStore } from '@/app/stores/businessStore'
 import type { Project, HarvestTask, TimeEntry, Business } from '@/app/db/financeDB'
 import TimeEntryForm, { type TimeEntryFormData } from './TimeEntryForm'
 import FormModal, { FormField, inputStyle } from '../FormModal'
+import HoursBar from './HoursBar'
 import * as XLSX from 'xlsx'
 
 type TimingTabProps = {
@@ -18,6 +19,7 @@ type TimingTabProps = {
 type WeekEntry = TimeEntry & {
   projectName: string
   taskName: string
+  projectColor: string
 }
 
 type ProjectSummary = {
@@ -280,6 +282,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
         ...entry,
         projectName: project?.name || '',
         taskName: task?.name || '',
+        projectColor: project?.color || '#3b82f6',
       })
     }
     setWeekEntries(enriched.sort((a, b) => b.date.localeCompare(a.date)))
@@ -756,6 +759,15 @@ export default function TimingTab({ businessId }: TimingTabProps) {
               {formatHours(weekTotal)} שעות
             </span>
           </div>
+
+          {/* Hours bar visualization */}
+          <HoursBar
+            entries={weekEntries}
+            onEntryClick={(entry) => {
+              const fullEntry = weekEntries.find(e => e.id === entry.id)
+              if (fullEntry) handleEditEntry(fullEntry)
+            }}
+          />
 
           {/* Daily entries list */}
           {weekEntries.length > 0 ? (

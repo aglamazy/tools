@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { subscribeToAuth, type AuthUser } from '@/app/stores/authStore'
+import { lockModeStore } from '@/app/stores/lockModeStore'
 import {
   isCloudBackupAvailable,
   hasEncryptionPasswordSetup,
@@ -11,10 +12,12 @@ import {
   type CloudBackupInfo,
 } from '@/app/services/cloudBackupService'
 import { signOut } from '@/app/services/firebaseAuthService'
+import { getSyncPassword, setSyncPassword } from '../../CloudSyncManager'
 import AuthModal from '../../AuthModal'
 import EncryptionPasswordModal from '../../EncryptionPasswordModal'
 
 type SyncStatus = 'idle' | 'uploading' | 'downloading' | 'error'
+type LockMode = 'initializing' | 'master' | 'slave'
 
 export default function CloudSyncSection() {
   const [user, setUser] = useState<AuthUser | null>(null)
@@ -26,6 +29,9 @@ export default function CloudSyncSection() {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle')
   const [message, setMessage] = useState<string | null>(null)
   const [backupInfo, setBackupInfo] = useState<CloudBackupInfo | null>(null)
+  const [lockMode, setLockMode] = useState<LockMode>('initializing')
+  const [hasSessionPassword, setHasSessionPassword] = useState(false)
+  const [hasEncryption, setHasEncryption] = useState(false)
 
   useEffect(() => {
     const unsubscribe = subscribeToAuth((state) => {
@@ -34,6 +40,36 @@ export default function CloudSyncSection() {
     })
     return unsubscribe
   }, [])
+
+  useEffect(() => {
+    const unsubscribe = lockModeStore.subscribe((mode) => {
+      setLockMode(mode)
+    })
+    setLockMode(lockModeStore.get())
+    return unsubscribe
+  }, [])
+
+  useEffect(() => {
+    const checkPassword = () => {
+      setHasSessionPassword(!!getSyncPassword())
+    }
+    checkPassword()
+    // Re-check when user changes or after password actions
+    const interval = setInterval(checkPassword, 2000)
+    return () => clearInterval(interval)
+  }, [user])
+
+  useEffect(() => {
+    const checkEncryption = async () => {
+      if (user) {
+        const has = await hasEncryptionPasswordSetup()
+        setHasEncryption(has)
+      } else {
+        setHasEncryption(false)
+      }
+    }
+    checkEncryption()
+  }, [user])
 
   useEffect(() => {
     if (user) {
@@ -68,6 +104,15 @@ export default function CloudSyncSection() {
       return
     }
 
+    // Check if password already stored in session
+    const storedPassword = getSyncPassword()
+    if (storedPassword) {
+      // Use stored password directly
+      setPendingAction('upload')
+      await handlePasswordSuccess(storedPassword)
+      return
+    }
+
     // Ask for password
     setPasswordMode('enter')
     setPendingAction('upload')
@@ -86,27 +131,33 @@ export default function CloudSyncSection() {
   }
 
   const handlePasswordSuccess = async (password: string) => {
-    if (!pendingAction) return
+    const action = pendingAction // Capture before it gets cleared
+    if (!action) return
 
     setMessage(null)
 
-    if (pendingAction === 'upload') {
+    if (action === 'upload') {
       setSyncStatus('uploading')
       const result = await uploadBackup(password)
       setSyncStatus('idle')
 
       if (result.success) {
-        setMessage('הגיבוי הועלה בהצלחה!')
+        setSyncPassword(password) // Store in session for auto-sync
+        setHasSessionPassword(true)
+        setHasEncryption(true)
+        setMessage('הגיבוי הועלה בהצלחה! סנכרון אוטומטי מופעל.')
         loadBackupInfo()
       } else {
         setMessage(result.error || 'שגיאה בהעלאת הגיבוי')
       }
-    } else if (pendingAction === 'download') {
+    } else if (action === 'download') {
       setSyncStatus('downloading')
       const result = await restoreFromCloud(password)
       setSyncStatus('idle')
 
       if (result.success) {
+        setSyncPassword(password) // Store in session for auto-sync
+        setHasSessionPassword(true)
         setMessage('הנתונים שוחזרו בהצלחה! הדף יטען מחדש.')
         setTimeout(() => window.location.reload(), 2000)
       } else {
@@ -192,6 +243,77 @@ export default function CloudSyncSection() {
             </button>
           </div>
 
+          {/* Sync Status Indicator */}
+          <div
+            style={{
+              marginBottom: '1rem',
+              padding: '0.75rem',
+              borderRadius: '0.5rem',
+              fontSize: '0.9rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              ...(lockMode === 'master' && hasSessionPassword
+                ? { background: '#dcfce7', border: '1px solid #86efac', color: '#166534' }
+                : lockMode === 'slave'
+                  ? { background: '#fef3c7', border: '1px solid #fbbf24', color: '#92400e' }
+                  : !hasEncryption
+                    ? { background: '#fef2f2', border: '1px solid #fecaca', color: '#dc2626' }
+                    : !hasSessionPassword
+                      ? { background: '#fff7ed', border: '1px solid #fed7aa', color: '#c2410c' }
+                      : { background: '#f1f5f9', border: '1px solid #cbd5e1', color: '#475569' }),
+            }}
+          >
+            <span
+              style={{
+                width: '10px',
+                height: '10px',
+                borderRadius: '50%',
+                flexShrink: 0,
+                background:
+                  lockMode === 'master' && hasSessionPassword
+                    ? '#22c55e'
+                    : lockMode === 'slave'
+                      ? '#f59e0b'
+                      : !hasEncryption || !hasSessionPassword
+                        ? '#ef4444'
+                        : '#94a3b8',
+              }}
+            />
+            <span style={{ fontWeight: 500 }}>
+              {lockMode === 'initializing'
+                ? 'מאתחל...'
+                : lockMode === 'slave'
+                  ? 'קריאה בלבד - תחנה אחרת פעילה'
+                  : !hasEncryption
+                    ? 'נדרשת הגדרת סיסמת הצפנה'
+                    : !hasSessionPassword
+                      ? 'נדרשת הזנת סיסמה לסנכרון'
+                      : 'סנכרון אוטומטי פעיל'}
+            </span>
+            {lockMode === 'master' && hasEncryption && !hasSessionPassword && (
+              <button
+                onClick={() => {
+                  setPasswordMode('enter')
+                  setPendingAction('upload')
+                  setShowPasswordModal(true)
+                }}
+                style={{
+                  marginRight: 'auto',
+                  padding: '0.25rem 0.75rem',
+                  background: '#3b82f6',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '0.25rem',
+                  cursor: 'pointer',
+                  fontSize: '0.85rem',
+                }}
+              >
+                הזן סיסמה
+              </button>
+            )}
+          </div>
+
           {/* Backup info */}
           {backupInfo?.exists && (
             <div
@@ -208,8 +330,11 @@ export default function CloudSyncSection() {
                 <strong>גיבוי אחרון:</strong> {backupInfo.lastModified ? formatDate(backupInfo.lastModified) : 'לא ידוע'}
               </div>
               <div>
-                <strong>גודל:</strong> {backupInfo.sizeBytes ? formatSize(backupInfo.sizeBytes) : 'לא ידוע'}
-                <span style={{ color: '#64748b' }}> / 2.5 MB</span>
+                <strong>גודל:</strong>{' '}
+                <span dir="ltr" style={{ display: 'inline-block' }}>
+                  {backupInfo.sizeBytes ? formatSize(backupInfo.sizeBytes) : 'לא ידוע'}
+                  <span style={{ color: '#64748b' }}> / 2.5 MB</span>
+                </span>
               </div>
             </div>
           )}

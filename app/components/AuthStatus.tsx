@@ -8,9 +8,13 @@ import {
   clearCachedAvatar,
   type AuthUser,
 } from '@/app/stores/authStore'
+import { lockModeStore } from '@/app/stores/lockModeStore'
 import { signOut } from '@/app/services/firebaseAuthService'
 import { isFirebaseConfigured } from '@/app/lib/firebase'
+import { getSyncPassword } from './CloudSyncManager'
 import AuthModal from './AuthModal'
+
+type SyncIndicatorStatus = 'syncing' | 'readonly' | 'inactive' | 'hidden'
 
 function getInitialsAvatarUrl(email: string): string {
   const initial = (email.charAt(0) || '?').toUpperCase()
@@ -30,11 +34,62 @@ function getAvatarUrl(user: AuthUser): string {
   return fallback
 }
 
+function getSyncIndicatorStatus(user: AuthUser | null, isMounted: boolean): SyncIndicatorStatus {
+  if (!user || !isMounted) return 'hidden'
+  const mode = lockModeStore.get()
+  const hasPassword = !!getSyncPassword()
+
+  if (mode === 'slave') return 'readonly'
+  if (mode === 'master' && hasPassword) return 'syncing'
+  return 'inactive'
+}
+
+function SyncIndicator({ status }: { status: SyncIndicatorStatus }) {
+  if (status === 'hidden') return null
+
+  const colors: Record<SyncIndicatorStatus, string> = {
+    syncing: '#22c55e',  // green
+    readonly: '#f59e0b', // orange
+    inactive: '#94a3b8', // gray
+    hidden: 'transparent',
+  }
+
+  const titles: Record<SyncIndicatorStatus, string> = {
+    syncing: 'סנכרון פעיל',
+    readonly: 'קריאה בלבד',
+    inactive: 'סנכרון לא פעיל',
+    hidden: '',
+  }
+
+  return (
+    <div
+      title={titles[status]}
+      style={{
+        position: 'absolute',
+        bottom: '-2px',
+        right: '-2px',
+        width: '12px',
+        height: '12px',
+        background: colors[status],
+        borderRadius: '50%',
+        border: '2px solid white',
+        boxShadow: '0 1px 2px rgba(0,0,0,0.2)',
+      }}
+    />
+  )
+}
+
 export default function AuthStatus() {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [loading, setLoading] = useState(true)
   const [showAuthModal, setShowAuthModal] = useState(false)
   const [showMenu, setShowMenu] = useState(false)
+  const [syncStatus, setSyncStatus] = useState<SyncIndicatorStatus>('hidden')
+  const [isMounted, setIsMounted] = useState(false)
+
+  useEffect(() => {
+    setIsMounted(true)
+  }, [])
 
   useEffect(() => {
     const unsubscribe = subscribeToAuth((state) => {
@@ -43,6 +98,25 @@ export default function AuthStatus() {
     })
     return unsubscribe
   }, [])
+
+  useEffect(() => {
+    if (!isMounted) return
+    setSyncStatus(getSyncIndicatorStatus(user, true))
+
+    const unsubscribe = lockModeStore.subscribe(() => {
+      setSyncStatus(getSyncIndicatorStatus(user, true))
+    })
+    return unsubscribe
+  }, [user, isMounted])
+
+  // Re-check sync status periodically (for password changes)
+  useEffect(() => {
+    if (!isMounted) return
+    const interval = setInterval(() => {
+      setSyncStatus(getSyncIndicatorStatus(user, true))
+    }, 2000)
+    return () => clearInterval(interval)
+  }, [user, isMounted])
 
   if (!isFirebaseConfigured()) {
     return null
@@ -160,6 +234,7 @@ export default function AuthStatus() {
           }}
         />
       </button>
+      <SyncIndicator status={syncStatus} />
 
       {showMenu && (
         <>

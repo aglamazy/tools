@@ -7,6 +7,8 @@ import PageHeader from './components/PageHeader'
 import { ToastProvider } from './components/ToastContainer'
 import MigrationRunner from './components/MigrationRunner'
 import AuthInitializer from './components/AuthInitializer'
+import CloudSyncManager from './components/CloudSyncManager'
+import StationLockManager from './components/StationLockManager'
 
 if (!process.env.NEXT_PUBLIC_SITE_URL) {
   throw new Error('Missing NEXT_PUBLIC_SITE_URL environment variable')
@@ -51,6 +53,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <ToastProvider>
           <MigrationRunner />
           <AuthInitializer />
+          <CloudSyncManager />
+          <StationLockManager />
           <PageHeader />
           <div className="app-layout">
             <Sidebar />

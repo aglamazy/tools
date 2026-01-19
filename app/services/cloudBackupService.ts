@@ -6,14 +6,14 @@
 import {
   ref,
   uploadString,
-  getDownloadURL,
+  getBytes,
   getMetadata,
   deleteObject,
 } from 'firebase/storage'
 import { getFirebaseStorage, isFirebaseConfigured } from '@/app/lib/firebase'
 import { getCurrentUser } from './firebaseAuthService'
 import { encrypt, decrypt, generateVerificationToken, verifyPasswordWithToken } from './encryptionService'
-import { exportAllStores, importAllStores, type BackupData } from './backupService'
+import { exportAllStores, importAllStores, isLocalDataEmpty, type BackupData } from './backupService'
 
 const BACKUP_FILE_NAME = 'backup.enc'
 const VERIFICATION_FILE_NAME = 'verify.enc'
@@ -86,9 +86,8 @@ export async function verifyEncryptionPassword(password: string): Promise<boolea
     const storage = getFirebaseStorage()
     const verifyRef = ref(storage, getBackupPath(user.uid, VERIFICATION_FILE_NAME))
 
-    const url = await getDownloadURL(verifyRef)
-    const response = await fetch(url)
-    const verificationToken = await response.text()
+    const bytes = await getBytes(verifyRef)
+    const verificationToken = new TextDecoder().decode(bytes)
 
     return await verifyPasswordWithToken(verificationToken, password)
   } catch {
@@ -127,6 +126,13 @@ export async function uploadBackup(password: string): Promise<CloudBackupResult>
   }
 
   try {
+    // SAFETY: Never upload empty data
+    const localEmpty = await isLocalDataEmpty()
+    if (localEmpty) {
+      console.warn('[CloudBackup] Refusing to upload - local data is empty')
+      return { success: false, error: 'אין נתונים מקומיים לגיבוי', errorCode: 'no-backup' }
+    }
+
     // Verify password first
     const isValidPassword = await verifyEncryptionPassword(password)
     if (!isValidPassword) {
@@ -180,9 +186,8 @@ export async function downloadBackup(password: string): Promise<CloudBackupResul
     const backupRef = ref(storage, getBackupPath(user.uid, BACKUP_FILE_NAME))
 
     // Download encrypted backup
-    const url = await getDownloadURL(backupRef)
-    const response = await fetch(url)
-    const encryptedBackup = await response.text()
+    const bytes = await getBytes(backupRef)
+    const encryptedBackup = new TextDecoder().decode(bytes)
 
     // Decrypt
     let backupJson: string
