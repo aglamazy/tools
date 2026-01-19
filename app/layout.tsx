@@ -6,9 +6,7 @@ import Sidebar from './components/Sidebar'
 import PageHeader from './components/PageHeader'
 import { ToastProvider } from './components/ToastContainer'
 import MigrationRunner from './components/MigrationRunner'
-import DriveSetupGate from './components/DriveSetupGate'
-import StationLockManager from './components/StationLockManager'
-import DriveSyncManager from './components/DriveSyncManager'
+import AuthInitializer from './components/AuthInitializer'
 
 if (!process.env.NEXT_PUBLIC_SITE_URL) {
   throw new Error('Missing NEXT_PUBLIC_SITE_URL environment variable')
@@ -52,17 +50,14 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body>
         <ToastProvider>
           <MigrationRunner />
-          <DriveSetupGate>
-            <StationLockManager />
-            <DriveSyncManager />
-            <PageHeader />
-            <div className="app-layout">
-              <Sidebar />
-              <div className="main-content">
-                {children}
-              </div>
+          <AuthInitializer />
+          <PageHeader />
+          <div className="app-layout">
+            <Sidebar />
+            <div className="main-content">
+              {children}
             </div>
-          </DriveSetupGate>
+          </div>
           <Analytics />
         </ToastProvider>
       </body>

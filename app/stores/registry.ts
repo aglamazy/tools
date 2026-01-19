@@ -32,9 +32,7 @@ export const LOCALSTORAGE_STORES = [
 ] as const
 
 // Stores that are transient/session-only (don't need backup)
-export const TRANSIENT_STORES = [
-  'driveAuthStore',  // OAuth tokens - user re-authenticates
-] as const
+export const TRANSIENT_STORES = [] as const
 
 export type IndexedDBTable = typeof INDEXEDDB_TABLES[number]
 export type LocalStorageStore = typeof LOCALSTORAGE_STORES[number]

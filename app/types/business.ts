@@ -5,8 +5,6 @@ export type Business = {
   id?: number
   name: string
   type: BusinessType
-  driveFolderId?: string
-  driveFolderName?: string
   pinnedToSidebar?: boolean
   createdAt: string
   updatedAt: string

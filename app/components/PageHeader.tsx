@@ -2,8 +2,8 @@
 
 import Link from 'next/link'
 import NotificationCenter from './NotificationCenter'
+import AuthStatus from './AuthStatus'
 import { useToast } from './ToastContainer'
-import SyncStatusBadge from './SyncStatusBadge'
 
 export default function PageHeader() {
   const { notifications, clearNotifications } = useToast()
@@ -13,7 +13,7 @@ export default function PageHeader() {
       <div className="page-header-inner">
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
           <NotificationCenter notifications={notifications} onClear={clearNotifications} />
-          <SyncStatusBadge />
+          <AuthStatus />
         </div>
         <div className="page-header-title">
           <h1>ארגז כלים פיננסיים</h1>

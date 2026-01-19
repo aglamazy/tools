@@ -81,8 +81,6 @@ export interface Business {
   id?: number
   name: string
   type: 'personal' | 'business'
-  driveFolderId?: string
-  driveFolderName?: string
   pinnedToSidebar?: boolean
   createdAt: string
   updatedAt: string

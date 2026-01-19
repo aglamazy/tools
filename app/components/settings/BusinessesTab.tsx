@@ -7,8 +7,6 @@ import BusinessCard from './BusinessCard'
 import BusinessForm from './BusinessForm'
 import type { BusinessUI } from '@/app/types/business'
 import { businessStore } from '@/app/stores/businessStore'
-import { ensureDriveAccessToken, DRIVE_FILE_SCOPE } from '@/app/services/driveSyncService'
-import { loadPickerApi, openFolderPicker } from '@/app/services/drivePickerService'
 
 export default function BusinessesTab() {
   const [businesses, setBusinesses] = useState<BusinessUI[]>([])
@@ -16,10 +14,6 @@ export default function BusinessesTab() {
   const [isAddingNew, setIsAddingNew] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean; id: number | null }>({ isOpen: false, id: null })
   const [alertMessage, setAlertMessage] = useState('')
-  const [isPickingFolder, setIsPickingFolder] = useState(false)
-
-  const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || ''
-  const googleApiKey = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || ''
 
   useEffect(() => {
     void loadBusinesses()
@@ -38,8 +32,6 @@ export default function BusinessesTab() {
             id: b.id as number,
             name: b.name,
             type: b.type,
-            driveFolderId: b.driveFolderId,
-            driveFolderName: b.driveFolderName,
             pinnedToSidebar: b.pinnedToSidebar,
           } as BusinessUI
         })
@@ -57,8 +49,6 @@ export default function BusinessesTab() {
       id: Date.now(),
       name: '',
       type: 'business',
-      driveFolderId: '',
-      driveFolderName: '',
     })
     setIsAddingNew(true)
     setAlertMessage('')
@@ -67,8 +57,6 @@ export default function BusinessesTab() {
   const handleEdit = (business: BusinessUI) => {
     setEditingBusiness({
       ...business,
-      driveFolderId: business.driveFolderId || '',
-      driveFolderName: business.driveFolderName || '',
     })
     setIsAddingNew(false)
     setAlertMessage('')
@@ -83,8 +71,6 @@ export default function BusinessesTab() {
     const trimmed: BusinessUI = {
       ...editingBusiness,
       name: editingBusiness.name.trim(),
-      driveFolderId: editingBusiness.driveFolderId?.toString().trim() || undefined,
-      driveFolderName: editingBusiness.driveFolderName?.trim() || undefined,
     }
 
     try {
@@ -92,8 +78,6 @@ export default function BusinessesTab() {
         const id = await businessStore.add({
           name: trimmed.name,
           type: trimmed.type,
-          driveFolderId: trimmed.driveFolderId,
-          driveFolderName: trimmed.driveFolderName,
         })
         if (id == null) {
           setAlertMessage('שמירת העסק נכשלה')
@@ -104,8 +88,6 @@ export default function BusinessesTab() {
         const updated = await businessStore.update(trimmed.id, {
           name: trimmed.name,
           type: trimmed.type,
-          driveFolderId: trimmed.driveFolderId,
-          driveFolderName: trimmed.driveFolderName,
         })
         if (!updated) {
           setAlertMessage('עדכון העסק נכשל')
@@ -162,64 +144,6 @@ export default function BusinessesTab() {
     }
   }
 
-  const handleSelectFolder = async (business: BusinessUI) => {
-    if (!googleClientId) {
-      setAlertMessage('חסר GOOGLE CLIENT ID (NEXT_PUBLIC_GOOGLE_CLIENT_ID)')
-      return
-    }
-    if (!googleApiKey) {
-      setAlertMessage('חסר GOOGLE API KEY (NEXT_PUBLIC_GOOGLE_API_KEY)')
-      return
-    }
-
-    setAlertMessage('')
-    setIsPickingFolder(true)
-    try {
-      await loadPickerApi()
-      const token = await ensureDriveAccessToken(googleClientId, { prompt: 'consent', scopes: [DRIVE_FILE_SCOPE] })
-      if (!token) {
-        setAlertMessage('נדרשת הרשאה ל-Google Drive כדי לבחור תיקייה')
-        setIsPickingFolder(false)
-        return
-      }
-
-      openFolderPicker({
-        apiKey: googleApiKey,
-        token,
-        onPicked: async (folder) => {
-          try {
-            const updated = await businessStore.update(business.id, {
-              driveFolderId: folder.id,
-              driveFolderName: folder.name,
-            })
-            if (!updated) {
-              setAlertMessage('עדכון העסק נכשל')
-              return
-            }
-            const updatedBusiness: BusinessUI = {
-              ...business,
-              driveFolderId: folder.id,
-              driveFolderName: folder.name,
-            }
-            setBusinesses(sortBusinesses(businesses.map((b) => (b.id === business.id ? updatedBusiness : b))))
-            console.log('Drive folder selected for business', { business: business.name, folder })
-          } catch (err) {
-            console.error('Error updating business folder:', err)
-            setAlertMessage('עדכון העסק נכשל')
-          }
-        },
-        onCancel: () => {
-          /* user closed picker */
-        },
-      })
-    } catch (err) {
-      console.error('Error opening Drive Picker:', err)
-      setAlertMessage('שגיאה בפתיחת Google Drive Picker')
-    } finally {
-      setIsPickingFolder(false)
-    }
-  }
-
   return (
     <>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
@@ -242,7 +166,6 @@ export default function BusinessesTab() {
             business={business}
             onEdit={handleEdit}
             onDelete={handleDelete}
-            onSelectFolder={() => void handleSelectFolder(business)}
             onTogglePin={handleTogglePin}
           />
         ))}
@@ -260,12 +183,6 @@ export default function BusinessesTab() {
           </div>
         )}
       </div>
-
-      {isPickingFolder && (
-        <div style={{ marginTop: '1rem', color: '#475569', fontSize: '0.95rem' }}>
-          פותח את Google Drive Picker...
-        </div>
-      )}
 
       {/* Add/Edit Modal */}
       <Modal

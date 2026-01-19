@@ -11,7 +11,7 @@ export interface DriveSyncSettings {
   frequencyMinutes: number
   lastSyncAt?: string
   lastSyncError?: string
-  driveFileId?: string
+  syncFolderName?: string
   remoteModifiedAt?: string
   standaloneMode?: boolean
 }

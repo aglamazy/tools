@@ -9,11 +9,10 @@ type BusinessCardProps = {
   business: BusinessUI
   onEdit: (business: BusinessUI) => void
   onDelete: (id: number) => void
-  onSelectFolder: (business: BusinessUI) => void
   onTogglePin: (business: BusinessUI) => void
 }
 
-export default function BusinessCard({ business, onEdit, onDelete, onSelectFolder, onTogglePin }: BusinessCardProps) {
+export default function BusinessCard({ business, onEdit, onDelete, onTogglePin }: BusinessCardProps) {
   return (
     <div
       style={{
@@ -38,10 +37,10 @@ export default function BusinessCard({ business, onEdit, onDelete, onSelectFolde
                 opacity: business.pinnedToSidebar ? 1 : 0.4,
               }}
             >
-              📌
+              ...
             </button>
             <span style={{ fontSize: '1.25rem' }}>
-              {business.type === 'personal' ? '🏠' : '🏢'}
+              {business.type === 'personal' ? '...' : '...'}
             </span>
             <span style={{ fontWeight: 600, fontSize: '1rem' }}>{business.name}</span>
             <span style={{
@@ -53,44 +52,6 @@ export default function BusinessCard({ business, onEdit, onDelete, onSelectFolde
             }}>
               {business.type === 'personal' ? 'אישי' : 'עסקי'}
             </span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem', color: '#64748b' }}>
-            <span>בחירת תיקייה:</span>
-            <span style={{ color: business.driveFolderName ? '#0f172a' : '#94a3b8' }}>
-              {business.driveFolderName || 'לא מוגדר'}
-            </span>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              {business.driveFolderId && (
-                <button
-                  onClick={() => window.open(`https://drive.google.com/drive/folders/${business.driveFolderId}`, '_blank')}
-                  style={{
-                    padding: '0.25rem 0.5rem',
-                    fontSize: '0.8rem',
-                    background: '#e0f2fe',
-                    border: '1px solid #7dd3fc',
-                    borderRadius: '0.25rem',
-                    cursor: 'pointer',
-                    color: '#0369a1',
-                  }}
-                >
-                  פתח
-                </button>
-              )}
-              <button
-                onClick={() => onSelectFolder(business)}
-                style={{
-                  padding: '0.25rem 0.5rem',
-                  fontSize: '0.8rem',
-                  background: '#e0f2fe',
-                  border: '1px solid #7dd3fc',
-                  borderRadius: '0.25rem',
-                  cursor: 'pointer',
-                  color: '#0369a1',
-                }}
-              >
-                {business.driveFolderId ? 'החלף' : 'בחר תיקייה'}
-              </button>
-            </div>
           </div>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
