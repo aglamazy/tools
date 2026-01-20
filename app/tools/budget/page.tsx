@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { formatMonthDisplay } from '@/app/utils/formatters'
 import { transactionStore } from '@/app/stores/transactionStore'
@@ -11,6 +11,14 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recha
 import { useToast } from '@/app/components/ToastContainer'
 
 export default function BudgetPage() {
+  return (
+    <Suspense fallback={<div className="app" dir="rtl"><div className="card">טוען...</div></div>}>
+      <BudgetPageContent />
+    </Suspense>
+  )
+}
+
+function BudgetPageContent() {
   const { showToast } = useToast()
   const searchParams = useSearchParams()
   const [selectedMonth, setSelectedMonth] = useState<string>('')
