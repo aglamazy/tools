@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { businessStore } from '@/app/stores/businessStore'
 import { userTierStore, UserTier } from '@/app/stores/userTierStore'
+import UpgradeModal from './UpgradeModal'
 import type { Business } from '@/app/db/financeDB'
 
 type Tool = {
@@ -109,9 +110,17 @@ export default function Sidebar() {
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [pinnedBusinesses, setPinnedBusinesses] = useState<Business[]>([])
   const [userTier, setUserTier] = useState<UserTier>(userTierStore.get())
+  const [upgradeModalOpen, setUpgradeModalOpen] = useState(false)
+  const [upgradeFeatureName, setUpgradeFeatureName] = useState<string | undefined>()
 
-  // Filter tools based on user tier
-  const tools = allTools.filter(tool => userTierStore.hasAccess(tool.requiredTier))
+  // Show all tools except LOCAL tier tools (unless user has LOCAL access)
+  const tools = allTools.filter(tool => {
+    // Always hide LOCAL tier tools unless user is LOCAL
+    if (tool.requiredTier === UserTier.LOCAL && !userTierStore.hasAccess(UserTier.LOCAL)) {
+      return false
+    }
+    return true
+  })
 
   useEffect(() => {
     const loadPinnedBusinesses = async () => {
@@ -135,62 +144,122 @@ export default function Sidebar() {
     }
   }, [])
 
+  const handleLockedToolClick = (tool: Tool) => {
+    setUpgradeFeatureName(tool.title)
+    setUpgradeModalOpen(true)
+  }
+
+  const isToolLocked = (tool: Tool) => !userTierStore.hasAccess(tool.requiredTier)
+
   return (
-    <aside className={`sidebar ${isCollapsed ? 'collapsed' : ''}`}>
-      <nav className="sidebar-nav">
-        <button
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className="sidebar-toggle"
-          aria-label={isCollapsed ? 'הרחב תפריט' : 'צמצם תפריט'}
-        >
-          {isCollapsed ? '◀' : '▶'}
-        </button>
+    <>
+      <aside className={`sidebar ${isCollapsed ? 'collapsed' : ''}`}>
+        <nav className="sidebar-nav">
+          <button
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            className="sidebar-toggle"
+            aria-label={isCollapsed ? 'הרחב תפריט' : 'צמצם תפריט'}
+          >
+            {isCollapsed ? '◀' : '▶'}
+          </button>
 
-        <ul className="nav-list">
-          {tools.map((tool) => (
-            <li key={tool.id}>
-              {tool.available ? (
-                <Link
-                  href={tool.href}
-                  className={`nav-item ${pathname === tool.href ? 'active' : ''}`}
-                  title={isCollapsed ? tool.title : undefined}
-                >
-                  <span className="nav-icon">{tool.icon}</span>
-                  {!isCollapsed && <span className="nav-title">{tool.title}</span>}
-                </Link>
-              ) : (
-                <div className="nav-item disabled" title={isCollapsed ? tool.title : undefined}>
-                  <span className="nav-icon">{tool.icon}</span>
-                  {!isCollapsed && (
-                    <>
-                      <span className="nav-title">{tool.title}</span>
-                      <span className="nav-badge">בקרוב</span>
-                    </>
+          <ul className="nav-list">
+            {tools.map((tool) => {
+              const locked = isToolLocked(tool)
+
+              return (
+                <li key={tool.id}>
+                  {!tool.available ? (
+                    <div className="nav-item disabled" title={isCollapsed ? tool.title : undefined}>
+                      <span className="nav-icon">{tool.icon}</span>
+                      {!isCollapsed && (
+                        <>
+                          <span className="nav-title">{tool.title}</span>
+                          <span className="nav-badge">בקרוב</span>
+                        </>
+                      )}
+                    </div>
+                  ) : locked ? (
+                    <button
+                      className="nav-item locked"
+                      onClick={() => handleLockedToolClick(tool)}
+                      title={isCollapsed ? `${tool.title} (נעול)` : undefined}
+                    >
+                      <span className="nav-icon">{tool.icon}</span>
+                      {!isCollapsed && (
+                        <>
+                          <span className="nav-title">{tool.title}</span>
+                          <span className="nav-lock">🔒</span>
+                        </>
+                      )}
+                    </button>
+                  ) : (
+                    <Link
+                      href={tool.href}
+                      className={`nav-item ${pathname === tool.href ? 'active' : ''}`}
+                      title={isCollapsed ? tool.title : undefined}
+                    >
+                      <span className="nav-icon">{tool.icon}</span>
+                      {!isCollapsed && <span className="nav-title">{tool.title}</span>}
+                    </Link>
                   )}
-                </div>
-              )}
-            </li>
-          ))}
-
-          {userTierStore.hasAccess(UserTier.BUSINESS) && pinnedBusinesses.length > 0 && (
-            <>
-              <li style={{ borderTop: '1px solid #e2e8f0', margin: '0.5rem 0' }} />
-              {pinnedBusinesses.map((business) => (
-                <li key={`business-${business.id}`}>
-                  <Link
-                    href={`/business/${business.id}`}
-                    className={`nav-item ${pathname === `/business/${business.id}` ? 'active' : ''}`}
-                    title={isCollapsed ? business.name : undefined}
-                  >
-                    <span className="nav-icon">{business.type === 'personal' ? '🏠' : '🏢'}</span>
-                    {!isCollapsed && <span className="nav-title">{business.name}</span>}
-                  </Link>
                 </li>
-              ))}
-            </>
-          )}
-        </ul>
-      </nav>
-    </aside>
+              )
+            })}
+
+            {userTierStore.hasAccess(UserTier.BUSINESS) && pinnedBusinesses.length > 0 && (
+              <>
+                <li style={{ borderTop: '1px solid #e2e8f0', margin: '0.5rem 0' }} />
+                {pinnedBusinesses.map((business) => (
+                  <li key={`business-${business.id}`}>
+                    <Link
+                      href={`/business/${business.id}`}
+                      className={`nav-item ${pathname === `/business/${business.id}` ? 'active' : ''}`}
+                      title={isCollapsed ? business.name : undefined}
+                    >
+                      <span className="nav-icon">{business.type === 'personal' ? '🏠' : '🏢'}</span>
+                      {!isCollapsed && <span className="nav-title">{business.name}</span>}
+                    </Link>
+                  </li>
+                ))}
+              </>
+            )}
+          </ul>
+        </nav>
+
+        <style jsx>{`
+          .nav-item.locked {
+            width: 100%;
+            background: none;
+            border: none;
+            text-align: inherit;
+            font: inherit;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            padding: 0.625rem 0.75rem;
+            border-radius: 0.5rem;
+            color: #94a3b8;
+            transition: all 0.15s ease;
+          }
+
+          .nav-item.locked:hover {
+            background: #f1f5f9;
+            color: #64748b;
+          }
+
+          .nav-lock {
+            margin-right: auto;
+            font-size: 0.75rem;
+          }
+        `}</style>
+      </aside>
+
+      <UpgradeModal
+        isOpen={upgradeModalOpen}
+        onClose={() => setUpgradeModalOpen(false)}
+        featureName={upgradeFeatureName}
+      />
+    </>
   )
 }

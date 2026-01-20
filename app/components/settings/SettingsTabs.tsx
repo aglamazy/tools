@@ -7,12 +7,14 @@ export type TabItem = {
   id: string
   label: string
   icon: string
+  locked?: boolean
 }
 
 type SettingsTabsProps = {
   tabs: TabItem[]
   defaultTab?: string
   children: (activeTab: string) => React.ReactNode
+  onLockedTabClick?: (tabLabel: string) => void
 }
 
 export default function SettingsTabs(props: SettingsTabsProps) {
@@ -23,40 +25,47 @@ export default function SettingsTabs(props: SettingsTabsProps) {
   )
 }
 
-function SettingsTabsContent({ tabs, defaultTab, children }: SettingsTabsProps) {
+function SettingsTabsContent({ tabs, defaultTab, children, onLockedTabClick }: SettingsTabsProps) {
   const searchParams = useSearchParams()
   const pathname = usePathname()
   const router = useRouter()
 
-  const fallbackTab = defaultTab || tabs[0]?.id || ''
+  // Only consider non-locked tabs for default and navigation
+  const accessibleTabs = tabs.filter(t => !t.locked)
+  const fallbackTab = defaultTab || accessibleTabs[0]?.id || ''
   const tabFromQuery = searchParams.get('tab')
-  const initialTab = tabs.some((t) => t.id === tabFromQuery) ? tabFromQuery! : fallbackTab
+  const initialTab = accessibleTabs.some((t) => t.id === tabFromQuery) ? tabFromQuery! : fallbackTab
 
   const [activeTab, setActiveTab] = useState(initialTab)
 
   useEffect(() => {
     const tabParam = searchParams.get('tab')
-    if (tabParam && tabParam !== activeTab && tabs.some((t) => t.id === tabParam)) {
+    if (tabParam && tabParam !== activeTab && accessibleTabs.some((t) => t.id === tabParam)) {
       setActiveTab(tabParam)
     }
-  }, [searchParams, tabs, activeTab])
+  }, [searchParams, accessibleTabs, activeTab])
 
-  const handleTabChange = (tabId: string) => {
-    setActiveTab(tabId)
+  const handleTabChange = (tab: TabItem) => {
+    if (tab.locked) {
+      onLockedTabClick?.(tab.label)
+      return
+    }
+
+    setActiveTab(tab.id)
     const params = new URLSearchParams(Array.from(searchParams.entries()))
-    params.set('tab', tabId)
+    params.set('tab', tab.id)
     router.replace(`${pathname}?${params.toString()}`, { scroll: false })
   }
 
-  const tabStyle = (tabId: string) => ({
+  const tabStyle = (tab: TabItem) => ({
     padding: '0.75rem 1.5rem',
     fontSize: '0.95rem',
     fontWeight: 500,
-    background: activeTab === tabId ? '#ffffff' : 'transparent',
+    background: activeTab === tab.id ? '#ffffff' : 'transparent',
     border: 'none',
-    borderBottom: activeTab === tabId ? '2px solid #3b82f6' : '2px solid transparent',
-    cursor: 'pointer',
-    color: activeTab === tabId ? '#1e40af' : '#64748b',
+    borderBottom: activeTab === tab.id ? '2px solid #3b82f6' : '2px solid transparent',
+    cursor: tab.locked ? 'pointer' : 'pointer',
+    color: tab.locked ? '#94a3b8' : activeTab === tab.id ? '#1e40af' : '#64748b',
     transition: 'all 0.15s ease',
     display: 'flex',
     alignItems: 'center',
@@ -77,11 +86,12 @@ function SettingsTabsContent({ tabs, defaultTab, children }: SettingsTabsProps) 
         {tabs.map((tab) => (
           <button
             key={tab.id}
-            style={tabStyle(tab.id)}
-            onClick={() => handleTabChange(tab.id)}
+            style={tabStyle(tab)}
+            onClick={() => handleTabChange(tab)}
           >
             <span>{tab.icon}</span>
             <span>{tab.label}</span>
+            {tab.locked && <span style={{ fontSize: '0.75rem' }}>🔒</span>}
           </button>
         ))}
       </div>
