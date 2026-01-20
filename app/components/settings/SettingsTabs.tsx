@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React, { Suspense, useEffect, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 
 export type TabItem = {
@@ -15,7 +15,15 @@ type SettingsTabsProps = {
   children: (activeTab: string) => React.ReactNode
 }
 
-export default function SettingsTabs({ tabs, defaultTab, children }: SettingsTabsProps) {
+export default function SettingsTabs(props: SettingsTabsProps) {
+  return (
+    <Suspense fallback={<div>טוען...</div>}>
+      <SettingsTabsContent {...props} />
+    </Suspense>
+  )
+}
+
+function SettingsTabsContent({ tabs, defaultTab, children }: SettingsTabsProps) {
   const searchParams = useSearchParams()
   const pathname = usePathname()
   const router = useRouter()

@@ -114,6 +114,18 @@ export const timeEntryStore = {
   },
 
   /**
+   * Get recent time entries (sorted by date desc)
+   */
+  getRecent: async (limit: number = 50): Promise<TimeEntry[]> => {
+    try {
+      return await db.timeEntries.orderBy('date').reverse().limit(limit).toArray()
+    } catch (error) {
+      console.error('Error getting recent time entries:', error)
+      return []
+    }
+  },
+
+  /**
    * Get total hours by task id
    */
   getTotalHoursByTaskId: async (taskId: number): Promise<number> => {

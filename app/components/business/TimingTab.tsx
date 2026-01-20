@@ -158,18 +158,43 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     void load()
   }, [businessId])
 
-  // Load tasks when project changes
+  // Load tasks when project changes - sorted by recent usage
   useEffect(() => {
     if (!selectedProjectId) {
       setTasks([])
       return
     }
     const load = async () => {
-      const t = await harvestTaskStore.getActiveByProjectId(selectedProjectId)
-      setTasks(t)
-      if (t.length > 0) {
-        setSelectedTaskId(t[0].id!)
-      } else {
+      const allTasks = await harvestTaskStore.getActiveByProjectId(selectedProjectId)
+
+      // Get recent time entries to determine task usage order
+      const recentEntries = await timeEntryStore.getRecent(50) // Get last 50 entries
+
+      // Build a map of taskId -> most recent usage timestamp
+      const taskUsage = new Map<number, string>()
+      for (const entry of recentEntries) {
+        const task = allTasks.find(t => t.id === entry.taskId)
+        if (task && !taskUsage.has(entry.taskId)) {
+          taskUsage.set(entry.taskId, entry.date + (entry.startTime || ''))
+        }
+      }
+
+      // Sort tasks: recently used first (up to 5), then rest by creation date
+      const recentlyUsedTasks = allTasks
+        .filter(t => taskUsage.has(t.id!))
+        .sort((a, b) => (taskUsage.get(b.id!) || '').localeCompare(taskUsage.get(a.id!) || ''))
+        .slice(0, 5)
+
+      const otherTasks = allTasks
+        .filter(t => !taskUsage.has(t.id!))
+        .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+
+      const sortedTasks = [...recentlyUsedTasks, ...otherTasks]
+      setTasks(sortedTasks)
+
+      if (sortedTasks.length > 0 && !selectedTaskId) {
+        setSelectedTaskId(sortedTasks[0].id!)
+      } else if (sortedTasks.length === 0) {
         setSelectedTaskId(null)
       }
     }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import type { ImportedFile } from '@/app/db/financeDB'
 import { formatMonthDisplay, formatDateTime } from '@/app/utils/formatters'
@@ -19,6 +19,14 @@ import type { FilePreview } from '@/app/types/file-preview'
 import { parseXlsTables } from '@/app/utils/xlsTableParser'
 
 export default function ImportPage() {
+  return (
+    <Suspense fallback={<div className="app" dir="rtl"><div className="card">טוען...</div></div>}>
+      <ImportPageContent />
+    </Suspense>
+  )
+}
+
+function ImportPageContent() {
   const searchParams = useSearchParams()
   const { showToast } = useToast()
   const [files, setFiles] = useState<ImportedFile[]>([])
