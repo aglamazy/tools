@@ -10,6 +10,13 @@ import type { Project, HarvestTask, TimeEntry, Business } from '@/app/db/finance
 import TimeEntryForm, { type TimeEntryFormData } from './TimeEntryForm'
 import FormModal, { FormField, inputStyle } from '../FormModal'
 import HoursBar from './HoursBar'
+import CalendarColumn from './CalendarColumn'
+import {
+  hasCalendarAccess,
+  requestCalendarAccess,
+  fetchCalendarEvents,
+  type CalendarEvent,
+} from '@/app/services/googleCalendarService'
 import * as XLSX from 'xlsx'
 
 type TimingTabProps = {
@@ -137,6 +144,17 @@ export default function TimingTab({ businessId }: TimingTabProps) {
   const [monthOffset, setMonthOffset] = useState(0)
   const [editingTask, setEditingTask] = useState<HarvestTask | null>(null)
 
+  // Calendar state
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([])
+  const [calendarLoading, setCalendarLoading] = useState(false)
+  const [calendarError, setCalendarError] = useState<string | undefined>()
+  const [calendarConnected, setCalendarConnected] = useState(false)
+
+  // Task dropdown state
+  const [allTasks, setAllTasks] = useState<HarvestTask[]>([])
+  const [showAllTasks, setShowAllTasks] = useState(false)
+  const RECENT_TASKS_LIMIT = 5
+
   // Load business
   useEffect(() => {
     const load = async () => {
@@ -162,10 +180,12 @@ export default function TimingTab({ businessId }: TimingTabProps) {
   useEffect(() => {
     if (!selectedProjectId) {
       setTasks([])
+      setAllTasks([])
+      setShowAllTasks(false)
       return
     }
     const load = async () => {
-      const allTasks = await harvestTaskStore.getActiveByProjectId(selectedProjectId)
+      const fetchedTasks = await harvestTaskStore.getActiveByProjectId(selectedProjectId)
 
       // Get recent time entries to determine task usage order
       const recentEntries = await timeEntryStore.getRecent(50) // Get last 50 entries
@@ -173,24 +193,25 @@ export default function TimingTab({ businessId }: TimingTabProps) {
       // Build a map of taskId -> most recent usage timestamp
       const taskUsage = new Map<number, string>()
       for (const entry of recentEntries) {
-        const task = allTasks.find(t => t.id === entry.taskId)
+        const task = fetchedTasks.find(t => t.id === entry.taskId)
         if (task && !taskUsage.has(entry.taskId)) {
           taskUsage.set(entry.taskId, entry.date + (entry.startTime || ''))
         }
       }
 
-      // Sort tasks: recently used first (up to 5), then rest by creation date
-      const recentlyUsedTasks = allTasks
+      // Sort tasks: recently used first, then rest by creation date
+      const recentlyUsedTasks = fetchedTasks
         .filter(t => taskUsage.has(t.id!))
         .sort((a, b) => (taskUsage.get(b.id!) || '').localeCompare(taskUsage.get(a.id!) || ''))
-        .slice(0, 5)
 
-      const otherTasks = allTasks
+      const otherTasks = fetchedTasks
         .filter(t => !taskUsage.has(t.id!))
         .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
 
       const sortedTasks = [...recentlyUsedTasks, ...otherTasks]
-      setTasks(sortedTasks)
+      setAllTasks(sortedTasks)
+      setTasks(sortedTasks.slice(0, RECENT_TASKS_LIMIT))
+      setShowAllTasks(false)
 
       if (sortedTasks.length > 0 && !selectedTaskId) {
         setSelectedTaskId(sortedTasks[0].id!)
@@ -235,6 +256,36 @@ export default function TimingTab({ businessId }: TimingTabProps) {
   useEffect(() => {
     void loadWeekEntries()
   }, [businessId, weekOffset, monthOffset, selectedDate, viewMode])
+
+  // Check calendar connection on mount
+  useEffect(() => {
+    setCalendarConnected(hasCalendarAccess())
+  }, [])
+
+  // Load calendar events when in daily view and date changes
+  useEffect(() => {
+    if (viewMode !== 'daily' || !calendarConnected) return
+
+    const loadCalendarEvents = async () => {
+      setCalendarLoading(true)
+      setCalendarError(undefined)
+
+      const result = await fetchCalendarEvents(selectedDate)
+
+      if (result.error) {
+        setCalendarError(result.error)
+        // If auth expired, mark as disconnected
+        if (result.error.includes('פג תוקף')) {
+          setCalendarConnected(false)
+        }
+      }
+
+      setCalendarEvents(result.events)
+      setCalendarLoading(false)
+    }
+
+    void loadCalendarEvents()
+  }, [viewMode, selectedDate, calendarConnected])
 
   const handleStart = async () => {
     if (!selectedTaskId) return
@@ -446,11 +497,49 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     })
 
     if (taskId) {
-      // Reload tasks for this project
+      // Reload tasks for this project - show all to include the new task
       const updatedTasks = await harvestTaskStore.getActiveByProjectId(editingTask.projectId)
+      setAllTasks(updatedTasks)
       setTasks(updatedTasks)
+      setShowAllTasks(true)
       setSelectedTaskId(taskId)
       setEditingTask(null)
+    }
+  }
+
+  const handleConnectCalendar = async () => {
+    const result = await requestCalendarAccess()
+    if (result.success) {
+      setCalendarConnected(true)
+      setCalendarError(undefined)
+      // Trigger reload of events
+      const eventsResult = await fetchCalendarEvents(selectedDate)
+      setCalendarEvents(eventsResult.events)
+      if (eventsResult.error) {
+        setCalendarError(eventsResult.error)
+      }
+    } else {
+      setCalendarError(result.error)
+    }
+  }
+
+  const handleCalendarEventClick = (event: CalendarEvent) => {
+    // Open the time entry form pre-filled with the calendar event times
+    console.log('[Calendar] Event clicked:', event)
+    const startTime = event.startTime && event.startTime.length > 0 ? event.startTime : '09:00'
+    const endTime = event.endTime && event.endTime.length > 0 ? event.endTime : '10:00'
+    console.log('[Calendar] Using times:', startTime, '-', endTime)
+
+    setEditingEntry(null)
+    setFormData({
+      projectId: selectedProjectId,
+      taskId: selectedTaskId,
+      date: selectedDate,
+      startTime,
+      endTime,
+    })
+    if (selectedProjectId) {
+      void harvestTaskStore.getActiveByProjectId(selectedProjectId).then(setFormTasks)
     }
   }
 
@@ -582,7 +671,15 @@ export default function TimingTab({ businessId }: TimingTabProps) {
 
           <select
             value={selectedTaskId || ''}
-            onChange={(e) => setSelectedTaskId(Number(e.target.value))}
+            onChange={(e) => {
+              const value = e.target.value
+              if (value === '__show_more__') {
+                setTasks(allTasks)
+                setShowAllTasks(true)
+              } else {
+                setSelectedTaskId(Number(value))
+              }
+            }}
             disabled={!!activeTimer || !selectedProjectId}
             style={{
               padding: '0.5rem',
@@ -596,6 +693,11 @@ export default function TimingTab({ businessId }: TimingTabProps) {
             {tasks.map((t) => (
               <option key={t.id} value={t.id}>{t.name}</option>
             ))}
+            {!showAllTasks && allTasks.length > RECENT_TASKS_LIMIT && (
+              <option value="__show_more__" style={{ fontStyle: 'italic', color: '#6b7280' }}>
+                ··· הצג עוד {allTasks.length - RECENT_TASKS_LIMIT} משימות
+              </option>
+            )}
           </select>
 
           <button
@@ -779,87 +881,222 @@ export default function TimingTab({ businessId }: TimingTabProps) {
               >
                 היום
               </button>
+              {!calendarConnected && (
+                <button
+                  onClick={handleConnectCalendar}
+                  style={{
+                    padding: '0.5rem 1rem',
+                    background: '#f0fdf4',
+                    border: '1px solid #86efac',
+                    borderRadius: '0.5rem',
+                    cursor: 'pointer',
+                    fontSize: '0.9rem',
+                    color: '#166534',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.375rem',
+                  }}
+                >
+                  <span>📅</span>
+                  חבר יומן
+                </button>
+              )}
             </div>
             <span style={{ fontWeight: 500, color: '#64748b' }}>
               {formatHours(weekTotal)} שעות
             </span>
           </div>
 
-          {/* Hours bar visualization */}
-          <HoursBar
-            entries={weekEntries}
-            onEntryClick={(entry) => {
-              const fullEntry = weekEntries.find(e => e.id === entry.id)
-              if (fullEntry) handleEditEntry(fullEntry)
-            }}
-          />
+          {/* Two-column layout when calendar connected, single column otherwise */}
+          {calendarConnected ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+              {/* Calendar Events Column */}
+              <div>
+                <h4 style={{ margin: '0 0 0.75rem 0', fontSize: '0.95rem', fontWeight: 600, color: '#374151' }}>
+                  📅 יומן Google
+                </h4>
+                <CalendarColumn
+                  events={calendarEvents}
+                  loading={calendarLoading}
+                  error={calendarError}
+                  isConnected={calendarConnected}
+                  onConnectClick={handleConnectCalendar}
+                  onEventClick={handleCalendarEventClick}
+                />
+              </div>
 
-          {/* Daily entries list */}
-          {weekEntries.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              {(() => {
-                // Sort entries by start time
-                const sortedEntries = [...weekEntries].sort((a, b) => {
-                  // Handle entries without startTime (sort them to the end)
-                  if (!a.startTime && !b.startTime) return 0
-                  if (!a.startTime) return 1
-                  if (!b.startTime) return -1
-                  return a.startTime.localeCompare(b.startTime)
-                })
+              {/* Time Entries Column */}
+              <div>
+                <h4 style={{ margin: '0 0 0.75rem 0', fontSize: '0.95rem', fontWeight: 600, color: '#374151' }}>
+                  ⏱️ רישומי זמן
+                </h4>
+                {/* Hours bar visualization */}
+                <HoursBar
+                  entries={weekEntries}
+                  onEntryClick={(entry) => {
+                    const fullEntry = weekEntries.find(e => e.id === entry.id)
+                    if (fullEntry) handleEditEntry(fullEntry)
+                  }}
+                />
 
-                return sortedEntries.map((entry) => (
+                {/* Daily entries list */}
+                {weekEntries.length > 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    {(() => {
+                      const sortedEntries = [...weekEntries].sort((a, b) => {
+                        if (!a.startTime && !b.startTime) return 0
+                        if (!a.startTime) return 1
+                        if (!b.startTime) return -1
+                        return a.startTime.localeCompare(b.startTime)
+                      })
+
+                      return sortedEntries.map((entry) => (
+                        <div
+                          key={entry.id}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '1rem',
+                            background: '#f8fafc',
+                            border: '1px solid #e2e8f0',
+                            borderRadius: '0.5rem',
+                            fontSize: '0.95rem',
+                          }}
+                        >
+                          <div
+                            onClick={() => handleEditEntry(entry)}
+                            style={{ flex: 1, cursor: 'pointer' }}
+                          >
+                            <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>
+                              {entry.projectName}
+                              <span style={{ color: '#64748b', margin: '0 0.5rem' }}>›</span>
+                              {entry.taskName}
+                            </div>
+                            <div style={{ color: '#64748b', fontSize: '0.85rem' }}>
+                              {entry.startTime && entry.endTime ? `${entry.startTime} - ${entry.endTime}` : formatHours(entry.hours) + ' שעות'}
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                            <span style={{ fontWeight: 600, fontSize: '1.1rem' }}>{formatHours(entry.hours)}</span>
+                            <button
+                              onClick={() => void handleStartFromEntry(entry)}
+                              title="התחל טיימר עם אותו פרויקט ומשימה"
+                              style={{
+                                padding: '0.25rem 0.5rem',
+                                fontSize: '0.8rem',
+                                background: '#ecfdf5',
+                                border: '1px solid #6ee7b7',
+                                borderRadius: '0.25rem',
+                                cursor: 'pointer',
+                                color: '#059669',
+                              }}
+                            >
+                              ▶
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    })()}
+                  </div>
+                ) : (
                   <div
-                    key={entry.id}
                     style={{
                       display: 'flex',
-                      justifyContent: 'space-between',
+                      flexDirection: 'column',
                       alignItems: 'center',
-                      padding: '1rem',
+                      justifyContent: 'center',
+                      padding: '2rem',
                       background: '#f8fafc',
                       border: '1px solid #e2e8f0',
                       borderRadius: '0.5rem',
-                      fontSize: '0.95rem',
+                      minHeight: '200px',
+                      color: '#64748b',
                     }}
                   >
-                    <div
-                      onClick={() => handleEditEntry(entry)}
-                      style={{ flex: 1, cursor: 'pointer' }}
-                    >
-                      <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>
-                        {entry.projectName}
-                        <span style={{ color: '#64748b', margin: '0 0.5rem' }}>›</span>
-                        {entry.taskName}
-                      </div>
-                      <div style={{ color: '#64748b', fontSize: '0.85rem' }}>
-                        {entry.startTime && entry.endTime ? `${entry.startTime} - ${entry.endTime}` : formatHours(entry.hours) + ' שעות'}
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                      <span style={{ fontWeight: 600, fontSize: '1.1rem' }}>{formatHours(entry.hours)}</span>
-                      <button
-                        onClick={() => void handleStartFromEntry(entry)}
-                        title="התחל טיימר עם אותו פרויקט ומשימה"
-                        style={{
-                          padding: '0.25rem 0.5rem',
-                          fontSize: '0.8rem',
-                          background: '#ecfdf5',
-                          border: '1px solid #6ee7b7',
-                          borderRadius: '0.25rem',
-                          cursor: 'pointer',
-                          color: '#059669',
-                        }}
-                      >
-                        ▶
-                      </button>
-                    </div>
+                    <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>⏱️</div>
+                    <p>אין רישומי זמן ביום זה</p>
                   </div>
-                ))
-              })()}
+                )}
+              </div>
             </div>
           ) : (
-            <p style={{ color: '#64748b', textAlign: 'center' }}>
-              אין רישומי זמן ביום זה
-            </p>
+            <>
+              {/* Hours bar visualization */}
+              <HoursBar
+                entries={weekEntries}
+                onEntryClick={(entry) => {
+                  const fullEntry = weekEntries.find(e => e.id === entry.id)
+                  if (fullEntry) handleEditEntry(fullEntry)
+                }}
+              />
+
+              {/* Daily entries list */}
+              {weekEntries.length > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {(() => {
+                    const sortedEntries = [...weekEntries].sort((a, b) => {
+                      if (!a.startTime && !b.startTime) return 0
+                      if (!a.startTime) return 1
+                      if (!b.startTime) return -1
+                      return a.startTime.localeCompare(b.startTime)
+                    })
+
+                    return sortedEntries.map((entry) => (
+                      <div
+                        key={entry.id}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          padding: '1rem',
+                          background: '#f8fafc',
+                          border: '1px solid #e2e8f0',
+                          borderRadius: '0.5rem',
+                          fontSize: '0.95rem',
+                        }}
+                      >
+                        <div
+                          onClick={() => handleEditEntry(entry)}
+                          style={{ flex: 1, cursor: 'pointer' }}
+                        >
+                          <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>
+                            {entry.projectName}
+                            <span style={{ color: '#64748b', margin: '0 0.5rem' }}>›</span>
+                            {entry.taskName}
+                          </div>
+                          <div style={{ color: '#64748b', fontSize: '0.85rem' }}>
+                            {entry.startTime && entry.endTime ? `${entry.startTime} - ${entry.endTime}` : formatHours(entry.hours) + ' שעות'}
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                          <span style={{ fontWeight: 600, fontSize: '1.1rem' }}>{formatHours(entry.hours)}</span>
+                          <button
+                            onClick={() => void handleStartFromEntry(entry)}
+                            title="התחל טיימר עם אותו פרויקט ומשימה"
+                            style={{
+                              padding: '0.25rem 0.5rem',
+                              fontSize: '0.8rem',
+                              background: '#ecfdf5',
+                              border: '1px solid #6ee7b7',
+                              borderRadius: '0.25rem',
+                              cursor: 'pointer',
+                              color: '#059669',
+                            }}
+                          >
+                            ▶
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  })()}
+                </div>
+              ) : (
+                <p style={{ color: '#64748b', textAlign: 'center' }}>
+                  אין רישומי זמן ביום זה
+                </p>
+              )}
+            </>
           )}
         </div>
       )}
