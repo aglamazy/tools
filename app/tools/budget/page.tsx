@@ -31,6 +31,7 @@ function BudgetPageContent() {
   const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set())
   const [drillDownCategory, setDrillDownCategory] = useState<string | null>(null)
   const [isPieChartCollapsed, setIsPieChartCollapsed] = useState(false)
+  const [typeFilter, setTypeFilter] = useState<'all' | 'income' | 'expense'>('all')
 
   // Load available months from transactions and categories
   useEffect(() => {
@@ -87,9 +88,16 @@ function BudgetPageContent() {
     loadTransactions()
   }, [selectedMonth])
 
+  // Build set of capital category names to exclude from daily totals
+  const capitalNames = new Set(
+    categories.filter((c) => c.isCapital).map((c) => c.name)
+  )
+  const dailyTransactions = transactions.filter((t) => !capitalNames.has(t.category || ''))
+  const capitalTransactions = transactions.filter((t) => capitalNames.has(t.category || ''))
+
   // Calculate category totals for pie chart with hierarchical structure
   const getCategoryData = () => {
-    const expenses = transactions.filter((t) => t.amount < 0 && !t.isCreditCardCharge)
+    const expenses = dailyTransactions.filter((t) => t.amount < 0 && !t.isCreditCardCharge)
     const parentTotals = new Map<string, { total: number; color: string; subCategories: Map<string, { total: number; color: string }> }>()
 
     expenses.forEach((t) => {
@@ -199,6 +207,10 @@ function BudgetPageContent() {
     if (t.isCreditCardCharge) {
       return false
     }
+
+    // Apply type filter (income/expense)
+    if (typeFilter === 'income' && t.amount <= 0) return false
+    if (typeFilter === 'expense' && t.amount >= 0) return false
 
     // First apply category filter if any are selected
     if (selectedCategories.size > 0) {
@@ -317,26 +329,44 @@ function BudgetPageContent() {
           {/* Summary Cards - Compact */}
           {selectedMonth && !loading && (
             <section className="summary-grid" style={{ marginTop: '1rem', gap: '0.75rem' }}>
-              <div className="summary-card income" style={{ padding: '0.75rem' }}>
+              <div
+                className="summary-card income"
+                onClick={() => setTypeFilter(typeFilter === 'income' ? 'all' : 'income')}
+                style={{
+                  padding: '0.75rem',
+                  cursor: 'pointer',
+                  outline: typeFilter === 'income' ? '2px solid #10b981' : 'none',
+                  opacity: typeFilter === 'expense' ? 0.5 : 1,
+                }}
+              >
                 <div className="summary-label" style={{ fontSize: '0.8rem' }}>הכנסות</div>
                 <div className="summary-amount" style={{ fontSize: '1.25rem' }}>
                   {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(
-                    transactions.filter((t) => t.amount > 0).reduce((sum, t) => sum + t.amount, 0)
+                    dailyTransactions.filter((t) => t.amount > 0).reduce((sum, t) => sum + t.amount, 0)
                   )}
                 </div>
                 <div className="summary-count" style={{ fontSize: '0.75rem' }}>
-                  {transactions.filter((t) => t.amount > 0).length} עסקאות
+                  {dailyTransactions.filter((t) => t.amount > 0).length} עסקאות
                 </div>
               </div>
-              <div className="summary-card expenses" style={{ padding: '0.75rem' }}>
+              <div
+                className="summary-card expenses"
+                onClick={() => setTypeFilter(typeFilter === 'expense' ? 'all' : 'expense')}
+                style={{
+                  padding: '0.75rem',
+                  cursor: 'pointer',
+                  outline: typeFilter === 'expense' ? '2px solid #ef4444' : 'none',
+                  opacity: typeFilter === 'income' ? 0.5 : 1,
+                }}
+              >
                 <div className="summary-label" style={{ fontSize: '0.8rem' }}>הוצאות</div>
                 <div className="summary-amount" style={{ fontSize: '1.25rem' }}>
                   {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(
-                    Math.abs(transactions.filter((t) => t.amount < 0).reduce((sum, t) => sum + t.amount, 0))
+                    Math.abs(dailyTransactions.filter((t) => t.amount < 0).reduce((sum, t) => sum + t.amount, 0))
                   )}
                 </div>
                 <div className="summary-count" style={{ fontSize: '0.75rem' }}>
-                  {transactions.filter((t) => t.amount < 0).length} עסקאות
+                  {dailyTransactions.filter((t) => t.amount < 0).length} עסקאות
                 </div>
               </div>
               <div className="summary-card net" style={{ padding: '0.75rem' }}>
@@ -344,15 +374,28 @@ function BudgetPageContent() {
                 <div
                   className={
                     'summary-amount ' +
-                    (transactions.reduce((sum, t) => sum + t.amount, 0) > 0 ? 'positive' : 'negative')
+                    (dailyTransactions.reduce((sum, t) => sum + t.amount, 0) > 0 ? 'positive' : 'negative')
                   }
                   style={{ fontSize: '1.25rem' }}
                 >
                   {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(
-                    transactions.reduce((sum, t) => sum + t.amount, 0)
+                    dailyTransactions.reduce((sum, t) => sum + t.amount, 0)
                   )}
                 </div>
               </div>
+              {capitalTransactions.length > 0 && (
+                <div className="summary-card" style={{ padding: '0.75rem', background: '#7c3aed', color: 'white' }}>
+                  <div className="summary-label" style={{ fontSize: '0.8rem' }}>הון</div>
+                  <div className="summary-amount" style={{ fontSize: '1.25rem' }}>
+                    {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(
+                      -(capitalTransactions.reduce((sum, t) => sum + t.amount, 0))
+                    )}
+                  </div>
+                  <div className="summary-count" style={{ fontSize: '0.75rem' }}>
+                    {capitalTransactions.length} עסקאות
+                  </div>
+                </div>
+              )}
             </section>
           )}
         </div>
@@ -586,11 +629,12 @@ function BudgetPageContent() {
                   <tbody>
                     {displayedTransactions.map((transaction) => {
                       const isAutoClassified = autoClassifiedIds.has(transaction.id)
+                      const isCapitalTx = capitalNames.has(transaction.category || '')
                       return (
                         <tr
                           key={transaction.id}
                           style={{
-                            backgroundColor: isAutoClassified ? '#fef3c7' : undefined,
+                            backgroundColor: isAutoClassified ? '#fef3c7' : isCapitalTx ? '#f5f3ff' : undefined,
                             transition: 'background-color 0.3s ease',
                           }}
                         >
@@ -654,7 +698,9 @@ function BudgetPageContent() {
                         </td>
                         <td
                           style={{
-                            color: transaction.amount > 0 ? '#10b981' : '#ef4444',
+                            color: capitalNames.has(transaction.category || '')
+                              ? '#7c3aed'
+                              : transaction.amount > 0 ? '#10b981' : '#ef4444',
                             fontWeight: 500,
                           }}
                         >

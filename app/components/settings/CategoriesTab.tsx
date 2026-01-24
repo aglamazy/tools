@@ -497,6 +497,17 @@ export default function CategoriesTab() {
                     style={{ width: '100%', height: '50px', cursor: 'pointer', border: 'none' }}
                   />
                 </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="checkbox"
+                    id="isCapital"
+                    checked={editingCategory.isCapital || false}
+                    onChange={(e) => setEditingCategory({ ...editingCategory, isCapital: e.target.checked })}
+                    style={{ width: '1.1rem', height: '1.1rem', cursor: 'pointer' }}
+                  />
+                  <label htmlFor="isCapital" style={{ fontWeight: 600, cursor: 'pointer' }}>הון</label>
+                  <span style={{ fontSize: '0.8rem', color: '#64748b' }}>(פנסיה, חסכונות, השקעות - יופרד מתזרים שוטף)</span>
+                </div>
                 <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
                   <button onClick={() => setEditingCategory(null)} className="upload-another-btn">
                     ביטול

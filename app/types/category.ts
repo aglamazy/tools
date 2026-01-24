@@ -7,6 +7,7 @@ export type Category = {
   color: string
   createdAt: string
   isFixed?: boolean
+  isCapital?: boolean
   parentId?: string // If this is a sub-category, reference to parent category
   subCategories?: string[] // IDs of sub-categories (for parent categories)
 }

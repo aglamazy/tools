@@ -519,7 +519,9 @@ export const transactionStore = {
    */
   saveBusinessCategory: async (business: string, category: string): Promise<boolean> => {
     try {
+      const existing = await db.businessCategories.where('business').equals(business).first()
       await db.businessCategories.put({
+        ...(existing?.id ? { id: existing.id } : {}),
         business,
         category,
         lastUpdated: new Date().toISOString(),
