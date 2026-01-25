@@ -5,6 +5,7 @@ import { projectStore } from '@/app/stores/projectStore'
 import { harvestTaskStore } from '@/app/stores/harvestTaskStore'
 import type { Project, HarvestTask } from '@/app/db/financeDB'
 import FormModal, { FormField, inputStyle } from '../FormModal'
+import ProjectEditModal from './ProjectEditModal'
 
 type BusinessSettingsTabProps = {
   businessId: number
@@ -92,21 +93,27 @@ export default function BusinessSettingsTab({ businessId }: BusinessSettingsTabP
     setIsNewProject(false)
   }
 
-  const handleSaveProject = async () => {
-    if (!editingProject || !editingProject.name.trim()) return
+  const handleSaveProject = async (project: Project) => {
+    if (!project.name.trim()) return
 
     if (isNewProject) {
       await projectStore.add({
-        businessId: editingProject.businessId,
-        name: editingProject.name.trim(),
-        color: editingProject.color,
-        defaultHourlyRate: editingProject.defaultHourlyRate,
+        businessId: project.businessId,
+        name: project.name.trim(),
+        color: project.color,
+        defaultHourlyRate: project.defaultHourlyRate,
+        contactEmail: project.contactEmail,
+        contactBusinessID: project.contactBusinessID,
+        contactPhone: project.contactPhone,
       })
     } else {
-      await projectStore.update(editingProject.id!, {
-        name: editingProject.name.trim(),
-        color: editingProject.color,
-        defaultHourlyRate: editingProject.defaultHourlyRate,
+      await projectStore.update(project.id!, {
+        name: project.name.trim(),
+        color: project.color,
+        defaultHourlyRate: project.defaultHourlyRate,
+        contactEmail: project.contactEmail,
+        contactBusinessID: project.contactBusinessID,
+        contactPhone: project.contactPhone,
       })
     }
 
@@ -367,54 +374,12 @@ export default function BusinessSettingsTab({ businessId }: BusinessSettingsTabP
         </div>
       )}
 
-      {/* Project Edit Modal */}
-      {editingProject && (
-        <FormModal
-          isOpen={!!editingProject}
-          onClose={() => setEditingProject(null)}
-          onSave={() => void handleSaveProject()}
-          title={isNewProject ? 'פרויקט חדש' : 'עריכת פרויקט'}
-        >
-          <FormField label="שם">
-            <input
-              type="text"
-              value={editingProject.name}
-              onChange={(e) => setEditingProject({ ...editingProject, name: e.target.value })}
-              autoFocus
-              style={inputStyle}
-            />
-          </FormField>
-
-          <FormField label="צבע">
-            <input
-              type="color"
-              value={editingProject.color || '#3b82f6'}
-              onChange={(e) => setEditingProject({ ...editingProject, color: e.target.value })}
-              style={{
-                width: '60px',
-                height: '40px',
-                padding: '0',
-                border: '1px solid #d1d5db',
-                borderRadius: '0.375rem',
-                cursor: 'pointer',
-              }}
-            />
-          </FormField>
-
-          <FormField label="תעריף שעתי ברירת מחדל">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <input
-                type="number"
-                value={editingProject.defaultHourlyRate || ''}
-                onChange={(e) => setEditingProject({ ...editingProject, defaultHourlyRate: e.target.value ? Number(e.target.value) : undefined })}
-                placeholder="0"
-                style={{ ...inputStyle, flex: 1 }}
-              />
-              <span style={{ color: '#64748b', whiteSpace: 'nowrap' }}>₪ / שעה</span>
-            </div>
-          </FormField>
-        </FormModal>
-      )}
+      <ProjectEditModal
+        project={editingProject}
+        isNew={isNewProject}
+        onClose={() => setEditingProject(null)}
+        onSave={handleSaveProject}
+      />
 
       {/* Task Edit Modal */}
       {editingTask && (

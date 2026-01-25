@@ -32,6 +32,7 @@ export default function BusinessesTab() {
             id: b.id as number,
             name: b.name,
             type: b.type,
+            vatType: b.vatType,
             pinnedToSidebar: b.pinnedToSidebar,
           } as BusinessUI
         })
@@ -78,6 +79,7 @@ export default function BusinessesTab() {
         const id = await businessStore.add({
           name: trimmed.name,
           type: trimmed.type,
+          vatType: trimmed.vatType,
         })
         if (id == null) {
           setAlertMessage('שמירת העסק נכשלה')
@@ -88,6 +90,7 @@ export default function BusinessesTab() {
         const updated = await businessStore.update(trimmed.id, {
           name: trimmed.name,
           type: trimmed.type,
+          vatType: trimmed.vatType,
         })
         if (!updated) {
           setAlertMessage('עדכון העסק נכשל')

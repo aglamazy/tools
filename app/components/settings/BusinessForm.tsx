@@ -64,6 +64,36 @@ export default function BusinessForm({ business, onChange, onSave, onCancel, isN
               </label>
             </div>
           </div>
+          {business.type === 'business' && (
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>
+                סוג עוסק (למע"מ)
+              </label>
+              <div style={{ display: 'flex', gap: '1rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="vatType"
+                    checked={business.vatType === 'exempt'}
+                    onChange={() => onChange({ ...business, vatType: 'exempt' })}
+                  />
+                  <span>פטור</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="vatType"
+                    checked={business.vatType === 'authorized'}
+                    onChange={() => onChange({ ...business, vatType: 'authorized' })}
+                  />
+                  <span>עוסק מורשה</span>
+                </label>
+              </div>
+              <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                {business.vatType === 'exempt' ? 'יופק: קבלה' : business.vatType === 'authorized' ? 'יופק: חשבונית מס קבלה' : ''}
+              </span>
+            </div>
+          )}
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
             <button onClick={onCancel} className="upload-another-btn">
               ביטול

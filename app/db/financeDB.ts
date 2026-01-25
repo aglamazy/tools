@@ -81,6 +81,7 @@ export interface Business {
   id?: number
   name: string
   type: 'personal' | 'business'
+  vatType?: 'exempt' | 'authorized'
   pinnedToSidebar?: boolean
   createdAt: string
   updatedAt: string
@@ -93,6 +94,9 @@ export interface Project {
   name: string
   color?: string
   defaultHourlyRate?: number
+  contactEmail?: string
+  contactBusinessID?: string  // ח.פ
+  contactPhone?: string
   archived: boolean
   createdAt: string
   updatedAt: string
@@ -119,6 +123,15 @@ export interface TimeEntry {
   updatedAt: string
 }
 
+export interface YpayDocument {
+  id?: number
+  transactionId: string // Unique reference to the transaction
+  url: string // Link to the PDF document
+  serialNumber: string // Document serial number from YPAY
+  docType: number // 108 = קבלה, 109 = חשבונית מס קבלה
+  createdAt: string // ISO timestamp
+}
+
 class FinanceDB extends Dexie {
   transactions!: Table<Transaction, number>
   importedFiles!: Table<ImportedFile, number>
@@ -132,6 +145,7 @@ class FinanceDB extends Dexie {
   timeEntries!: Table<TimeEntry, number>
   capitalEntries!: Table<CapitalEntry, number>
   financialInstitutions!: Table<FinancialInstitution, number>
+  ypayDocuments!: Table<YpayDocument, number>
 
   constructor() {
     super('FinanceDB')
@@ -265,6 +279,23 @@ class FinanceDB extends Dexie {
       timeEntries: '++id, taskId, date, startTime, endTime, [taskId+date]',
       capitalEntries: '++id, date, institution, accountNumber, description, assetType, currency, employer, investmentTrack, agent, soldDate, [institution+accountNumber+description], fileId',
       financialInstitutions: '++id, name, type',
+    })
+
+    // Define schema version 10 - add ypayDocuments
+    this.version(10).stores({
+      transactions: '++id, type, month, accountNumber, cardNumber, date, chargingDate, [type+month], [cardNumber+month], [accountNumber+month], fileId',
+      importedFiles: '++id, fileName, fileType, processingMonth, [fileType+processingMonth], [cardNumber+processingMonth]',
+      categories: '++id, name, type',
+      businessCategories: '++id, &business',
+      tasks: '++id, createdAt, priority',
+      appSettings: '++id, &key',
+      businesses: '++id, &name, type',
+      projects: '++id, businessId, name, archived',
+      harvestTasks: '++id, projectId, name, archived',
+      timeEntries: '++id, taskId, date, startTime, endTime, [taskId+date]',
+      capitalEntries: '++id, date, institution, accountNumber, description, assetType, currency, employer, investmentTrack, agent, soldDate, [institution+accountNumber+description], fileId',
+      financialInstitutions: '++id, name, type',
+      ypayDocuments: '++id, &transactionId',
     })
   }
 }
