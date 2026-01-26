@@ -11,10 +11,10 @@ import { userTierStore, UserTier } from '@/app/stores/userTierStore'
 type TabItemWithTier = TabItem & { requiredTier?: UserTier }
 
 const ALL_TABS: TabItemWithTier[] = [
-  { id: 'categories', label: 'נושאים', icon: '🏷️', requiredTier: UserTier.FREEMIUM },
-  { id: 'businesses', label: 'עסקים', icon: '🏢', requiredTier: UserTier.BUSINESS },
-  { id: 'sync', label: 'סנכרון', icon: '☁️', requiredTier: UserTier.FREEMIUM },
-  { id: 'advanced', label: 'מתקדם', icon: '⚙️', requiredTier: UserTier.FREEMIUM },
+  { id: 'categories', label: 'נושאים', icon: '🏷️', requiredTier: UserTier.FREE },
+  { id: 'businesses', label: 'עסקים', icon: '🏢', requiredTier: UserTier.PRO },
+  { id: 'sync', label: 'סנכרון', icon: '☁️', requiredTier: UserTier.FREE },
+  { id: 'advanced', label: 'מתקדם', icon: '⚙️', requiredTier: UserTier.FREE },
 ]
 
 export default function Settings() {

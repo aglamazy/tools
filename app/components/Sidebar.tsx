@@ -17,14 +17,14 @@ type Tool = {
 }
 
 const allTools: Tool[] = [
-  // Freemium features
+  // Free features
   {
     id: 'import',
     title: 'ייבוא קבצים',
     href: '/tools/import',
     icon: '📥',
     available: true,
-    requiredTier: UserTier.FREEMIUM,
+    requiredTier: UserTier.FREE,
   },
   {
     id: 'cash-flow',
@@ -32,7 +32,7 @@ const allTools: Tool[] = [
     href: '/tools/cash-flow',
     icon: '💰',
     available: true,
-    requiredTier: UserTier.FREEMIUM,
+    requiredTier: UserTier.FREE,
   },
   {
     id: 'budget',
@@ -40,7 +40,7 @@ const allTools: Tool[] = [
     href: '/tools/budget',
     icon: '📊',
     available: true,
-    requiredTier: UserTier.FREEMIUM,
+    requiredTier: UserTier.FREE,
   },
   {
     id: 'todo',
@@ -48,7 +48,7 @@ const allTools: Tool[] = [
     href: '/tools/todo',
     icon: '✓',
     available: true,
-    requiredTier: UserTier.FREEMIUM,
+    requiredTier: UserTier.FREE,
   },
   {
     id: 'future-payments',
@@ -56,7 +56,7 @@ const allTools: Tool[] = [
     href: '/tools/future-payments',
     icon: '💳',
     available: true,
-    requiredTier: UserTier.LOCAL,
+    requiredTier: UserTier.PRO,
   },
   {
     id: 'settings',
@@ -64,7 +64,7 @@ const allTools: Tool[] = [
     href: '/tools/settings',
     icon: '⚙️',
     available: true,
-    requiredTier: UserTier.FREEMIUM,
+    requiredTier: UserTier.FREE,
   },
   {
     id: 'about',
@@ -72,7 +72,7 @@ const allTools: Tool[] = [
     href: '/about',
     icon: 'ℹ️',
     available: true,
-    requiredTier: UserTier.FREEMIUM,
+    requiredTier: UserTier.FREE,
   },
   {
     id: 'guide',
@@ -80,38 +80,47 @@ const allTools: Tool[] = [
     href: '/guide',
     icon: '📖',
     available: true,
-    requiredTier: UserTier.FREEMIUM,
+    requiredTier: UserTier.FREE,
   },
 
-  // Business features
+  // Pro features
   {
     id: 'capital',
     title: 'הון',
     href: '/tools/capital',
     icon: '💎',
     available: true,
-    requiredTier: UserTier.BUSINESS,
+    requiredTier: UserTier.PRO,
   },
-
-  // Local/developer features
   {
     id: 'dev-db',
     title: 'Dev DB',
     href: '/tools/dev-db',
     icon: '🛠️',
     available: true,
-    requiredTier: UserTier.LOCAL,
+    requiredTier: UserTier.PRO,
   },
 ]
+
+const tierLabels: Record<UserTier, string> = {
+  [UserTier.FREE]: 'חינם',
+  [UserTier.HOME]: 'בית',
+  [UserTier.PRO]: 'מקצועי',
+}
 
 export default function Sidebar() {
   const pathname = usePathname()
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [pinnedBusinesses, setPinnedBusinesses] = useState<Business[]>([])
   const [userTier, setUserTier] = useState<UserTier>(userTierStore.get())
+  const [upgradePrompt, setUpgradePrompt] = useState<{ tool: Tool } | null>(null)
 
-  // Filter tools based on user tier
-  const tools = allTools.filter(tool => userTierStore.hasAccess(tool.requiredTier))
+  // Show all tools, check access per tool
+  const tools = allTools
+
+  const handleLockedClick = (tool: Tool) => {
+    setUpgradePrompt({ tool })
+  }
 
   useEffect(() => {
     const loadPinnedBusinesses = async () => {
@@ -147,32 +156,43 @@ export default function Sidebar() {
         </button>
 
         <ul className="nav-list">
-          {tools.map((tool) => (
-            <li key={tool.id}>
-              {tool.available ? (
-                <Link
-                  href={tool.href}
-                  className={`nav-item ${pathname === tool.href ? 'active' : ''}`}
-                  title={isCollapsed ? tool.title : undefined}
-                >
-                  <span className="nav-icon">{tool.icon}</span>
-                  {!isCollapsed && <span className="nav-title">{tool.title}</span>}
-                </Link>
-              ) : (
-                <div className="nav-item disabled" title={isCollapsed ? tool.title : undefined}>
-                  <span className="nav-icon">{tool.icon}</span>
-                  {!isCollapsed && (
-                    <>
-                      <span className="nav-title">{tool.title}</span>
-                      <span className="nav-badge">בקרוב</span>
-                    </>
-                  )}
-                </div>
-              )}
-            </li>
-          ))}
+          {tools.map((tool) => {
+            const hasAccess = userTierStore.hasAccess(tool.requiredTier)
+            const isLocked = !hasAccess
 
-          {userTierStore.hasAccess(UserTier.BUSINESS) && pinnedBusinesses.length > 0 && (
+            return (
+              <li key={tool.id}>
+                {tool.available && hasAccess ? (
+                  <Link
+                    href={tool.href}
+                    className={`nav-item ${pathname === tool.href ? 'active' : ''}`}
+                    title={isCollapsed ? tool.title : undefined}
+                  >
+                    <span className="nav-icon">{tool.icon}</span>
+                    {!isCollapsed && <span className="nav-title">{tool.title}</span>}
+                  </Link>
+                ) : (
+                  <div
+                    className={`nav-item disabled ${isLocked ? 'locked' : ''}`}
+                    title={isCollapsed ? tool.title : `${tool.title}${isLocked ? ' (נעול)' : ''}`}
+                    onClick={isLocked ? () => handleLockedClick(tool) : undefined}
+                    style={isLocked ? { cursor: 'pointer' } : undefined}
+                  >
+                    <span className="nav-icon">{tool.icon}</span>
+                    {!isCollapsed && (
+                      <>
+                        <span className="nav-title">{tool.title}</span>
+                        {isLocked && <span className="nav-lock">🔒</span>}
+                        {!tool.available && !isLocked && <span className="nav-badge">בקרוב</span>}
+                      </>
+                    )}
+                  </div>
+                )}
+              </li>
+            )
+          })}
+
+          {userTierStore.hasAccess(UserTier.PRO) && pinnedBusinesses.length > 0 && (
             <>
               <li style={{ borderTop: '1px solid #e2e8f0', margin: '0.5rem 0' }} />
               {pinnedBusinesses.map((business) => (
@@ -191,6 +211,26 @@ export default function Sidebar() {
           )}
         </ul>
       </nav>
+
+      {upgradePrompt && (
+        <div className="upgrade-modal-overlay" onClick={() => setUpgradePrompt(null)}>
+          <div className="upgrade-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>🔒 {upgradePrompt.tool.title}</h3>
+            <p>
+              תכונה זו דורשת מנוי <strong>{tierLabels[upgradePrompt.tool.requiredTier]}</strong>
+            </p>
+            <p className="upgrade-modal-current">
+              המנוי הנוכחי שלך: {tierLabels[userTier]}
+            </p>
+            <div className="upgrade-modal-actions">
+              <button onClick={() => setUpgradePrompt(null)}>סגור</button>
+              <Link href="/pricing" className="upgrade-btn" onClick={() => setUpgradePrompt(null)}>
+                שדרג עכשיו
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   )
 }

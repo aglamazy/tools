@@ -1,9 +1,12 @@
 /**
  * Auth Store
  * Manages authentication state across the app
+ * Also fetches user tier from Firestore on login
  */
 
 import { subscribeToAuthState, type AuthUser } from '@/app/services/firebaseAuthService'
+import { subscribeToUserData } from '@/app/services/userService'
+import { userTierStore, UserTier } from '@/app/stores/userTierStore'
 
 export type { AuthUser }
 
@@ -23,6 +26,7 @@ let state: AuthState = {
 
 const listeners = new Set<Listener>()
 let unsubscribeFirebase: (() => void) | null = null
+let unsubscribeUserData: (() => void) | null = null
 
 function notifyListeners() {
   listeners.forEach((listener) => listener(state))
@@ -31,11 +35,28 @@ function notifyListeners() {
 /**
  * Initialize auth state listener
  * Should be called once when the app starts
+ * Also subscribes to user tier from Firestore
  */
 export function initializeAuth() {
   if (unsubscribeFirebase) return // Already initialized
 
   unsubscribeFirebase = subscribeToAuthState((user) => {
+    // Clean up previous user data subscription
+    if (unsubscribeUserData) {
+      unsubscribeUserData()
+      unsubscribeUserData = null
+    }
+
+    if (user) {
+      // Subscribe to user data (tier) from Firestore
+      unsubscribeUserData = subscribeToUserData(user.uid, (userData) => {
+        userTierStore.set(userData.tier)
+      })
+    } else {
+      // Reset tier to FREE when logged out
+      userTierStore.set(UserTier.FREE)
+    }
+
     state = {
       user,
       loading: false,

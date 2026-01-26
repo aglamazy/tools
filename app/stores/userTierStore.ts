@@ -4,22 +4,16 @@
  */
 
 export enum UserTier {
-  FREEMIUM = 'freemium',
-  BUSINESS = 'business',
-  LOCAL = 'local',
+  FREE = 'free',
+  HOME = 'home',
+  PRO = 'pro',
 }
 
 type Listener = (tier: UserTier) => void
 
-// Initialize from environment variable or default to freemium
+// Default tier until fetched from Firestore
 function getInitialTier(): UserTier {
-  if (typeof window === 'undefined') {
-    // Server-side: check env var
-    return process.env.NEXT_PUBLIC_SEGMENT === 'local' ? UserTier.LOCAL : UserTier.FREEMIUM
-  }
-
-  // Client-side: check env var (will be embedded at build time)
-  return process.env.NEXT_PUBLIC_SEGMENT === 'local' ? UserTier.LOCAL : UserTier.FREEMIUM
+  return UserTier.FREE
 }
 
 let currentTier: UserTier = getInitialTier()
@@ -47,27 +41,27 @@ export const userTierStore = {
 
   /**
    * Check if user has access to a feature requiring a specific tier
-   * Tier hierarchy: LOCAL > BUSINESS > FREEMIUM
+   * Tier hierarchy: PRO > HOME > FREE
    */
   hasAccess(requiredTier: UserTier): boolean {
     const tierRank = {
-      [UserTier.FREEMIUM]: 1,
-      [UserTier.BUSINESS]: 2,
-      [UserTier.LOCAL]: 3,
+      [UserTier.FREE]: 1,
+      [UserTier.HOME]: 2,
+      [UserTier.PRO]: 3,
     }
 
     return tierRank[currentTier] >= tierRank[requiredTier]
   },
 
-  isFreemium(): boolean {
-    return currentTier === UserTier.FREEMIUM
+  isFree(): boolean {
+    return currentTier === UserTier.FREE
   },
 
-  isBusiness(): boolean {
-    return currentTier === UserTier.BUSINESS
+  isHome(): boolean {
+    return currentTier === UserTier.HOME
   },
 
-  isLocal(): boolean {
-    return currentTier === UserTier.LOCAL
+  isPro(): boolean {
+    return currentTier === UserTier.PRO
   },
 }

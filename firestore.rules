@@ -1,0 +1,13 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Users collection - read own, write only via Admin SDK
+    match /users/{uid} {
+      // User can read their own document
+      allow read: if request.auth != null && request.auth.uid == uid;
+      // No client writes - tier is managed server-side only
+      allow write: if false;
+    }
+  }
+}

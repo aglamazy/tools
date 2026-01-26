@@ -1,11 +1,22 @@
 /**
  * Backup and Restore Service
  * Each store exports and imports its own data
+ *
+ * IMPORTANT: Sync is TIER-AGNOSTIC
+ * ================================
+ * All stores are always backed up and restored regardless of user's current tier.
+ * Tier only controls UI visibility (which features user can access), NOT data storage.
+ *
+ * This ensures:
+ * - No data loss when user is downgraded (temporarily or permanently)
+ * - Data created at higher tier remains in backup, just hidden in UI
+ * - Upgrading tier makes previously hidden data accessible again
+ *
+ * DO NOT add tier-based filtering to export/import functions.
  */
 
 import { db } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
-import { historyStore } from '@/app/stores/historyStore'
 import { timerStore } from '@/app/stores/timerStore'
 import { initializeAppSettings } from '@/app/services/appSettingsService'
 
@@ -24,9 +35,9 @@ export interface BackupData {
     projects: any[]
     harvestTasks: any[]
     timeEntries: any[]
+    ypayDocuments: any[]
     // localStorage data
     subjectStore: any
-    historyStore: any
     timerStore: any
   }
 }
@@ -47,6 +58,7 @@ export async function exportAllStores(): Promise<BackupData> {
       projects,
       harvestTasks,
       timeEntries,
+      ypayDocuments,
     ] = await Promise.all([
       db.transactions.toArray(),
       db.importedFiles.toArray(),
@@ -58,12 +70,12 @@ export async function exportAllStores(): Promise<BackupData> {
       db.projects.toArray(),
       db.harvestTasks.toArray(),
       db.timeEntries.toArray(),
+      db.ypayDocuments.toArray(),
     ])
 
     // Let stores export their own data
-    const [subjectStoreData, historyStoreData, timerStoreData] = await Promise.all([
+    const [subjectStoreData, timerStoreData] = await Promise.all([
       subjectStore.export(),
-      historyStore.export(),
       Promise.resolve(timerStore.export()),
     ])
 
@@ -81,8 +93,8 @@ export async function exportAllStores(): Promise<BackupData> {
         projects,
         harvestTasks,
         timeEntries,
+        ypayDocuments,
         subjectStore: subjectStoreData,
-        historyStore: historyStoreData,
         timerStore: timerStoreData,
       },
     }
@@ -118,6 +130,7 @@ export async function importAllStores(backup: BackupData): Promise<void> {
       projects: stores.projects?.length ?? 0,
       harvestTasks: stores.harvestTasks?.length ?? 0,
       timeEntries: stores.timeEntries?.length ?? 0,
+      ypayDocuments: stores.ypayDocuments?.length ?? 0,
     }
     console.log('[BackupRestore] importing backup', counts)
 
@@ -167,11 +180,14 @@ export async function importAllStores(backup: BackupData): Promise<void> {
       await db.timeEntries.clear()
       await db.timeEntries.bulkAdd(stores.timeEntries)
     }
+    if (stores.ypayDocuments?.length > 0) {
+      await db.ypayDocuments.clear()
+      await db.ypayDocuments.bulkAdd(stores.ypayDocuments)
+    }
 
     // Let stores import their own data
     await Promise.all([
       stores.subjectStore ? subjectStore.import(stores.subjectStore) : Promise.resolve(),
-      stores.historyStore ? historyStore.import(stores.historyStore) : Promise.resolve(),
     ])
 
     // Import timer (sync, not async)
