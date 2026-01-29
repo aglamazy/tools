@@ -47,6 +47,12 @@ function formatDisplayDate(dateStr: string): string {
   return `${day}/${month}/${year}`
 }
 
+function adjustDate(dateStr: string, days: number): string {
+  const date = new Date(dateStr)
+  date.setDate(date.getDate() + days)
+  return formatLocalDate(date)
+}
+
 function getWeekDates(weekOffset: number = 0): { start: string; end: string; days: string[] } {
   const now = new Date()
   const dayOfWeek = now.getDay()
@@ -120,6 +126,40 @@ function getMonthDates(monthOffset: number = 0): { start: string; end: string; m
     end: formatLocalDate(lastDay),
     monthName: `${monthNames[month]} ${year}`,
   }
+}
+
+function getCalendarDays(monthOffset: number = 0): { date: string; isCurrentMonth: boolean }[] {
+  const now = new Date()
+  const targetDate = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1)
+  const year = targetDate.getFullYear()
+  const month = targetDate.getMonth()
+
+  const firstDay = new Date(year, month, 1)
+  const lastDay = new Date(year, month + 1, 0)
+
+  // Get the day of week for the first day (0 = Sunday)
+  const startDayOfWeek = firstDay.getDay()
+
+  const days: { date: string; isCurrentMonth: boolean }[] = []
+
+  // Add days from previous month to fill first week
+  for (let i = startDayOfWeek - 1; i >= 0; i--) {
+    const d = new Date(year, month, -i)
+    days.push({ date: formatLocalDate(d), isCurrentMonth: false })
+  }
+
+  // Add all days of current month
+  for (let d = 1; d <= lastDay.getDate(); d++) {
+    days.push({ date: formatLocalDate(new Date(year, month, d)), isCurrentMonth: true })
+  }
+
+  // Add days from next month to fill 5 rows (35 days total)
+  while (days.length < 35) {
+    const nextDay = days.length - startDayOfWeek - lastDay.getDate() + 1
+    days.push({ date: formatLocalDate(new Date(year, month + 1, nextDay)), isCurrentMonth: false })
+  }
+
+  return days
 }
 
 type ViewMode = 'daily' | 'weekly' | 'monthly'
@@ -551,22 +591,6 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     // Sort entries by date ascending
     const sortedEntries = [...projectEntries].sort((a, b) => a.date.localeCompare(b.date))
 
-    // Group entries by task
-    const taskGroups = new Map<string, { taskName: string; entries: WeekEntry[]; total: number }>()
-
-    sortedEntries.forEach(entry => {
-      if (!taskGroups.has(entry.taskName)) {
-        taskGroups.set(entry.taskName, {
-          taskName: entry.taskName,
-          entries: [],
-          total: 0,
-        })
-      }
-      const task = taskGroups.get(entry.taskName)!
-      task.entries.push(entry)
-      task.total += entry.hours
-    })
-
     // Create worksheet data
     const wsData: any[][] = []
 
@@ -578,21 +602,19 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     // Summary header (RTL order)
     wsData.push(['סה"כ שעות', 'שעות סיום', 'שעות התחלה', 'תאריך', 'משימה'])
 
-    // Data rows
+    // Data rows - sorted by date ascending
     let projectTotal = 0
 
-    Array.from(taskGroups.values()).forEach(task => {
-      task.entries.forEach(entry => {
-        // RTL order: Hours, End Time, Start Time, Date, Task
-        wsData.push([
-          formatHours(entry.hours),
-          entry.endTime,
-          entry.startTime,
-          formatDisplayDate(entry.date),
-          task.taskName,
-        ])
-        projectTotal += entry.hours
-      })
+    sortedEntries.forEach(entry => {
+      // RTL order: Hours, End Time, Start Time, Date, Task
+      wsData.push([
+        formatHours(entry.hours),
+        entry.endTime,
+        entry.startTime,
+        formatDisplayDate(entry.date),
+        entry.taskName,
+      ])
+      projectTotal += entry.hours
     })
 
     // Project total
@@ -856,17 +878,66 @@ export default function TimingTab({ businessId }: TimingTabProps) {
         <div style={{ marginBottom: '1rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
+              <button
+                onClick={() => setSelectedDate(adjustDate(selectedDate, -1))}
                 style={{
-                  padding: '0.5rem',
+                  padding: '0.5rem 0.75rem',
+                  background: '#f1f5f9',
                   border: '1px solid #cbd5e1',
                   borderRadius: '0.5rem',
-                  fontSize: '0.9rem',
+                  cursor: 'pointer',
+                  fontSize: '1rem',
                 }}
-              />
+                title="יום קודם"
+              >
+                →
+              </button>
+              <div style={{ position: 'relative' }}>
+                <span
+                  onClick={() => {
+                    const input = document.getElementById('date-picker-input') as HTMLInputElement
+                    input?.showPicker()
+                  }}
+                  style={{
+                    padding: '0.5rem 0.75rem',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '0.5rem',
+                    fontSize: '0.9rem',
+                    cursor: 'pointer',
+                    display: 'inline-block',
+                    background: 'white',
+                  }}
+                >
+                  {formatDisplayDate(selectedDate)}
+                </span>
+                <input
+                  id="date-picker-input"
+                  type="date"
+                  value={selectedDate}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                  style={{
+                    position: 'absolute',
+                    opacity: 0,
+                    width: 0,
+                    height: 0,
+                    pointerEvents: 'none',
+                  }}
+                />
+              </div>
+              <button
+                onClick={() => setSelectedDate(adjustDate(selectedDate, 1))}
+                style={{
+                  padding: '0.5rem 0.75rem',
+                  background: '#f1f5f9',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '0.5rem',
+                  cursor: 'pointer',
+                  fontSize: '1rem',
+                }}
+                title="יום הבא"
+              >
+                ←
+              </button>
               <button
                 onClick={() => setSelectedDate(formatLocalDate(new Date()))}
                 style={{
@@ -1308,31 +1379,64 @@ export default function TimingTab({ businessId }: TimingTabProps) {
           {weekEntries.length > 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               {(() => {
-                const projectGroups = new Map<string, { projectName: string; tasks: Map<string, { taskName: string; entries: WeekEntry[]; total: number }> }>()
+                const projectGroups = new Map<string, { projectName: string; entries: WeekEntry[] }>()
 
                 weekEntries.forEach(entry => {
                   if (!projectGroups.has(entry.projectName)) {
                     projectGroups.set(entry.projectName, {
                       projectName: entry.projectName,
-                      tasks: new Map(),
-                    })
-                  }
-                  const project = projectGroups.get(entry.projectName)!
-                  if (!project.tasks.has(entry.taskName)) {
-                    project.tasks.set(entry.taskName, {
-                      taskName: entry.taskName,
                       entries: [],
-                      total: 0,
                     })
                   }
-                  const task = project.tasks.get(entry.taskName)!
-                  task.entries.push(entry)
-                  task.total += entry.hours
+                  projectGroups.get(entry.projectName)!.entries.push(entry)
                 })
 
+                const calendarDays = getCalendarDays(monthOffset)
+
                 return Array.from(projectGroups.values()).map(project => {
-                  const projectTotal = Array.from(project.tasks.values()).reduce((sum, task) => sum + task.total, 0)
-                  const projectEntries = Array.from(project.tasks.values()).flatMap(task => task.entries)
+                  const projectTotal = project.entries.reduce((sum, e) => sum + e.hours, 0)
+
+                  // Group entries by date
+                  const entriesByDate = new Map<string, { hours: number; tasks: string[] }>()
+                  project.entries.forEach(entry => {
+                    if (!entriesByDate.has(entry.date)) {
+                      entriesByDate.set(entry.date, { hours: 0, tasks: [] })
+                    }
+                    const dayData = entriesByDate.get(entry.date)!
+                    dayData.hours += entry.hours
+                    if (!dayData.tasks.includes(entry.taskName)) {
+                      dayData.tasks.push(entry.taskName)
+                    }
+                  })
+
+                  // Check if this project has entries for Friday (5) or Saturday (6)
+                  const hasSaturdayEntries = project.entries.some(entry => new Date(entry.date).getDay() === 6)
+                  const hasFridayEntries = project.entries.some(entry => new Date(entry.date).getDay() === 5)
+
+                  // Saturday entries → show both Fri+Sat, Friday only → show Fri, neither → Sun-Thu only
+                  let dayNames: string[]
+                  let numColumns: number
+                  let excludeDays: number[]
+
+                  if (hasSaturdayEntries) {
+                    dayNames = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳', 'ש׳']
+                    numColumns = 7
+                    excludeDays = []
+                  } else if (hasFridayEntries) {
+                    dayNames = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳']
+                    numColumns = 6
+                    excludeDays = [6] // exclude Saturday
+                  } else {
+                    dayNames = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳']
+                    numColumns = 5
+                    excludeDays = [5, 6] // exclude Friday and Saturday
+                  }
+
+                  // Filter calendar days based on this project's weekend entries
+                  const filteredDays = calendarDays.filter(({ date }) => {
+                    const dayOfWeek = new Date(date).getDay()
+                    return !excludeDays.includes(dayOfWeek)
+                  })
 
                   return (
                     <div
@@ -1360,7 +1464,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
                             {formatHours(projectTotal)}
                           </span>
                           <button
-                            onClick={() => handleExportToExcel(project.projectName, projectEntries)}
+                            onClick={() => handleExportToExcel(project.projectName, project.entries)}
                             title="ייצא ל-Excel"
                             style={{
                               padding: '0.375rem 0.75rem',
@@ -1377,55 +1481,82 @@ export default function TimingTab({ businessId }: TimingTabProps) {
                           </button>
                         </div>
                       </div>
-                      <div style={{ padding: '0.5rem' }}>
-                        {Array.from(project.tasks.values()).map(task => (
-                          <div
-                            key={task.taskName}
-                            style={{
-                              padding: '0.75rem',
-                              marginBottom: '0.5rem',
-                              background: 'white',
-                              borderRadius: '0.375rem',
-                              border: '1px solid #e2e8f0',
-                            }}
-                          >
-                            <div style={{
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              alignItems: 'center',
-                              marginBottom: '0.5rem',
-                            }}>
-                              <span style={{ fontWeight: 500, fontSize: '0.95rem' }}>
-                                {task.taskName}
-                              </span>
-                              <span style={{ fontWeight: 600 }}>
-                                {formatHours(task.total)}
-                              </span>
+                      {/* Calendar Grid */}
+                      <div style={{ padding: '0.5rem', direction: 'rtl' }}>
+                        {/* Day headers */}
+                        <div style={{
+                          display: 'grid',
+                          gridTemplateColumns: `repeat(${numColumns}, minmax(0, 1fr))`,
+                          gap: '2px',
+                        }}>
+                          {dayNames.map(day => (
+                            <div
+                              key={day}
+                              style={{
+                                textAlign: 'center',
+                                padding: '0.25rem',
+                                fontSize: '0.75rem',
+                                fontWeight: 600,
+                                color: '#64748b',
+                                border: '1px solid transparent',
+                              }}
+                            >
+                              {day}
                             </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                              {task.entries.map(entry => (
-                                <div
-                                  key={entry.id}
-                                  onClick={() => handleEditEntry(entry)}
-                                  style={{
-                                    display: 'flex',
-                                    justifyContent: 'space-between',
-                                    padding: '0.375rem 0.5rem',
-                                    fontSize: '0.85rem',
-                                    color: '#64748b',
-                                    cursor: 'pointer',
-                                    borderRadius: '0.25rem',
-                                  }}
-                                  onMouseEnter={(e) => e.currentTarget.style.background = '#f1f5f9'}
-                                  onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                                >
-                                  <span>{formatDisplayDate(entry.date)}</span>
-                                  <span>{formatHours(entry.hours)}</span>
+                          ))}
+                        </div>
+                        {/* Calendar days - 5 rows */}
+                        <div style={{
+                          display: 'grid',
+                          gridTemplateColumns: `repeat(${numColumns}, minmax(0, 1fr))`,
+                          gap: '2px',
+                        }}>
+                          {filteredDays.map(({ date, isCurrentMonth }) => {
+                            const dayData = entriesByDate.get(date)
+                            const dayNum = parseInt(date.split('-')[2])
+                            return (
+                              <div
+                                key={date}
+                                style={{
+                                  background: isCurrentMonth ? 'white' : '#f1f5f9',
+                                  border: '1px solid #e2e8f0',
+                                  borderRadius: '0.25rem',
+                                  padding: '0.25rem',
+                                  minHeight: '60px',
+                                  opacity: isCurrentMonth ? 1 : 0.5,
+                                }}
+                              >
+                                <div style={{
+                                  fontSize: '0.7rem',
+                                  color: '#94a3b8',
+                                  marginBottom: '0.125rem',
+                                }}>
+                                  {dayNum}
                                 </div>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
+                                {dayData && (
+                                  <>
+                                    <div style={{
+                                      fontSize: '0.8rem',
+                                      fontWeight: 600,
+                                      color: '#0369a1',
+                                    }}>
+                                      {formatHours(dayData.hours)}
+                                    </div>
+                                    <div style={{
+                                      fontSize: '0.65rem',
+                                      color: '#64748b',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      whiteSpace: 'nowrap',
+                                    }}>
+                                      {dayData.tasks.join(', ')}
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
                       </div>
                     </div>
                   )
