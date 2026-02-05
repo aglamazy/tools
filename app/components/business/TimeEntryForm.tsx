@@ -1,8 +1,27 @@
 'use client'
 
-import React from 'react'
+import React, { useMemo } from 'react'
 import FormModal, { FormField, inputStyle } from '../FormModal'
+import { LocaleDateInput, LocaleTimeInput } from '../LocaleInputs'
 import type { Project, HarvestTask } from '@/app/db/financeDB'
+
+function calculateDuration(startTime: string, endTime: string, endNextDay: boolean): number {
+  if (!startTime || !endTime) return 0
+  const [startH, startM] = startTime.split(':').map(Number)
+  const [endH, endM] = endTime.split(':').map(Number)
+  const startMinutes = startH * 60 + startM
+  let endMinutes = endH * 60 + endM
+  if (endNextDay) {
+    endMinutes += 24 * 60
+  }
+  return (endMinutes - startMinutes) / 60
+}
+
+function formatDuration(hours: number): string {
+  const h = Math.floor(hours)
+  const m = Math.round((hours - h) * 60)
+  return `${h}:${m.toString().padStart(2, '0')}`
+}
 
 export type TimeEntryFormData = {
   projectId: number | null
@@ -10,6 +29,7 @@ export type TimeEntryFormData = {
   date: string
   startTime: string
   endTime: string
+  endNextDay: boolean
 }
 
 type TimeEntryFormProps = {
@@ -43,6 +63,11 @@ export default function TimeEntryForm({
   projectName,
   taskName,
 }: TimeEntryFormProps) {
+  const hours = useMemo(
+    () => calculateDuration(data.startTime, data.endTime, data.endNextDay),
+    [data.startTime, data.endTime, data.endNextDay]
+  )
+
   return (
     <FormModal
       isOpen={isOpen}
@@ -92,32 +117,58 @@ export default function TimeEntryForm({
       )}
 
       <FormField label="תאריך">
-        <input
-          type="date"
+        <LocaleDateInput
           value={data.date}
-          onChange={(e) => onChange({ ...data, date: e.target.value })}
+          onChange={(date) => onChange({ ...data, date })}
           style={inputStyle}
         />
       </FormField>
 
-      <div style={{ display: 'flex', gap: '1rem' }}>
+      <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end' }}>
         <FormField label="שעת התחלה">
-          <input
-            type="time"
+          <LocaleTimeInput
             value={data.startTime}
-            onChange={(e) => onChange({ ...data, startTime: e.target.value })}
+            onChange={(startTime) => onChange({ ...data, startTime })}
             style={inputStyle}
           />
         </FormField>
 
         <FormField label="שעת סיום">
-          <input
-            type="time"
+          <LocaleTimeInput
             value={data.endTime}
-            onChange={(e) => onChange({ ...data, endTime: e.target.value })}
+            onChange={(endTime) => onChange({ ...data, endTime })}
             style={inputStyle}
           />
         </FormField>
+
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem' }}>
+          <button
+            type="button"
+            onClick={() => onChange({ ...data, endNextDay: !data.endNextDay })}
+            style={{
+              padding: '0.4rem 0.5rem',
+              background: data.endNextDay ? '#3b82f6' : '#e2e8f0',
+              border: 'none',
+              borderRadius: '0.375rem',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              color: data.endNextDay ? '#fff' : '#64748b',
+              cursor: 'pointer',
+            }}
+            title={data.endNextDay ? 'סיום ביום הבא' : 'סיום באותו יום'}
+          >
+            {data.endNextDay ? '+1' : '+0'}
+          </button>
+          {hours > 0 && hours <= 24 && (
+            <span style={{
+              fontSize: '0.85rem',
+              fontWeight: 500,
+              color: data.endNextDay ? '#1d4ed8' : '#64748b',
+            }}>
+              {formatDuration(hours)}
+            </span>
+          )}
+        </div>
       </div>
 
       {onDelete && (

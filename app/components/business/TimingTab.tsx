@@ -439,6 +439,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
       date: today,
       startTime: '09:00',
       endTime: '10:00',
+      endNextDay: false,
     })
     if (selectedProjectId) {
       void harvestTaskStore.getActiveByProjectId(selectedProjectId).then(setFormTasks)
@@ -456,10 +457,15 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     const [startH, startM] = formData.startTime.split(':').map(Number)
     const [endH, endM] = formData.endTime.split(':').map(Number)
     const startMinutes = startH * 60 + startM
-    const endMinutes = endH * 60 + endM
+    let endMinutes = endH * 60 + endM
+
+    // Handle entries that span midnight based on user's explicit +1 selection
+    if (formData.endNextDay) {
+      endMinutes += 24 * 60
+    }
     const hours = (endMinutes - startMinutes) / 60
 
-    if (hours <= 0) return
+    if (hours <= 0 || hours > 24) return
 
     if (editingEntry) {
       // Update existing
@@ -496,12 +502,22 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     const projectTasks = await harvestTaskStore.getActiveByProjectId(task.projectId)
     setFormTasks(projectTasks)
 
+    // Calculate if entry spans midnight from stored hours
+    const startTime = entry.startTime || '09:00'
+    const endTime = entry.endTime || '10:00'
+    const [startH, startM] = startTime.split(':').map(Number)
+    const [endH, endM] = endTime.split(':').map(Number)
+    const sameDayHours = ((endH * 60 + endM) - (startH * 60 + startM)) / 60
+    // If stored hours > same-day calculation, it spans midnight
+    const endNextDay = entry.hours > sameDayHours + 0.01 // small epsilon for float comparison
+
     setFormData({
       projectId: task.projectId,
       taskId: entry.taskId,
       date: entry.date,
-      startTime: entry.startTime || '09:00',
-      endTime: entry.endTime || '10:00',
+      startTime,
+      endTime,
+      endNextDay,
     })
   }
 
@@ -577,6 +593,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
       date: selectedDate,
       startTime,
       endTime,
+      endNextDay: false,
     })
     if (selectedProjectId) {
       void harvestTaskStore.getActiveByProjectId(selectedProjectId).then(setFormTasks)

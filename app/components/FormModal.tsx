@@ -67,7 +67,7 @@ export default function FormModal({
 }
 
 // Reusable form field components
-export function FormField({ label, children }: { label: string; children: ReactNode }) {
+export function FormField({ label, children }: { label: ReactNode; children: ReactNode }) {
   return (
     <div style={{ marginBottom: '1rem' }}>
       <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, fontSize: '0.95rem' }}>
