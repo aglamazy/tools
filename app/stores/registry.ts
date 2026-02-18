@@ -22,12 +22,12 @@ export const INDEXEDDB_TABLES = [
   'projects',
   'harvestTasks',
   'timeEntries',
+  'ypayDocuments',
 ] as const
 
 // localStorage stores that need backup (have export/import methods)
 export const LOCALSTORAGE_STORES = [
   'subjectStore',
-  'historyStore',
   'timerStore',
 ] as const
 

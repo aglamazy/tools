@@ -23,11 +23,11 @@ const INDEXEDDB_TABLES = [
   'projects',
   'harvestTasks',
   'timeEntries',
+  'ypayDocuments',
 ]
 
 const LOCALSTORAGE_STORES = [
   'subjectStore',
-  'historyStore',
   'timerStore',
 ]
 

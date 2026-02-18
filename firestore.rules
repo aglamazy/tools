@@ -6,7 +6,33 @@ service cloud.firestore {
     match /users/{uid} {
       // User can read their own document
       allow read: if request.auth != null && request.auth.uid == uid;
-      // No client writes - tier is managed server-side only
+      // No client writes - tier and household managed server-side only
+      allow write: if false;
+    }
+
+    // Households collection - read for members, write only via Admin SDK
+    match /households/{householdId} {
+      // Members can read their household (checked via custom claim)
+      allow read: if request.auth != null
+                  && request.auth.token.householdId == householdId;
+      // No client writes - managed server-side only
+      allow write: if false;
+    }
+
+    // Invitations collection - read for invitee or household owner
+    match /invitations/{invitationId} {
+      // Allow read if:
+      // 1. User is authenticated AND
+      // 2. Either the invitation is for their email OR they are the household owner
+      allow read: if request.auth != null
+                  && (
+                    // Invitee can read invitation by email (needs to match their auth email)
+                    resource.data.inviteeEmail == request.auth.token.email
+                    // Or household owner can read their household's invitations
+                    || (request.auth.token.householdId == resource.data.householdId
+                        && request.auth.token.householdRole == 'owner')
+                  );
+      // No client writes - managed server-side only
       allow write: if false;
     }
   }

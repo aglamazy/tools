@@ -1,7 +1,7 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    // Backup files - each user can only access their own backups
+    // Personal backup files - each user can only access their own backups
     match /backups/{userId}/{fileName} {
       // Allow read/write only if:
       // 1. User is authenticated
@@ -10,6 +10,19 @@ service firebase.storage {
       allow read: if request.auth != null && request.auth.uid == userId;
       allow write: if request.auth != null
                    && request.auth.uid == userId
+                   && request.resource.size < 2621440;
+    }
+
+    // Household backup files - members share access via custom claims
+    match /backups/households/{householdId}/{fileName} {
+      // Allow read/write only if:
+      // 1. User is authenticated
+      // 2. User's householdId custom claim matches the path
+      // 3. File size is under 2.5 MB (2621440 bytes)
+      allow read: if request.auth != null
+                  && request.auth.token.householdId == householdId;
+      allow write: if request.auth != null
+                   && request.auth.token.householdId == householdId
                    && request.resource.size < 2621440;
     }
 

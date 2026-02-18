@@ -39,6 +39,9 @@ export default function FileBrowser({
   const [previews, setPreviews] = useState<FilePreview[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [subfolders, setSubfolders] = useState<{ name: string; handle: FileSystemDirectoryHandle }[]>([])
+  const [dirStack, setDirStack] = useState<{ name: string; handle: FileSystemDirectoryHandle }[]>([])
+  const [currentDirHandle, setCurrentDirHandle] = useState<FileSystemDirectoryHandle | null>(null)
 
   // Auto-load files when modal opens using the saved directory from settings
   useEffect(() => {
@@ -47,10 +50,13 @@ export default function FileBrowser({
       if (!savedDirHandle) {
         // No folder selected yet - show folder selection UI
         setPreviews([])
+        setSubfolders([])
+        setDirStack([])
         return
       }
 
       setError('')
+      setDirStack([])
       const hasPermission = await requestDirectoryPermission(savedDirHandle, 'read')
       if (!hasPermission) {
         setError('אין הרשאה לתיקייה. פתח את התיקייה במסך ההגדרות ואשר גישה.')
@@ -70,24 +76,32 @@ export default function FileBrowser({
     setLoading(true)
     setError('')
     setPreviews([])
+    setSubfolders([])
+    setCurrentDirHandle(dirHandle)
 
     try {
       const fileHandles: FileSystemFileHandle[] = []
+      const folders: { name: string; handle: FileSystemDirectoryHandle }[] = []
 
-      // Collect all .xls and .xlsx files
+      // Collect all .xls and .xlsx files and sub-folders
       // TypeScript's built-in types don't include entries() for FileSystemDirectoryHandle, so we cast
       const dirHandleWithEntries = dirHandle as FileSystemDirectoryHandle & {
         entries(): AsyncIterableIterator<[string, FileSystemHandle]>
       }
 
       for await (const [, entry] of dirHandleWithEntries.entries()) {
-        if (entry.kind === 'file') {
+        if (entry.kind === 'directory') {
+          folders.push({ name: entry.name, handle: entry as FileSystemDirectoryHandle })
+        } else if (entry.kind === 'file') {
           const fileName = entry.name.toLowerCase()
           if (fileName.endsWith('.xls') || fileName.endsWith('.xlsx')) {
             fileHandles.push(entry as FileSystemFileHandle)
           }
         }
       }
+
+      folders.sort((a, b) => a.name.localeCompare(b.name))
+      setSubfolders(folders)
 
       // Generate previews
       const previewPromises = fileHandles.map(async (fileHandle) => {
@@ -162,6 +176,7 @@ export default function FileBrowser({
       })
 
       if (dirHandle) {
+        setDirStack([])
         onDirHandleChange(dirHandle)
       }
     } catch (err: any) {
@@ -172,6 +187,20 @@ export default function FileBrowser({
       console.error('Error selecting folder:', err)
       setError('שגיאה בבחירת תיקייה')
     }
+  }
+
+  const handleEnterSubfolder = async (folder: { name: string; handle: FileSystemDirectoryHandle }) => {
+    if (currentDirHandle) {
+      setDirStack((prev) => [...prev, { name: currentDirHandle.name, handle: currentDirHandle }])
+    }
+    await loadFilesFromDirectory(folder.handle)
+  }
+
+  const handleGoBack = async () => {
+    if (dirStack.length === 0) return
+    const parent = dirStack[dirStack.length - 1]
+    setDirStack((prev) => prev.slice(0, -1))
+    await loadFilesFromDirectory(parent.handle)
   }
 
   const formatMonthDisplay = (monthStr: string | null): string => {
@@ -218,6 +247,57 @@ export default function FileBrowser({
         </div>
       )}
       {error && <div className="banner error" style={{ marginTop: '1rem' }}>{error}</div>}
+
+      {savedDirHandle && !loading && dirStack.length > 0 && (
+        <button
+          onClick={handleGoBack}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            padding: '0.5rem 1rem',
+            marginBottom: '0.5rem',
+            background: 'transparent',
+            border: '1px solid #e2e8f0',
+            borderRadius: '0.375rem',
+            cursor: 'pointer',
+            fontSize: '0.875rem',
+            color: '#475569',
+          }}
+        >
+          ↩ חזור ל-{dirStack[dirStack.length - 1].name}
+        </button>
+      )}
+
+      {savedDirHandle && !loading && subfolders.length > 0 && (
+        <div style={{ marginBottom: '0.75rem' }}>
+          {subfolders.map((folder) => (
+            <button
+              key={folder.name}
+              onClick={() => handleEnterSubfolder(folder)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                width: '100%',
+                padding: '0.625rem 1rem',
+                marginBottom: '0.25rem',
+                background: '#f8fafc',
+                border: '1px solid #e2e8f0',
+                borderRadius: '0.375rem',
+                cursor: 'pointer',
+                fontSize: '0.9rem',
+                textAlign: 'right',
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#eff6ff'}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#f8fafc'}
+            >
+              <span>📁</span>
+              <span>{folder.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {previews.length > 0 && (
         <div className="table-wrapper">
@@ -270,7 +350,7 @@ export default function FileBrowser({
           </table>
         </div>
       )}
-      {savedDirHandle && !loading && !error && previews.length === 0 && (
+      {savedDirHandle && !loading && !error && previews.length === 0 && subfolders.length === 0 && (
         <div className="banner" style={{ marginTop: '1rem' }}>
           לא נמצאו קבצי XLS/XLSX בתיקייה שנבחרה.
         </div>

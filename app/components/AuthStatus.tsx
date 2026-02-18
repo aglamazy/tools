@@ -122,8 +122,8 @@ export default function AuthStatus() {
     return null
   }
 
-  // Show cached avatar while loading for faster render
-  const cachedAvatar = getCachedAvatar()
+  // Show cached avatar while loading for faster render (only after mount to avoid hydration mismatch)
+  const cachedAvatar = isMounted ? getCachedAvatar() : null
   if (loading && cachedAvatar) {
     return (
       <div style={{ position: 'relative' }}>

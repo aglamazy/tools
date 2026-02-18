@@ -5,9 +5,11 @@ import { businessStore } from '@/app/stores/businessStore'
 import type { Business } from '@/app/db/financeDB'
 import SettingsTabs, { type TabItem } from '../settings/SettingsTabs'
 import TimingTab from './TimingTab'
+import IncomeTab from './IncomeTab'
 import BusinessSettingsTab from './BusinessSettingsTab'
 
 const TABS: TabItem[] = [
+  { id: 'income', label: 'הכנסות', icon: '💰' },
   { id: 'timing', label: 'תיעוד זמן', icon: '⏱️' },
   { id: 'settings', label: 'הגדרות', icon: '⚙️' },
 ]
@@ -56,9 +58,10 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
         </h1>
       </header>
 
-      <SettingsTabs tabs={TABS} defaultTab="timing">
+      <SettingsTabs tabs={TABS} defaultTab="income">
         {(activeTab) => (
           <>
+            {activeTab === 'income' && <IncomeTab businessId={businessId} />}
             {activeTab === 'timing' && <TimingTab businessId={businessId} />}
             {activeTab === 'settings' && <BusinessSettingsTab businessId={businessId} />}
           </>

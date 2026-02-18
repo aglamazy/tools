@@ -85,6 +85,14 @@ const allTools: Tool[] = [
 
   // Pro features
   {
+    id: 'gmail',
+    title: 'Gmail',
+    href: '/tools/gmail',
+    icon: '📧',
+    available: true,
+    requiredTier: UserTier.PRO,
+  },
+  {
     id: 'capital',
     title: 'הון',
     href: '/tools/capital',
@@ -106,6 +114,7 @@ const tierLabels: Record<UserTier, string> = {
   [UserTier.FREE]: 'חינם',
   [UserTier.HOME]: 'בית',
   [UserTier.PRO]: 'מקצועי',
+  [UserTier.OWNER]: 'בעלים',
 }
 
 export default function Sidebar() {

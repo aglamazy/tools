@@ -18,6 +18,19 @@ import {
   type CalendarEvent,
 } from '@/app/services/googleCalendarService'
 import * as XLSX from 'xlsx'
+import {
+  formatLocalDate,
+  formatDisplayDate,
+  getDayName,
+  adjustDate,
+  formatTime,
+  formatHours,
+  getWeekDates,
+  formatWeekRange,
+  getMonthDates,
+  getCalendarDays,
+  DAY_NAMES_HE,
+} from '@/app/lib/dateUtils'
 
 type TimingTabProps = {
   businessId: number
@@ -35,67 +48,6 @@ type ProjectSummary = {
 }
 
 
-function formatLocalDate(d: Date): string {
-  const year = d.getFullYear()
-  const month = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-function formatDisplayDate(dateStr: string): string {
-  const [year, month, day] = dateStr.split('-')
-  return `${day}/${month}/${year}`
-}
-
-function adjustDate(dateStr: string, days: number): string {
-  const date = new Date(dateStr)
-  date.setDate(date.getDate() + days)
-  return formatLocalDate(date)
-}
-
-function getWeekDates(weekOffset: number = 0): { start: string; end: string; days: string[] } {
-  const now = new Date()
-  const dayOfWeek = now.getDay()
-  // Start from Sunday (day 0)
-  const sunday = new Date(now)
-  sunday.setDate(now.getDate() - dayOfWeek + (weekOffset * 7))
-  sunday.setHours(12, 0, 0, 0) // Use noon to avoid timezone issues
-
-  const days: string[] = []
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(sunday)
-    d.setDate(sunday.getDate() + i)
-    days.push(formatLocalDate(d))
-  }
-
-  return {
-    start: days[0],
-    end: days[6],
-    days,
-  }
-}
-
-function formatWeekRange(days: string[]): string {
-  const start = new Date(days[0])
-  const end = new Date(days[6])
-  const startStr = `${start.getDate()}/${start.getMonth() + 1}`
-  const endStr = `${end.getDate()}/${end.getMonth() + 1}`
-  return `${startStr} - ${endStr}`
-}
-
-function formatTime(seconds: number): string {
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  const s = seconds % 60
-  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
-}
-
-function formatHours(hours: number): string {
-  const h = Math.floor(hours)
-  const m = Math.round((hours - h) * 60)
-  return `${h}:${m.toString().padStart(2, '0')}`
-}
-
 function calculateProjectSummaries(entries: WeekEntry[]): ProjectSummary[] {
   const projectMap = new Map<string, number>()
 
@@ -107,59 +59,6 @@ function calculateProjectSummaries(entries: WeekEntry[]): ProjectSummary[] {
   return Array.from(projectMap.entries())
     .map(([projectName, totalHours]) => ({ projectName, totalHours }))
     .sort((a, b) => b.totalHours - a.totalHours)
-}
-
-function getMonthDates(monthOffset: number = 0): { start: string; end: string; monthName: string } {
-  const now = new Date()
-  const targetDate = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1)
-
-  const year = targetDate.getFullYear()
-  const month = targetDate.getMonth()
-
-  const firstDay = new Date(year, month, 1)
-  const lastDay = new Date(year, month + 1, 0)
-
-  const monthNames = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר']
-
-  return {
-    start: formatLocalDate(firstDay),
-    end: formatLocalDate(lastDay),
-    monthName: `${monthNames[month]} ${year}`,
-  }
-}
-
-function getCalendarDays(monthOffset: number = 0): { date: string; isCurrentMonth: boolean }[] {
-  const now = new Date()
-  const targetDate = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1)
-  const year = targetDate.getFullYear()
-  const month = targetDate.getMonth()
-
-  const firstDay = new Date(year, month, 1)
-  const lastDay = new Date(year, month + 1, 0)
-
-  // Get the day of week for the first day (0 = Sunday)
-  const startDayOfWeek = firstDay.getDay()
-
-  const days: { date: string; isCurrentMonth: boolean }[] = []
-
-  // Add days from previous month to fill first week
-  for (let i = startDayOfWeek - 1; i >= 0; i--) {
-    const d = new Date(year, month, -i)
-    days.push({ date: formatLocalDate(d), isCurrentMonth: false })
-  }
-
-  // Add all days of current month
-  for (let d = 1; d <= lastDay.getDate(); d++) {
-    days.push({ date: formatLocalDate(new Date(year, month, d)), isCurrentMonth: true })
-  }
-
-  // Add days from next month to fill 5 rows (35 days total)
-  while (days.length < 35) {
-    const nextDay = days.length - startDayOfWeek - lastDay.getDate() + 1
-    days.push({ date: formatLocalDate(new Date(year, month + 1, nextDay)), isCurrentMonth: false })
-  }
-
-  return days
 }
 
 type ViewMode = 'daily' | 'weekly' | 'monthly'
@@ -676,7 +575,6 @@ export default function TimingTab({ businessId }: TimingTabProps) {
   }
 
   const { days } = getWeekDates(weekOffset)
-  const dayNames = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳', 'ש׳']
   const isCurrentWeek = weekOffset === 0
 
   return (
@@ -925,7 +823,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
                     background: 'white',
                   }}
                 >
-                  {formatDisplayDate(selectedDate)}
+                  {getDayName(selectedDate)} {formatDisplayDate(selectedDate)}
                 </span>
                 <input
                   id="date-picker-input"
@@ -1270,7 +1168,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
                   textAlign: 'center',
                 }}
               >
-                <div style={{ fontSize: '0.8rem', color: '#64748b' }}>{dayNames[i]}</div>
+                <div style={{ fontSize: '0.8rem', color: '#64748b' }}>{DAY_NAMES_HE[i]}</div>
                 <div style={{ fontSize: '1rem', fontWeight: 600 }}>
                   {dayTotal > 0 ? formatHours(dayTotal) : '-'}
                 </div>
@@ -1431,20 +1329,20 @@ export default function TimingTab({ businessId }: TimingTabProps) {
                   const hasFridayEntries = project.entries.some(entry => new Date(entry.date).getDay() === 5)
 
                   // Saturday entries → show both Fri+Sat, Friday only → show Fri, neither → Sun-Thu only
-                  let dayNames: string[]
+                  let visibleDays: string[]
                   let numColumns: number
                   let excludeDays: number[]
 
                   if (hasSaturdayEntries) {
-                    dayNames = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳', 'ש׳']
+                    visibleDays = DAY_NAMES_HE
                     numColumns = 7
                     excludeDays = []
                   } else if (hasFridayEntries) {
-                    dayNames = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳']
+                    visibleDays = DAY_NAMES_HE.slice(0, 6)
                     numColumns = 6
                     excludeDays = [6] // exclude Saturday
                   } else {
-                    dayNames = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳']
+                    visibleDays = DAY_NAMES_HE.slice(0, 5)
                     numColumns = 5
                     excludeDays = [5, 6] // exclude Friday and Saturday
                   }
@@ -1506,7 +1404,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
                           gridTemplateColumns: `repeat(${numColumns}, minmax(0, 1fr))`,
                           gap: '2px',
                         }}>
-                          {dayNames.map(day => (
+                          {visibleDays.map(day => (
                             <div
                               key={day}
                               style={{

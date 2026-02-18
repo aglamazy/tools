@@ -10,8 +10,9 @@ import { UserTier } from '@/app/stores/userTierStore'
 export interface UserData {
   tier: UserTier
   createdAt?: string
-  // Future: householdId for HOME tier sharing
+  // Household sharing (HOME tier)
   householdId?: string
+  householdRole?: 'owner' | 'member'
 }
 
 const DEFAULT_USER_DATA: UserData = {
@@ -42,6 +43,7 @@ export async function fetchUserData(uid: string): Promise<UserData> {
       tier: (data.tier as UserTier) || UserTier.FREE,
       createdAt: data.createdAt,
       householdId: data.householdId,
+      householdRole: data.householdRole,
     }
   } catch (error) {
     console.error('[UserService] Error fetching user data:', error)
@@ -78,6 +80,7 @@ export function subscribeToUserData(
         tier: (data.tier as UserTier) || UserTier.FREE,
         createdAt: data.createdAt,
         householdId: data.householdId,
+        householdRole: data.householdRole,
       })
     },
     (error) => {

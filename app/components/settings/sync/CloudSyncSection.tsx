@@ -9,6 +9,8 @@ import {
   uploadBackup,
   restoreFromCloud,
   getBackupInfo,
+  isUsingHouseholdStorage,
+  migrateToHouseholdStorage,
   type CloudBackupInfo,
 } from '@/app/services/cloudBackupService'
 import { signOut } from '@/app/services/firebaseAuthService'
@@ -32,6 +34,7 @@ export default function CloudSyncSection() {
   const [lockMode, setLockMode] = useState<LockMode>('initializing')
   const [hasSessionPassword, setHasSessionPassword] = useState(false)
   const [hasEncryption, setHasEncryption] = useState(false)
+  const [isHousehold, setIsHousehold] = useState(false)
 
   useEffect(() => {
     const unsubscribe = subscribeToAuth((state) => {
@@ -62,10 +65,15 @@ export default function CloudSyncSection() {
   useEffect(() => {
     const checkEncryption = async () => {
       if (user) {
-        const has = await hasEncryptionPasswordSetup()
+        const [has, household] = await Promise.all([
+          hasEncryptionPasswordSetup(),
+          isUsingHouseholdStorage(),
+        ])
         setHasEncryption(has)
+        setIsHousehold(household)
       } else {
         setHasEncryption(false)
+        setIsHousehold(false)
       }
     }
     checkEncryption()
@@ -243,6 +251,31 @@ export default function CloudSyncSection() {
             </button>
           </div>
 
+          {/* Household notice */}
+          {isHousehold && (
+            <div
+              style={{
+                marginBottom: '1rem',
+                padding: '0.75rem',
+                background: '#eff6ff',
+                border: '1px solid #bfdbfe',
+                borderRadius: '0.5rem',
+                fontSize: '0.9rem',
+                color: '#1e40af',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+              }}
+            >
+              <span>🏠</span>
+              <span>
+                <strong>משק בית משותף</strong> — הגיבוי משותף עם בן/בת הזוג.
+                {!hasEncryption && !hasSessionPassword && ' יש לקבל את סיסמת ההצפנה מהשותף/ה ולשחזר מהענן.'}
+                {hasEncryption && !hasSessionPassword && ' הזן את סיסמת ההצפנה המשותפת כדי לסנכרן.'}
+              </span>
+            </div>
+          )}
+
           {/* Sync Status Indicator */}
           <div
             style={{
@@ -364,6 +397,57 @@ export default function CloudSyncSection() {
             </button>
           </div>
 
+          {/* Household: no backup yet — offer migration */}
+          {isHousehold && !backupInfo?.exists && (
+            <div
+              style={{
+                marginTop: '1rem',
+                padding: '0.75rem',
+                background: '#fefce8',
+                border: '1px solid #fef08a',
+                borderRadius: '0.5rem',
+                fontSize: '0.9rem',
+                color: '#854d0e',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '0.75rem',
+              }}
+            >
+              <span>אין עדיין גיבוי משותף. אם יש לך גיבוי אישי קיים, ניתן להעביר אותו.</span>
+              <button
+                onClick={async () => {
+                  setSyncStatus('uploading')
+                  setMessage(null)
+                  const result = await migrateToHouseholdStorage()
+                  setSyncStatus('idle')
+                  if (result.success) {
+                    setMessage('הגיבוי הועבר לאחסון המשותף!')
+                    loadBackupInfo()
+                    const has = await hasEncryptionPasswordSetup()
+                    setHasEncryption(has)
+                  } else {
+                    setMessage(result.error || 'לא נמצא גיבוי אישי להעברה')
+                  }
+                }}
+                disabled={syncStatus !== 'idle'}
+                style={{
+                  padding: '0.4rem 0.8rem',
+                  fontSize: '0.85rem',
+                  background: '#f59e0b',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '0.375rem',
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0,
+                }}
+              >
+                העבר גיבוי
+              </button>
+            </div>
+          )}
+
           {/* Message */}
           {message && (
             <div
@@ -393,7 +477,9 @@ export default function CloudSyncSection() {
               color: '#92400e',
             }}
           >
-            מגבלת אחסון בחינם: 2.5 MB. הנתונים מוצפנים בסיסמה שרק אתה יודע.
+            {isHousehold
+              ? 'מגבלת אחסון בחינם: 2.5 MB. הנתונים מוצפנים בסיסמה משותפת למשק הבית.'
+              : 'מגבלת אחסון בחינם: 2.5 MB. הנתונים מוצפנים בסיסמה שרק אתה יודע.'}
           </div>
         </>
       )}

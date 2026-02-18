@@ -1,6 +1,10 @@
 /**
  * Cloud Backup Service
  * Handles encrypted backup storage in Firebase Storage
+ *
+ * Supports two storage modes:
+ * 1. Personal: backups/{userId}/... (default for FREE/PRO users)
+ * 2. Household: backups/households/{householdId}/... (for HOME tier sharing)
  */
 
 import {
@@ -11,6 +15,7 @@ import {
   deleteObject,
 } from 'firebase/storage'
 import { getFirebaseStorage, isFirebaseConfigured } from '@/app/lib/firebase'
+import { getFirebaseAuth } from '@/app/lib/firebase'
 import { getCurrentUser } from './firebaseAuthService'
 import { encrypt, decrypt, generateVerificationToken, verifyPasswordWithToken } from './encryptionService'
 import { exportAllStores, importAllStores, isLocalDataEmpty, type BackupData } from './backupService'
@@ -30,13 +35,102 @@ export type CloudBackupInfo = {
   sizeBytes?: number
   lastModified?: string
   error?: string
+  isHousehold?: boolean
 }
 
 /**
- * Get the storage path for user's backup
+ * Get householdId from current user's ID token claims
+ * Returns null if not in a household
  */
-function getBackupPath(uid: string, fileName: string): string {
+async function getHouseholdIdFromToken(): Promise<string | null> {
+  if (!isFirebaseConfigured()) return null
+
+  const auth = getFirebaseAuth()
+  const user = auth.currentUser
+  if (!user) return null
+
+  try {
+    const tokenResult = await user.getIdTokenResult()
+    return (tokenResult.claims.householdId as string) || null
+  } catch (error) {
+    console.error('[CloudBackup] Error getting householdId from token:', error)
+    return null
+  }
+}
+
+/**
+ * Get the storage path for backup files
+ * Uses household path if user is in a household, otherwise personal path
+ */
+async function getBackupPath(uid: string, fileName: string): Promise<string> {
+  const householdId = await getHouseholdIdFromToken()
+
+  if (householdId) {
+    console.log('[CloudBackup] Using household path:', householdId)
+    return `backups/households/${householdId}/${fileName}`
+  }
+
   return `backups/${uid}/${fileName}`
+}
+
+/**
+ * Check if user is currently using household storage
+ */
+export async function isUsingHouseholdStorage(): Promise<boolean> {
+  const householdId = await getHouseholdIdFromToken()
+  return householdId !== null
+}
+
+/**
+ * Migrate personal backup to household storage
+ * Called after creating a household — copies backup.enc and verify.enc
+ * from personal path to the shared household path
+ */
+export async function migrateToHouseholdStorage(): Promise<CloudBackupResult> {
+  const user = getCurrentUser()
+  if (!user || !isFirebaseConfigured()) {
+    return { success: false, error: 'לא מחובר', errorCode: 'not-authenticated' }
+  }
+
+  const householdId = await getHouseholdIdFromToken()
+  if (!householdId) {
+    return { success: false, error: 'לא חבר במשק בית', errorCode: 'not-configured' }
+  }
+
+  const storage = getFirebaseStorage()
+  const filesToMigrate = [BACKUP_FILE_NAME, VERIFICATION_FILE_NAME]
+  let migrated = 0
+
+  for (const fileName of filesToMigrate) {
+    const personalPath = `backups/${user.uid}/${fileName}`
+    const householdPath = `backups/households/${householdId}/${fileName}`
+
+    try {
+      const personalRef = ref(storage, personalPath)
+      const bytes = await getBytes(personalRef)
+      const content = new TextDecoder().decode(bytes)
+
+      const householdRef = ref(storage, householdPath)
+      await uploadString(householdRef, content)
+      migrated++
+
+      console.log(`[CloudBackup] Migrated ${fileName} to household path`)
+    } catch (err: any) {
+      if (err.code === 'storage/object-not-found') {
+        console.log(`[CloudBackup] No personal ${fileName} to migrate`)
+      } else {
+        console.error(`[CloudBackup] Failed to migrate ${fileName}:`, err)
+        return { success: false, error: 'שגיאה בהעברת הגיבוי למשק הבית', errorCode: 'unknown' }
+      }
+    }
+  }
+
+  if (migrated === 0) {
+    return { success: true } // Nothing to migrate, not an error
+  }
+
+  console.log(`[CloudBackup] Migration complete: ${migrated} files moved to household`)
+  return { success: true }
 }
 
 /**
@@ -62,7 +156,8 @@ export async function setupEncryptionPassword(password: string): Promise<CloudBa
 
   try {
     const storage = getFirebaseStorage()
-    const verifyRef = ref(storage, getBackupPath(user.uid, VERIFICATION_FILE_NAME))
+    const backupPath = await getBackupPath(user.uid, VERIFICATION_FILE_NAME)
+    const verifyRef = ref(storage, backupPath)
 
     // Generate and upload verification token
     const verificationToken = await generateVerificationToken(password)
@@ -84,7 +179,8 @@ export async function verifyEncryptionPassword(password: string): Promise<boolea
 
   try {
     const storage = getFirebaseStorage()
-    const verifyRef = ref(storage, getBackupPath(user.uid, VERIFICATION_FILE_NAME))
+    const backupPath = await getBackupPath(user.uid, VERIFICATION_FILE_NAME)
+    const verifyRef = ref(storage, backupPath)
 
     const bytes = await getBytes(verifyRef)
     const verificationToken = new TextDecoder().decode(bytes)
@@ -104,7 +200,8 @@ export async function hasEncryptionPasswordSetup(): Promise<boolean> {
 
   try {
     const storage = getFirebaseStorage()
-    const verifyRef = ref(storage, getBackupPath(user.uid, VERIFICATION_FILE_NAME))
+    const backupPath = await getBackupPath(user.uid, VERIFICATION_FILE_NAME)
+    const verifyRef = ref(storage, backupPath)
     await getMetadata(verifyRef)
     return true
   } catch {
@@ -157,10 +254,11 @@ export async function uploadBackup(password: string): Promise<CloudBackupResult>
 
     // Upload to Firebase Storage
     const storage = getFirebaseStorage()
-    const backupRef = ref(storage, getBackupPath(user.uid, BACKUP_FILE_NAME))
+    const backupPath = await getBackupPath(user.uid, BACKUP_FILE_NAME)
+    const backupRef = ref(storage, backupPath)
     await uploadString(backupRef, encryptedBackup)
 
-    console.log('[CloudBackup] Backup uploaded successfully')
+    console.log('[CloudBackup] Backup uploaded successfully to:', backupPath)
     return { success: true }
   } catch (err: any) {
     console.error('[CloudBackup] Upload failed:', err)
@@ -183,7 +281,8 @@ export async function downloadBackup(password: string): Promise<CloudBackupResul
 
   try {
     const storage = getFirebaseStorage()
-    const backupRef = ref(storage, getBackupPath(user.uid, BACKUP_FILE_NAME))
+    const backupPath = await getBackupPath(user.uid, BACKUP_FILE_NAME)
+    const backupRef = ref(storage, backupPath)
 
     // Download encrypted backup
     const bytes = await getBytes(backupRef)
@@ -240,13 +339,16 @@ export async function getBackupInfo(): Promise<CloudBackupInfo> {
 
   try {
     const storage = getFirebaseStorage()
-    const backupRef = ref(storage, getBackupPath(user.uid, BACKUP_FILE_NAME))
+    const backupPath = await getBackupPath(user.uid, BACKUP_FILE_NAME)
+    const backupRef = ref(storage, backupPath)
     const metadata = await getMetadata(backupRef)
+    const isHousehold = backupPath.includes('/households/')
 
     return {
       exists: true,
       sizeBytes: metadata.size,
       lastModified: metadata.updated,
+      isHousehold,
     }
   } catch (err: any) {
     if (err.code === 'storage/object-not-found') {
@@ -258,6 +360,7 @@ export async function getBackupInfo(): Promise<CloudBackupInfo> {
 
 /**
  * Delete cloud backup
+ * For household backups, only the owner can delete
  */
 export async function deleteBackup(): Promise<CloudBackupResult> {
   const user = getCurrentUser()
@@ -269,11 +372,22 @@ export async function deleteBackup(): Promise<CloudBackupResult> {
     return { success: false, error: 'Firebase לא מוגדר', errorCode: 'not-configured' }
   }
 
+  // Block non-owners from deleting household backups
+  const householdId = await getHouseholdIdFromToken()
+  if (householdId) {
+    const auth = getFirebaseAuth()
+    const tokenResult = await auth.currentUser!.getIdTokenResult()
+    if (tokenResult.claims.householdRole !== 'owner') {
+      return { success: false, error: 'רק בעל משק הבית יכול למחוק את הגיבוי המשותף', errorCode: 'not-authenticated' }
+    }
+  }
+
   try {
     const storage = getFirebaseStorage()
 
     // Delete backup file
-    const backupRef = ref(storage, getBackupPath(user.uid, BACKUP_FILE_NAME))
+    const backupPath = await getBackupPath(user.uid, BACKUP_FILE_NAME)
+    const backupRef = ref(storage, backupPath)
     try {
       await deleteObject(backupRef)
     } catch (err: any) {
@@ -281,7 +395,8 @@ export async function deleteBackup(): Promise<CloudBackupResult> {
     }
 
     // Delete verification file
-    const verifyRef = ref(storage, getBackupPath(user.uid, VERIFICATION_FILE_NAME))
+    const verifyPath = await getBackupPath(user.uid, VERIFICATION_FILE_NAME)
+    const verifyRef = ref(storage, verifyPath)
     try {
       await deleteObject(verifyRef)
     } catch (err: any) {

@@ -1,5 +1,7 @@
 # Agent Guidelines
 
+See also: ~/develop/AGENTS.md (common coding standards)
+
 ## Core Principles
 
 ### a) No commit before testing
@@ -31,7 +33,7 @@
 - Check the conversation history for context
 
 ### f) Use proper data access patterns
-- **Frontend**: Use Store classes (subjectStore, historyStore, transactionStore, etc.)
+- **Frontend**: Use Store classes (subjectStore, transactionStore, etc.)
 - Don't bypass these patterns with direct localStorage/IndexedDB access
 - Each store is responsible for its own persistence
 

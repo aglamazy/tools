@@ -3,8 +3,9 @@
 import React, { useState, useEffect } from 'react'
 import type { Category, CategoryType } from '@/app/types/category'
 import { generateDistinctColors } from '@/app/utils/colorGenerator'
-import { db } from '@/app/db/financeDB'
+import { db, type Business } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
+import { businessStore } from '@/app/stores/businessStore'
 import YesNoModal from '../YesNoModal'
 import Modal from '../Modal'
 
@@ -20,11 +21,18 @@ export default function CategoriesTab() {
   const [categoryUsage, setCategoryUsage] = useState<Record<string, { bank: number; credit: number }>>({})
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
+  const [businesses, setBusinesses] = useState<Business[]>([])
 
   useEffect(() => {
     loadCategories()
     loadCategoryUsage()
+    loadBusinesses()
   }, [])
+
+  const loadBusinesses = async () => {
+    const all = await businessStore.getAll()
+    setBusinesses(all.filter(b => b.type === 'business'))
+  }
 
   const loadCategories = () => {
     try {
@@ -502,12 +510,47 @@ export default function CategoriesTab() {
                     type="checkbox"
                     id="isCapital"
                     checked={editingCategory.isCapital || false}
-                    onChange={(e) => setEditingCategory({ ...editingCategory, isCapital: e.target.checked })}
+                    onChange={(e) => setEditingCategory({ ...editingCategory, isCapital: e.target.checked, isExternal: false })}
                     style={{ width: '1.1rem', height: '1.1rem', cursor: 'pointer' }}
                   />
                   <label htmlFor="isCapital" style={{ fontWeight: 600, cursor: 'pointer' }}>הון</label>
                   <span style={{ fontSize: '0.8rem', color: '#64748b' }}>(פנסיה, חסכונות, השקעות - יופרד מתזרים שוטף)</span>
                 </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="checkbox"
+                    id="isExternal"
+                    checked={editingCategory.isExternal || false}
+                    onChange={(e) => setEditingCategory({ ...editingCategory, isExternal: e.target.checked, isCapital: false })}
+                    style={{ width: '1.1rem', height: '1.1rem', cursor: 'pointer' }}
+                  />
+                  <label htmlFor="isExternal" style={{ fontWeight: 600, cursor: 'pointer' }}>חיצוני</label>
+                  <span style={{ fontSize: '0.8rem', color: '#64748b' }}>(מתנות, ירושה, העברות חד-פעמיות - לא יספר כהכנסה שוטפת)</span>
+                </div>
+                {editingCategory.type === 'income' && businesses.length > 0 && (
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>עסק משויך</label>
+                    <select
+                      value={editingCategory.businessId ?? ''}
+                      onChange={(e) => setEditingCategory({ ...editingCategory, businessId: e.target.value ? Number(e.target.value) : undefined })}
+                      style={{
+                        width: '100%',
+                        padding: '0.75rem',
+                        borderRadius: '0.5rem',
+                        border: '1px solid #e2e8f0',
+                        fontSize: '1rem',
+                        direction: 'rtl',
+                        background: '#fff',
+                      }}
+                    >
+                      <option value="">ללא שיוך</option>
+                      {businesses.map((b) => (
+                        <option key={b.id} value={b.id}>{b.name}</option>
+                      ))}
+                    </select>
+                    <span style={{ fontSize: '0.8rem', color: '#64748b' }}>שייך נושא הכנסה זה לעסק ליצירת קבלות</span>
+                  </div>
+                )}
                 <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
                   <button onClick={() => setEditingCategory(null)} className="upload-another-btn">
                     ביטול

@@ -26,6 +26,13 @@ export const metadata: Metadata = {
   metadataBase,
   title: 'ארגז כלים פיננסיים',
   description: 'כלים פיננסיים לניהול תשלומים ותקציב.',
+  manifest: '/manifest.json',
+  themeColor: '#4338ca',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'ארגז כלים',
+  },
   alternates: {
     canonical: '/',
   },

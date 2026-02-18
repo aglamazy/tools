@@ -28,6 +28,7 @@ type CategorySummary = {
 export default function HomePage() {
   const [monthSummaries, setMonthSummaries] = useState<MonthSummary[]>([])
   const [capitalSummaries, setCapitalSummaries] = useState<MonthSummary[]>([])
+  const [externalSummaries, setExternalSummaries] = useState<MonthSummary[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -37,15 +38,21 @@ export default function HomePage() {
       const capitalNames = new Set(
         categories.filter((c) => c.isCapital).map((c) => c.name)
       )
+      const externalNames = new Set(
+        categories.filter((c) => c.isExternal).map((c) => c.name)
+      )
+      const nonDailyNames = new Set([...capitalNames, ...externalNames])
 
       const daily: MonthSummary[] = []
       const capital: MonthSummary[] = []
+      const external: MonthSummary[] = []
 
       for (const month of months) {
         const transactions = await transactionStore.getBudgetTransactions(month)
 
-        const dailyTx = transactions.filter((t) => !capitalNames.has(t.category || ''))
+        const dailyTx = transactions.filter((t) => !nonDailyNames.has(t.category || ''))
         const capitalTx = transactions.filter((t) => capitalNames.has(t.category || ''))
+        const externalTx = transactions.filter((t) => externalNames.has(t.category || ''))
 
         const dIncome = dailyTx.filter((t) => t.amount > 0).reduce((sum, t) => sum + t.amount, 0)
         const dExpense = dailyTx.filter((t) => t.amount < 0).reduce((sum, t) => sum + Math.abs(t.amount), 0)
@@ -56,10 +63,17 @@ export default function HomePage() {
         if (cIncome > 0 || cExpense > 0) {
           capital.push({ monthYear: month, income: cIncome, expense: cExpense, net: cIncome - cExpense })
         }
+
+        const eIncome = externalTx.filter((t) => t.amount > 0).reduce((sum, t) => sum + t.amount, 0)
+        const eExpense = externalTx.filter((t) => t.amount < 0).reduce((sum, t) => sum + Math.abs(t.amount), 0)
+        if (eIncome > 0 || eExpense > 0) {
+          external.push({ monthYear: month, income: eIncome, expense: eExpense, net: eIncome - eExpense })
+        }
       }
 
       setMonthSummaries(daily)
       setCapitalSummaries(capital)
+      setExternalSummaries(external)
       setLoading(false)
     }
     loadData()
@@ -74,14 +88,14 @@ export default function HomePage() {
     const loadCategories = async () => {
       const transactions = await transactionStore.getBudgetTransactions(latestMonth.monthYear)
       const categories = subjectStore.getAll()
-      const capitalNames = new Set(
-        categories.filter((c) => c.isCapital).map((c) => c.name)
+      const nonDailyNames = new Set(
+        categories.filter((c) => c.isCapital || c.isExternal).map((c) => c.name)
       )
       const categoryMap = new Map<string, CategorySummary>()
 
       for (const t of transactions) {
         const name = t.category || 'ללא קטגוריה'
-        if (capitalNames.has(name)) continue
+        if (nonDailyNames.has(name)) continue
         const existing = categoryMap.get(name)
         if (existing) {
           existing.total += t.amount
@@ -159,38 +173,61 @@ export default function HomePage() {
                 </div>
               </div>
 
-              {capitalSummaries.length > 0 && (
-                <div className="card">
-                  <div style={{ marginBottom: '1rem' }}>
-                    <h2 style={{ margin: 0 }}>תזרים הון</h2>
-                    <p style={{ margin: '0.25rem 0 0', color: '#64748b' }}>פנסיה, חסכונות, השקעות.</p>
-                  </div>
-                  <div className="table-wrapper">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>חודש</th>
-                          <th>הכנסה</th>
-                          <th>הוצאה</th>
-                          <th>מאזן</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {capitalSummaries.map((row) => (
-                          <tr key={row.monthYear}>
-                            <td>{row.monthYear}</td>
-                            <td className="amount-positive">{currency(row.income)}</td>
-                            <td className="amount-negative">{currency(-row.expense)}</td>
-                            <td className={row.net >= 0 ? 'amount-positive' : 'amount-negative'}>
-                              {currency(row.net)}
-                            </td>
+              {(capitalSummaries.length > 0 || externalSummaries.length > 0) && (() => {
+                const allMonths = [...new Set([
+                  ...capitalSummaries.map((s) => s.monthYear),
+                  ...externalSummaries.map((s) => s.monthYear),
+                ])].sort((a, b) => {
+                  const [am, ay] = a.split('/').map(Number)
+                  const [bm, by] = b.split('/').map(Number)
+                  return by - ay || bm - am
+                })
+                const capMap = new Map(capitalSummaries.map((s) => [s.monthYear, s]))
+                const extMap = new Map(externalSummaries.map((s) => [s.monthYear, s]))
+
+                return (
+                  <div className="card">
+                    <div style={{ marginBottom: '1rem' }}>
+                      <h2 style={{ margin: 0 }}>הון וחיצוני</h2>
+                      <p style={{ margin: '0.25rem 0 0', color: '#64748b' }}>פנסיה, חסכונות, השקעות, מתנות, ירושה.</p>
+                    </div>
+                    <div className="table-wrapper">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>חודש</th>
+                            <th>חיצוני</th>
+                            <th>הפקדה</th>
+                            <th>משיכה</th>
+                            <th>שינוי הון</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {allMonths.map((month) => {
+                            const cap = capMap.get(month)
+                            const ext = extMap.get(month)
+                            const capDeposit = cap ? cap.expense : 0
+                            const capWithdraw = cap ? cap.income : 0
+                            const capChange = capDeposit - capWithdraw
+                            const extNet = ext ? ext.net : 0
+                            return (
+                              <tr key={month}>
+                                <td>{month}</td>
+                                <td style={{ color: '#d97706' }}>{extNet !== 0 ? currency(extNet) : '-'}</td>
+                                <td style={{ color: '#7c3aed' }}>{capDeposit !== 0 ? currency(capDeposit) : '-'}</td>
+                                <td style={{ color: '#7c3aed' }}>{capWithdraw !== 0 ? currency(-capWithdraw) : '-'}</td>
+                                <td className={capChange >= 0 ? 'amount-positive' : 'amount-negative'}>
+                                  {capChange !== 0 ? currency(capChange) : '-'}
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                </div>
-              )}
+                )
+              })()}
             </div>
 
             <div className="card">

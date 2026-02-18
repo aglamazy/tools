@@ -8,6 +8,8 @@ export type Category = {
   createdAt: string
   isFixed?: boolean
   isCapital?: boolean
+  isExternal?: boolean
+  businessId?: number // Maps income category to a business
   parentId?: string // If this is a sub-category, reference to parent category
   subCategories?: string[] // IDs of sub-categories (for parent categories)
 }

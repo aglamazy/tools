@@ -41,6 +41,42 @@ function toAuthUser(user: User): AuthUser {
 }
 
 /**
+ * Get ID token for authenticated API requests
+ */
+export async function getIdToken(): Promise<string | null> {
+  if (!isFirebaseConfigured()) return null
+
+  const auth = getFirebaseAuth()
+  const user = auth.currentUser
+  if (!user) return null
+
+  try {
+    return await user.getIdToken()
+  } catch (error) {
+    console.error('[Auth] Failed to get ID token:', error)
+    return null
+  }
+}
+
+/**
+ * Force refresh the ID token to get latest custom claims
+ */
+export async function refreshIdToken(): Promise<string | null> {
+  if (!isFirebaseConfigured()) return null
+
+  const auth = getFirebaseAuth()
+  const user = auth.currentUser
+  if (!user) return null
+
+  try {
+    return await user.getIdToken(true)
+  } catch (error) {
+    console.error('[Auth] Failed to refresh ID token:', error)
+    return null
+  }
+}
+
+/**
  * Get current authenticated user
  */
 export function getCurrentUser(): AuthUser | null {

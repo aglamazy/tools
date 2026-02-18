@@ -21,8 +21,19 @@ import {
   type GmailLabel,
   type GmailFilter,
 } from '@/app/services/gmailService'
-import { generateArchiveQuery } from '@/app/services/geminiService'
+import { generateArchiveQuery, extractEventDates } from '@/app/services/geminiService'
 import Link from 'next/link'
+
+type ExpiredEvent = {
+  id: string; from: string; subject: string; snippet: string
+  eventDate: string; eventDescription: string; selected: boolean
+}
+
+type EventScanState =
+  | { step: 'idle' }
+  | { step: 'scanning'; progress: string }
+  | { step: 'review'; events: ExpiredEvent[] }
+  | { step: 'deleting' }
 
 type ArchiveState =
   | { step: 'idle' }
@@ -37,10 +48,12 @@ export default function GmailPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [pageSize, setPageSize] = useState(25)
-  const [pageTokenStack, setPageTokenStack] = useState<string[]>([])
+  const [pageTokens, setPageTokens] = useState<string[]>([])  // token that loaded each page (index = page-1)
+  const [currentPage, setCurrentPage] = useState(0)
   const [nextPageToken, setNextPageToken] = useState<string | undefined>()
   const [connectingGmail, setConnectingGmail] = useState(false)
   const [trashingId, setTrashingId] = useState<string | null>(null)
+  const [archivingId, setArchivingId] = useState<string | null>(null)
   const [archiveState, setArchiveState] = useState<ArchiveState>({ step: 'idle' })
   const [editFrom, setEditFrom] = useState('')
   const [editSubject, setEditSubject] = useState('')
@@ -65,6 +78,16 @@ export default function GmailPage() {
     loading: boolean
     deleting: boolean
   } | null>(null)
+  const [eventScan, setEventScan] = useState<EventScanState>({ step: 'idle' })
+  const [topSenders, setTopSenders] = useState<{
+    step: 'idle' | 'scanning' | 'ready'
+    progress?: string
+    senders: { email: string; name: string; count: number; ids: string[]; selected: boolean }[]
+    deletingEmail?: string
+    continueToken?: string  // token to fetch next batch
+    totalScanned: number
+  }>({ step: 'idle', senders: [], totalScanned: 0 })
+  const topSendersCancelRef = useRef(false)
 
   useEffect(() => {
     const unsubscribe = userTierStore.subscribe((tier) => {
@@ -114,24 +137,62 @@ export default function GmailPage() {
     setLoading(false)
   }
 
+  const handleGoToPage = (page: number) => {
+    if (page === currentPage || loading) return
+    const token = page === 0 ? undefined : pageTokens[page]
+    if (page > 0 && !token) return
+    setCurrentPage(page)
+    loadMessages(pageSize, token)
+  }
+
   const handleNextPage = () => {
-    if (!nextPageToken) return
-    setPageTokenStack(prev => [...prev, nextPageToken])
+    if (!nextPageToken || loading) return
+    const nextIdx = currentPage + 1
+    setPageTokens(prev => {
+      const updated = [...prev]
+      updated[nextIdx] = nextPageToken
+      return updated
+    })
+    setCurrentPage(nextIdx)
     loadMessages(pageSize, nextPageToken)
   }
 
-  const handlePrevPage = () => {
-    if (pageTokenStack.length === 0) return
-    const newStack = [...pageTokenStack]
-    newStack.pop()
-    const prevToken = newStack.length > 0 ? newStack[newStack.length - 1] : undefined
-    setPageTokenStack(newStack)
-    loadMessages(pageSize, prevToken)
+  const handleSkipPages = async (count: number) => {
+    if (!nextPageToken || loading) return
+    setLoading(true)
+    setError(null)
+    let token: string | undefined = nextPageToken
+    let page = currentPage
+    const updatedTokens = [...pageTokens]
+    for (let i = 0; i < count; i++) {
+      if (!token) break
+      page++
+      updatedTokens[page] = token
+      const result = await fetchInboxMessages(pageSize, token)
+      if (result.error) {
+        setError(result.error)
+        if (result.error.includes('פג תוקף')) setHasAccess(false)
+        setLoading(false)
+        return
+      }
+      if (i === count - 1 || !result.nextPageToken) {
+        // Last skip or no more pages — show these messages
+        setPageTokens(updatedTokens)
+        setCurrentPage(page)
+        setMessages(result.messages)
+        setNextPageToken(result.nextPageToken)
+        setLoading(false)
+        return
+      }
+      token = result.nextPageToken
+    }
+    setLoading(false)
   }
 
   const handlePageSizeChange = (newSize: number) => {
     setPageSize(newSize)
-    setPageTokenStack([])
+    setPageTokens([])
+    setCurrentPage(0)
     setNextPageToken(undefined)
     loadMessages(newSize)
   }
@@ -159,6 +220,17 @@ export default function GmailPage() {
       setError(result.error)
     }
     setTrashingId(null)
+  }
+
+  const handleArchiveSingle = async (messageId: string) => {
+    setArchivingId(messageId)
+    const result = await archiveMessages([messageId])
+    if (result.success) {
+      setMessages((prev) => prev.filter((m) => m.id !== messageId))
+    } else if (result.error) {
+      setError(result.error)
+    }
+    setArchivingId(null)
   }
 
   const handleArchiveLikeThis = async (msg: GmailMessage) => {
@@ -317,6 +389,186 @@ export default function GmailPage() {
       matchCount: searchResult.messageIds.length,
       matchIds: searchResult.messageIds,
     })
+  }
+
+  const handleEventScan = async () => {
+    setEventScan({ step: 'scanning', progress: 'סורק הודעות...' })
+    setError(null)
+
+    // Fetch up to 200 inbox messages by paginating
+    let allMessages: GmailMessage[] = []
+    let token: string | undefined
+    for (let i = 0; i < 4; i++) {
+      const result = await fetchInboxMessages(50, token)
+      if (result.error) {
+        setError(result.error)
+        setEventScan({ step: 'idle' })
+        return
+      }
+      allMessages = allMessages.concat(result.messages)
+      token = result.nextPageToken
+      if (!token) break
+    }
+
+    if (allMessages.length === 0) {
+      setEventScan({ step: 'review', events: [] })
+      return
+    }
+
+    setEventScan({ step: 'scanning', progress: 'מנתח אירועים...' })
+
+    // Split into batches of 15
+    const batches: { id: string; subject: string; snippet: string }[][] = []
+    for (let i = 0; i < allMessages.length; i += 15) {
+      batches.push(allMessages.slice(i, i + 15).map(m => ({ id: m.id, subject: m.subject, snippet: m.snippet })))
+    }
+
+    // Send batches with max 3 concurrent
+    const allResults: { id: string; eventDate: string | null; eventDescription: string | null }[] = []
+    for (let i = 0; i < batches.length; i += 3) {
+      const chunk = batches.slice(i, i + 3)
+      const responses = await Promise.all(chunk.map(batch => extractEventDates(batch)))
+      for (const resp of responses) {
+        if (resp.error) {
+          setError(resp.error)
+          setEventScan({ step: 'idle' })
+          return
+        }
+        allResults.push(...resp.results)
+      }
+    }
+
+    // Filter: keep only past event dates
+    const today = new Date().toISOString().split('T')[0]
+    const msgMap = new Map(allMessages.map(m => [m.id, m]))
+    const expired: ExpiredEvent[] = allResults
+      .filter(r => r.eventDate && r.eventDate < today)
+      .map(r => {
+        const msg = msgMap.get(r.id)
+        return msg ? {
+          id: r.id,
+          from: msg.from,
+          subject: msg.subject,
+          snippet: msg.snippet,
+          eventDate: r.eventDate!,
+          eventDescription: r.eventDescription || '',
+          selected: true,
+        } : null
+      })
+      .filter((e): e is ExpiredEvent => e !== null)
+      .sort((a, b) => a.eventDate.localeCompare(b.eventDate))
+
+    setEventScan({ step: 'review', events: expired })
+  }
+
+  const handleEventDelete = async () => {
+    if (eventScan.step !== 'review') return
+    const selectedIds = eventScan.events.filter(e => e.selected).map(e => e.id)
+    if (selectedIds.length === 0) return
+
+    setEventScan({ step: 'deleting' })
+    const result = await trashMessages(selectedIds)
+    if (result.error) {
+      setError(result.error)
+      setEventScan({ step: 'idle' })
+      return
+    }
+
+    const deletedSet = new Set(selectedIds)
+    setMessages(prev => prev.filter(m => !deletedSet.has(m.id)))
+    setEventScan({ step: 'idle' })
+  }
+
+  const handleTopSenders = async (continueFrom?: string) => {
+    topSendersCancelRef.current = false
+
+    // Build initial map from existing senders if continuing
+    const map = new Map<string, { name: string; count: number; ids: string[] }>()
+    let prevTotal = 0
+    if (continueFrom) {
+      for (const s of topSenders.senders) {
+        map.set(s.email, { name: s.name, count: s.count, ids: [...s.ids] })
+      }
+      prevTotal = topSenders.totalScanned
+    }
+
+    setTopSenders({ step: 'scanning', progress: `סורק... ${prevTotal} הודעות`, senders: [], totalScanned: prevTotal })
+    setError(null)
+
+    let token: string | undefined = continueFrom
+    let total = prevTotal
+
+    for (let i = 0; i < 40; i++) {
+      if (topSendersCancelRef.current) return
+
+      const result = await fetchInboxMessages(50, token)
+      if (topSendersCancelRef.current) return
+
+      if (result.error) {
+        setError(result.error)
+        setTopSenders({ step: 'idle', senders: [], totalScanned: 0 })
+        return
+      }
+
+      for (const msg of result.messages) {
+        const emailMatch = msg.from.match(/<([^>]+)>/)
+        const email = emailMatch ? emailMatch[1].toLowerCase() : msg.from.toLowerCase()
+        const nameMatch = msg.from.match(/^"?(.+?)"?\s*</)
+        const name = nameMatch ? nameMatch[1] : email
+        const entry = map.get(email)
+        if (entry) {
+          entry.count++
+          entry.ids.push(msg.id)
+        } else {
+          map.set(email, { name, count: 1, ids: [msg.id] })
+        }
+      }
+
+      total += result.messages.length
+      setTopSenders({ step: 'scanning', progress: `סורק... ${total} הודעות`, senders: [], totalScanned: total })
+
+      token = result.nextPageToken
+      if (!token) break
+    }
+
+    const senders = Array.from(map.entries())
+      .map(([email, data]) => ({ email, ...data, selected: false }))
+      .sort((a, b) => b.count - a.count)
+
+    setTopSenders({ step: 'ready', senders, continueToken: token, totalScanned: total })
+  }
+
+  const handleTrashSender = async (email: string) => {
+    if (topSenders.step !== 'ready') return
+    const sender = topSenders.senders.find(s => s.email === email)
+    if (!sender) return
+
+    setTopSenders(prev => ({ ...prev, deletingEmail: email }))
+
+    // Search for ALL messages from this sender (not just the ones we fetched)
+    const searchResult = await searchMessages(`from:(${email})`)
+    if (searchResult.error) {
+      setError(searchResult.error)
+      setTopSenders(prev => ({ ...prev, deletingEmail: undefined }))
+      return
+    }
+
+    if (searchResult.messageIds.length > 0) {
+      const result = await trashMessages(searchResult.messageIds)
+      if (result.error) {
+        setError(result.error)
+        setTopSenders(prev => ({ ...prev, deletingEmail: undefined }))
+        return
+      }
+      const deletedSet = new Set(searchResult.messageIds)
+      setMessages(prev => prev.filter(m => !deletedSet.has(m.id)))
+    }
+
+    setTopSenders(prev => ({
+      ...prev,
+      senders: prev.senders.filter(s => s.email !== email),
+      deletingEmail: undefined,
+    }))
   }
 
   const handleOpenMessage = async (msg: GmailMessage) => {
@@ -564,7 +816,37 @@ export default function GmailPage() {
                   ארכוב ידני
                 </button>
                 <button
-                  onClick={() => { setPageTokenStack([]); setNextPageToken(undefined); loadMessages() }}
+                  onClick={handleEventScan}
+                  disabled={eventScan.step !== 'idle'}
+                  style={{
+                    margin: 0,
+                    padding: '0.5rem 1rem',
+                    fontSize: '0.875rem',
+                    background: 'none',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '0.375rem',
+                    cursor: eventScan.step !== 'idle' ? 'wait' : 'pointer',
+                  }}
+                >
+                  ניקוי אירועים
+                </button>
+                <button
+                  onClick={() => handleTopSenders()}
+                  disabled={topSenders.step === 'scanning'}
+                  style={{
+                    margin: 0,
+                    padding: '0.5rem 1rem',
+                    fontSize: '0.875rem',
+                    background: 'none',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '0.375rem',
+                    cursor: topSenders.step === 'scanning' ? 'wait' : 'pointer',
+                  }}
+                >
+                  שולחים מובילים
+                </button>
+                <button
+                  onClick={() => { setPageTokens([]); setCurrentPage(0); setNextPageToken(undefined); loadMessages() }}
                   disabled={loading}
                   className="upload-another-btn"
                   style={{ margin: 0, padding: '0.5rem 1rem', fontSize: '0.875rem' }}
@@ -615,6 +897,23 @@ export default function GmailPage() {
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '0.25rem', flexShrink: 0 }}>
+                      <button
+                        onClick={() => handleArchiveSingle(msg.id)}
+                        disabled={archivingId === msg.id}
+                        title="ארכב"
+                        style={{
+                          padding: '0.5rem',
+                          background: 'none',
+                          border: '1px solid #e5e7eb',
+                          borderRadius: '0.375rem',
+                          cursor: archivingId === msg.id ? 'wait' : 'pointer',
+                          fontSize: '1rem',
+                          opacity: archivingId === msg.id ? 0.5 : 1,
+                          lineHeight: 1,
+                        }}
+                      >
+                        {archivingId === msg.id ? '...' : '↓'}
+                      </button>
                       <button
                         onClick={() => handleArchiveLikeThis(msg)}
                         disabled={isArchiveBusy}
@@ -673,41 +972,79 @@ export default function GmailPage() {
             )}
 
             {/* Pagination */}
-            {(pageTokenStack.length > 0 || nextPageToken) && (
-              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.75rem', marginTop: '1rem' }}>
-                <button
-                  onClick={handlePrevPage}
-                  disabled={pageTokenStack.length === 0 || loading}
-                  style={{
-                    padding: '0.5rem 1rem',
-                    background: 'none',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '0.375rem',
-                    cursor: pageTokenStack.length === 0 || loading ? 'default' : 'pointer',
-                    fontSize: '0.875rem',
-                    color: pageTokenStack.length === 0 ? '#d1d5db' : '#374151',
-                  }}
-                >
-                  הקודם
-                </button>
-                <span style={{ color: '#6b7280', fontSize: '0.875rem' }}>
-                  עמוד {pageTokenStack.length + 1}
-                </span>
-                <button
-                  onClick={handleNextPage}
-                  disabled={!nextPageToken || loading}
-                  style={{
-                    padding: '0.5rem 1rem',
-                    background: 'none',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '0.375rem',
-                    cursor: !nextPageToken || loading ? 'default' : 'pointer',
-                    fontSize: '0.875rem',
-                    color: !nextPageToken ? '#d1d5db' : '#374151',
-                  }}
-                >
-                  הבא
-                </button>
+            {(currentPage > 0 || nextPageToken) && (
+              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.25rem', marginTop: '1rem', flexWrap: 'wrap' }}>
+                {/* Page number buttons for visited pages */}
+                {Array.from({ length: currentPage + 1 }, (_, i) => (
+                  <button
+                    key={i}
+                    onClick={() => handleGoToPage(i)}
+                    disabled={loading}
+                    style={{
+                      padding: '0.375rem 0.75rem',
+                      background: i === currentPage ? '#2563eb' : 'none',
+                      color: i === currentPage ? 'white' : '#374151',
+                      border: `1px solid ${i === currentPage ? '#2563eb' : '#d1d5db'}`,
+                      borderRadius: '0.375rem',
+                      cursor: i === currentPage || loading ? 'default' : 'pointer',
+                      fontSize: '0.875rem',
+                      fontWeight: i === currentPage ? 600 : 400,
+                      minWidth: '2.25rem',
+                    }}
+                  >
+                    {i + 1}
+                  </button>
+                ))}
+                {nextPageToken && (
+                  <>
+                    <button
+                      onClick={handleNextPage}
+                      disabled={loading}
+                      style={{
+                        padding: '0.375rem 0.75rem',
+                        background: 'none',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                        cursor: loading ? 'default' : 'pointer',
+                        fontSize: '0.875rem',
+                        color: '#374151',
+                      }}
+                    >
+                      הבא
+                    </button>
+                    <span style={{ color: '#d1d5db', margin: '0 0.125rem' }}>|</span>
+                    <button
+                      onClick={() => handleSkipPages(5)}
+                      disabled={loading}
+                      style={{
+                        padding: '0.375rem 0.75rem',
+                        background: 'none',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                        cursor: loading ? 'default' : 'pointer',
+                        fontSize: '0.875rem',
+                        color: '#6b7280',
+                      }}
+                    >
+                      +5
+                    </button>
+                    <button
+                      onClick={() => handleSkipPages(10)}
+                      disabled={loading}
+                      style={{
+                        padding: '0.375rem 0.75rem',
+                        background: 'none',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                        cursor: loading ? 'default' : 'pointer',
+                        fontSize: '0.875rem',
+                        color: '#6b7280',
+                      }}
+                    >
+                      +10
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </>
@@ -1106,6 +1443,356 @@ export default function GmailPage() {
                 </>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Top senders modal */}
+      {topSenders.step !== 'idle' && (
+        <div
+          onClick={() => { topSendersCancelRef.current = true; setTopSenders({ step: 'idle', senders: [], totalScanned: 0 }) }}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: '1rem',
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'white',
+              borderRadius: '0.75rem',
+              width: '100%',
+              maxWidth: '540px',
+              maxHeight: '80vh',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            <div style={{ padding: '1rem', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+              <div style={{ fontWeight: 600 }}>שולחים מובילים</div>
+              <button
+                onClick={() => { topSendersCancelRef.current = true; setTopSenders({ step: 'idle', senders: [], totalScanned: 0 }) }}
+                style={{ background: 'none', border: 'none', fontSize: '1.5rem', cursor: 'pointer', color: '#6b7280', lineHeight: 1, padding: '0.25rem' }}
+              >
+                &times;
+              </button>
+            </div>
+
+            {topSenders.step === 'scanning' ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: '#1e40af' }}>{topSenders.progress || 'סורק...'}</div>
+            ) : topSenders.senders.length === 0 ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: '#6b7280' }}>לא נמצאו הודעות</div>
+            ) : (
+              <>
+                <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+                  {topSenders.senders.map((s) => (
+                    <div
+                      key={s.email}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.75rem',
+                        padding: '0.625rem 1rem',
+                        borderBottom: '1px solid #f3f4f6',
+                      }}
+                    >
+                      <div style={{
+                        background: '#dbeafe',
+                        color: '#1e40af',
+                        fontWeight: 700,
+                        fontSize: '0.8rem',
+                        borderRadius: '0.375rem',
+                        padding: '0.25rem 0.5rem',
+                        minWidth: '2rem',
+                        textAlign: 'center',
+                        flexShrink: 0,
+                      }}>
+                        {s.count}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: '0.875rem', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {s.name}
+                        </div>
+                        <div dir="ltr" style={{ fontSize: '0.75rem', color: '#9ca3af', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {s.email}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleTrashSender(s.email)}
+                        disabled={topSenders.deletingEmail === s.email}
+                        title="מחק הכל מהשולח"
+                        style={{
+                          padding: '0.375rem 0.75rem',
+                          background: 'none',
+                          border: '1px solid #fecaca',
+                          borderRadius: '0.375rem',
+                          cursor: topSenders.deletingEmail === s.email ? 'wait' : 'pointer',
+                          fontSize: '0.75rem',
+                          color: '#dc2626',
+                          opacity: topSenders.deletingEmail === s.email ? 0.5 : 1,
+                          flexShrink: 0,
+                        }}
+                      >
+                        {topSenders.deletingEmail === s.email ? '...' : 'מחק הכל'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                {/* Footer */}
+                <div style={{
+                  padding: '0.75rem 1rem',
+                  borderTop: '1px solid #e5e7eb',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  flexShrink: 0,
+                }}>
+                  <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>
+                    נסרקו {topSenders.totalScanned} הודעות
+                  </span>
+                  {topSenders.continueToken && (
+                    <button
+                      onClick={() => handleTopSenders(topSenders.continueToken)}
+                      style={{
+                        padding: '0.5rem 1rem',
+                        background: '#2563eb',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '0.375rem',
+                        cursor: 'pointer',
+                        fontSize: '0.8rem',
+                        fontWeight: 500,
+                      }}
+                    >
+                      סרוק עוד 2000
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Event scan modal */}
+      {eventScan.step !== 'idle' && (
+        <div
+          onClick={() => setEventScan({ step: 'idle' })}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: '1rem',
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'white',
+              borderRadius: '0.75rem',
+              width: '100%',
+              maxWidth: '540px',
+              maxHeight: '80vh',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            {/* Header */}
+            <div style={{ padding: '1rem', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+              <div style={{ fontWeight: 600 }}>ניקוי אירועים שחלפו</div>
+              <button
+                onClick={() => setEventScan({ step: 'idle' })}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '1.5rem',
+                  cursor: 'pointer',
+                  color: '#6b7280',
+                  lineHeight: 1,
+                  padding: '0.25rem',
+                }}
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Body */}
+            {eventScan.step === 'scanning' ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: '#1e40af' }}>
+                {eventScan.progress}
+              </div>
+            ) : eventScan.step === 'deleting' ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: '#dc2626' }}>
+                מוחק הודעות...
+              </div>
+            ) : eventScan.step === 'review' && eventScan.events.length === 0 ? (
+              <div style={{ padding: '2rem', textAlign: 'center' }}>
+                <div style={{ color: '#6b7280', marginBottom: '1rem' }}>לא נמצאו אירועים שחלפו</div>
+                <button
+                  onClick={() => setEventScan({ step: 'idle' })}
+                  style={{
+                    padding: '0.5rem 1rem',
+                    background: 'none',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '0.375rem',
+                    cursor: 'pointer',
+                    fontSize: '0.875rem',
+                  }}
+                >
+                  סגור
+                </button>
+              </div>
+            ) : eventScan.step === 'review' ? (
+              <>
+                {/* Summary bar */}
+                <div style={{
+                  padding: '0.75rem 1rem',
+                  borderBottom: '1px solid #e5e7eb',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  flexShrink: 0,
+                  background: '#f9fafb',
+                }}>
+                  <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>
+                    נמצאו {eventScan.events.length} אירועים שחלפו
+                  </span>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+                      {eventScan.events.filter(e => e.selected).length} נבחרו
+                    </span>
+                    <button
+                      onClick={() => setEventScan(prev => prev.step === 'review' ? { ...prev, events: prev.events.map(e => ({ ...e, selected: true })) } : prev)}
+                      style={{ padding: '0.25rem 0.5rem', background: 'none', border: '1px solid #d1d5db', borderRadius: '0.25rem', cursor: 'pointer', fontSize: '0.75rem' }}
+                    >
+                      בחר הכל
+                    </button>
+                    <button
+                      onClick={() => setEventScan(prev => prev.step === 'review' ? { ...prev, events: prev.events.map(e => ({ ...e, selected: false })) } : prev)}
+                      style={{ padding: '0.25rem 0.5rem', background: 'none', border: '1px solid #d1d5db', borderRadius: '0.25rem', cursor: 'pointer', fontSize: '0.75rem' }}
+                    >
+                      בטל הכל
+                    </button>
+                  </div>
+                </div>
+
+                {/* Events list */}
+                <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+                  {eventScan.events.map((ev) => (
+                    <div
+                      key={ev.id}
+                      onClick={() => setEventScan(prev => prev.step === 'review' ? {
+                        ...prev,
+                        events: prev.events.map(e => e.id === ev.id ? { ...e, selected: !e.selected } : e),
+                      } : prev)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: '0.75rem',
+                        padding: '0.75rem 1rem',
+                        borderBottom: '1px solid #f3f4f6',
+                        cursor: 'pointer',
+                        background: ev.selected ? '#eff6ff' : 'white',
+                      }}
+                    >
+                      {/* Checkbox */}
+                      <div style={{
+                        width: '1.25rem',
+                        height: '1.25rem',
+                        borderRadius: '0.25rem',
+                        border: `2px solid ${ev.selected ? '#3b82f6' : '#d1d5db'}`,
+                        background: ev.selected ? '#3b82f6' : 'white',
+                        flexShrink: 0,
+                        marginTop: '0.125rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: 'white',
+                        fontSize: '0.75rem',
+                        fontWeight: 700,
+                      }}>
+                        {ev.selected && '\u2713'}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: '0.875rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {ev.subject}
+                        </div>
+                        {ev.eventDescription && (
+                          <div style={{ fontSize: '0.8rem', color: '#7c3aed', marginTop: '0.125rem' }}>
+                            {ev.eventDescription}
+                          </div>
+                        )}
+                        <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.125rem' }}>
+                          {formatSender(ev.from)}
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: '#dc2626', marginTop: '0.125rem' }}>
+                          האירוע היה ב-{new Date(ev.eventDate + 'T00:00:00').toLocaleDateString('he-IL', { day: 'numeric', month: 'long', year: 'numeric' })}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Footer */}
+                <div style={{
+                  padding: '0.75rem 1rem',
+                  borderTop: '1px solid #e5e7eb',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  flexShrink: 0,
+                }}>
+                  <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>
+                    {eventScan.events.filter(e => e.selected).length} הודעות יימחקו
+                  </span>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button
+                      onClick={() => setEventScan({ step: 'idle' })}
+                      style={{
+                        padding: '0.5rem 1rem',
+                        background: 'none',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                        cursor: 'pointer',
+                        fontSize: '0.875rem',
+                        color: '#6b7280',
+                      }}
+                    >
+                      ביטול
+                    </button>
+                    <button
+                      onClick={handleEventDelete}
+                      disabled={eventScan.events.filter(e => e.selected).length === 0}
+                      style={{
+                        padding: '0.5rem 1rem',
+                        background: '#dc2626',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '0.375rem',
+                        cursor: eventScan.events.filter(e => e.selected).length === 0 ? 'default' : 'pointer',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        opacity: eventScan.events.filter(e => e.selected).length === 0 ? 0.5 : 1,
+                      }}
+                    >
+                      מחק ({eventScan.events.filter(e => e.selected).length})
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : null}
           </div>
         </div>
       )}
