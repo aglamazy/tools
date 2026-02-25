@@ -36,8 +36,8 @@ export async function applyMergedBackup(merged: BackupData): Promise<void> {
     await applyNaturalKeyTable(db.ypayDocuments, merged.stores.ypayDocuments, 'transactionId')
 
     // --- FK chain tables: process in dependency order ---
-    // 1. Businesses (parent — no FK dependencies)
-    const businessSyncIdToLocalId = await applyFKParentTable(db.businesses, merged.stores.businesses)
+    // 1. Businesses (parent — no FK dependencies, has unique 'name' index)
+    const businessSyncIdToLocalId = await applyFKParentTable(db.businesses, merged.stores.businesses, 'name')
 
     // 2. Projects (FK: businessId → businesses)
     const projectSyncIdToLocalId = await applyFKChildTable(
@@ -144,23 +144,33 @@ async function applyNaturalKeyTable(table: any, mergedRecords: any[] | undefined
 async function applyFKParentTable(
   table: any,
   mergedRecords: any[] | undefined,
+  uniqueKeyField?: string,
 ): Promise<Map<string, number>> {
   const syncIdToLocalId = new Map<string, number>()
   if (!mergedRecords?.length) return syncIdToLocalId
 
   const localRecords = await table.toArray()
   const localBySyncId = new Map<string, any>()
+  const localByUniqueKey = new Map<string, any>()
   for (const r of localRecords) {
     if (r.syncId) {
       localBySyncId.set(r.syncId, r)
       syncIdToLocalId.set(r.syncId, r.id)
+    }
+    if (uniqueKeyField && r[uniqueKeyField] != null) {
+      localByUniqueKey.set(String(r[uniqueKeyField]), r)
     }
   }
 
   for (const merged of mergedRecords) {
     if (!merged.syncId) continue
 
-    const local = localBySyncId.get(merged.syncId)
+    // Match by syncId first, then fall back to unique key
+    let local = localBySyncId.get(merged.syncId)
+    if (!local && uniqueKeyField && merged[uniqueKeyField] != null) {
+      local = localByUniqueKey.get(String(merged[uniqueKeyField]))
+    }
+
     if (local) {
       if (shouldUpdate(local, merged)) {
         const { id: _id, ...updates } = merged
