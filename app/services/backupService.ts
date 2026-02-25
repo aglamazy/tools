@@ -15,7 +15,7 @@
  * DO NOT add tier-based filtering to export/import functions.
  */
 
-import { db } from '@/app/db/financeDB'
+import { db, withRawAccess } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { timerStore } from '@/app/stores/timerStore'
 import { initializeAppSettings } from '@/app/services/appSettingsService'
@@ -36,6 +36,9 @@ export interface BackupData {
     harvestTasks: any[]
     timeEntries: any[]
     ypayDocuments: any[]
+    capitalEntries: any[]
+    financialInstitutions: any[]
+    vacations: any[]
     // localStorage data
     subjectStore: any
     timerStore: any
@@ -47,6 +50,7 @@ export interface BackupData {
  */
 export async function exportAllStores(): Promise<BackupData> {
   try {
+    // Use rawAccess so soft-deleted records are included in backup
     const [
       transactions,
       importedFiles,
@@ -59,7 +63,10 @@ export async function exportAllStores(): Promise<BackupData> {
       harvestTasks,
       timeEntries,
       ypayDocuments,
-    ] = await Promise.all([
+      capitalEntries,
+      financialInstitutions,
+      vacations,
+    ] = await withRawAccess(() => Promise.all([
       db.transactions.toArray(),
       db.importedFiles.toArray(),
       db.categories.toArray(),
@@ -71,7 +78,10 @@ export async function exportAllStores(): Promise<BackupData> {
       db.harvestTasks.toArray(),
       db.timeEntries.toArray(),
       db.ypayDocuments.toArray(),
-    ])
+      db.capitalEntries.toArray(),
+      db.financialInstitutions.toArray(),
+      db.vacations.toArray(),
+    ]))
 
     // Let stores export their own data
     const [subjectStoreData, timerStoreData] = await Promise.all([
@@ -80,7 +90,7 @@ export async function exportAllStores(): Promise<BackupData> {
     ])
 
     return {
-      version: '1.0',
+      version: '2.0',
       timestamp: new Date().toISOString(),
       stores: {
         transactions,
@@ -94,6 +104,9 @@ export async function exportAllStores(): Promise<BackupData> {
         harvestTasks,
         timeEntries,
         ypayDocuments,
+        capitalEntries,
+        financialInstitutions,
+        vacations,
         subjectStore: subjectStoreData,
         timerStore: timerStoreData,
       },
@@ -131,6 +144,9 @@ export async function importAllStores(backup: BackupData): Promise<void> {
       harvestTasks: stores.harvestTasks?.length ?? 0,
       timeEntries: stores.timeEntries?.length ?? 0,
       ypayDocuments: stores.ypayDocuments?.length ?? 0,
+      capitalEntries: stores.capitalEntries?.length ?? 0,
+      financialInstitutions: stores.financialInstitutions?.length ?? 0,
+      vacations: stores.vacations?.length ?? 0,
     }
     console.log('[BackupRestore] importing backup', counts)
 
@@ -138,52 +154,67 @@ export async function importAllStores(backup: BackupData): Promise<void> {
       throw new Error('Backup missing core data (transactions/importedFiles)')
     }
 
-    // Clear and import IndexedDB tables - only clear if backup has data for that table
-    // This preserves local data for stores that don't exist in older backups
-    if (stores.transactions?.length > 0) {
-      await db.transactions.clear()
-      await db.transactions.bulkAdd(stores.transactions)
-    }
-    if (stores.importedFiles?.length > 0) {
-      await db.importedFiles.clear()
-      await db.importedFiles.bulkAdd(stores.importedFiles)
-    }
-    if (stores.categories?.length > 0) {
-      await db.categories.clear()
-      await db.categories.bulkAdd(stores.categories)
-    }
-    if (stores.businessCategories?.length > 0) {
-      await db.businessCategories.clear()
-      await db.businessCategories.bulkAdd(stores.businessCategories)
-    }
-    if (stores.tasks?.length > 0) {
-      await db.tasks.clear()
-      await db.tasks.bulkAdd(stores.tasks)
-    }
-    if (stores.appSettings?.length > 0) {
-      await db.appSettings.clear()
-      await db.appSettings.bulkAdd(stores.appSettings)
-    }
-    if (stores.businesses?.length > 0) {
-      await db.businesses.clear()
-      await db.businesses.bulkAdd(stores.businesses)
-    }
-    if (stores.projects?.length > 0) {
-      await db.projects.clear()
-      await db.projects.bulkAdd(stores.projects)
-    }
-    if (stores.harvestTasks?.length > 0) {
-      await db.harvestTasks.clear()
-      await db.harvestTasks.bulkAdd(stores.harvestTasks)
-    }
-    if (stores.timeEntries?.length > 0) {
-      await db.timeEntries.clear()
-      await db.timeEntries.bulkAdd(stores.timeEntries)
-    }
-    if (stores.ypayDocuments?.length > 0) {
-      await db.ypayDocuments.clear()
-      await db.ypayDocuments.bulkAdd(stores.ypayDocuments)
-    }
+    // Use rawAccess so clear() is a real delete and bulkAdd doesn't double-inject syncIds
+    await withRawAccess(async () => {
+      // Clear and import IndexedDB tables - only clear if backup has data for that table
+      // This preserves local data for stores that don't exist in older backups
+      if (stores.transactions?.length > 0) {
+        await db.transactions.clear()
+        await db.transactions.bulkAdd(stores.transactions)
+      }
+      if (stores.importedFiles?.length > 0) {
+        await db.importedFiles.clear()
+        await db.importedFiles.bulkAdd(stores.importedFiles)
+      }
+      if (stores.categories?.length > 0) {
+        await db.categories.clear()
+        await db.categories.bulkAdd(stores.categories)
+      }
+      if (stores.businessCategories?.length > 0) {
+        await db.businessCategories.clear()
+        await db.businessCategories.bulkAdd(stores.businessCategories)
+      }
+      if (stores.tasks?.length > 0) {
+        await db.tasks.clear()
+        await db.tasks.bulkAdd(stores.tasks)
+      }
+      if (stores.appSettings?.length > 0) {
+        await db.appSettings.clear()
+        await db.appSettings.bulkAdd(stores.appSettings)
+      }
+      if (stores.businesses?.length > 0) {
+        await db.businesses.clear()
+        await db.businesses.bulkAdd(stores.businesses)
+      }
+      if (stores.projects?.length > 0) {
+        await db.projects.clear()
+        await db.projects.bulkAdd(stores.projects)
+      }
+      if (stores.harvestTasks?.length > 0) {
+        await db.harvestTasks.clear()
+        await db.harvestTasks.bulkAdd(stores.harvestTasks)
+      }
+      if (stores.timeEntries?.length > 0) {
+        await db.timeEntries.clear()
+        await db.timeEntries.bulkAdd(stores.timeEntries)
+      }
+      if (stores.ypayDocuments?.length > 0) {
+        await db.ypayDocuments.clear()
+        await db.ypayDocuments.bulkAdd(stores.ypayDocuments)
+      }
+      if (stores.capitalEntries?.length > 0) {
+        await db.capitalEntries.clear()
+        await db.capitalEntries.bulkAdd(stores.capitalEntries)
+      }
+      if (stores.financialInstitutions?.length > 0) {
+        await db.financialInstitutions.clear()
+        await db.financialInstitutions.bulkAdd(stores.financialInstitutions)
+      }
+      if (stores.vacations?.length > 0) {
+        await db.vacations.clear()
+        await db.vacations.bulkAdd(stores.vacations)
+      }
+    })
 
     // Let stores import their own data
     await Promise.all([

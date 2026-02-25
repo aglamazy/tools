@@ -1,6 +1,7 @@
 // Financial Institution - Banks, pension funds, investment houses, etc.
 export interface FinancialInstitution {
   id?: number
+  syncId?: string // UUID for cross-device identity
   name: string
   type: 'bank' | 'pension' | 'provident' | 'investment' | 'insurance' | 'other'
   email?: string
@@ -11,6 +12,7 @@ export interface FinancialInstitution {
   notes?: string
   createdAt: string
   updatedAt: string
+  deletedAt?: string // ISO timestamp - soft delete
 }
 
 export type FinancialInstitutionType = FinancialInstitution['type']

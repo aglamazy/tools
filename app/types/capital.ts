@@ -1,6 +1,7 @@
 // Capital Entry - Track investment/pension/savings holdings over time
 export interface CapitalEntry {
   id?: number
+  syncId?: string           // UUID for cross-device identity
   date: string              // Snapshot date (DD/MM/YYYY)
   assetType: string         // Asset type (flexible - user defined: pension, provident, stocks, etc.)
   institution: string       // Bank/Pension fund/Investment house
@@ -14,6 +15,8 @@ export interface CapitalEntry {
   soldDate?: string        // When sold (DD/MM/YYYY) - null if active
   notes?: string
   importedAt: string       // ISO timestamp
+  updatedAt?: string       // ISO timestamp
+  deletedAt?: string       // ISO timestamp - soft delete
   fileId?: string          // Reference to imported Excel file
 }
 

@@ -8,13 +8,12 @@ import {
   clearCachedAvatar,
   type AuthUser,
 } from '@/app/stores/authStore'
-import { lockModeStore } from '@/app/stores/lockModeStore'
 import { signOut } from '@/app/services/firebaseAuthService'
 import { isFirebaseConfigured } from '@/app/lib/firebase'
 import { getSyncPassword } from './CloudSyncManager'
 import AuthModal from './AuthModal'
 
-type SyncIndicatorStatus = 'syncing' | 'readonly' | 'inactive' | 'hidden'
+type SyncIndicatorStatus = 'syncing' | 'inactive' | 'hidden'
 
 function getInitialsAvatarUrl(email: string): string {
   const initial = (email.charAt(0) || '?').toUpperCase()
@@ -36,12 +35,8 @@ function getAvatarUrl(user: AuthUser): string {
 
 function getSyncIndicatorStatus(user: AuthUser | null, isMounted: boolean): SyncIndicatorStatus {
   if (!user || !isMounted) return 'hidden'
-  const mode = lockModeStore.get()
   const hasPassword = !!getSyncPassword()
-
-  if (mode === 'slave') return 'readonly'
-  if (mode === 'master' && hasPassword) return 'syncing'
-  return 'inactive'
+  return hasPassword ? 'syncing' : 'inactive'
 }
 
 function SyncIndicator({ status }: { status: SyncIndicatorStatus }) {
@@ -49,14 +44,12 @@ function SyncIndicator({ status }: { status: SyncIndicatorStatus }) {
 
   const colors: Record<SyncIndicatorStatus, string> = {
     syncing: '#22c55e',  // green
-    readonly: '#f59e0b', // orange
     inactive: '#94a3b8', // gray
     hidden: 'transparent',
   }
 
   const titles: Record<SyncIndicatorStatus, string> = {
     syncing: 'סנכרון פעיל',
-    readonly: 'קריאה בלבד',
     inactive: 'סנכרון לא פעיל',
     hidden: '',
   }
@@ -102,11 +95,6 @@ export default function AuthStatus() {
   useEffect(() => {
     if (!isMounted) return
     setSyncStatus(getSyncIndicatorStatus(user, true))
-
-    const unsubscribe = lockModeStore.subscribe(() => {
-      setSyncStatus(getSyncIndicatorStatus(user, true))
-    })
-    return unsubscribe
   }, [user, isMounted])
 
   // Re-check sync status periodically (for password changes)

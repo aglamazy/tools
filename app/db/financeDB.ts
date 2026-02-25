@@ -6,9 +6,23 @@ import type { FinancialInstitution } from '@/app/types/financialInstitution'
 export type { CapitalEntry } from '@/app/types/capital'
 export type { FinancialInstitution } from '@/app/types/financialInstitution'
 
+/** Generate a UUID v4 */
+export function generateSyncId(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID()
+  }
+  // Fallback for older browsers
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    const v = c === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+}
+
 // Transaction type (unified for bank and credit card)
 export interface Transaction {
   id?: number // Auto-increment primary key
+  syncId?: string // UUID for cross-device identity
   type: string
   date: string // Transaction date (DD/MM/YYYY)
   amount: number
@@ -33,10 +47,13 @@ export interface Transaction {
   month: string // MM/YYYY - transaction month (extracted from date field)
   importedAt: string // ISO timestamp
   fileId: string // Reference to imported file
+  updatedAt?: string // ISO timestamp
+  deletedAt?: string // ISO timestamp - soft delete
 }
 
 export interface ImportedFile {
   id?: number
+  syncId?: string
   fileName: string
   fileType: 'bank' | 'credit-card'
   processingMonth: string
@@ -45,51 +62,63 @@ export interface ImportedFile {
   cardNumber?: string
   transactionCount: number
   importedAt: string
+  updatedAt?: string
+  deletedAt?: string
 }
 
 export interface Category {
   id?: number
-  name: string
+  name: string // Natural key - no syncId needed
   type: 'income' | 'expense'
   icon?: string
   color?: string
+  updatedAt?: string
+  deletedAt?: string
 }
 
 export interface BusinessCategory {
   id?: number
-  business: string
+  business: string // Natural key - no syncId needed
   category: string
   lastUpdated: string
+  deletedAt?: string
 }
 
 export interface Task {
   id?: number
+  syncId?: string
   title: string
   completed: boolean
   priority: 'low' | 'medium' | 'high'
   createdAt: string
+  updatedAt?: string
+  deletedAt?: string
 }
 
 export interface AppSettings {
   id?: number
-  key: string // e.g., 'cardTypeIndicators'
+  key: string // Natural key - no syncId needed
   value: any // Store any JSON-serializable value
   updatedAt: string
+  deletedAt?: string
 }
 
 export interface Business {
   id?: number
+  syncId?: string
   name: string
   type: 'personal' | 'business'
   vatType?: 'exempt' | 'authorized'
   pinnedToSidebar?: boolean
   createdAt: string
   updatedAt: string
+  deletedAt?: string
 }
 
 // Harvest (Time Tracking) interfaces
 export interface Project {
   id?: number
+  syncId?: string
   businessId: number
   name: string
   color?: string
@@ -100,20 +129,24 @@ export interface Project {
   archived: boolean
   createdAt: string
   updatedAt: string
+  deletedAt?: string
 }
 
 export interface HarvestTask {
   id?: number
+  syncId?: string
   projectId: number
   name: string
   hourlyRate?: number
   archived: boolean
   createdAt: string
   updatedAt: string
+  deletedAt?: string
 }
 
 export interface TimeEntry {
   id?: number
+  syncId?: string
   taskId: number
   date: string // YYYY-MM-DD
   startTime: string // HH:MM
@@ -121,15 +154,30 @@ export interface TimeEntry {
   hours: number
   createdAt: string
   updatedAt: string
+  deletedAt?: string
 }
 
 export interface YpayDocument {
   id?: number
-  transactionId: string // Unique reference to the transaction
+  transactionId: string // Natural key - no syncId needed
   url: string // Link to the PDF document
   serialNumber: string // Document serial number from YPAY
   docType: number // 108 = קבלה, 109 = חשבונית מס קבלה
   createdAt: string // ISO timestamp
+  updatedAt?: string
+  deletedAt?: string
+}
+
+export interface Vacation {
+  id?: number
+  syncId?: string
+  from: string // Origin
+  to: string // Destination
+  windowStart?: string // YYYY-MM-DD - earliest acceptable date
+  windowEnd?: string // YYYY-MM-DD - latest acceptable date
+  createdAt: string // ISO timestamp
+  updatedAt?: string
+  deletedAt?: string
 }
 
 class FinanceDB extends Dexie {
@@ -146,6 +194,7 @@ class FinanceDB extends Dexie {
   capitalEntries!: Table<CapitalEntry, number>
   financialInstitutions!: Table<FinancialInstitution, number>
   ypayDocuments!: Table<YpayDocument, number>
+  vacations!: Table<Vacation, number>
 
   constructor() {
     super('FinanceDB')
@@ -297,8 +346,260 @@ class FinanceDB extends Dexie {
       financialInstitutions: '++id, name, type',
       ypayDocuments: '++id, &transactionId',
     })
+
+    // Define schema version 11 - add vacations
+    this.version(11).stores({
+      transactions: '++id, type, month, accountNumber, cardNumber, date, chargingDate, [type+month], [cardNumber+month], [accountNumber+month], fileId',
+      importedFiles: '++id, fileName, fileType, processingMonth, [fileType+processingMonth], [cardNumber+processingMonth]',
+      categories: '++id, name, type',
+      businessCategories: '++id, &business',
+      tasks: '++id, createdAt, priority',
+      appSettings: '++id, &key',
+      businesses: '++id, &name, type',
+      projects: '++id, businessId, name, archived',
+      harvestTasks: '++id, projectId, name, archived',
+      timeEntries: '++id, taskId, date, startTime, endTime, [taskId+date]',
+      capitalEntries: '++id, date, institution, accountNumber, description, assetType, currency, employer, investmentTrack, agent, soldDate, [institution+accountNumber+description], fileId',
+      financialInstitutions: '++id, name, type',
+      ypayDocuments: '++id, &transactionId',
+      vacations: '++id, createdAt',
+    })
+
+    // Define schema version 12 - merge-on-sync: add syncId, updatedAt, deletedAt
+    // syncId indexed on tables that use UUID identity (not natural-key tables)
+    // Natural-key tables: categories (name), businessCategories (business), appSettings (key), ypayDocuments (transactionId)
+    this.version(12).stores({
+      transactions: '++id, syncId, type, month, accountNumber, cardNumber, date, chargingDate, [type+month], [cardNumber+month], [accountNumber+month], fileId',
+      importedFiles: '++id, syncId, fileName, fileType, processingMonth, [fileType+processingMonth], [cardNumber+processingMonth]',
+      categories: '++id, name, type',
+      businessCategories: '++id, &business',
+      tasks: '++id, syncId, createdAt, priority',
+      appSettings: '++id, &key',
+      businesses: '++id, syncId, &name, type',
+      projects: '++id, syncId, businessId, name, archived',
+      harvestTasks: '++id, syncId, projectId, name, archived',
+      timeEntries: '++id, syncId, taskId, date, startTime, endTime, [taskId+date]',
+      capitalEntries: '++id, syncId, date, institution, accountNumber, description, assetType, currency, employer, investmentTrack, agent, soldDate, [institution+accountNumber+description], fileId',
+      financialInstitutions: '++id, syncId, name, type',
+      ypayDocuments: '++id, &transactionId',
+      vacations: '++id, syncId, createdAt',
+    }).upgrade(async (trans) => {
+      const now = new Date().toISOString()
+
+      // Tables that get syncId (UUID identity)
+      const syncIdTables = [
+        'transactions', 'importedFiles', 'tasks', 'businesses',
+        'projects', 'harvestTasks', 'timeEntries', 'capitalEntries',
+        'financialInstitutions', 'vacations',
+      ]
+
+      for (const tableName of syncIdTables) {
+        const table = trans.table(tableName)
+        const records = await table.toArray()
+        for (const record of records) {
+          const updates: any = {}
+          if (!record.syncId) {
+            updates.syncId = generateSyncId()
+          }
+          if (!record.updatedAt) {
+            updates.updatedAt = record.createdAt || record.importedAt || now
+          }
+          if (Object.keys(updates).length > 0) {
+            await table.update(record.id, updates)
+          }
+        }
+      }
+
+      // Natural-key tables that only need updatedAt (no syncId)
+      const naturalKeyUpdates: Array<{ table: string; fallbackField: string }> = [
+        { table: 'categories', fallbackField: '' },
+        { table: 'ypayDocuments', fallbackField: 'createdAt' },
+      ]
+
+      for (const { table: tableName, fallbackField } of naturalKeyUpdates) {
+        const table = trans.table(tableName)
+        const records = await table.toArray()
+        for (const record of records) {
+          if (!record.updatedAt) {
+            const fallback = fallbackField ? record[fallbackField] : now
+            await table.update(record.id, { updatedAt: fallback || now })
+          }
+        }
+      }
+
+      console.log('[FinanceDB] v12 migration complete: syncId + updatedAt added to all records')
+    })
   }
 }
 
 // Export singleton instance
 export const db = new FinanceDB()
+
+// --- Sync Middleware ---
+// Automatically handles syncId injection, updatedAt timestamps,
+// soft-delete conversion, and read filtering for ALL tables.
+// No per-store changes needed.
+
+/** Tables that use syncId (UUID) as cross-device identity */
+const SYNC_ID_TABLES = new Set([
+  'transactions', 'importedFiles', 'tasks', 'businesses',
+  'projects', 'harvestTasks', 'timeEntries', 'capitalEntries',
+  'financialInstitutions', 'vacations',
+])
+
+/** All tables that participate in soft-delete */
+const SOFT_DELETE_TABLES = new Set([
+  ...SYNC_ID_TABLES,
+  'categories', 'businessCategories', 'appSettings', 'ypayDocuments',
+])
+
+let _rawAccess = false
+
+/**
+ * Execute fn with raw DB access:
+ * - Reads include soft-deleted records
+ * - Deletes are real deletes (not soft-delete)
+ * Used by backup export and merge operations.
+ */
+export async function withRawAccess<T>(fn: () => Promise<T>): Promise<T> {
+  _rawAccess = true
+  try {
+    return await fn()
+  } finally {
+    _rawAccess = false
+  }
+}
+
+db.use({
+  stack: 'dbcore',
+  name: 'SyncMiddleware',
+  create(downlevelDatabase) {
+    return {
+      ...downlevelDatabase,
+      table(tableName: string) {
+        const downTable = downlevelDatabase.table(tableName)
+        const usesSyncId = SYNC_ID_TABLES.has(tableName)
+        const usesSoftDelete = SOFT_DELETE_TABLES.has(tableName)
+
+        // Tables that don't participate in sync — pass through unchanged
+        if (!usesSoftDelete && !usesSyncId) return downTable
+
+        return {
+          ...downTable,
+
+          // --- WRITES ---
+          mutate(req: any) {
+            const now = new Date().toISOString()
+
+            if (req.type === 'add') {
+              const values = req.values.map((v: any) => {
+                const clone = { ...v }
+                if (usesSyncId && !clone.syncId) clone.syncId = generateSyncId()
+                if (!clone.updatedAt) clone.updatedAt = now
+                return clone
+              })
+              return downTable.mutate({ ...req, values })
+            }
+
+            if (req.type === 'put') {
+              const values = req.values.map((v: any) => {
+                const clone = { ...v }
+                if (usesSyncId && !clone.syncId) clone.syncId = generateSyncId()
+                // Always stamp updatedAt on puts unless value already has one
+                // (the caller may have set it intentionally)
+                if (!clone.updatedAt) clone.updatedAt = now
+                return clone
+              })
+              // Also inject updatedAt into changeSpec (used by Table.update/modify)
+              let { changeSpec, updates } = req
+              if (changeSpec && !changeSpec.updatedAt) {
+                changeSpec = { ...changeSpec, updatedAt: now }
+              }
+              if (updates) {
+                updates = {
+                  ...updates,
+                  changeSpecs: updates.changeSpecs.map((cs: any) =>
+                    cs.updatedAt ? cs : { ...cs, updatedAt: now }
+                  ),
+                }
+              }
+              return downTable.mutate({ ...req, values, changeSpec, updates })
+            }
+
+            // Soft-delete: convert delete-by-keys to put-with-deletedAt
+            if (usesSoftDelete && !_rawAccess && req.type === 'delete') {
+              return (async () => {
+                const existing = await downTable.getMany({ trans: req.trans, keys: req.keys })
+                const toPut = existing
+                  .filter((r: any) => r != null && !r.deletedAt)
+                  .map((r: any) => ({ ...r, deletedAt: now, updatedAt: now }))
+                if (toPut.length === 0) {
+                  return { numFailures: 0, failures: {}, lastResult: undefined, results: [] }
+                }
+                return downTable.mutate({ type: 'put', trans: req.trans, values: toPut })
+              })()
+            }
+
+            // Soft-delete: convert deleteRange
+            if (usesSoftDelete && !_rawAccess && req.type === 'deleteRange') {
+              // Range type 3 = DBCoreRangeType.Any = clear() → real delete
+              if (req.range?.type === 3) {
+                return downTable.mutate(req)
+              }
+              // Other ranges (e.g. Collection.delete()) → soft-delete
+              return (async () => {
+                const queryResult = await downTable.query({
+                  trans: req.trans,
+                  query: { index: downTable.schema.primaryKey, range: req.range },
+                  values: true,
+                })
+                const toPut = queryResult.result
+                  .filter((r: any) => !r.deletedAt)
+                  .map((r: any) => ({ ...r, deletedAt: now, updatedAt: now }))
+                if (toPut.length === 0) {
+                  return { numFailures: 0, failures: {}, lastResult: undefined, results: [] }
+                }
+                return downTable.mutate({ type: 'put', trans: req.trans, values: toPut })
+              })()
+            }
+
+            return downTable.mutate(req)
+          },
+
+          // --- READS (filter out soft-deleted records) ---
+
+          async get(req: any) {
+            const result = await downTable.get(req)
+            if (_rawAccess || !usesSoftDelete) return result
+            return result?.deletedAt ? undefined : result
+          },
+
+          async getMany(req: any) {
+            const results = await downTable.getMany(req)
+            if (_rawAccess || !usesSoftDelete) return results
+            return results.map((r: any) => (r?.deletedAt ? undefined : r))
+          },
+
+          async query(req: any) {
+            const result = await downTable.query(req)
+            if (_rawAccess || !usesSoftDelete || !req.values) return result
+            const filtered = result.result.filter((r: any) => !r.deletedAt)
+            return { ...result, result: filtered }
+          },
+
+          async count(req: any) {
+            if (_rawAccess || !usesSoftDelete) return downTable.count(req)
+            // Count non-deleted records by querying with values
+            const result = await downTable.query({
+              trans: req.trans,
+              query: req.query,
+              values: true,
+            })
+            return result.result.filter((r: any) => !r.deletedAt).length
+          },
+        }
+      },
+    }
+  },
+})
+
