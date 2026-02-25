@@ -25,23 +25,32 @@ export type GmailMessage = {
 
 // Store the access token in memory (loaded from storage on init)
 let gmailAccessToken: string | null = null
+const TOKEN_LIFETIME_MS = 55 * 60 * 1000 // 55 minutes (Google tokens last 60 min)
 
 function loadTokenFromStorage(): void {
   if (typeof window === 'undefined') return
   try {
-    const stored = sessionStorage.getItem(GMAIL_TOKEN_KEY)
+    const stored = localStorage.getItem(GMAIL_TOKEN_KEY)
     if (stored) {
-      gmailAccessToken = stored
+      const { token, expiresAt } = JSON.parse(stored)
+      if (expiresAt > Date.now()) {
+        gmailAccessToken = token
+      } else {
+        localStorage.removeItem(GMAIL_TOKEN_KEY)
+      }
     }
   } catch {
-    // Ignore storage errors
+    localStorage.removeItem(GMAIL_TOKEN_KEY)
   }
 }
 
 function saveTokenToStorage(token: string): void {
   if (typeof window === 'undefined') return
   try {
-    sessionStorage.setItem(GMAIL_TOKEN_KEY, token)
+    localStorage.setItem(GMAIL_TOKEN_KEY, JSON.stringify({
+      token,
+      expiresAt: Date.now() + TOKEN_LIFETIME_MS,
+    }))
   } catch {
     // Ignore storage errors
   }
@@ -50,7 +59,7 @@ function saveTokenToStorage(token: string): void {
 function clearTokenFromStorage(): void {
   if (typeof window === 'undefined') return
   try {
-    sessionStorage.removeItem(GMAIL_TOKEN_KEY)
+    localStorage.removeItem(GMAIL_TOKEN_KEY)
   } catch {
     // Ignore storage errors
   }
