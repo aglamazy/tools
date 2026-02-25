@@ -2,13 +2,14 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { subscribeToAuth } from '@/app/stores/authStore'
+import { lockModeStore } from '@/app/stores/lockModeStore'
 import {
   isCloudBackupAvailable,
   hasEncryptionPasswordSetup,
+  uploadBackup,
   verifyEncryptionPassword,
   restoreFromCloud,
   getBackupInfo,
-  syncMerge,
 } from '@/app/services/cloudBackupService'
 import { isLocalDataEmpty } from '@/app/services/backupService'
 import { config } from '@/app/config'
@@ -91,6 +92,12 @@ export default function CloudSyncManager() {
     }
 
     const doInitialRestoreCheck = async (password: string) => {
+      // Only restore if we're master
+      if (!lockModeStore.isMaster()) {
+        initialCheckDoneRef.current = true
+        return
+      }
+
       const [localEmpty, backupInfo] = await Promise.all([
         isLocalDataEmpty(),
         getBackupInfo(),
@@ -119,6 +126,12 @@ export default function CloudSyncManager() {
   }, [])
 
   const doInitialRestoreCheck = async (password: string) => {
+    // Only restore if we're master
+    if (!lockModeStore.isMaster()) {
+      initialCheckDoneRef.current = true
+      return
+    }
+
     const [localEmpty, backupInfo] = await Promise.all([
       isLocalDataEmpty(),
       getBackupInfo(),
@@ -154,6 +167,9 @@ export default function CloudSyncManager() {
       // Wait for initial restore check to complete
       if (!initialCheckDoneRef.current) return
 
+      // Only sync if we're the master station
+      if (!lockModeStore.isMaster()) return
+
       // Check if cloud backup is available
       if (!isCloudBackupAvailable()) return
 
@@ -165,18 +181,22 @@ export default function CloudSyncManager() {
       const password = getSyncPassword()
       if (!password) return
 
+      // Verify password is still valid
+      const isValid = await verifyEncryptionPassword(password)
+      if (!isValid) {
+        console.log('[CloudSync] Stored password invalid, clearing')
+        clearSyncPassword()
+        return
+      }
+
       isSyncingRef.current = true
       try {
-        console.log('[CloudSync] Starting merge-on-sync...')
-        const result = await syncMerge(password)
+        console.log('[CloudSync] Starting auto-sync...')
+        const result = await uploadBackup(password)
         if (result.success) {
-          console.log('[CloudSync] Merge-on-sync completed')
+          console.log('[CloudSync] Auto-sync completed')
         } else {
-          console.warn('[CloudSync] Merge-on-sync failed:', result.error)
-          // If password is wrong, clear it so user gets re-prompted
-          if (result.errorCode === 'wrong-password') {
-            clearSyncPassword()
-          }
+          console.warn('[CloudSync] Auto-sync failed:', result.error)
         }
       } finally {
         isSyncingRef.current = false
