@@ -85,6 +85,14 @@ const allTools: Tool[] = [
 
   // Pro features
   {
+    id: 'vacation',
+    title: 'חופשות',
+    href: '/tools/vacation',
+    icon: '✈️',
+    available: true,
+    requiredTier: UserTier.PRO,
+  },
+  {
     id: 'gmail',
     title: 'Gmail',
     href: '/tools/gmail',
