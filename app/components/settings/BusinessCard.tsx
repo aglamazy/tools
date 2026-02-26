@@ -22,39 +22,36 @@ export default function BusinessCard({ business, onEdit, onDelete, onTogglePin }
         borderRadius: '0.75rem',
       }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
-        <div style={{ flex: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-            <button
-              onClick={() => onTogglePin(business)}
-              title={business.pinnedToSidebar ? 'הסר מהתפריט' : 'הצמד לתפריט'}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                cursor: 'pointer',
-                fontSize: '1.1rem',
-                padding: '0.1rem',
-                opacity: business.pinnedToSidebar ? 1 : 0.4,
-              }}
-            >
-              ...
-            </button>
-            <span style={{ fontSize: '1.25rem' }}>
-              {business.type === 'personal' ? '...' : '...'}
-            </span>
-            <span style={{ fontWeight: 600, fontSize: '1rem' }}>{business.name}</span>
-            <span style={{
-              fontSize: '0.75rem',
-              padding: '0.15rem 0.5rem',
-              background: business.type === 'personal' ? '#dbeafe' : '#dcfce7',
-              color: business.type === 'personal' ? '#1e40af' : '#166534',
-              borderRadius: '0.25rem',
-            }}>
-              {business.type === 'personal' ? 'אישי' : 'עסקי'}
-            </span>
-          </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, minWidth: 0 }}>
+          <button
+            onClick={() => onTogglePin(business)}
+            title={business.pinnedToSidebar ? 'הסר מהתפריט' : 'הצמד לתפריט'}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: '1.1rem',
+              padding: '0.1rem',
+              flexShrink: 0,
+              lineHeight: 1,
+            }}
+          >
+            {business.pinnedToSidebar ? '\u2B50' : '\u2606'}
+          </button>
+          <span style={{ fontWeight: 600, fontSize: '1rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{business.name}</span>
+          <span style={{
+            fontSize: '0.75rem',
+            padding: '0.15rem 0.5rem',
+            background: business.type === 'personal' ? '#dbeafe' : '#dcfce7',
+            color: business.type === 'personal' ? '#1e40af' : '#166534',
+            borderRadius: '0.25rem',
+            flexShrink: 0,
+          }}>
+            {business.type === 'personal' ? '\u05D0\u05D9\u05E9\u05D9' : '\u05E2\u05E1\u05E7\u05D9'}
+          </span>
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
           <button
             onClick={() => onEdit(business)}
             style={{
@@ -67,7 +64,7 @@ export default function BusinessCard({ business, onEdit, onDelete, onTogglePin }
               color: '#475569',
             }}
           >
-            ערוך
+            {'\u05E2\u05E8\u05D5\u05DA'}
           </button>
           <button
             onClick={() => onDelete(business.id)}
@@ -81,7 +78,7 @@ export default function BusinessCard({ business, onEdit, onDelete, onTogglePin }
               color: '#dc2626',
             }}
           >
-            מחק
+            {'\u05DE\u05D7\u05E7'}
           </button>
         </div>
       </div>
