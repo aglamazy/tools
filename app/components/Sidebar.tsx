@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { businessStore } from '@/app/stores/businessStore'
 import { userTierStore, UserTier } from '@/app/stores/userTierStore'
+import { config } from '@/app/config'
 import type { Business } from '@/app/db/financeDB'
 
 type Tool = {
@@ -124,8 +125,8 @@ export default function Sidebar() {
   const [userTier, setUserTier] = useState<UserTier>(userTierStore.get())
   const [upgradePrompt, setUpgradePrompt] = useState<{ tool: Tool } | null>(null)
 
-  // Show all tools, check access per tool
-  const tools = allTools
+  // Hide dev-db unless developer mode is on
+  const tools = config.developerMode ? allTools : allTools.filter(t => t.id !== 'dev-db')
 
   const handleLockedClick = (tool: Tool) => {
     setUpgradePrompt({ tool })
