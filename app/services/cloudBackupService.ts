@@ -19,6 +19,8 @@ import { getFirebaseAuth } from '@/app/lib/firebase'
 import { getCurrentUser } from './firebaseAuthService'
 import { encrypt, decrypt, generateVerificationToken, verifyPasswordWithToken } from './encryptionService'
 import { exportAllStores, importAllStores, isLocalDataEmpty, type BackupData } from './backupService'
+import { mergeBackups } from './mergeService'
+import { applyMergedBackup } from './applyMergedBackupService'
 
 const BACKUP_FILE_NAME = 'backup.enc'
 const VERIFICATION_FILE_NAME = 'verify.enc'
@@ -356,6 +358,177 @@ export async function getBackupInfo(): Promise<CloudBackupInfo> {
     }
     return { exists: false, error: err.message }
   }
+}
+
+/**
+ * Download backup with generation metadata for optimistic locking
+ */
+async function downloadBackupWithGeneration(password: string): Promise<{
+  success: boolean
+  data?: BackupData
+  generation?: string
+  error?: string
+  errorCode?: string
+}> {
+  const user = getCurrentUser()
+  if (!user || !isFirebaseConfigured()) {
+    return { success: false, error: 'לא מחובר', errorCode: 'not-authenticated' }
+  }
+
+  try {
+    const storage = getFirebaseStorage()
+    const backupPath = await getBackupPath(user.uid, BACKUP_FILE_NAME)
+    const backupRef = ref(storage, backupPath)
+
+    let metadata
+    try {
+      metadata = await getMetadata(backupRef)
+    } catch (err: any) {
+      if (err.code === 'storage/object-not-found') {
+        return { success: false, errorCode: 'no-backup' }
+      }
+      throw err
+    }
+
+    const bytes = await getBytes(backupRef)
+    const encryptedBackup = new TextDecoder().decode(bytes)
+
+    let backupJson: string
+    try {
+      backupJson = await decrypt(encryptedBackup, password)
+    } catch {
+      return { success: false, error: 'סיסמת הצפנה שגויה', errorCode: 'wrong-password' }
+    }
+
+    const backup = JSON.parse(backupJson) as BackupData
+    return { success: true, data: backup, generation: metadata.generation }
+  } catch (err: any) {
+    console.error('[CloudBackup] Download with generation failed:', err)
+    return { success: false, error: 'שגיאה בהורדת הגיבוי', errorCode: 'unknown' }
+  }
+}
+
+/**
+ * Upload backup with generation check for optimistic locking.
+ * If expectedGeneration is provided and doesn't match, returns generation-mismatch error.
+ */
+async function uploadBackupWithGeneration(
+  backup: BackupData,
+  password: string,
+  expectedGeneration?: string,
+): Promise<CloudBackupResult & { generation?: string }> {
+  const user = getCurrentUser()
+  if (!user || !isFirebaseConfigured()) {
+    return { success: false, error: 'לא מחובר', errorCode: 'not-authenticated' }
+  }
+
+  try {
+    const storage = getFirebaseStorage()
+    const backupPath = await getBackupPath(user.uid, BACKUP_FILE_NAME)
+    const backupRef = ref(storage, backupPath)
+
+    // Check generation if provided
+    if (expectedGeneration) {
+      try {
+        const currentMetadata = await getMetadata(backupRef)
+        if (currentMetadata.generation !== expectedGeneration) {
+          return { success: false, error: 'גרסה השתנתה', errorCode: 'generation-mismatch' as any }
+        }
+      } catch (err: any) {
+        if (err.code !== 'storage/object-not-found') throw err
+        // File doesn't exist yet — OK to upload
+      }
+    }
+
+    const backupJson = JSON.stringify(backup)
+    if (backupJson.length > MAX_BACKUP_SIZE_BYTES) {
+      const sizeMB = (backupJson.length / 1024 / 1024).toFixed(2)
+      return { success: false, error: `הגיבוי גדול מדי (${sizeMB} MB)`, errorCode: 'size-limit' }
+    }
+
+    const encryptedBackup = await encrypt(backupJson, password)
+    await uploadString(backupRef, encryptedBackup)
+
+    const newMetadata = await getMetadata(backupRef)
+    return { success: true, generation: newMetadata.generation }
+  } catch (err: any) {
+    console.error('[CloudBackup] Upload with generation failed:', err)
+    return { success: false, error: 'שגיאה בהעלאת הגיבוי', errorCode: 'unknown' }
+  }
+}
+
+/**
+ * Sync-merge: merge local data with cloud backup, apply locally, then upload.
+ * This is the core concurrent editing flow — replaces simple upload.
+ */
+export async function syncMerge(password: string): Promise<CloudBackupResult> {
+  const user = getCurrentUser()
+  if (!user) {
+    return { success: false, error: 'יש להתחבר', errorCode: 'not-authenticated' }
+  }
+  if (!isFirebaseConfigured()) {
+    return { success: false, error: 'Firebase לא מוגדר', errorCode: 'not-configured' }
+  }
+
+  const localEmpty = await isLocalDataEmpty()
+  if (localEmpty) {
+    return { success: false, error: 'אין נתונים מקומיים', errorCode: 'no-backup' }
+  }
+
+  const isValidPassword = await verifyEncryptionPassword(password)
+  if (!isValidPassword) {
+    return { success: false, error: 'סיסמת הצפנה שגויה', errorCode: 'wrong-password' }
+  }
+
+  const MAX_RETRIES = 3
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      // 1. Export local
+      const localBackup = await exportAllStores()
+
+      // 2. Download cloud (with generation)
+      const cloudResult = await downloadBackupWithGeneration(password)
+      let merged: BackupData
+      let generation: string | undefined
+
+      if (cloudResult.success && cloudResult.data) {
+        // 3. Merge
+        generation = cloudResult.generation
+        merged = mergeBackups(localBackup, cloudResult.data)
+      } else if (cloudResult.errorCode === 'no-backup') {
+        // No cloud backup yet — local is the merged result
+        merged = localBackup
+      } else {
+        return { success: false, error: cloudResult.error || 'שגיאה בהורדת הגיבוי', errorCode: 'unknown' }
+      }
+
+      // 4. Apply merged backup to local DB
+      await applyMergedBackup(merged)
+
+      // 5. Re-export (now has correct local IDs)
+      const finalBackup = await exportAllStores()
+
+      // 6. Upload with generation check
+      const uploadResult = await uploadBackupWithGeneration(finalBackup, password, generation)
+      if (!uploadResult.success) {
+        if ((uploadResult.errorCode as string) === 'generation-mismatch') {
+          console.log(`[CloudSync] Generation mismatch, retrying (attempt ${attempt + 1}/${MAX_RETRIES})`)
+          continue
+        }
+        return uploadResult
+      }
+
+      console.log('[CloudSync] Sync-merge completed successfully')
+      return { success: true }
+    } catch (err: any) {
+      console.error(`[CloudSync] Sync-merge attempt ${attempt + 1} failed:`, err)
+      if (attempt === MAX_RETRIES - 1) {
+        return { success: false, error: 'שגיאה בסנכרון', errorCode: 'unknown' }
+      }
+    }
+  }
+
+  return { success: false, error: 'נכשל אחרי מספר ניסיונות', errorCode: 'unknown' }
 }
 
 /**

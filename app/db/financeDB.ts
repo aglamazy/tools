@@ -9,6 +9,7 @@ export type { FinancialInstitution } from '@/app/types/financialInstitution'
 // Transaction type (unified for bank and credit card)
 export interface Transaction {
   id?: number // Auto-increment primary key
+  syncId?: string // UUID for cross-device identity
   type: string
   date: string // Transaction date (DD/MM/YYYY)
   amount: number
@@ -32,11 +33,13 @@ export interface Transaction {
   // Metadata
   month: string // MM/YYYY - transaction month (extracted from date field)
   importedAt: string // ISO timestamp
+  updatedAt?: string // ISO timestamp, auto-updated
   fileId: string // Reference to imported file
 }
 
 export interface ImportedFile {
   id?: number
+  syncId?: string
   fileName: string
   fileType: 'bank' | 'credit-card'
   processingMonth: string
@@ -45,18 +48,22 @@ export interface ImportedFile {
   cardNumber?: string
   transactionCount: number
   importedAt: string
+  updatedAt?: string
 }
 
 export interface Category {
   id?: number
+  syncId?: string
   name: string
   type: 'income' | 'expense'
   icon?: string
   color?: string
+  updatedAt?: string
 }
 
 export interface BusinessCategory {
   id?: number
+  syncId?: string
   business: string
   category: string
   lastUpdated: string
@@ -64,14 +71,17 @@ export interface BusinessCategory {
 
 export interface Task {
   id?: number
+  syncId?: string
   title: string
   completed: boolean
   priority: 'low' | 'medium' | 'high'
   createdAt: string
+  updatedAt?: string
 }
 
 export interface AppSettings {
   id?: number
+  syncId?: string
   key: string // e.g., 'cardTypeIndicators'
   value: any // Store any JSON-serializable value
   updatedAt: string
@@ -79,6 +89,7 @@ export interface AppSettings {
 
 export interface Business {
   id?: number
+  syncId?: string
   name: string
   type: 'personal' | 'business'
   vatType?: 'exempt' | 'authorized'
@@ -90,6 +101,7 @@ export interface Business {
 // Harvest (Time Tracking) interfaces
 export interface Project {
   id?: number
+  syncId?: string
   businessId: number
   name: string
   color?: string
@@ -104,6 +116,7 @@ export interface Project {
 
 export interface HarvestTask {
   id?: number
+  syncId?: string
   projectId: number
   name: string
   hourlyRate?: number
@@ -114,6 +127,7 @@ export interface HarvestTask {
 
 export interface TimeEntry {
   id?: number
+  syncId?: string
   taskId: number
   date: string // YYYY-MM-DD
   startTime: string // HH:MM
@@ -125,11 +139,13 @@ export interface TimeEntry {
 
 export interface YpayDocument {
   id?: number
+  syncId?: string
   transactionId: string // Unique reference to the transaction
   url: string // Link to the PDF document
   serialNumber: string // Document serial number from YPAY
   docType: number // 108 = קבלה, 109 = חשבונית מס קבלה
   createdAt: string // ISO timestamp
+  updatedAt?: string
 }
 
 class FinanceDB extends Dexie {
@@ -296,6 +312,56 @@ class FinanceDB extends Dexie {
       capitalEntries: '++id, date, institution, accountNumber, description, assetType, currency, employer, investmentTrack, agent, soldDate, [institution+accountNumber+description], fileId',
       financialInstitutions: '++id, name, type',
       ypayDocuments: '++id, &transactionId',
+    })
+
+    // Define schema version 11 - add syncId + updatedAt for merge-on-sync
+    this.version(11).stores({
+      transactions: '++id, syncId, type, month, accountNumber, cardNumber, date, chargingDate, [type+month], [cardNumber+month], [accountNumber+month], fileId',
+      importedFiles: '++id, syncId, fileName, fileType, processingMonth, [fileType+processingMonth], [cardNumber+processingMonth]',
+      categories: '++id, syncId, name, type',
+      businessCategories: '++id, syncId, &business',
+      tasks: '++id, syncId, createdAt, priority',
+      appSettings: '++id, syncId, &key',
+      businesses: '++id, syncId, &name, type',
+      projects: '++id, syncId, businessId, name, archived',
+      harvestTasks: '++id, syncId, projectId, name, archived',
+      timeEntries: '++id, syncId, taskId, date, startTime, endTime, [taskId+date]',
+      capitalEntries: '++id, syncId, date, institution, accountNumber, description, assetType, currency, employer, investmentTrack, agent, soldDate, [institution+accountNumber+description], fileId',
+      financialInstitutions: '++id, syncId, name, type',
+      ypayDocuments: '++id, syncId, &transactionId',
+    }).upgrade(async (trans) => {
+      const allTableNames = [
+        'transactions', 'importedFiles', 'categories', 'businessCategories',
+        'tasks', 'appSettings', 'businesses', 'projects', 'harvestTasks',
+        'timeEntries', 'capitalEntries', 'financialInstitutions', 'ypayDocuments',
+      ]
+      for (const tableName of allTableNames) {
+        const table = trans.table(tableName)
+        const rows = await table.toArray()
+        for (const row of rows) {
+          const updates: Record<string, string> = {}
+          if (!row.syncId) updates.syncId = crypto.randomUUID()
+          if (!row.updatedAt) {
+            updates.updatedAt = row.importedAt || row.lastUpdated || row.createdAt || new Date().toISOString()
+          }
+          if (Object.keys(updates).length > 0) {
+            await table.update(row.id, updates)
+          }
+        }
+      }
+    })
+
+    // Auto-inject syncId and updatedAt on create/update
+    this.on('ready', () => {
+      this.tables.forEach(table => {
+        table.hook('creating', (_primKey, obj) => {
+          if (!obj.syncId) obj.syncId = crypto.randomUUID()
+          if (!obj.updatedAt) obj.updatedAt = new Date().toISOString()
+        })
+        table.hook('updating', (mods: Record<string, any>) => {
+          if (!mods.updatedAt) return { ...mods, updatedAt: new Date().toISOString() }
+        })
+      })
     })
   }
 }

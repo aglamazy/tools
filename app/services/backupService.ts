@@ -35,6 +35,8 @@ export interface BackupData {
     projects: any[]
     harvestTasks: any[]
     timeEntries: any[]
+    capitalEntries: any[]
+    financialInstitutions: any[]
     ypayDocuments: any[]
     // localStorage data
     subjectStore: any
@@ -58,6 +60,8 @@ export async function exportAllStores(): Promise<BackupData> {
       projects,
       harvestTasks,
       timeEntries,
+      capitalEntries,
+      financialInstitutions,
       ypayDocuments,
     ] = await Promise.all([
       db.transactions.toArray(),
@@ -70,6 +74,8 @@ export async function exportAllStores(): Promise<BackupData> {
       db.projects.toArray(),
       db.harvestTasks.toArray(),
       db.timeEntries.toArray(),
+      db.capitalEntries.toArray(),
+      db.financialInstitutions.toArray(),
       db.ypayDocuments.toArray(),
     ])
 
@@ -93,6 +99,8 @@ export async function exportAllStores(): Promise<BackupData> {
         projects,
         harvestTasks,
         timeEntries,
+        capitalEntries,
+        financialInstitutions,
         ypayDocuments,
         subjectStore: subjectStoreData,
         timerStore: timerStoreData,
@@ -130,6 +138,8 @@ export async function importAllStores(backup: BackupData): Promise<void> {
       projects: stores.projects?.length ?? 0,
       harvestTasks: stores.harvestTasks?.length ?? 0,
       timeEntries: stores.timeEntries?.length ?? 0,
+      capitalEntries: stores.capitalEntries?.length ?? 0,
+      financialInstitutions: stores.financialInstitutions?.length ?? 0,
       ypayDocuments: stores.ypayDocuments?.length ?? 0,
     }
     console.log('[BackupRestore] importing backup', counts)
@@ -179,6 +189,14 @@ export async function importAllStores(backup: BackupData): Promise<void> {
     if (stores.timeEntries?.length > 0) {
       await db.timeEntries.clear()
       await db.timeEntries.bulkAdd(stores.timeEntries)
+    }
+    if (stores.capitalEntries?.length > 0) {
+      await db.capitalEntries.clear()
+      await db.capitalEntries.bulkAdd(stores.capitalEntries)
+    }
+    if (stores.financialInstitutions?.length > 0) {
+      await db.financialInstitutions.clear()
+      await db.financialInstitutions.bulkAdd(stores.financialInstitutions)
     }
     if (stores.ypayDocuments?.length > 0) {
       await db.ypayDocuments.clear()

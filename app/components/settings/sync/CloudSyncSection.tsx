@@ -2,11 +2,10 @@
 
 import { useState, useEffect } from 'react'
 import { subscribeToAuth, type AuthUser } from '@/app/stores/authStore'
-import { lockModeStore } from '@/app/stores/lockModeStore'
 import {
   isCloudBackupAvailable,
   hasEncryptionPasswordSetup,
-  uploadBackup,
+  syncMerge,
   restoreFromCloud,
   getBackupInfo,
   isUsingHouseholdStorage,
@@ -19,7 +18,6 @@ import AuthModal from '../../AuthModal'
 import EncryptionPasswordModal from '../../EncryptionPasswordModal'
 
 type SyncStatus = 'idle' | 'uploading' | 'downloading' | 'error'
-type LockMode = 'initializing' | 'master' | 'slave'
 
 export default function CloudSyncSection() {
   const [user, setUser] = useState<AuthUser | null>(null)
@@ -31,7 +29,6 @@ export default function CloudSyncSection() {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle')
   const [message, setMessage] = useState<string | null>(null)
   const [backupInfo, setBackupInfo] = useState<CloudBackupInfo | null>(null)
-  const [lockMode, setLockMode] = useState<LockMode>('initializing')
   const [hasSessionPassword, setHasSessionPassword] = useState(false)
   const [hasEncryption, setHasEncryption] = useState(false)
   const [isHousehold, setIsHousehold] = useState(false)
@@ -41,14 +38,6 @@ export default function CloudSyncSection() {
       setUser(state.user)
       setAuthLoading(state.loading)
     })
-    return unsubscribe
-  }, [])
-
-  useEffect(() => {
-    const unsubscribe = lockModeStore.subscribe((mode) => {
-      setLockMode(mode)
-    })
-    setLockMode(lockModeStore.get())
     return unsubscribe
   }, [])
 
@@ -146,17 +135,17 @@ export default function CloudSyncSection() {
 
     if (action === 'upload') {
       setSyncStatus('uploading')
-      const result = await uploadBackup(password)
+      const result = await syncMerge(password)
       setSyncStatus('idle')
 
       if (result.success) {
         setSyncPassword(password) // Store in session for auto-sync
         setHasSessionPassword(true)
         setHasEncryption(true)
-        setMessage('הגיבוי הועלה בהצלחה! סנכרון אוטומטי מופעל.')
+        setMessage('הסנכרון הושלם בהצלחה! סנכרון אוטומטי מופעל.')
         loadBackupInfo()
       } else {
-        setMessage(result.error || 'שגיאה בהעלאת הגיבוי')
+        setMessage(result.error || 'שגיאה בסנכרון')
       }
     } else if (action === 'download') {
       setSyncStatus('downloading')
@@ -286,15 +275,11 @@ export default function CloudSyncSection() {
               display: 'flex',
               alignItems: 'center',
               gap: '0.5rem',
-              ...(lockMode === 'master' && hasSessionPassword
+              ...(hasSessionPassword
                 ? { background: '#dcfce7', border: '1px solid #86efac', color: '#166534' }
-                : lockMode === 'slave'
-                  ? { background: '#fef3c7', border: '1px solid #fbbf24', color: '#92400e' }
-                  : !hasEncryption
-                    ? { background: '#fef2f2', border: '1px solid #fecaca', color: '#dc2626' }
-                    : !hasSessionPassword
-                      ? { background: '#fff7ed', border: '1px solid #fed7aa', color: '#c2410c' }
-                      : { background: '#f1f5f9', border: '1px solid #cbd5e1', color: '#475569' }),
+                : !hasEncryption
+                  ? { background: '#fef2f2', border: '1px solid #fecaca', color: '#dc2626' }
+                  : { background: '#fff7ed', border: '1px solid #fed7aa', color: '#c2410c' }),
             }}
           >
             <span
@@ -303,28 +288,19 @@ export default function CloudSyncSection() {
                 height: '10px',
                 borderRadius: '50%',
                 flexShrink: 0,
-                background:
-                  lockMode === 'master' && hasSessionPassword
-                    ? '#22c55e'
-                    : lockMode === 'slave'
-                      ? '#f59e0b'
-                      : !hasEncryption || !hasSessionPassword
-                        ? '#ef4444'
-                        : '#94a3b8',
+                background: hasSessionPassword
+                  ? '#22c55e'
+                  : '#ef4444',
               }}
             />
             <span style={{ fontWeight: 500 }}>
-              {lockMode === 'initializing'
-                ? 'מאתחל...'
-                : lockMode === 'slave'
-                  ? 'קריאה בלבד - תחנה אחרת פעילה'
-                  : !hasEncryption
-                    ? 'נדרשת הגדרת סיסמת הצפנה'
-                    : !hasSessionPassword
-                      ? 'נדרשת הזנת סיסמה לסנכרון'
-                      : 'סנכרון אוטומטי פעיל'}
+              {!hasEncryption
+                ? 'נדרשת הגדרת סיסמת הצפנה'
+                : !hasSessionPassword
+                  ? 'נדרשת הזנת סיסמה לסנכרון'
+                  : 'סנכרון אוטומטי פעיל'}
             </span>
-            {lockMode === 'master' && hasEncryption && !hasSessionPassword && (
+            {hasEncryption && !hasSessionPassword && (
               <button
                 onClick={() => {
                   setPasswordMode('enter')

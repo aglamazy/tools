@@ -1,6 +1,7 @@
 // Financial Institution - Banks, pension funds, investment houses, etc.
 export interface FinancialInstitution {
   id?: number
+  syncId?: string
   name: string
   type: 'bank' | 'pension' | 'provident' | 'investment' | 'insurance' | 'other'
   email?: string
