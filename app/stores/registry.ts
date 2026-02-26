@@ -22,6 +22,8 @@ export const INDEXEDDB_TABLES = [
   'projects',
   'harvestTasks',
   'timeEntries',
+  'capitalEntries',
+  'financialInstitutions',
   'ypayDocuments',
 ] as const
 
