@@ -212,7 +212,7 @@ export default function Sidebar() {
                     className={`nav-item ${pathname === `/business/${business.id}` ? 'active' : ''}`}
                     title={isCollapsed ? business.name : undefined}
                   >
-                    <span className="nav-icon">{business.type === 'personal' ? '🏠' : '🏢'}</span>
+                    <span className="nav-icon">{business.type === 'personal' ? '🏠' : business.type === 'teacher' ? '👩‍🏫' : '🏢'}</span>
                     {!isCollapsed && <span className="nav-title">{business.name}</span>}
                   </Link>
                 </li>

@@ -31,7 +31,7 @@ export default function CategoriesTab() {
 
   const loadBusinesses = async () => {
     const all = await businessStore.getAll()
-    setBusinesses(all.filter(b => b.type === 'business'))
+    setBusinesses(all.filter(b => b.type === 'business' || b.type === 'teacher'))
   }
 
   const loadCategories = () => {

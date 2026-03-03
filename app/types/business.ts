@@ -1,4 +1,4 @@
-export type BusinessType = 'personal' | 'business'
+export type BusinessType = 'personal' | 'business' | 'teacher'
 
 // Database entity (id optional for new records)
 export type VatType = 'exempt' | 'authorized'

@@ -43,12 +43,12 @@ export default function BusinessCard({ business, onEdit, onDelete, onTogglePin }
           <span style={{
             fontSize: '0.75rem',
             padding: '0.15rem 0.5rem',
-            background: business.type === 'personal' ? '#dbeafe' : '#dcfce7',
-            color: business.type === 'personal' ? '#1e40af' : '#166534',
+            background: business.type === 'personal' ? '#dbeafe' : business.type === 'teacher' ? '#fef3c7' : '#dcfce7',
+            color: business.type === 'personal' ? '#1e40af' : business.type === 'teacher' ? '#92400e' : '#166534',
             borderRadius: '0.25rem',
             flexShrink: 0,
           }}>
-            {business.type === 'personal' ? '\u05D0\u05D9\u05E9\u05D9' : '\u05E2\u05E1\u05E7\u05D9'}
+            {business.type === 'personal' ? '\u05D0\u05D9\u05E9\u05D9' : business.type === 'teacher' ? '\u05DE\u05D5\u05E8\u05D4' : '\u05E2\u05E1\u05E7\u05D9'}
           </span>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>

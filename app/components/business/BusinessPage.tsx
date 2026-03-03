@@ -7,10 +7,18 @@ import SettingsTabs, { type TabItem } from '../settings/SettingsTabs'
 import TimingTab from './TimingTab'
 import IncomeTab from './IncomeTab'
 import BusinessSettingsTab from './BusinessSettingsTab'
+import StudentsTab from './StudentsTab'
+import AccountingTab from './AccountingTab'
 
 const TABS: TabItem[] = [
   { id: 'income', label: 'הכנסות', icon: '💰' },
   { id: 'timing', label: 'תיעוד זמן', icon: '⏱️' },
+  { id: 'settings', label: 'הגדרות', icon: '⚙️' },
+]
+
+const TEACHER_TABS: TabItem[] = [
+  { id: 'students', label: 'תלמידים', icon: '👨‍🎓' },
+  { id: 'accounting', label: 'חשבונאות חודשית', icon: '📊' },
   { id: 'settings', label: 'הגדרות', icon: '⚙️' },
 ]
 
@@ -52,21 +60,33 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
       <header>
         <h1>
           <span style={{ marginLeft: '0.5rem' }}>
-            {business.type === 'personal' ? '🏠' : '🏢'}
+            {business.type === 'personal' ? '🏠' : business.type === 'teacher' ? '👩‍🏫' : '🏢'}
           </span>
           {business.name}
         </h1>
       </header>
 
-      <SettingsTabs tabs={TABS} defaultTab="income">
-        {(activeTab) => (
-          <>
-            {activeTab === 'income' && <IncomeTab businessId={businessId} />}
-            {activeTab === 'timing' && <TimingTab businessId={businessId} />}
-            {activeTab === 'settings' && <BusinessSettingsTab businessId={businessId} />}
-          </>
-        )}
-      </SettingsTabs>
+      {business.type === 'teacher' ? (
+        <SettingsTabs tabs={TEACHER_TABS} defaultTab="students">
+          {(activeTab) => (
+            <>
+              {activeTab === 'students' && <StudentsTab businessId={businessId} />}
+              {activeTab === 'accounting' && <AccountingTab businessId={businessId} />}
+              {activeTab === 'settings' && <BusinessSettingsTab businessId={businessId} />}
+            </>
+          )}
+        </SettingsTabs>
+      ) : (
+        <SettingsTabs tabs={TABS} defaultTab="income">
+          {(activeTab) => (
+            <>
+              {activeTab === 'income' && <IncomeTab businessId={businessId} />}
+              {activeTab === 'timing' && <TimingTab businessId={businessId} />}
+              {activeTab === 'settings' && <BusinessSettingsTab businessId={businessId} />}
+            </>
+          )}
+        </SettingsTabs>
+      )}
     </div>
   )
 }
