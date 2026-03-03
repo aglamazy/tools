@@ -74,7 +74,7 @@ export default function BusinessForm({ business, onChange, onSave, onCancel, isN
               </label>
             </div>
           </div>
-          {business.type === BusinessType.Business && (
+          {business.type !== BusinessType.Personal && (
             <div>
               <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>
                 סוג עוסק (למע"מ)
