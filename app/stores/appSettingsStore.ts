@@ -12,6 +12,8 @@ export interface YpayCredentials {
   clientSecret: string
 }
 
+export type AccountOwners = Record<string, string> // key = "card:1234" or "bank:5678", value = Firebase UID
+
 export interface DriveSyncSettings {
   frequencyMinutes: number
   lastSyncAt?: string
@@ -180,6 +182,64 @@ export const appSettingsStore = {
     } catch (error) {
       console.error('Error setting ypayCredentials:', error)
       throw error
+    }
+  },
+
+  /**
+   * Get account owners mapping (which household member owns which card/bank account)
+   */
+  getAccountOwners: async (): Promise<AccountOwners> => {
+    try {
+      const setting = await db.appSettings.where('key').equals('accountOwners').first()
+      return setting ? (setting.value as AccountOwners) : {}
+    } catch (error) {
+      console.error('Error getting accountOwners:', error)
+      return {}
+    }
+  },
+
+  /**
+   * Set account owners mapping
+   */
+  setAccountOwners: async (owners: AccountOwners): Promise<void> => {
+    try {
+      const existing = await db.appSettings.where('key').equals('accountOwners').first()
+      if (existing) {
+        await db.appSettings.update(existing.id!, {
+          value: owners,
+          updatedAt: new Date().toISOString(),
+        })
+      } else {
+        await db.appSettings.add({
+          key: 'accountOwners',
+          value: owners,
+          updatedAt: new Date().toISOString(),
+        })
+      }
+    } catch (error) {
+      console.error('Error setting accountOwners:', error)
+      throw error
+    }
+  },
+
+  /**
+   * Record a deleted syncId so merge-on-sync won't resurrect the record from cloud.
+   */
+  recordDeletion: async (tableName: string, syncId: string): Promise<void> => {
+    try {
+      const setting = await db.appSettings.where('key').equals('deletedRecords').first()
+      const ledger: Record<string, string[]> = setting ? (setting.value as Record<string, string[]>) : {}
+      if (!ledger[tableName]) ledger[tableName] = []
+      if (!ledger[tableName].includes(syncId)) {
+        ledger[tableName].push(syncId)
+      }
+      if (setting) {
+        await db.appSettings.update(setting.id!, { value: ledger, updatedAt: new Date().toISOString() })
+      } else {
+        await db.appSettings.add({ key: 'deletedRecords', value: ledger, updatedAt: new Date().toISOString() })
+      }
+    } catch (error) {
+      console.error('Error recording deletion:', error)
     }
   },
 

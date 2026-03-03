@@ -1,5 +1,7 @@
 import { db, Task } from '@/app/db/financeDB'
 import { transactionStore } from './transactionStore'
+import { getUser } from './authStore'
+import { appSettingsStore, AccountOwners } from './appSettingsStore'
 
 type Priority = 'low' | 'medium' | 'high'
 
@@ -75,13 +77,17 @@ export const todoStore = {
     const month3 = getPreviousMonth(month2)
     const defaultPeriod = [latestMonth, month2, month3]
 
+    // Load account ownership for household filtering
+    const currentUid = getUser()?.uid
+    const owners = await appSettingsStore.getAccountOwners()
+
     // Check for missing files (bank and credit cards) for ALL months since first import
-    const missingFileTasks = await checkMissingFiles()
+    const missingFileTasks = await checkMissingFiles(owners, currentUid)
     autoTasks.push(...missingFileTasks)
 
     // Check for uncategorized transactions in default 3-month period
     for (const month of defaultPeriod) {
-      const uncategorizedTasks = await checkUncategorizedTransactions(month)
+      const uncategorizedTasks = await checkUncategorizedTransactions(month, owners, currentUid)
       autoTasks.push(...uncategorizedTasks)
     }
 
@@ -133,7 +139,14 @@ function compareMonths(month1: string, month2: string): number {
   return m1 - m2
 }
 
-async function checkMissingFiles(): Promise<AutoTask[]> {
+function isAccountVisibleToUser(accountKey: string, owners: AccountOwners, currentUid: string | undefined): boolean {
+  if (!currentUid) return true // No user logged in, show all
+  const owner = owners[accountKey]
+  if (!owner) return true // Unassigned, show to everyone
+  return owner === currentUid // Show only if assigned to current user
+}
+
+async function checkMissingFiles(owners: AccountOwners, currentUid: string | undefined): Promise<AutoTask[]> {
   const tasks: AutoTask[] = []
   const importedFiles = await db.importedFiles.toArray()
 
@@ -251,15 +264,37 @@ async function checkMissingFiles(): Promise<AutoTask[]> {
     }
   }
 
-  return tasks
+  // Filter tasks by account ownership (household feature)
+  return tasks.filter(task => {
+    if (task.id.startsWith('missing-bank-')) {
+      const match = task.id.match(/^missing-bank-(.+)-\d{2}\/\d{4}$/)
+      if (match) return isAccountVisibleToUser(`bank:${match[1]}`, owners, currentUid)
+    } else if (task.id.startsWith('missing-credit-')) {
+      const match = task.id.match(/^missing-credit-(.+)-\d{2}\/\d{4}$/)
+      if (match) return isAccountVisibleToUser(`card:${match[1]}`, owners, currentUid)
+    }
+    return true
+  })
 }
 
-async function checkUncategorizedTransactions(currentMonth: string): Promise<AutoTask[]> {
+async function checkUncategorizedTransactions(currentMonth: string, owners: AccountOwners, currentUid: string | undefined): Promise<AutoTask[]> {
   const tasks: AutoTask[] = []
 
   // Get budget transactions for current month
   const transactions = await transactionStore.getBudgetTransactions(currentMonth)
-  const uncategorized = transactions.filter(t => !t.category || t.category.trim() === '')
+
+  // Filter to only transactions visible to current user based on account ownership
+  const visibleTransactions = transactions.filter(t => {
+    let accountKey: string
+    if (t.paymentMethod.startsWith('💳')) {
+      accountKey = `card:${t.paymentMethod.replace('💳 ', '')}`
+    } else {
+      accountKey = `bank:${t.paymentMethod}`
+    }
+    return isAccountVisibleToUser(accountKey, owners, currentUid)
+  })
+
+  const uncategorized = visibleTransactions.filter(t => !t.category || t.category.trim() === '')
 
   if (uncategorized.length > 0) {
     tasks.push({
