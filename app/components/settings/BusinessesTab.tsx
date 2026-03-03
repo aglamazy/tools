@@ -5,6 +5,7 @@ import Modal from '../Modal'
 import YesNoModal from '../YesNoModal'
 import BusinessCard from './BusinessCard'
 import BusinessForm from './BusinessForm'
+import { BusinessType } from '@/app/types/business'
 import type { BusinessUI } from '@/app/types/business'
 import { businessStore } from '@/app/stores/businessStore'
 
@@ -49,7 +50,7 @@ export default function BusinessesTab() {
     setEditingBusiness({
       id: Date.now(),
       name: '',
-      type: 'business',
+      type: BusinessType.Business,
     })
     setIsAddingNew(true)
     setAlertMessage('')

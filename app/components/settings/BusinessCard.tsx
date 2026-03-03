@@ -2,6 +2,7 @@
 
 import React from 'react'
 import type { BusinessUI } from '@/app/types/business'
+import { BUSINESS_TYPE_CONFIG } from '@/app/types/businessColors'
 
 export type { BusinessUI }
 
@@ -43,12 +44,12 @@ export default function BusinessCard({ business, onEdit, onDelete, onTogglePin }
           <span style={{
             fontSize: '0.75rem',
             padding: '0.15rem 0.5rem',
-            background: business.type === 'personal' ? '#dbeafe' : '#dcfce7',
-            color: business.type === 'personal' ? '#1e40af' : '#166534',
+            background: BUSINESS_TYPE_CONFIG[business.type].badgeBackground,
+            color: BUSINESS_TYPE_CONFIG[business.type].badgeColor,
             borderRadius: '0.25rem',
             flexShrink: 0,
           }}>
-            {business.type === 'personal' ? '\u05D0\u05D9\u05E9\u05D9' : '\u05E2\u05E1\u05E7\u05D9'}
+            {BUSINESS_TYPE_CONFIG[business.type].label}
           </span>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>

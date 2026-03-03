@@ -1,10 +1,13 @@
 import Dexie, { Table } from 'dexie'
 import type { CapitalEntry } from '@/app/types/capital'
 import type { FinancialInstitution } from '@/app/types/financialInstitution'
+import type { Student } from '@/app/types/student'
+import { BusinessType } from '@/app/types/business'
 
 // Re-export types for convenience
 export type { CapitalEntry } from '@/app/types/capital'
 export type { FinancialInstitution } from '@/app/types/financialInstitution'
+export type { Student } from '@/app/types/student'
 
 // Transaction type (unified for bank and credit card)
 export interface Transaction {
@@ -91,7 +94,7 @@ export interface Business {
   id?: number
   syncId?: string
   name: string
-  type: 'personal' | 'business'
+  type: BusinessType
   vatType?: 'exempt' | 'authorized'
   pinnedToSidebar?: boolean
   createdAt: string
@@ -162,6 +165,7 @@ class FinanceDB extends Dexie {
   capitalEntries!: Table<CapitalEntry, number>
   financialInstitutions!: Table<FinancialInstitution, number>
   ypayDocuments!: Table<YpayDocument, number>
+  students!: Table<Student, number>
 
   constructor() {
     super('FinanceDB')
@@ -349,6 +353,24 @@ class FinanceDB extends Dexie {
           }
         }
       }
+    })
+
+    // Define schema version 12 - add students table for teacher businesses
+    this.version(12).stores({
+      transactions: '++id, syncId, type, month, accountNumber, cardNumber, date, chargingDate, [type+month], [cardNumber+month], [accountNumber+month], fileId',
+      importedFiles: '++id, syncId, fileName, fileType, processingMonth, [fileType+processingMonth], [cardNumber+processingMonth]',
+      categories: '++id, syncId, name, type',
+      businessCategories: '++id, syncId, &business',
+      tasks: '++id, syncId, createdAt, priority',
+      appSettings: '++id, syncId, &key',
+      businesses: '++id, syncId, &name, type',
+      projects: '++id, syncId, businessId, name, archived',
+      harvestTasks: '++id, syncId, projectId, name, archived',
+      timeEntries: '++id, syncId, taskId, date, startTime, endTime, [taskId+date]',
+      capitalEntries: '++id, syncId, date, institution, accountNumber, description, assetType, currency, employer, investmentTrack, agent, soldDate, [institution+accountNumber+description], fileId',
+      financialInstitutions: '++id, syncId, name, type',
+      ypayDocuments: '++id, syncId, &transactionId',
+      students: '++id, syncId, businessId, name, archived',
     })
 
     // Auto-inject syncId and updatedAt on create/update

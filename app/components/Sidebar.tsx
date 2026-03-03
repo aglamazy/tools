@@ -7,6 +7,7 @@ import { businessStore } from '@/app/stores/businessStore'
 import { userTierStore, UserTier } from '@/app/stores/userTierStore'
 import { config } from '@/app/config'
 import type { Business } from '@/app/db/financeDB'
+import { BUSINESS_TYPE_CONFIG } from '@/app/types/businessColors'
 
 type Tool = {
   id: string
@@ -212,7 +213,7 @@ export default function Sidebar() {
                     className={`nav-item ${pathname === `/business/${business.id}` ? 'active' : ''}`}
                     title={isCollapsed ? business.name : undefined}
                   >
-                    <span className="nav-icon">{business.type === 'personal' ? '🏠' : '🏢'}</span>
+                    <span className="nav-icon">{BUSINESS_TYPE_CONFIG[business.type].icon}</span>
                     {!isCollapsed && <span className="nav-title">{business.name}</span>}
                   </Link>
                 </li>
