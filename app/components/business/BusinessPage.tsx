@@ -3,6 +3,8 @@
 import React, { useEffect, useState } from 'react'
 import { businessStore } from '@/app/stores/businessStore'
 import type { Business } from '@/app/db/financeDB'
+import { BusinessType } from '@/app/types/business'
+import { BUSINESS_TYPE_CONFIG } from '@/app/types/businessColors'
 import SettingsTabs, { type TabItem } from '../settings/SettingsTabs'
 import TimingTab from './TimingTab'
 import IncomeTab from './IncomeTab'
@@ -60,13 +62,13 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
       <header>
         <h1>
           <span style={{ marginLeft: '0.5rem' }}>
-            {business.type === 'personal' ? '🏠' : business.type === 'teacher' ? '👩‍🏫' : '🏢'}
+            {BUSINESS_TYPE_CONFIG[business.type].icon}
           </span>
           {business.name}
         </h1>
       </header>
 
-      {business.type === 'teacher' ? (
+      {business.type === BusinessType.Teacher ? (
         <SettingsTabs tabs={TEACHER_TABS} defaultTab="students">
           {(activeTab) => (
             <>

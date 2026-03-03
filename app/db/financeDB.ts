@@ -2,6 +2,7 @@ import Dexie, { Table } from 'dexie'
 import type { CapitalEntry } from '@/app/types/capital'
 import type { FinancialInstitution } from '@/app/types/financialInstitution'
 import type { Student } from '@/app/types/student'
+import { BusinessType } from '@/app/types/business'
 
 // Re-export types for convenience
 export type { CapitalEntry } from '@/app/types/capital'
@@ -93,7 +94,7 @@ export interface Business {
   id?: number
   syncId?: string
   name: string
-  type: 'personal' | 'business' | 'teacher'
+  type: BusinessType
   vatType?: 'exempt' | 'authorized'
   pinnedToSidebar?: boolean
   createdAt: string

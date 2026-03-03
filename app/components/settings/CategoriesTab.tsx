@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react'
 import type { Category, CategoryType } from '@/app/types/category'
 import { generateDistinctColors } from '@/app/utils/colorGenerator'
 import { db, type Business } from '@/app/db/financeDB'
+import { BusinessType } from '@/app/types/business'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { businessStore } from '@/app/stores/businessStore'
 import YesNoModal from '../YesNoModal'
@@ -31,7 +32,7 @@ export default function CategoriesTab() {
 
   const loadBusinesses = async () => {
     const all = await businessStore.getAll()
-    setBusinesses(all.filter(b => b.type === 'business' || b.type === 'teacher'))
+    setBusinesses(all.filter(b => b.type === BusinessType.Business || b.type === BusinessType.Teacher))
   }
 
   const loadCategories = () => {

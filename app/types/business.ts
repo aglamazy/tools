@@ -1,4 +1,8 @@
-export type BusinessType = 'personal' | 'business' | 'teacher'
+export enum BusinessType {
+  Personal = 'personal',
+  Business = 'business',
+  Teacher = 'teacher',
+}
 
 // Database entity (id optional for new records)
 export type VatType = 'exempt' | 'authorized'

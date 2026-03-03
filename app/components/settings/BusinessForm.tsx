@@ -1,6 +1,7 @@
 'use client'
 
 import React from 'react'
+import { BusinessType } from '@/app/types/business'
 import type { BusinessUI } from '@/app/types/business'
 
 type BusinessFormProps = {
@@ -48,8 +49,8 @@ export default function BusinessForm({ business, onChange, onSave, onCancel, isN
                 <input
                   type="radio"
                   name="businessType"
-                  checked={business.type === 'personal'}
-                  onChange={() => onChange({ ...business, type: 'personal' })}
+                  checked={business.type === BusinessType.Personal}
+                  onChange={() => onChange({ ...business, type: BusinessType.Personal })}
                 />
                 <span>🏠 אישי/בית</span>
               </label>
@@ -57,8 +58,8 @@ export default function BusinessForm({ business, onChange, onSave, onCancel, isN
                 <input
                   type="radio"
                   name="businessType"
-                  checked={business.type === 'business'}
-                  onChange={() => onChange({ ...business, type: 'business' })}
+                  checked={business.type === BusinessType.Business}
+                  onChange={() => onChange({ ...business, type: BusinessType.Business })}
                 />
                 <span>🏢 עסקי</span>
               </label>
@@ -66,14 +67,14 @@ export default function BusinessForm({ business, onChange, onSave, onCancel, isN
                 <input
                   type="radio"
                   name="businessType"
-                  checked={business.type === 'teacher'}
-                  onChange={() => onChange({ ...business, type: 'teacher' })}
+                  checked={business.type === BusinessType.Teacher}
+                  onChange={() => onChange({ ...business, type: BusinessType.Teacher })}
                 />
                 <span>👩‍🏫 מורה פרטית</span>
               </label>
             </div>
           </div>
-          {business.type === 'business' && (
+          {business.type === BusinessType.Business && (
             <div>
               <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>
                 סוג עוסק (למע"מ)
