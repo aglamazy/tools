@@ -20,7 +20,9 @@ const TIER_RANK: Record<UserTier, number> = {
 }
 
 // LOCAL segment = developer/owner mode = OWNER as minimum floor
-const isLocalEnv = process.env.NEXT_PUBLIC_SEGMENT === 'local'
+const isLocalEnv =
+  process.env.NEXT_PUBLIC_SEGMENT === 'local' ||
+  process.env.NEXT_PUBLIC_DEVELOPER_MODE === 'true'
 
 function getInitialTier(): UserTier {
   if (isLocalEnv) return UserTier.OWNER

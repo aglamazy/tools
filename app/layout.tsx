@@ -1,5 +1,5 @@
 import { Analytics } from '@vercel/analytics/react'
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import type { ReactNode } from 'react'
 import './globals.css'
 import Sidebar from './components/Sidebar'
@@ -26,7 +26,6 @@ export const metadata: Metadata = {
   title: 'ארגז כלים פיננסיים',
   description: 'כלים פיננסיים לניהול תשלומים ותקציב.',
   manifest: '/manifest.json',
-  themeColor: '#4338ca',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
@@ -50,6 +49,10 @@ export const metadata: Metadata = {
       follow: true,
     },
   },
+}
+
+export const viewport: Viewport = {
+  themeColor: '#4338ca',
 }
 
 export default function RootLayout({ children }: { children: ReactNode }) {

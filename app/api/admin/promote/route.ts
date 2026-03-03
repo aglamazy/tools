@@ -25,12 +25,14 @@ export async function POST(request: NextRequest) {
     const decodedToken = await verifyIdToken(idToken)
     const callerUid = decodedToken.uid
 
-    // Verify caller is OWNER tier
+    // Verify caller is OWNER tier (or bootstrap owner from env)
+    const ownerEmail = process.env.OWNER_EMAIL?.trim().toLowerCase()
+    const isBootstrapOwner = ownerEmail && decodedToken.email?.toLowerCase() === ownerEmail
     const firestore = getAdminFirestore()
     const callerDoc = await firestore.collection('users').doc(callerUid).get()
     const callerData = callerDoc.data()
     const callerTier = callerData?.tier || 'free'
-    if (callerTier !== 'owner') {
+    if (callerTier !== 'owner' && !isBootstrapOwner) {
       return NextResponse.json({ success: false, error: 'אין הרשאה', errorCode: 'forbidden' })
     }
 
