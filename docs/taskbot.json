@@ -1,0 +1,25 @@
+{
+  "project": "finance",
+  "dev_port": 3100,
+  "dev_branch": "dev",
+  "prod_branch": "main",
+  "lint": "npx eslint app",
+  "typecheck": "npx tsc --noEmit",
+  "hosting": "vercel",
+  "deploy": {
+    "poll_status": "gh api repos/aglamazy/tools/commits/dev/status --jq '.state'"
+  },
+  "pr": {
+    "platform": "github",
+    "repo": "aglamazy/tools",
+    "create_method": "gh_cli",
+    "reviewer": "aglamazy"
+  },
+  "notes": [
+    "Uses Dexie (IndexedDB) for client-side storage via Store classes.",
+    "Frontend data access: always use Store classes (subjectStore, transactionStore, etc.).",
+    "Firebase for auth, cloud storage, Firestore sync.",
+    "Has lint-staged + husky pre-commit hooks."
+  ],
+"run": { "cmd": "npm run dev", "port": 3000, "env_files": [".env"] }
+}

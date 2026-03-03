@@ -18,3 +18,4 @@ next-env.d.ts
 /.codex
 /.env
 .taskbot-worktrees/
+task-logs/
