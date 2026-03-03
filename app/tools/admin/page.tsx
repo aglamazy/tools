@@ -16,22 +16,22 @@ type Member = {
 type Account = {
   id: string
   name: string
-  tier: string
+  tier: UserTier
   members: Member[]
 }
 
-const TIERS = [
-  { value: 'free', label: 'חינם' },
-  { value: 'home', label: 'בית' },
-  { value: 'pro', label: 'מקצועי' },
-  { value: 'owner', label: 'בעלים' },
+const TIERS: { value: UserTier; label: string }[] = [
+  { value: UserTier.FREE, label: 'חינם' },
+  { value: UserTier.HOME, label: 'בית' },
+  { value: UserTier.PRO, label: 'מקצועי' },
+  { value: UserTier.OWNER, label: 'בעלים' },
 ]
 
-const TIER_COLORS: Record<string, string> = {
-  free: '#9ca3af',
-  home: '#3b82f6',
-  pro: '#8b5cf6',
-  owner: '#f59e0b',
+const TIER_COLORS: Record<UserTier, string> = {
+  [UserTier.FREE]: '#9ca3af',
+  [UserTier.HOME]: '#3b82f6',
+  [UserTier.PRO]: '#8b5cf6',
+  [UserTier.OWNER]: '#f59e0b',
 }
 
 export default function AdminPage() {
@@ -72,7 +72,7 @@ export default function AdminPage() {
     fetchAccounts()
   }, [])
 
-  const handleTierChange = async (accountId: string, newTier: string) => {
+  const handleTierChange = async (accountId: string, newTier: UserTier) => {
     setUpdating(accountId)
     try {
       const token = await getIdToken()
@@ -154,7 +154,7 @@ export default function AdminPage() {
                     <select
                       value={account.tier}
                       onClick={(e) => e.stopPropagation()}
-                      onChange={(e) => handleTierChange(account.id, e.target.value)}
+                      onChange={(e) => handleTierChange(account.id, e.target.value as UserTier)}
                       disabled={isUpdating}
                       style={{
                         padding: '0.25rem 0.5rem',

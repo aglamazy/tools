@@ -5,8 +5,9 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyIdToken, getAdminFirestore, isAdminConfigured } from '@/app/lib/firebaseAdmin'
+import { UserTier } from '@/app/stores/userTierStore'
 
-const VALID_TIERS = ['free', 'home', 'pro', 'owner'] as const
+const VALID_TIERS = Object.values(UserTier)
 
 export async function POST(request: NextRequest) {
   if (!isAdminConfigured()) {
@@ -29,20 +30,20 @@ export async function POST(request: NextRequest) {
     const firestore = getAdminFirestore()
     const callerDoc = await firestore.collection('users').doc(callerUid).get()
     const callerData = callerDoc.data()
-    const callerTier = callerData?.tier || 'free'
-    if (callerTier !== 'owner') {
+    const callerTier = (callerData?.tier as UserTier) || UserTier.FREE
+    if (callerTier !== UserTier.OWNER) {
       return NextResponse.json({ success: false, error: 'אין הרשאה', errorCode: 'forbidden' })
     }
 
     // Parse and validate body
     const body = await request.json()
-    const { accountId, tier } = body as { accountId: string; tier: string }
+    const { accountId, tier } = body as { accountId: string; tier: UserTier }
 
     if (!accountId || !tier) {
       return NextResponse.json({ success: false, error: 'חסרים פרטים', errorCode: 'invalid-body' })
     }
 
-    if (!VALID_TIERS.includes(tier as typeof VALID_TIERS[number])) {
+    if (!VALID_TIERS.includes(tier)) {
       return NextResponse.json({ success: false, error: 'דרגה לא חוקית', errorCode: 'invalid-tier' })
     }
 
