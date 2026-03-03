@@ -72,6 +72,15 @@ export default function BusinessForm({ business, onChange, onSave, onCancel, isN
                 />
                 <span>👩‍🏫 מורה פרטית</span>
               </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="businessType"
+                  checked={business.type === BusinessType.Artist}
+                  onChange={() => onChange({ ...business, type: BusinessType.Artist })}
+                />
+                <span>🎨 אמן</span>
+              </label>
             </div>
           </div>
           {business.type === BusinessType.Business && (
