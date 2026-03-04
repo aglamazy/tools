@@ -1,13 +1,24 @@
 /**
  * User Tier Store
- * Manages user subscription tier and feature access
+ * Manages user subscription tier and feature access.
+ * Also owns Firestore subscription for real-time tier sync.
  */
+
+import { doc, onSnapshot, type Unsubscribe } from 'firebase/firestore'
+import { getFirebaseFirestore, isFirebaseConfigured } from '@/app/lib/firebase'
 
 export enum UserTier {
   FREE = 'free',
   HOME = 'home',
   PRO = 'pro',
   OWNER = 'owner',
+}
+
+export interface UserData {
+  tier: UserTier
+  createdAt?: string
+  householdId?: string
+  householdRole?: 'owner' | 'member'
 }
 
 type Listener = (tier: UserTier) => void
@@ -34,6 +45,7 @@ export const isEnvOverride = false
 
 let currentTier: UserTier = getInitialTier()
 const listeners: Set<Listener> = new Set()
+let firestoreUnsubscribe: Unsubscribe | null = null
 
 export const userTierStore = {
   get(): UserTier {
@@ -56,6 +68,41 @@ export const userTierStore = {
     // Return unsubscribe function
     return () => {
       listeners.delete(listener)
+    }
+  },
+
+  /**
+   * Start real-time Firestore subscription for the logged-in user's tier.
+   * Updates the in-memory tier whenever Firestore changes.
+   */
+  subscribeFirestore(uid: string): void {
+    if (!isFirebaseConfigured()) return
+    this.unsubscribeFirestore()
+    const firestore = getFirebaseFirestore()
+    firestoreUnsubscribe = onSnapshot(
+      doc(firestore, 'users', uid),
+      (snapshot) => {
+        if (!snapshot.exists()) {
+          this.set(UserTier.FREE)
+          return
+        }
+        const data = snapshot.data()
+        this.set((data.tier as UserTier) || UserTier.FREE)
+      },
+      (error) => {
+        console.error('[UserTierStore] Firestore subscription error:', error)
+        this.set(UserTier.FREE)
+      }
+    )
+  },
+
+  /**
+   * Stop the Firestore subscription (call on sign-out).
+   */
+  unsubscribeFirestore(): void {
+    if (firestoreUnsubscribe) {
+      firestoreUnsubscribe()
+      firestoreUnsubscribe = null
     }
   },
 
