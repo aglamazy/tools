@@ -110,6 +110,14 @@ const allTools: Tool[] = [
     available: true,
     requiredTier: UserTier.PRO,
   },
+  {
+    id: 'admin',
+    title: 'ניהול',
+    href: '/tools/admin',
+    icon: '👑',
+    available: true,
+    requiredTier: UserTier.OWNER,
+  },
 ]
 
 const tierLabels: Record<UserTier, string> = {

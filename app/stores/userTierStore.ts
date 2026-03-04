@@ -1,7 +1,11 @@
 /**
  * User Tier Store
- * Manages user subscription tier and feature access
+ * Manages user subscription tier and feature access.
+ * Also owns Firestore subscription for real-time tier sync.
  */
+
+import { doc, onSnapshot, type Unsubscribe } from 'firebase/firestore'
+import { getFirebaseFirestore, isFirebaseConfigured } from '@/app/lib/firebase'
 
 export enum UserTier {
   FREE = 'free',
@@ -10,22 +14,36 @@ export enum UserTier {
   OWNER = 'owner',
 }
 
+export interface UserData {
+  tier: UserTier
+  createdAt?: string
+  householdId?: string
+  householdRole?: 'owner' | 'member'
+}
+
 type Listener = (tier: UserTier) => void
 
-// Check for LOCAL env override, otherwise default to FREE until Firestore fetch
+const TIER_RANK: Record<UserTier, number> = {
+  [UserTier.FREE]: 1,
+  [UserTier.HOME]: 2,
+  [UserTier.PRO]: 3,
+  [UserTier.OWNER]: 4,
+}
+
+// LOCAL segment = developer/owner mode = OWNER as minimum floor
+const isLocalEnv = process.env.NEXT_PUBLIC_SEGMENT === 'local'
+
 function getInitialTier(): UserTier {
-  // LOCAL segment = developer/owner mode = max tier
-  if (process.env.NEXT_PUBLIC_SEGMENT === 'local') {
-    return UserTier.OWNER
-  }
+  if (isLocalEnv) return UserTier.OWNER
   return UserTier.FREE
 }
 
-// Track if tier is from env override (shouldn't be overwritten by Firestore)
-export const isEnvOverride = process.env.NEXT_PUBLIC_SEGMENT === 'local'
+// Always false so Firestore is always consulted — env override is handled in set()
+export const isEnvOverride = false
 
 let currentTier: UserTier = getInitialTier()
 const listeners: Set<Listener> = new Set()
+let firestoreUnsubscribe: Unsubscribe | null = null
 
 export const userTierStore = {
   get(): UserTier {
@@ -33,9 +51,13 @@ export const userTierStore = {
   },
 
   set(tier: UserTier): void {
-    if (currentTier !== tier) {
-      currentTier = tier
-      listeners.forEach((listener) => listener(tier))
+    // env-var is an OR condition: local env keeps OWNER as floor
+    const effective = isLocalEnv && TIER_RANK[tier] < TIER_RANK[UserTier.OWNER]
+      ? UserTier.OWNER
+      : tier
+    if (currentTier !== effective) {
+      currentTier = effective
+      listeners.forEach((listener) => listener(effective))
     }
   },
 
@@ -48,18 +70,46 @@ export const userTierStore = {
   },
 
   /**
+   * Start real-time Firestore subscription for the logged-in user's tier.
+   * Updates the in-memory tier whenever Firestore changes.
+   */
+  subscribeFirestore(uid: string): void {
+    if (!isFirebaseConfigured()) return
+    this.unsubscribeFirestore()
+    const firestore = getFirebaseFirestore()
+    firestoreUnsubscribe = onSnapshot(
+      doc(firestore, 'users', uid),
+      (snapshot) => {
+        if (!snapshot.exists()) {
+          this.set(UserTier.FREE)
+          return
+        }
+        const data = snapshot.data()
+        this.set((data.tier as UserTier) || UserTier.FREE)
+      },
+      (error) => {
+        console.error('[UserTierStore] Firestore subscription error:', error)
+        this.set(UserTier.FREE)
+      }
+    )
+  },
+
+  /**
+   * Stop the Firestore subscription (call on sign-out).
+   */
+  unsubscribeFirestore(): void {
+    if (firestoreUnsubscribe) {
+      firestoreUnsubscribe()
+      firestoreUnsubscribe = null
+    }
+  },
+
+  /**
    * Check if user has access to a feature requiring a specific tier
    * Tier hierarchy: OWNER > PRO > HOME > FREE
    */
   hasAccess(requiredTier: UserTier): boolean {
-    const tierRank = {
-      [UserTier.FREE]: 1,
-      [UserTier.HOME]: 2,
-      [UserTier.PRO]: 3,
-      [UserTier.OWNER]: 4,
-    }
-
-    return tierRank[currentTier] >= tierRank[requiredTier]
+    return TIER_RANK[currentTier] >= TIER_RANK[requiredTier]
   },
 
   isFree(): boolean {

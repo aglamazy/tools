@@ -11,6 +11,7 @@ import IncomeTab from './IncomeTab'
 import BusinessSettingsTab from './BusinessSettingsTab'
 import StudentsTab from './StudentsTab'
 import AccountingTab from './AccountingTab'
+import ProfileTab from './ProfileTab'
 
 const TABS: TabItem[] = [
   { id: 'income', label: 'הכנסות', icon: '💰' },
@@ -21,6 +22,12 @@ const TABS: TabItem[] = [
 const TEACHER_TABS: TabItem[] = [
   { id: 'students', label: 'תלמידים', icon: '👨‍🎓' },
   { id: 'accounting', label: 'חשבונאות חודשית', icon: '📊' },
+  { id: 'settings', label: 'הגדרות', icon: '⚙️' },
+]
+
+const ARTIST_TABS: TabItem[] = [
+  { id: 'profile', label: 'פרופיל', icon: '📋' },
+  { id: 'income', label: 'הכנסות', icon: '💰' },
   { id: 'settings', label: 'הגדרות', icon: '⚙️' },
 ]
 
@@ -74,6 +81,16 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
             <>
               {activeTab === 'students' && <StudentsTab businessId={businessId} />}
               {activeTab === 'accounting' && <AccountingTab businessId={businessId} />}
+              {activeTab === 'settings' && <BusinessSettingsTab businessId={businessId} />}
+            </>
+          )}
+        </SettingsTabs>
+      ) : business.type === BusinessType.Artist ? (
+        <SettingsTabs tabs={ARTIST_TABS} defaultTab="profile">
+          {(activeTab) => (
+            <>
+              {activeTab === 'profile' && <ProfileTab businessId={businessId} />}
+              {activeTab === 'income' && <IncomeTab businessId={businessId} />}
               {activeTab === 'settings' && <BusinessSettingsTab businessId={businessId} />}
             </>
           )}

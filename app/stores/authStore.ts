@@ -5,7 +5,6 @@
  */
 
 import { subscribeToAuthState, type AuthUser } from '@/app/services/firebaseAuthService'
-import { subscribeToUserData } from '@/app/services/userService'
 import { userTierStore, UserTier, isEnvOverride } from '@/app/stores/userTierStore'
 
 export type { AuthUser }
@@ -26,7 +25,6 @@ let state: AuthState = {
 
 const listeners = new Set<Listener>()
 let unsubscribeFirebase: (() => void) | null = null
-let unsubscribeUserData: (() => void) | null = null
 
 function notifyListeners() {
   listeners.forEach((listener) => listener(state))
@@ -41,21 +39,14 @@ export function initializeAuth() {
   if (unsubscribeFirebase) return // Already initialized
 
   unsubscribeFirebase = subscribeToAuthState((user) => {
-    // Clean up previous user data subscription
-    if (unsubscribeUserData) {
-      unsubscribeUserData()
-      unsubscribeUserData = null
-    }
-
     // Skip Firestore tier fetch if env override is active (OWNER mode)
     if (!isEnvOverride) {
       if (user) {
-        // Subscribe to user data (tier) from Firestore
-        unsubscribeUserData = subscribeToUserData(user.uid, (userData) => {
-          userTierStore.set(userData.tier)
-        })
+        // Subscribe to user tier from Firestore via the store
+        userTierStore.subscribeFirestore(user.uid)
       } else {
         // Reset tier to FREE when logged out
+        userTierStore.unsubscribeFirestore()
         userTierStore.set(UserTier.FREE)
       }
     }
