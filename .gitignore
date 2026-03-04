@@ -19,3 +19,4 @@ next-env.d.ts
 /.env
 .taskbot-worktrees/
 task-logs/
+.taskbot-state

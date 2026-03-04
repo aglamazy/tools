@@ -21,5 +21,12 @@
     "Firebase for auth, cloud storage, Firestore sync.",
     "Has lint-staged + husky pre-commit hooks."
   ],
-"run": { "cmd": "npm run dev", "port": 3000, "env_files": [".env"] }
+  "run": {
+    "cmd": "npm run dev",
+    "port": 3000,
+    "env_files": [
+      ".env"
+    ]
+  },
+  "taskbot_version": 1
 }
