@@ -81,6 +81,7 @@ export default function BusinessesTab() {
           name: trimmed.name,
           type: trimmed.type,
           vatType: trimmed.vatType,
+          pinnedToSidebar: true,
         })
         if (id == null) {
           setAlertMessage('שמירת העסק נכשלה')
