@@ -1,0 +1,6 @@
+{
+  "project": "finance",
+  "dev_branch": "main",
+  "prod_branch": "main",
+  "taskbot_version": 1
+}

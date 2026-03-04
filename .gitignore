@@ -18,3 +18,7 @@ next-env.d.ts
 /.codex
 /.env
 .taskbot-worktrees/
+.taskbot-state/
+.taskbot-run.pid
+run.log
+task-logs/
