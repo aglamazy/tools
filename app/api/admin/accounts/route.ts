@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyIdToken, getAdminAuth, getAdminFirestore, isAdminConfigured } from '@/app/lib/firebaseAdmin'
+import { UserTier } from '@/app/stores/userTierStore'
 
 export async function GET(request: NextRequest) {
   if (!isAdminConfigured()) {
@@ -27,8 +28,8 @@ export async function GET(request: NextRequest) {
     const firestore = getAdminFirestore()
     const callerDoc = await firestore.collection('users').doc(callerUid).get()
     const callerData = callerDoc.data()
-    const callerTier = callerData?.tier || 'free'
-    if (callerTier !== 'owner') {
+    const callerTier = (callerData?.tier as UserTier) || UserTier.FREE
+    if (callerTier !== UserTier.OWNER) {
       return NextResponse.json({ success: false, error: 'אין הרשאה', errorCode: 'forbidden' })
     }
 
@@ -50,13 +51,13 @@ export async function GET(request: NextRequest) {
     } while (nextPageToken)
 
     // Fetch user docs from Firestore
-    const userDocs = new Map<string, { tier?: string; householdId?: string; householdRole?: string }>()
+    const userDocs = new Map<string, { tier?: UserTier; householdId?: string; householdRole?: string }>()
     for (const u of allUsers) {
       const doc = await firestore.collection('users').doc(u.uid).get()
       if (doc.exists) {
         const data = doc.data()!
         userDocs.set(u.uid, {
-          tier: data.tier,
+          tier: data.tier as UserTier,
           householdId: data.householdId,
           householdRole: data.householdRole,
         })
@@ -67,7 +68,7 @@ export async function GET(request: NextRequest) {
 
     // Group into accounts
     type Member = { uid: string; email?: string; displayName?: string; photoURL?: string; role: string }
-    type Account = { id: string; name: string; tier: string; members: Member[] }
+    type Account = { id: string; name: string; tier: UserTier; members: Member[] }
 
     const householdAccounts = new Map<string, Account>()
     const soloAccounts: Account[] = []
@@ -89,14 +90,14 @@ export async function GET(request: NextRequest) {
           existing.members.push(member)
           // Household tier = owner member's tier
           if (userData.householdRole === 'owner') {
-            existing.tier = userData.tier || 'free'
+            existing.tier = userData.tier || UserTier.FREE
             existing.name = u.displayName || u.email || u.uid
           }
         } else {
           householdAccounts.set(userData.householdId, {
             id: userData.householdId,
             name: u.displayName || u.email || u.uid,
-            tier: userData.householdRole === 'owner' ? (userData.tier || 'free') : (userData.tier || 'free'),
+            tier: userData.tier || UserTier.FREE,
             members: [member],
           })
         }
@@ -105,7 +106,7 @@ export async function GET(request: NextRequest) {
         soloAccounts.push({
           id: u.uid,
           name: u.displayName || u.email || u.uid,
-          tier: userData.tier || 'free',
+          tier: userData.tier || UserTier.FREE,
           members: [member],
         })
       }

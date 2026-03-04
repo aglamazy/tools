@@ -2,6 +2,7 @@ export enum BusinessType {
   Personal = 'personal',
   Business = 'business',
   Teacher = 'teacher',
+  Artist = 'artist',
 }
 
 // Database entity (id optional for new records)
