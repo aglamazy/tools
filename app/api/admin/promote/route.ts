@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
     const decodedToken = await verifyIdToken(idToken)
     const callerUid = decodedToken.uid
 
-    // Verify caller is OWNER tier
+    // Verify caller is OWNER tier (or bootstrap owner from env)
     const firestore = getAdminFirestore()
     const callerDoc = await firestore.collection('users').doc(callerUid).get()
     const callerData = callerDoc.data()

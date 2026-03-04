@@ -159,7 +159,7 @@ export default function TimeEntryForm({
           >
             {data.endNextDay ? '+1' : '+0'}
           </button>
-          {hours > 0 && hours <= 24 && (
+          {hours > 0 && hours <= 25 && (
             <span style={{
               fontSize: '0.85rem',
               fontWeight: 500,
@@ -167,6 +167,12 @@ export default function TimeEntryForm({
             }}>
               {formatDuration(hours)}
             </span>
+          )}
+          {hours <= 0 && data.startTime && data.endTime && (
+            <span style={{ fontSize: '0.8rem', color: '#dc2626' }}>שעת סיום לפני התחלה</span>
+          )}
+          {hours > 25 && (
+            <span style={{ fontSize: '0.8rem', color: '#dc2626' }}>משך זמן חריג ({formatDuration(hours)})</span>
           )}
         </div>
       </div>
