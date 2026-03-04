@@ -3,6 +3,8 @@ import type { CapitalEntry } from '@/app/types/capital'
 import type { FinancialInstitution } from '@/app/types/financialInstitution'
 import type { Student } from '@/app/types/student'
 import type { ProfileQA } from '@/app/types/profileQA'
+import type { ScoutResult } from '@/app/types/scoutResult'
+import type { ScoutConfig } from '@/app/types/scoutConfig'
 import { BusinessType } from '@/app/types/business'
 
 // Re-export types for convenience
@@ -10,6 +12,8 @@ export type { CapitalEntry } from '@/app/types/capital'
 export type { FinancialInstitution } from '@/app/types/financialInstitution'
 export type { Student } from '@/app/types/student'
 export type { ProfileQA } from '@/app/types/profileQA'
+export type { ScoutResult } from '@/app/types/scoutResult'
+export type { ScoutConfig } from '@/app/types/scoutConfig'
 
 // Transaction type (unified for bank and credit card)
 export interface Transaction {
@@ -169,6 +173,8 @@ class FinanceDB extends Dexie {
   ypayDocuments!: Table<YpayDocument, number>
   students!: Table<Student, number>
   profileQAs!: Table<ProfileQA, number>
+  scoutResults!: Table<ScoutResult, number>
+  scoutConfigs!: Table<ScoutConfig, number>
 
   constructor() {
     super('FinanceDB')
@@ -393,6 +399,27 @@ class FinanceDB extends Dexie {
       ypayDocuments: '++id, syncId, &transactionId',
       students: '++id, syncId, businessId, name, archived',
       profileQAs: '++id, syncId, businessId, [businessId+answerType]',
+    })
+
+    // Define schema version 14 - add scoutResults and scoutConfigs tables
+    this.version(14).stores({
+      transactions: '++id, syncId, type, month, accountNumber, cardNumber, date, chargingDate, [type+month], [cardNumber+month], [accountNumber+month], fileId',
+      importedFiles: '++id, syncId, fileName, fileType, processingMonth, [fileType+processingMonth], [cardNumber+processingMonth]',
+      categories: '++id, syncId, name, type',
+      businessCategories: '++id, syncId, &business',
+      tasks: '++id, syncId, createdAt, priority',
+      appSettings: '++id, syncId, &key',
+      businesses: '++id, syncId, &name, type',
+      projects: '++id, syncId, businessId, name, archived',
+      harvestTasks: '++id, syncId, projectId, name, archived',
+      timeEntries: '++id, syncId, taskId, date, startTime, endTime, [taskId+date]',
+      capitalEntries: '++id, syncId, date, institution, accountNumber, description, assetType, currency, employer, investmentTrack, agent, soldDate, [institution+accountNumber+description], fileId',
+      financialInstitutions: '++id, syncId, name, type',
+      ypayDocuments: '++id, syncId, &transactionId',
+      students: '++id, syncId, businessId, name, archived',
+      profileQAs: '++id, syncId, businessId, [businessId+answerType]',
+      scoutResults: '++id, syncId, businessId, status, [businessId+status]',
+      scoutConfigs: '++id, syncId, &businessId',
     })
 
     // Auto-inject syncId and updatedAt on create/update
