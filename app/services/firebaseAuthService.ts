@@ -22,6 +22,7 @@ import { getFirebaseAuth, isFirebaseConfigured } from '@/app/lib/firebase'
 export type AuthUser = {
   uid: string
   email: string | null
+  displayName: string | null
   photoURL: string | null
 }
 
@@ -39,6 +40,7 @@ function toAuthUser(user: User): AuthUser {
   return {
     uid: user.uid,
     email: user.email,
+    displayName: user.displayName,
     photoURL: user.photoURL,
   }
 }

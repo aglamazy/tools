@@ -88,6 +88,14 @@ export function isAuthenticated(): boolean {
 }
 
 /**
+ * Set a local auth user directly (bypasses Firebase, used by localAuthService)
+ */
+export function setBootstrapUser(user: AuthUser | null) {
+  state = { user, loading: false, initialized: true }
+  notifyListeners()
+}
+
+/**
  * Get current user
  */
 export function getUser(): AuthUser | null {

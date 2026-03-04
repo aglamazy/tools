@@ -2,7 +2,8 @@
 
 import { useState } from 'react'
 import Modal from './Modal'
-import { signInWithGoogle, signInWithEmail } from '@/app/services/firebaseAuthService'
+import { signInWithGoogle } from '@/app/services/firebaseAuthService'
+import { signInLocal } from '@/app/services/localAuthService'
 
 type AuthModalProps = {
   isOpen: boolean
@@ -10,17 +11,16 @@ type AuthModalProps = {
   onSuccess?: () => void
 }
 
-type Tab = 'google' | 'email'
+type Tab = 'local' | 'google'
 
-const DEFAULT_EMAIL = process.env.NEXT_PUBLIC_DEFAULT_LOGIN_EMAIL ?? ''
-const DEFAULT_PASSWORD = '123ABC'
+const isLocalAuthEnabled = process.env.NEXT_PUBLIC_SEGMENT !== 'production'
 
 export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
-  const [tab, setTab] = useState<Tab>('email')
+  const [tab, setTab] = useState<Tab>(isLocalAuthEnabled ? 'local' : 'google')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [email, setEmail] = useState(DEFAULT_EMAIL)
-  const [password, setPassword] = useState(DEFAULT_PASSWORD)
+  const [username, setUsername] = useState('root')
+  const [password, setPassword] = useState('ABC123')
 
   const handleGoogleSignIn = async () => {
     setError(null)
@@ -40,12 +40,12 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
     }
   }
 
-  const handleEmailSignIn = async (e: React.FormEvent) => {
+  const handleLocalSignIn = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
     setLoading(true)
     try {
-      const result = await signInWithEmail(email.trim(), password)
+      const result = await signInLocal(username.trim(), password)
       if (result.success) {
         onSuccess?.()
         onClose()
@@ -78,9 +78,11 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
 
         {/* Tab switcher */}
         <div style={{ display: 'flex', gap: '0.25rem', background: '#f1f5f9', borderRadius: '0.5rem', padding: '0.25rem', marginBottom: '1.25rem' }}>
-          <button type="button" style={tabStyle(tab === 'email')} onClick={() => { setTab('email'); setError(null) }}>
-            אימייל
-          </button>
+          {isLocalAuthEnabled && (
+            <button type="button" style={tabStyle(tab === 'local')} onClick={() => { setTab('local'); setError(null) }}>
+              משתמש
+            </button>
+          )}
           <button type="button" style={tabStyle(tab === 'google')} onClick={() => { setTab('google'); setError(null) }}>
             Google
           </button>
@@ -92,13 +94,13 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
           </div>
         )}
 
-        {tab === 'email' && (
-          <form onSubmit={handleEmailSignIn} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+        {tab === 'local' && (
+          <form onSubmit={handleLocalSignIn} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             <input
-              type="email"
-              placeholder="אימייל"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              type="text"
+              placeholder="שם משתמש"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
               required
               dir="ltr"
               style={{ padding: '0.75rem', border: '1px solid #d1d5db', borderRadius: '0.5rem', fontSize: '1rem', width: '100%', boxSizing: 'border-box' }}

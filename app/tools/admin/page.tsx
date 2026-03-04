@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { notFound } from 'next/navigation'
 import { userTierStore, UserTier } from '@/app/stores/userTierStore'
 import { getIdToken } from '@/app/services/firebaseAuthService'
+import { subscribeToAuth } from '@/app/stores/authStore'
 
 type Member = {
   uid: string
@@ -69,7 +70,14 @@ export default function AdminPage() {
   }
 
   useEffect(() => {
-    fetchAccounts()
+    let fetched = false
+    const unsub = subscribeToAuth((authState) => {
+      if (authState.initialized && authState.user && !fetched) {
+        fetched = true
+        fetchAccounts()
+      }
+    })
+    return unsub
   }, [])
 
   const handleTierChange = async (accountId: string, newTier: UserTier) => {
