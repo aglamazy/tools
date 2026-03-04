@@ -179,6 +179,9 @@ export default function Sidebar() {
             const hasAccess = userTierStore.hasAccess(tool.requiredTier)
             const isLocked = !hasAccess
 
+            // Hide admin-only items entirely if user lacks access
+            if (tool.requiredTier === UserTier.OWNER && !hasAccess) return null
+
             return (
               <li key={tool.id}>
                 {tool.available && hasAccess ? (

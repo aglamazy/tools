@@ -1,6 +1,14 @@
 {
   "project": "finance",
-  "dev_branch": "main",
+  "dev_branch": "dev",
   "prod_branch": "main",
-  "taskbot_version": 1
+  "taskbot_version": 1,
+  "run": {
+    "cmd": "npm run dev",
+    "port": 3100,
+    "env_files": [
+      ".env",
+      ".env.local"
+    ]
+  }
 }

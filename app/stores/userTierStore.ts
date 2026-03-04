@@ -30,20 +30,7 @@ const TIER_RANK: Record<UserTier, number> = {
   [UserTier.OWNER]: 4,
 }
 
-// LOCAL segment = developer/owner mode = OWNER as minimum floor
-const isLocalEnv =
-  process.env.NEXT_PUBLIC_SEGMENT === 'local' ||
-  process.env.NEXT_PUBLIC_DEVELOPER_MODE === 'true'
-
-function getInitialTier(): UserTier {
-  if (isLocalEnv) return UserTier.OWNER
-  return UserTier.FREE
-}
-
-// Always false so Firestore is always consulted — env override is handled in set()
-export const isEnvOverride = false
-
-let currentTier: UserTier = getInitialTier()
+let currentTier: UserTier = UserTier.FREE
 const listeners: Set<Listener> = new Set()
 let firestoreUnsubscribe: Unsubscribe | null = null
 
@@ -53,13 +40,9 @@ export const userTierStore = {
   },
 
   set(tier: UserTier): void {
-    // env-var is an OR condition: local env keeps OWNER as floor
-    const effective = isLocalEnv && TIER_RANK[tier] < TIER_RANK[UserTier.OWNER]
-      ? UserTier.OWNER
-      : tier
-    if (currentTier !== effective) {
-      currentTier = effective
-      listeners.forEach((listener) => listener(effective))
+    if (currentTier !== tier) {
+      currentTier = tier
+      listeners.forEach((listener) => listener(tier))
     }
   },
 
