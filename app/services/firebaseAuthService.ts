@@ -11,6 +11,9 @@ import {
   signOut as firebaseSignOut,
   onAuthStateChanged,
   sendPasswordResetEmail,
+  updatePassword,
+  reauthenticateWithCredential,
+  EmailAuthProvider,
   type User,
   type Unsubscribe,
 } from 'firebase/auth'
@@ -201,6 +204,34 @@ export async function signOut(): Promise<{ success: boolean; error?: string }> {
   } catch (err: any) {
     console.error('[Auth] Sign out failed:', err)
     return { success: false, error: err.message }
+  }
+}
+
+/**
+ * Change password for email/password users (requires current password for re-auth)
+ */
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string
+): Promise<{ success: boolean; error?: string }> {
+  if (!isFirebaseConfigured()) {
+    return { success: false, error: 'Firebase not configured' }
+  }
+
+  const auth = getFirebaseAuth()
+  const user = auth.currentUser
+  if (!user || !user.email) {
+    return { success: false, error: 'לא מחובר' }
+  }
+
+  try {
+    const credential = EmailAuthProvider.credential(user.email, currentPassword)
+    await reauthenticateWithCredential(user, credential)
+    await updatePassword(user, newPassword)
+    return { success: true }
+  } catch (err: any) {
+    console.error('[Auth] Change password failed:', err.code, err.message)
+    return { success: false, error: getErrorMessage(err.code) }
   }
 }
 
