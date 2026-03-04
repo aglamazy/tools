@@ -364,7 +364,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     }
     const hours = (endMinutes - startMinutes) / 60
 
-    if (hours <= 0 || hours > 24) return
+    if (hours <= 0 || hours > 25) return
 
     if (editingEntry) {
       // Update existing
