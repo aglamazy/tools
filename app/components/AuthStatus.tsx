@@ -8,7 +8,7 @@ import {
   clearCachedAvatar,
   type AuthUser,
 } from '@/app/stores/authStore'
-import { signOut } from '@/app/services/firebaseAuthService'
+import { signOut, changePassword } from '@/app/services/firebaseAuthService'
 import { isFirebaseConfigured } from '@/app/lib/firebase'
 import { getSyncPassword } from './CloudSyncManager'
 import AuthModal from './AuthModal'
@@ -77,6 +77,12 @@ export default function AuthStatus() {
   const [loading, setLoading] = useState(true)
   const [showAuthModal, setShowAuthModal] = useState(false)
   const [showMenu, setShowMenu] = useState(false)
+  const [showChangePassword, setShowChangePassword] = useState(false)
+  const [cpCurrent, setCpCurrent] = useState('')
+  const [cpNew, setCpNew] = useState('')
+  const [cpError, setCpError] = useState<string | null>(null)
+  const [cpSuccess, setCpSuccess] = useState(false)
+  const [cpLoading, setCpLoading] = useState(false)
   const [syncStatus, setSyncStatus] = useState<SyncIndicatorStatus>('hidden')
   const [isMounted, setIsMounted] = useState(false)
 
@@ -191,6 +197,25 @@ export default function AuthStatus() {
     await signOut()
   }
 
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setCpError(null)
+    setCpSuccess(false)
+    setCpLoading(true)
+    try {
+      const result = await changePassword(cpCurrent, cpNew)
+      if (result.success) {
+        setCpSuccess(true)
+        setCpCurrent('')
+        setCpNew('')
+      } else {
+        setCpError(result.error || 'שגיאה בשינוי סיסמה')
+      }
+    } finally {
+      setCpLoading(false)
+    }
+  }
+
   return (
     <div style={{ position: 'relative' }}>
       <button
@@ -265,20 +290,59 @@ export default function AuthStatus() {
               {user.email}
             </div>
             <button
+              onClick={() => { setShowMenu(false); setShowChangePassword(true); setCpError(null); setCpSuccess(false) }}
+              style={{ width: '100%', padding: '0.75rem 1rem', background: 'none', border: 'none', borderBottom: '1px solid #e5e7eb', color: '#374151', fontSize: '0.9rem', cursor: 'pointer', textAlign: 'right' }}
+            >
+              שנה סיסמה
+            </button>
+            <button
               onClick={handleSignOut}
-              style={{
-                width: '100%',
-                padding: '0.75rem 1rem',
-                background: 'none',
-                border: 'none',
-                color: '#dc2626',
-                fontSize: '0.9rem',
-                cursor: 'pointer',
-                textAlign: 'right',
-              }}
+              style={{ width: '100%', padding: '0.75rem 1rem', background: 'none', border: 'none', color: '#dc2626', fontSize: '0.9rem', cursor: 'pointer', textAlign: 'right' }}
             >
               התנתק
             </button>
+          </div>
+        </>
+      )}
+
+      {/* Change password inline panel */}
+      {showChangePassword && (
+        <>
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 99, background: 'rgba(0,0,0,0.3)' }} onClick={() => setShowChangePassword(false)} />
+          <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: '0.5rem', background: 'white', border: '1px solid #e5e7eb', borderRadius: '0.5rem', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)', zIndex: 100, width: '240px', padding: '1rem' }}>
+            <div style={{ fontWeight: 600, marginBottom: '0.75rem', fontSize: '0.9rem' }}>שנה סיסמה</div>
+            {cpSuccess ? (
+              <div style={{ color: '#16a34a', fontSize: '0.875rem', textAlign: 'center', padding: '0.5rem 0' }}>הסיסמה שונתה בהצלחה</div>
+            ) : (
+              <form onSubmit={handleChangePassword} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                {cpError && <div style={{ color: '#dc2626', fontSize: '0.8rem' }}>{cpError}</div>}
+                <input
+                  type="password"
+                  placeholder="סיסמה נוכחית"
+                  value={cpCurrent}
+                  onChange={(e) => setCpCurrent(e.target.value)}
+                  required
+                  dir="ltr"
+                  style={{ padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.875rem' }}
+                />
+                <input
+                  type="password"
+                  placeholder="סיסמה חדשה"
+                  value={cpNew}
+                  onChange={(e) => setCpNew(e.target.value)}
+                  required
+                  dir="ltr"
+                  style={{ padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.875rem' }}
+                />
+                <button
+                  type="submit"
+                  disabled={cpLoading}
+                  style={{ padding: '0.5rem', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '0.375rem', fontSize: '0.875rem', cursor: cpLoading ? 'not-allowed' : 'pointer', opacity: cpLoading ? 0.7 : 1 }}
+                >
+                  {cpLoading ? '...' : 'שמור'}
+                </button>
+              </form>
+            )}
           </div>
         </>
       )}

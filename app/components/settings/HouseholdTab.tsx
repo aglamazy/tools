@@ -12,6 +12,9 @@ import {
 } from '@/app/services/householdService'
 import { refreshIdToken } from '@/app/services/firebaseAuthService'
 import { migrateToHouseholdStorage } from '@/app/services/cloudBackupService'
+import { appSettingsStore, AccountOwners } from '@/app/stores/appSettingsStore'
+import { getUser } from '@/app/stores/authStore'
+import { db } from '@/app/db/financeDB'
 import type { Household, HouseholdInvitation, HouseholdRole } from '@/app/types/household'
 
 type HouseholdWithEmails = Household & { memberEmails?: Record<string, string> }
@@ -25,6 +28,9 @@ export default function HouseholdTab() {
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviting, setInviting] = useState(false)
 
+  const [accountOwners, setAccountOwners] = useState<AccountOwners>({})
+  const [accounts, setAccounts] = useState<{ key: string; label: string }[]>([])
+
   const [alertModal, setAlertModal] = useState<{ isOpen: boolean; message: string; isError?: boolean; copyText?: string }>({
     isOpen: false,
     message: '',
@@ -35,6 +41,12 @@ export default function HouseholdTab() {
   useEffect(() => {
     loadHouseholdInfo()
   }, [])
+
+  useEffect(() => {
+    if (household && (household.members || []).length === 2) {
+      loadAccountAssignments()
+    }
+  }, [household])
 
   const loadHouseholdInfo = async () => {
     setLoading(true)
@@ -52,6 +64,42 @@ export default function HouseholdTab() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const loadAccountAssignments = async () => {
+    try {
+      const importedFiles = await db.importedFiles.toArray()
+      const accountSet = new Map<string, string>()
+
+      importedFiles.forEach(file => {
+        if (file.fileType === 'credit-card' && file.cardNumber) {
+          accountSet.set(`card:${file.cardNumber}`, `כרטיס ${file.cardNumber}`)
+        } else if (file.fileType === 'bank' && file.accountNumber) {
+          accountSet.set(`bank:${file.accountNumber}`, `בנק ${file.accountNumber}`)
+        }
+      })
+
+      const sorted = Array.from(accountSet.entries())
+        .map(([key, label]) => ({ key, label }))
+        .sort((a, b) => a.label.localeCompare(b.label, 'he'))
+
+      setAccounts(sorted)
+      const owners = await appSettingsStore.getAccountOwners()
+      setAccountOwners(owners)
+    } catch (error) {
+      console.error('[HouseholdTab] Error loading account assignments:', error)
+    }
+  }
+
+  const handleAssign = async (accountKey: string, uid: string | null) => {
+    const updated = { ...accountOwners }
+    if (uid === null) {
+      delete updated[accountKey]
+    } else {
+      updated[accountKey] = uid
+    }
+    setAccountOwners(updated)
+    await appSettingsStore.setAccountOwners(updated)
   }
 
   const handleCreateHousehold = async () => {
@@ -309,6 +357,81 @@ export default function HouseholdTab() {
           </p>
         )}
       </section>
+
+      {/* Account Assignment - only when 2 members */}
+      {members.length === 2 && accounts.length > 0 && (() => {
+        const currentUid = getUser()?.uid
+        const memberA = currentUid || members[0]
+        const memberB = members.find(m => m !== memberA) || members[1]
+        const emailA = household.memberEmails?.[memberA] || 'אני'
+        const emailB = household.memberEmails?.[memberB] || 'שותף/ה'
+
+        return (
+          <section
+            style={{
+              marginBottom: '2rem',
+              padding: '1.5rem',
+              border: '1px solid #e2e8f0',
+              borderRadius: '0.75rem',
+              background: '#f8fafc',
+            }}
+          >
+            <h3 style={{ margin: '0 0 1rem', fontSize: '1rem' }}>שיוך חשבונות</h3>
+            <p style={{ margin: '0 0 1rem', color: '#64748b', fontSize: '0.9rem' }}>
+              שייכו כל חשבון לבן/בת הזוג הרלוונטי/ת. משימות אוטומטיות יוצגו רק למי שהחשבון שייך אליו.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {accounts.map(({ key, label }) => {
+                const owner = accountOwners[key]
+                const value: 'a' | 'b' | 'both' = !owner ? 'both' : owner === memberA ? 'a' : 'b'
+
+                return (
+                  <div
+                    key={key}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.75rem',
+                      padding: '0.75rem 1rem',
+                      background: '#fff',
+                      borderRadius: '0.5rem',
+                      border: '1px solid #e2e8f0',
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <span style={{ minWidth: '120px', fontWeight: 500 }}>{label}</span>
+                    <div style={{ display: 'flex', gap: 0, borderRadius: '0.375rem', overflow: 'hidden', border: '1px solid #cbd5e1' }}>
+                      {([
+                        { id: 'a' as const, uid: memberA, text: emailA },
+                        { id: 'b' as const, uid: memberB, text: emailB },
+                        { id: 'both' as const, uid: null, text: 'שניהם' },
+                      ]).map(opt => (
+                        <button
+                          key={opt.id}
+                          onClick={() => handleAssign(key, opt.uid)}
+                          style={{
+                            padding: '0.4rem 0.75rem',
+                            fontSize: '0.85rem',
+                            border: 'none',
+                            borderRight: opt.id !== 'both' ? '1px solid #cbd5e1' : 'none',
+                            cursor: 'pointer',
+                            background: value === opt.id ? '#3b82f6' : '#fff',
+                            color: value === opt.id ? '#fff' : '#374151',
+                            fontWeight: value === opt.id ? 600 : 400,
+                            transition: 'background 0.15s, color 0.15s',
+                          }}
+                        >
+                          {opt.text}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        )
+      })()}
 
       {/* Invite (Owner only) */}
       {isOwner && members.length < 2 && (

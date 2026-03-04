@@ -30,4 +30,10 @@ export const BUSINESS_TYPE_CONFIG: Record<BusinessType, BusinessTypeConfig> = {
     badgeBackground: '#fef3c7', // amber-100
     badgeColor: '#92400e',      // amber-800
   },
+  [BusinessType.Artist]: {
+    label: 'אמן',
+    icon: '🎨',
+    badgeBackground: '#ede9fe', // violet-100
+    badgeColor: '#5b21b6',      // violet-800
+  },
 }

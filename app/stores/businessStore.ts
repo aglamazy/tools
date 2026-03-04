@@ -1,6 +1,7 @@
 // Business Store - Uses IndexedDB via Dexie
 
 import { db, Business } from '@/app/db/financeDB'
+import { appSettingsStore } from './appSettingsStore'
 
 export const businessStore = {
   /**
@@ -78,6 +79,10 @@ export const businessStore = {
    */
   delete: async (id: number): Promise<boolean> => {
     try {
+      const business = await db.businesses.get(id)
+      if (business?.syncId) {
+        await appSettingsStore.recordDeletion('businesses', business.syncId)
+      }
       await db.businesses.delete(id)
       return true
     } catch (error) {

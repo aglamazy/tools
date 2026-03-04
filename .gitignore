@@ -17,3 +17,4 @@ tsconfig.tsbuildinfo
 next-env.d.ts
 /.codex
 /.env
+.taskbot-worktrees/
