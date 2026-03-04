@@ -51,7 +51,7 @@ export async function GET(request: NextRequest) {
     } while (nextPageToken)
 
     // Fetch user docs from Firestore
-    const userDocs = new Map<string, { tier?: UserTier; householdId?: string; householdRole?: string }>()
+    const userDocs = new Map<string, { tier?: UserTier; householdId?: string; householdRole?: string; isLifetime?: boolean }>()
     for (const u of allUsers) {
       const doc = await firestore.collection('users').doc(u.uid).get()
       if (doc.exists) {
@@ -60,6 +60,7 @@ export async function GET(request: NextRequest) {
           tier: data.tier as UserTier,
           householdId: data.householdId,
           householdRole: data.householdRole,
+          isLifetime: data.isLifetime === true,
         })
       } else {
         userDocs.set(u.uid, {})
@@ -68,7 +69,7 @@ export async function GET(request: NextRequest) {
 
     // Group into accounts
     type Member = { uid: string; email?: string; displayName?: string; photoURL?: string; role: string }
-    type Account = { id: string; name: string; tier: UserTier; members: Member[] }
+    type Account = { id: string; name: string; tier: UserTier; isLifetime: boolean; members: Member[] }
 
     const householdAccounts = new Map<string, Account>()
     const soloAccounts: Account[] = []
@@ -88,9 +89,10 @@ export async function GET(request: NextRequest) {
         const existing = householdAccounts.get(userData.householdId)
         if (existing) {
           existing.members.push(member)
-          // Household tier = owner member's tier
+          // Household tier/isLifetime = owner member's values
           if (userData.householdRole === 'owner') {
             existing.tier = userData.tier || UserTier.FREE
+            existing.isLifetime = userData.isLifetime === true
             existing.name = u.displayName || u.email || u.uid
           }
         } else {
@@ -98,6 +100,7 @@ export async function GET(request: NextRequest) {
             id: userData.householdId,
             name: u.displayName || u.email || u.uid,
             tier: userData.tier || UserTier.FREE,
+            isLifetime: userData.isLifetime === true,
             members: [member],
           })
         }
@@ -107,6 +110,7 @@ export async function GET(request: NextRequest) {
           id: u.uid,
           name: u.displayName || u.email || u.uid,
           tier: userData.tier || UserTier.FREE,
+          isLifetime: userData.isLifetime === true,
           members: [member],
         })
       }

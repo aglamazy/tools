@@ -177,6 +177,16 @@ export async function signInWithGoogle(): Promise<AuthResult> {
     const auth = getFirebaseAuth()
     const provider = new GoogleAuthProvider()
     const credential = await signInWithPopup(auth, provider)
+
+    // Best-effort: claim any pre-provisioned tier for this email
+    try {
+      const idToken = await credential.user.getIdToken()
+      await fetch('/api/auth/claim-provision', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${idToken}` },
+      })
+    } catch { /* non-blocking */ }
+
     return {
       success: true,
       user: toAuthUser(credential.user),

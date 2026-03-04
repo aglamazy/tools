@@ -1,6 +1,6 @@
 /**
- * Admin: Promote/Demote Account API Route
- * Changes tier for an account (all members in household, or solo user)
+ * Admin: Pre-provision Account API Route
+ * Creates a provision record for a user who hasn't signed up yet
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -14,7 +14,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'שרת לא מוגדר', errorCode: 'not-configured' })
   }
 
-  // Verify authentication
   const authHeader = request.headers.get('Authorization')
   if (!authHeader?.startsWith('Bearer ')) {
     return NextResponse.json({ success: false, error: 'לא מחובר', errorCode: 'not-authenticated' })
@@ -35,11 +34,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'אין הרשאה', errorCode: 'forbidden' })
     }
 
-    // Parse and validate body
     const body = await request.json()
-    const { accountId, tier, isLifetime } = body as { accountId: string; tier: UserTier; isLifetime?: boolean }
+    const { email, tier, isLifetime } = body as { email: string; tier: UserTier; isLifetime: boolean }
 
-    if (!accountId || !tier) {
+    if (!email || !tier) {
       return NextResponse.json({ success: false, error: 'חסרים פרטים', errorCode: 'invalid-body' })
     }
 
@@ -47,36 +45,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'דרגה לא חוקית', errorCode: 'invalid-tier' })
     }
 
-    const updatePayload: Record<string, unknown> = { tier }
-    if (typeof isLifetime === 'boolean') updatePayload.isLifetime = isLifetime
+    const normalizedEmail = email.toLowerCase().trim()
 
-    // Check if accountId is a household
-    const householdDoc = await firestore.collection('households').doc(accountId).get()
-
-    if (householdDoc.exists) {
-      // Household: update tier on all members
-      const householdData = householdDoc.data()!
-      const memberUids: string[] = householdData.members || []
-
-      const batch = firestore.batch()
-      for (const uid of memberUids) {
-        batch.update(firestore.collection('users').doc(uid), updatePayload)
-      }
-      await batch.commit()
-    } else {
-      // Solo user: update that user's doc
-      const userDoc = await firestore.collection('users').doc(accountId).get()
-      if (!userDoc.exists) {
-        // Create user doc if it doesn't exist
-        await firestore.collection('users').doc(accountId).set(updatePayload, { merge: true })
-      } else {
-        await firestore.collection('users').doc(accountId).update(updatePayload)
-      }
-    }
+    await firestore.collection('provisions').doc(normalizedEmail).set({
+      email: normalizedEmail,
+      tier,
+      isLifetime: isLifetime === true,
+      createdAt: new Date(),
+      createdBy: callerUid,
+      claimedAt: null,
+      claimedBy: null,
+    })
 
     return NextResponse.json({ success: true })
   } catch (error: any) {
-    console.error('[Admin] Promote failed:', error)
+    console.error('[Admin] Provision failed:', error)
 
     if (error.code === 'auth/id-token-expired') {
       return NextResponse.json({ success: false, error: 'פג תוקף ההתחברות', errorCode: 'token-expired' })
