@@ -11,7 +11,7 @@ const SEED_USERNAME = 'root'
 const SEED_PASSWORD = 'ABC123'
 
 export async function POST(request: NextRequest) {
-  if (process.env.VERCEL_ENV === 'production') {
+  if (process.env.NODE_ENV === 'production') {
     return NextResponse.json({ success: false, error: 'לא זמין' }, { status: 403 })
   }
 

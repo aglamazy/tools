@@ -62,6 +62,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: result.error }, { status: 500 })
     }
 
+    // Build a map of grounding sources by title for URL matching
+    const groundingByTitle = new Map<string, string>()
+    for (const src of result.groundingSources || []) {
+      if (src.title) groundingByTitle.set(src.title.toLowerCase(), src.url)
+    }
+
     const resultsMatch = result.text.match(/<results>\s*([\s\S]*?)\s*<\/results>/)
     let results: Array<{
       title: string
@@ -77,6 +83,25 @@ export async function POST(request: NextRequest) {
         results = JSON.parse(resultsMatch[1])
       } catch {
         console.error('[Scout Run] Failed to parse results')
+      }
+    }
+
+    // Enrich results with grounding URLs when the LLM didn't provide a valid one
+    for (const r of results) {
+      const hasValidUrl = r.url && r.url.startsWith('https://')
+      if (!hasValidUrl) {
+        // Try to match by title
+        const titleLower = r.title.toLowerCase()
+        for (const [groundTitle, groundUrl] of groundingByTitle) {
+          if (titleLower.includes(groundTitle) || groundTitle.includes(titleLower)) {
+            r.url = groundUrl
+            break
+          }
+        }
+        // Fallback: use first grounding source if still no URL
+        if (!r.url && result.groundingSources?.length) {
+          r.url = result.groundingSources[0].url
+        }
       }
     }
 

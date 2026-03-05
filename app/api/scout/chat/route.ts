@@ -99,6 +99,7 @@ export async function POST(request: NextRequest) {
       message: assistantText,
       searchPrompt,
       results,
+      groundingSources: result.groundingSources,
     })
   } catch (err: any) {
     console.error('[Scout Chat] Error:', err)

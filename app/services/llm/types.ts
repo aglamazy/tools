@@ -13,9 +13,15 @@ export type LLMChatOptions = {
   apiKey?: string
 }
 
+export type GroundingSource = {
+  url: string
+  title?: string
+}
+
 export type LLMResult = {
   text: string
   error?: string
+  groundingSources?: GroundingSource[]
 }
 
 export interface LLMClient {

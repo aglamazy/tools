@@ -13,7 +13,7 @@ type AuthModalProps = {
 
 type Tab = 'local' | 'google'
 
-const isLocalAuthEnabled = process.env.NEXT_PUBLIC_SEGMENT !== 'production'
+const isLocalAuthEnabled = process.env.NODE_ENV !== 'production'
 
 export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
   const [tab, setTab] = useState<Tab>(isLocalAuthEnabled ? 'local' : 'google')

@@ -45,13 +45,22 @@ export class GeminiClient implements LLMClient {
       }
 
       const data = await response.json()
-      const text = data.candidates?.[0]?.content?.parts
+      const candidate = data.candidates?.[0]
+      const text = candidate?.content?.parts
         ?.filter((p: any) => p.text)
         .map((p: any) => p.text)
         .join('') || ''
 
       if (!text) return { text: '', error: 'Gemini לא החזיר תשובה' }
-      return { text }
+
+      const groundingSources = (candidate?.groundingMetadata?.groundingChunks || [])
+        .filter((chunk: any) => chunk.web?.uri)
+        .map((chunk: any) => ({
+          url: chunk.web.uri,
+          title: chunk.web.title,
+        }))
+
+      return { text, groundingSources: groundingSources.length > 0 ? groundingSources : undefined }
     } catch (err: any) {
       console.error('[LLM/Gemini] Error:', err)
       return { text: '', error: 'שגיאת רשת בקריאה ל-Gemini' }
