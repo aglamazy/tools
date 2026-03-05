@@ -1,16 +1,23 @@
 import { NextResponse } from 'next/server'
-import { readFile } from 'fs/promises'
+import { readFile, readdir } from 'fs/promises'
 import { join } from 'path'
 
 export async function GET() {
   try {
-    const filePath = join(process.cwd(), 'public', 'extension', 'aglamaz-form-assistant.zip')
-    const fileBuffer = await readFile(filePath)
+    const dir = join(process.cwd(), 'public', 'extension')
+    const files = await readdir(dir)
+    const zip = files.find(f => f.startsWith('aglamaz-form-assistant-') && f.endsWith('.zip'))
+
+    if (!zip) {
+      return NextResponse.json({ error: 'Extension file not found' }, { status: 404 })
+    }
+
+    const fileBuffer = await readFile(join(dir, zip))
 
     return new NextResponse(fileBuffer, {
       headers: {
         'Content-Type': 'application/zip',
-        'Content-Disposition': 'attachment; filename="aglamaz-form-assistant.zip"',
+        'Content-Disposition': `attachment; filename="${zip}"`,
         'Content-Length': String(fileBuffer.length),
       },
     })
