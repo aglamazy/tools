@@ -5,6 +5,7 @@ import './globals.css'
 import Sidebar from './components/Sidebar'
 import PageHeader from './components/PageHeader'
 import { ToastProvider } from './components/ToastContainer'
+import { branding } from './config'
 import MigrationRunner from './components/MigrationRunner'
 import AuthInitializer from './components/AuthInitializer'
 import CloudSyncManager from './components/CloudSyncManager'
@@ -23,22 +24,22 @@ const metadataBase = (() => {
 
 export const metadata: Metadata = {
   metadataBase,
-  title: 'ארגז כלים פיננסיים',
-  description: 'כלים פיננסיים לניהול תשלומים ותקציב.',
+  title: branding.name,
+  description: branding.tagline,
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
-    title: 'ארגז כלים',
+    title: branding.name,
   },
   alternates: {
     canonical: '/',
   },
   openGraph: {
-    title: 'ארגז כלים פיננסיים',
-    description: 'כלים פיננסיים לניהול תשלומים ותקציב.',
+    title: branding.name,
+    description: branding.tagline,
     url: '/',
-    siteName: 'ארגז כלים',
+    siteName: branding.name,
     type: 'website',
   },
   robots: {

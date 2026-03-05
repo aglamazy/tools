@@ -1,12 +1,13 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
+import { branding } from '@/app/config'
 
 export const metadata: Metadata = {
-  title: 'אודות | ארגז כלים פיננסיים',
-  description: 'ארגז כלים פיננסיים - כלי חינמי לניהול תקציב, ניתוח תזרים מזומנים ותחזית תשלומים. כל המידע נשמר בדפדפן שלך בלבד, ללא שרתים חיצוניים.',
+  title: `אודות | ${branding.name}`,
+  description: `${branding.name} - ${branding.tagline}. ניהול פיננסי, תובנות חכמות ועוד.`,
   openGraph: {
-    title: 'אודות | ארגז כלים פיננסיים',
-    description: 'ארגז כלים פיננסיים - כלי חינמי לניהול תקציב, ניתוח תזרים מזומנים ותחזית תשלומים. כל המידע נשמר בדפדפן שלך בלבד.',
+    title: `אודות | ${branding.name}`,
+    description: `${branding.name} - ${branding.tagline}. ניהול פיננסי, תובנות חכמות ועוד.`,
   },
 }
 
@@ -15,16 +16,16 @@ export default function AboutPage() {
     <main className="app" dir="rtl">
       <div className="card" style={{ maxWidth: '800px', margin: '0 auto' }}>
         <header style={{ marginBottom: '2rem' }}>
-          <h1 style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>ארגז כלים פיננסיים</h1>
+          <h1 style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>{branding.name}</h1>
           <p style={{ fontSize: '1.125rem', color: '#64748b' }}>
-            כלי חינמי לניהול תקציב אישי ומשפחתי
+            {branding.tagline}
           </p>
         </header>
 
         <section style={{ marginBottom: '2rem' }}>
           <h2 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>מה זה?</h2>
           <p style={{ lineHeight: '1.75', marginBottom: '1rem' }}>
-            ארגז הכלים הפיננסיים הוא אפליקציית ווב חינמית שעוזרת לך לנהל את הכספים האישיים שלך בצורה חכמה ויעילה.
+            {branding.name} הוא העוזר החכם שלך לניהול העסק - מנתח את הכספים, מציג תובנות ועוזר לך לקבל החלטות.
             האפליקציה מאפשרת לך לייבא קבצי בנק וכרטיסי אשראי, לנתח תזרים מזומנים, לעקוב אחרי תקציב ולתכנן תשלומים עתידיים.
           </p>
           <p style={{ lineHeight: '1.75' }}>

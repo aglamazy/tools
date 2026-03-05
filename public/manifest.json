@@ -1,7 +1,7 @@
 {
-  "name": "ארגז כלים פיננסיים",
-  "short_name": "ארגז כלים",
-  "description": "כלים פיננסיים לניהול תשלומים ותקציב",
+  "name": "Aglamazo",
+  "short_name": "Aglamazo",
+  "description": "הראש השקט של העסק שלך",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",

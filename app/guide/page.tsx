@@ -1,9 +1,10 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
+import { branding } from '@/app/config'
 
 export const metadata: Metadata = {
-  title: 'מדריך שימוש | ארגז כלים פיננסיים',
-  description: 'מדריך מפורט לשימוש בארגז הכלים הפיננסיים - ייבוא קבצים, ניתוח תזרים, ניהול תקציב ותחזית תשלומים.',
+  title: `מדריך שימוש | ${branding.name}`,
+  description: `מדריך מפורט לשימוש ב-${branding.name} - ייבוא קבצים, ניתוח תזרים, ניהול תקציב ותחזית תשלומים.`,
   robots: {
     index: false, // Don't index the guide in search engines
     follow: true,
@@ -17,7 +18,7 @@ export default function GuidePage() {
         <header style={{ marginBottom: '2rem', textAlign: 'center' }}>
           <h1 style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>מדריך שימוש</h1>
           <p style={{ fontSize: '1.125rem', color: '#64748b' }}>
-            למד כיצד להשתמש בארגז הכלים הפיננסיים בצורה מיטבית
+            למד כיצד להשתמש ב-{branding.name} בצורה מיטבית
           </p>
         </header>
 
