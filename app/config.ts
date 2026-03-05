@@ -5,6 +5,28 @@ export const branding = {
   tagline: 'הראש השקט של העסק שלך',
 } as const
 
+export const routes = {
+  home: '/',
+  dashboard: '/app',
+  import: '/app/import',
+  cashFlow: '/app/cash-flow',
+  budget: '/app/budget',
+  todo: '/app/todo',
+  futurePayments: '/app/future-payments',
+  settings: '/app/settings',
+  gmail: '/app/gmail',
+  capital: '/app/capital',
+  devDb: '/app/dev-db',
+  admin: '/app/admin',
+  businessCategories: '/app/business-categories',
+  about: '/about',
+  guide: '/guide',
+  pricing: '/pricing',
+  extension: '/extension',
+  invite: '/invite',
+  business: (id: number | string) => `/business/${id}`,
+} as const
+
 export const config = {
   // Developer mode - enables additional validation and debugging
   developerMode: process.env.NEXT_PUBLIC_DEVELOPER_MODE === 'true',

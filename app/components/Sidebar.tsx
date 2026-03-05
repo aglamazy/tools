@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { businessStore } from '@/app/stores/businessStore'
 import { userTierStore, UserTier } from '@/app/stores/userTierStore'
-import { config } from '@/app/config'
+import { config, routes } from '@/app/config'
 import type { Business } from '@/app/db/financeDB'
 import { BUSINESS_TYPE_CONFIG } from '@/app/types/businessColors'
 
@@ -23,7 +23,7 @@ const allTools: Tool[] = [
   {
     id: 'import',
     title: 'ייבוא קבצים',
-    href: '/tools/import',
+    href: routes.import,
     icon: '📥',
     available: true,
     requiredTier: UserTier.FREE,
@@ -31,7 +31,7 @@ const allTools: Tool[] = [
   {
     id: 'cash-flow',
     title: 'תזרים מזומנים',
-    href: '/tools/cash-flow',
+    href: routes.cashFlow,
     icon: '💰',
     available: true,
     requiredTier: UserTier.FREE,
@@ -39,7 +39,7 @@ const allTools: Tool[] = [
   {
     id: 'budget',
     title: 'תקציב',
-    href: '/tools/budget',
+    href: routes.budget,
     icon: '📊',
     available: true,
     requiredTier: UserTier.FREE,
@@ -47,7 +47,7 @@ const allTools: Tool[] = [
   {
     id: 'todo',
     title: 'משימות',
-    href: '/tools/todo',
+    href: routes.todo,
     icon: '✓',
     available: true,
     requiredTier: UserTier.FREE,
@@ -55,7 +55,7 @@ const allTools: Tool[] = [
   {
     id: 'future-payments',
     title: 'תחזית תשלומים',
-    href: '/tools/future-payments',
+    href: routes.futurePayments,
     icon: '💳',
     available: true,
     requiredTier: UserTier.PRO,
@@ -63,7 +63,7 @@ const allTools: Tool[] = [
   {
     id: 'settings',
     title: 'הגדרות',
-    href: '/tools/settings',
+    href: routes.settings,
     icon: '⚙️',
     available: true,
     requiredTier: UserTier.FREE,
@@ -71,7 +71,7 @@ const allTools: Tool[] = [
   {
     id: 'about',
     title: 'אודות',
-    href: '/about',
+    href: routes.about,
     icon: 'ℹ️',
     available: true,
     requiredTier: UserTier.FREE,
@@ -79,7 +79,7 @@ const allTools: Tool[] = [
   {
     id: 'guide',
     title: 'מדריך שימוש',
-    href: '/guide',
+    href: routes.guide,
     icon: '📖',
     available: true,
     requiredTier: UserTier.FREE,
@@ -89,7 +89,7 @@ const allTools: Tool[] = [
   {
     id: 'gmail',
     title: 'Gmail',
-    href: '/tools/gmail',
+    href: routes.gmail,
     icon: '📧',
     available: true,
     requiredTier: UserTier.PRO,
@@ -97,7 +97,7 @@ const allTools: Tool[] = [
   {
     id: 'capital',
     title: 'הון',
-    href: '/tools/capital',
+    href: routes.capital,
     icon: '💎',
     available: true,
     requiredTier: UserTier.PRO,
@@ -105,7 +105,7 @@ const allTools: Tool[] = [
   {
     id: 'dev-db',
     title: 'Dev DB',
-    href: '/tools/dev-db',
+    href: routes.devDb,
     icon: '🛠️',
     available: true,
     requiredTier: UserTier.PRO,
@@ -113,7 +113,7 @@ const allTools: Tool[] = [
   {
     id: 'admin',
     title: 'ניהול',
-    href: '/tools/admin',
+    href: routes.admin,
     icon: '👑',
     available: true,
     requiredTier: UserTier.OWNER,
@@ -246,7 +246,7 @@ export default function Sidebar() {
             </p>
             <div className="upgrade-modal-actions">
               <button onClick={() => setUpgradePrompt(null)}>סגור</button>
-              <Link href="/pricing" className="upgrade-btn" onClick={() => setUpgradePrompt(null)}>
+              <Link href={routes.pricing} className="upgrade-btn" onClick={() => setUpgradePrompt(null)}>
                 שדרג עכשיו
               </Link>
             </div>

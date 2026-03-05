@@ -2,6 +2,7 @@ import { db, Task } from '@/app/db/financeDB'
 import { transactionStore } from './transactionStore'
 import { getUser } from './authStore'
 import { appSettingsStore, AccountOwners } from './appSettingsStore'
+import { routes } from '@/app/config'
 
 type Priority = 'low' | 'medium' | 'high'
 
@@ -207,7 +208,7 @@ async function checkMissingFiles(owners: AccountOwners, currentUid: string | und
       description: 'יש להתחיל לייבא קבצי בנק וכרטיסי אשראי',
       type: 'missing-file',
       priority: 'high',
-      link: '/tools/import',
+      link: routes.import,
       createdAt: new Date().toISOString(),
       month: currentMonth,
     })
@@ -232,7 +233,7 @@ async function checkMissingFiles(owners: AccountOwners, currentUid: string | und
           description: `לא נמצא קובץ בנק מיובא עבור חשבון ${account} לחודש ${month}`,
           type: 'missing-file',
           priority,
-          link: `/tools/import?month=${encodeURIComponent(month)}`,
+          link: `${routes.import}?month=${encodeURIComponent(month)}`,
           createdAt: new Date().toISOString(),
           month,
         })
@@ -256,7 +257,7 @@ async function checkMissingFiles(owners: AccountOwners, currentUid: string | und
           description: `לא נמצא קובץ כרטיס אשראי מיובא עבור כרטיס ${card} לחודש ${month}`,
           type: 'missing-file',
           priority,
-          link: `/tools/import?month=${encodeURIComponent(month)}`,
+          link: `${routes.import}?month=${encodeURIComponent(month)}`,
           createdAt: new Date().toISOString(),
           month,
         })
@@ -303,7 +304,7 @@ async function checkUncategorizedTransactions(currentMonth: string, owners: Acco
       description: `נמצאו עסקאות בחודש ${currentMonth} שטרם סווגו לנושאים`,
       type: 'uncategorized',
       priority: uncategorized.length > 20 ? 'high' : 'medium',
-      link: `/tools/budget?filter=unclassified&month=${encodeURIComponent(currentMonth)}`,
+      link: `${routes.budget}?filter=unclassified&month=${encodeURIComponent(currentMonth)}`,
       createdAt: new Date().toISOString(),
       month: currentMonth,
     })

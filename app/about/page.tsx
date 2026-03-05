@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { branding } from '@/app/config'
+import { branding, routes } from '@/app/config'
 
 export const metadata: Metadata = {
   title: `אודות | ${branding.name}`,
@@ -125,14 +125,14 @@ export default function AboutPage() {
           <h2 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>מוכנים להתחיל?</h2>
           <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
             <Link
-              href="/tools/import"
+              href={routes.import}
               className="file-picker"
               style={{ textDecoration: 'none', display: 'inline-block' }}
             >
               התחל עכשיו
             </Link>
             <Link
-              href="/guide"
+              href={routes.guide}
               className="file-picker"
               style={{ textDecoration: 'none', display: 'inline-block', background: '#64748b' }}
             >

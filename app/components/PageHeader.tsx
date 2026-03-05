@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import NotificationCenter from './NotificationCenter'
 import AuthStatus from './AuthStatus'
-import { branding } from '@/app/config'
+import { branding, routes } from '@/app/config'
 import { useToast } from './ToastContainer'
 
 export default function PageHeader() {
@@ -19,7 +19,7 @@ export default function PageHeader() {
         <div className="page-header-title">
           <h1>{branding.name}</h1>
         </div>
-        <Link href="/" className="home-link">
+        <Link href={routes.home} className="home-link">
           <span role="img" aria-label="home">🏠</span>
         </Link>
       </div>

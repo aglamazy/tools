@@ -23,6 +23,7 @@ import {
 } from '@/app/services/gmailService'
 import { generateArchiveQuery, extractEventDates } from '@/app/services/geminiService'
 import Link from 'next/link'
+import { routes } from '@/app/config'
 
 type ExpiredEvent = {
   id: string; from: string; subject: string; snippet: string
@@ -708,7 +709,7 @@ export default function GmailPage() {
             תכונה זו זמינה למנויי <strong>מקצועי</strong> ומעלה
           </p>
           <Link
-            href="/pricing"
+            href={routes.pricing}
             style={{
               display: 'inline-block',
               padding: '0.75rem 1.5rem',

@@ -2,8 +2,6 @@ import { Analytics } from '@vercel/analytics/react'
 import type { Metadata, Viewport } from 'next'
 import type { ReactNode } from 'react'
 import './globals.css'
-import Sidebar from './components/Sidebar'
-import PageHeader from './components/PageHeader'
 import { ToastProvider } from './components/ToastContainer'
 import { branding } from './config'
 import MigrationRunner from './components/MigrationRunner'
@@ -64,13 +62,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <MigrationRunner />
           <AuthInitializer />
           <CloudSyncManager />
-          <PageHeader />
-          <div className="app-layout">
-            <Sidebar />
-            <div className="main-content">
-              {children}
-            </div>
-          </div>
+          {children}
           <Analytics />
         </ToastProvider>
       </body>

@@ -7,6 +7,7 @@ import { getPendingInvitation, acceptInvitation } from '@/app/services/household
 import { refreshIdToken } from '@/app/services/firebaseAuthService'
 import type { HouseholdInvitation } from '@/app/types/household'
 import AuthStatus from '@/app/components/AuthStatus'
+import { routes } from '@/app/config'
 
 function InvitePageContent() {
   const searchParams = useSearchParams()
@@ -91,11 +92,11 @@ function InvitePageContent() {
   }
 
   const handleGoToSync = () => {
-    router.push('/tools/settings?tab=sync')
+    router.push(`${routes.settings}?tab=sync`)
   }
 
   const handleGoHome = () => {
-    router.push('/')
+    router.push(routes.home)
   }
 
   // Not logged in

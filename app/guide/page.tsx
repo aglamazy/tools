@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { branding } from '@/app/config'
+import { branding, routes } from '@/app/config'
 
 export const metadata: Metadata = {
   title: `מדריך שימוש | ${branding.name}`,
@@ -84,7 +84,7 @@ export default function GuidePage() {
 
             <h3 style={{ fontSize: '1.125rem', marginBottom: '0.75rem', marginTop: '1.5rem' }}>איך מייבאים?</h3>
             <ol style={{ margin: 0, paddingRight: '1.5rem', lineHeight: '1.75', marginBottom: '1rem' }}>
-              <li>עבור לעמוד <Link href="/tools/import" style={{ color: '#3b82f6', textDecoration: 'none' }}>ייבוא קבצים</Link></li>
+              <li>עבור לעמוד <Link href={routes.import} style={{ color: '#3b82f6', textDecoration: 'none' }}>ייבוא קבצים</Link></li>
               <li>לחץ על "ייבא קובץ חדש"</li>
               <li>בחר תיקייה (מומלץ: תיקייה קבועה לכל קבצי הבנק שלך)</li>
               <li>בחר את הקובץ לייבוא</li>
@@ -133,7 +133,7 @@ export default function GuidePage() {
 
             <h3 style={{ fontSize: '1.125rem', marginBottom: '0.75rem' }}>איך משתמשים?</h3>
             <ol style={{ margin: 0, paddingRight: '1.5rem', lineHeight: '1.75', marginBottom: '1rem' }}>
-              <li>עבור לעמוד <Link href="/tools/cash-flow" style={{ color: '#3b82f6', textDecoration: 'none' }}>תזרים מזומנים</Link></li>
+              <li>עבור לעמוד <Link href={routes.cashFlow} style={{ color: '#3b82f6', textDecoration: 'none' }}>תזרים מזומנים</Link></li>
               <li>בחר חודש מהרשימה הנפתחת</li>
               <li>עיין בטבלת התנועות מהבנק</li>
               <li>בדוק את חיובי כרטיסי האשראי הצפויים</li>
@@ -184,7 +184,7 @@ export default function GuidePage() {
 
             <h3 style={{ fontSize: '1.125rem', marginBottom: '0.75rem' }}>איך משתמשים?</h3>
             <ol style={{ margin: 0, paddingRight: '1.5rem', lineHeight: '1.75', marginBottom: '1rem' }}>
-              <li>עבור לעמוד <Link href="/tools/budget" style={{ color: '#3b82f6', textDecoration: 'none' }}>תקציב</Link></li>
+              <li>עבור לעמוד <Link href={routes.budget} style={{ color: '#3b82f6', textDecoration: 'none' }}>תקציב</Link></li>
               <li>בחר חודש לניתוח</li>
               <li>עבור על העסקאות וסווג אותן לפי נושאים (בחר מהרשימה הנפתחת)</li>
               <li>סמן הוצאות קבועות (ארנונה, משכנתא, מים) עם ה-checkbox</li>
@@ -226,7 +226,7 @@ export default function GuidePage() {
 
             <h3 style={{ fontSize: '1.125rem', marginBottom: '0.75rem' }}>איך מגדירים קטגוריות?</h3>
             <ol style={{ margin: 0, paddingRight: '1.5rem', lineHeight: '1.75', marginBottom: '1rem' }}>
-              <li>עבור לעמוד <Link href="/tools/settings" style={{ color: '#3b82f6', textDecoration: 'none' }}>הגדרות</Link></li>
+              <li>עבור לעמוד <Link href={routes.settings} style={{ color: '#3b82f6', textDecoration: 'none' }}>הגדרות</Link></li>
               <li>לחץ על "הוסף נושא חדש"</li>
               <li>בחר שם לקטגוריה (למשל: "סופרמרקט", "דלק", "בילויים")</li>
               <li>בחר סוג (הכנסה או הוצאה)</li>
@@ -294,14 +294,14 @@ export default function GuidePage() {
           <h2 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>מוכנים להתחיל?</h2>
           <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
             <Link
-              href="/tools/import"
+              href={routes.import}
               className="file-picker"
               style={{ textDecoration: 'none', display: 'inline-block' }}
             >
               ייבא קובץ ראשון
             </Link>
             <Link
-              href="/about"
+              href={routes.about}
               className="file-picker"
               style={{ textDecoration: 'none', display: 'inline-block', background: '#64748b' }}
             >

@@ -1,6 +1,7 @@
 'use client'
 
 import React from 'react'
+import { routes } from '@/app/config'
 
 export default function ExtensionLink() {
   return (
@@ -9,7 +10,7 @@ export default function ExtensionLink() {
         התקן את התוסף לכרום כדי למלא טפסים אוטומטית
       </p>
       <a
-        href="/extension"
+        href={routes.extension}
         target="_blank"
         rel="noopener noreferrer"
         style={{

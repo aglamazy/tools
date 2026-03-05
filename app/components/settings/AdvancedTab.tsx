@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react'
 import Link from 'next/link'
+import { routes } from '@/app/config'
 import { db } from '@/app/db/financeDB'
 import {
   getCardTypeIndicators,
@@ -236,7 +237,7 @@ export default function AdvancedTab() {
                 <div><strong>קבצים מיובאים:</strong> {dbStats.importedFiles.toLocaleString('he-IL')}</div>
                 <div><strong>קטגוריות:</strong> {dbStats.categories.toLocaleString('he-IL')}</div>
                 <div>
-                  <Link href="/tools/business-categories" style={{ fontWeight: 700, color: '#0ea5e9' }}>
+                  <Link href={routes.businessCategories} style={{ fontWeight: 700, color: '#0ea5e9' }}>
                     מיפוי עסקים-נושאים
                   </Link>
                   : {dbStats.businessCategories.toLocaleString('he-IL')}
