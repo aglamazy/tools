@@ -95,9 +95,11 @@ export default function AuditionsTab({ businessId }: AuditionsTabProps) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  const [showHidden, setShowHidden] = useState(false)
   const HIDDEN_STATUSES: ScoutResultStatus[] = ['not_useful', 'not_available']
+  const hiddenCount = results.filter(r => HIDDEN_STATUSES.includes(r.status)).length
   const filteredResults = filter === 'all'
-    ? results.filter(r => !HIDDEN_STATUSES.includes(r.status))
+    ? (showHidden ? results : results.filter(r => !HIDDEN_STATUSES.includes(r.status)))
     : results.filter(r => r.status === filter)
 
   // --- Handlers ---
@@ -112,9 +114,59 @@ export default function AuditionsTab({ businessId }: AuditionsTabProps) {
     llmPrefsStore.setAnthropicKey(key)
   }
 
+  const refinePrompt = async (feedbackMessage: string) => {
+    const feedbackMsg: Message = { role: 'user', content: feedbackMessage }
+    const newMessages = [...messages, feedbackMsg]
+    setMessages(newMessages)
+
+    try {
+      const body: Record<string, unknown> = { messages: newMessages, provider }
+      if (provider === 'anthropic') body.apiKey = anthropicKey
+
+      const response = await fetch('/api/scout/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+
+      const data = await response.json()
+      if (data.success) {
+        const assistantMsg: Message = { role: 'assistant', content: data.message }
+        const updatedMessages = [...newMessages, assistantMsg]
+        setMessages(updatedMessages)
+
+        const newPrompt = data.searchPrompt || searchPrompt
+        setSearchPrompt(newPrompt)
+        await scoutConfigStore.save(businessId, newPrompt, updatedMessages)
+
+        if (data.results?.length) {
+          const now = new Date().toISOString()
+          for (const r of data.results) {
+            await scoutResultStore.add({
+              businessId, title: r.title, url: isValidUrl(r.url) ? r.url : undefined,
+              source: r.source, summary: r.summary, deadline: r.deadline,
+              details: r.details, status: 'new', foundAt: now,
+            })
+          }
+          await loadResults()
+        }
+      }
+    } catch (err) {
+      console.error('[ScoutChat] Refine error:', err)
+    }
+  }
+
   const handleStatusUpdate = async (id: number, status: ScoutResultStatus) => {
     const ok = await scoutResultStore.updateStatus(id, status)
-    if (ok) setResults(prev => prev.map(r => r.id === id ? { ...r, status } : r))
+    if (!ok) return
+    const result = results.find(r => r.id === id)
+    setResults(prev => prev.map(r => r.id === id ? { ...r, status } : r))
+
+    if (result && (status === 'not_useful' || status === 'not_available')) {
+      refinePrompt(`סימנתי את "${result.title}" כלא רלוונטי. עדכן את פרומפט החיפוש כך שלא יחזיר תוצאות דומות.`)
+    } else if (result && (status === 'useful' || status === 'apply')) {
+      refinePrompt(`סימנתי את "${result.title}" כשימושי. עדכן את פרומפט החיפוש כך שיחזיר יותר תוצאות דומות.`)
+    }
   }
 
   const handleSavePrompt = async () => {
@@ -439,6 +491,19 @@ export default function AuditionsTab({ businessId }: AuditionsTabProps) {
                 {opt.label}
               </button>
             ))}
+            {hiddenCount > 0 && filter === 'all' && (
+              <button
+                onClick={() => setShowHidden(prev => !prev)}
+                style={{
+                  padding: '0.15rem 0.5rem', borderRadius: '12px', cursor: 'pointer', fontSize: '0.8rem',
+                  border: '1px solid var(--border-color, #ddd)',
+                  background: showHidden ? '#f5f5f5' : 'transparent',
+                  color: '#999', marginRight: 'auto',
+                }}
+              >
+                {showHidden ? 'הסתר' : 'הצג'} לא רלוונטי ({hiddenCount})
+              </button>
+            )}
           </div>
 
           {/* Results list */}
