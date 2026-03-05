@@ -650,6 +650,64 @@ export async function deleteFilter(filterId: string): Promise<{ success: boolean
 }
 
 /**
+ * Send an email via Gmail API
+ */
+export async function sendEmail(
+  to: string,
+  subject: string,
+  htmlBody: string
+): Promise<{ success: boolean; error?: string }> {
+  if (!gmailAccessToken) {
+    return { success: false, error: 'לא מחובר ל-Gmail' }
+  }
+
+  try {
+    // Build RFC 2822 email
+    const emailLines = [
+      `To: ${to}`,
+      `Subject: =?UTF-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=`,
+      'Content-Type: text/html; charset=UTF-8',
+      '',
+      htmlBody,
+    ]
+    const rawEmail = emailLines.join('\r\n')
+    // URL-safe base64 encode
+    const encoded = btoa(unescape(encodeURIComponent(rawEmail)))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '')
+
+    const response = await fetch(
+      `${GMAIL_API_BASE}/messages/send`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${gmailAccessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ raw: encoded }),
+      }
+    )
+
+    if (response.status === 401) {
+      gmailAccessToken = null
+      clearTokenFromStorage()
+      return { success: false, error: 'פג תוקף ההרשאה. התחבר מחדש ל-Gmail' }
+    }
+
+    if (!response.ok) {
+      console.error('[Gmail] Send error:', response.status)
+      return { success: false, error: 'שגיאה בשליחת מייל' }
+    }
+
+    return { success: true }
+  } catch (err: any) {
+    console.error('[Gmail] Send error:', err)
+    return { success: false, error: 'שגיאת רשת בשליחת מייל' }
+  }
+}
+
+/**
  * Build a Gmail search query from filter criteria
  */
 export function buildQueryFromCriteria(criteria: GmailFilterCriteria): string {
