@@ -12,23 +12,27 @@ import BusinessSettingsTab from './BusinessSettingsTab'
 import StudentsTab from './StudentsTab'
 import AccountingTab from './AccountingTab'
 import ProfileTab from './ProfileTab'
+import ExtensionLink from './ExtensionLink'
 
 const TABS: TabItem[] = [
   { id: 'income', label: 'הכנסות', icon: '💰' },
   { id: 'timing', label: 'תיעוד זמן', icon: '⏱️' },
   { id: 'settings', label: 'הגדרות', icon: '⚙️' },
+  { id: 'extension', label: 'תוסף', icon: '🧩' },
 ]
 
 const TEACHER_TABS: TabItem[] = [
   { id: 'students', label: 'תלמידים', icon: '👨‍🎓' },
   { id: 'accounting', label: 'חשבונאות חודשית', icon: '📊' },
   { id: 'settings', label: 'הגדרות', icon: '⚙️' },
+  { id: 'extension', label: 'תוסף', icon: '🧩' },
 ]
 
 const ARTIST_TABS: TabItem[] = [
   { id: 'profile', label: 'פרופיל', icon: '📋' },
   { id: 'income', label: 'הכנסות', icon: '💰' },
   { id: 'settings', label: 'הגדרות', icon: '⚙️' },
+  { id: 'extension', label: 'תוסף', icon: '🧩' },
 ]
 
 type BusinessPageProps = {
@@ -82,6 +86,7 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
               {activeTab === 'students' && <StudentsTab businessId={businessId} />}
               {activeTab === 'accounting' && <AccountingTab businessId={businessId} />}
               {activeTab === 'settings' && <BusinessSettingsTab businessId={businessId} />}
+              {activeTab === 'extension' && <ExtensionLink />}
             </>
           )}
         </SettingsTabs>
@@ -92,6 +97,7 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
               {activeTab === 'profile' && <ProfileTab businessId={businessId} />}
               {activeTab === 'income' && <IncomeTab businessId={businessId} />}
               {activeTab === 'settings' && <BusinessSettingsTab businessId={businessId} />}
+              {activeTab === 'extension' && <ExtensionLink />}
             </>
           )}
         </SettingsTabs>
@@ -102,6 +108,7 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
               {activeTab === 'income' && <IncomeTab businessId={businessId} />}
               {activeTab === 'timing' && <TimingTab businessId={businessId} />}
               {activeTab === 'settings' && <BusinessSettingsTab businessId={businessId} />}
+              {activeTab === 'extension' && <ExtensionLink />}
             </>
           )}
         </SettingsTabs>

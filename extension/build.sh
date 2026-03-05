@@ -6,7 +6,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 OUTPUT_DIR="$PROJECT_ROOT/public/extension"
-OUTPUT_FILE="$OUTPUT_DIR/aglamaz-form-assistant.zip"
+VERSION=$(grep -o '"version": *"[^"]*"' "$SCRIPT_DIR/manifest.json" | head -1 | grep -o '"[^"]*"$' | tr -d '"')
+OUTPUT_FILE="$OUTPUT_DIR/aglamaz-form-assistant-${VERSION}.zip"
 
 # Create output directory
 mkdir -p "$OUTPUT_DIR"

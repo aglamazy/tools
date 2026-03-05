@@ -818,3 +818,12 @@ tbody tr:last-child td {
     padding: 1rem;
   }
 }
+
+/* Hide app chrome when used as extension auth popup */
+body.extension-auth-popup .page-header,
+body.extension-auth-popup .sidebar {
+  display: none;
+}
+body.extension-auth-popup .main-content {
+  margin: 0;
+}

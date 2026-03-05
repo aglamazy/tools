@@ -1,10 +1,20 @@
 import { NextResponse } from 'next/server'
-
-const EXTENSION_VERSION = '1.0.0'
+import { readFile } from 'fs/promises'
+import { join } from 'path'
 
 export async function GET() {
-  return NextResponse.json({
-    version: EXTENSION_VERSION,
-    name: 'Aglamaz Form Assistant',
-  })
+  try {
+    const manifestPath = join(process.cwd(), 'extension', 'manifest.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf-8'))
+
+    return NextResponse.json({
+      version: manifest.version,
+      name: manifest.name,
+    })
+  } catch {
+    return NextResponse.json(
+      { error: 'Failed to read extension manifest' },
+      { status: 500 }
+    )
+  }
 }
