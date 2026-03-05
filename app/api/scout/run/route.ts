@@ -1,6 +1,7 @@
 /**
  * Scout Run API Route
  * Daily cron job + manual trigger — runs the saved search prompt to find opportunities.
+ * Accepts user feedback to improve results over time.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -10,7 +11,7 @@ const SYSTEM_PROMPT = `אתה סוכן חיפוש הזדמנויות למוזי�
 
 חפש באינטרנט הזדמנויות קונקרטיות ופתוחות. לכל הזדמנות, ספק:
 - שם מדויק
-- קישור ישיר לדף ההרשמה/הגשה (לא לאתר הראשי)
+- קישור: עדיפות ראשונה — דף הרשמה/הגשה ישיר. אם אין, קישור לדף הספציפי שבו מצאת את המידע. חובה URL תקין (https://...). לעולם אל תכתוב טקסט במקום URL.
 - מקור (באיזה אתר/ארגון מצאת)
 - תיאור קצר בעברית
 - דדליין להגשה (אם ידוע)
@@ -21,7 +22,7 @@ const SYSTEM_PROMPT = `אתה סוכן חיפוש הזדמנויות למוזי�
 [
   {
     "title": "שם ההזדמנות",
-    "url": "קישור ישיר להרשמה",
+    "url": "https://... (דף הרשמה או דף המקור — חייב URL תקין)",
     "source": "שם האתר/הארגון",
     "summary": "תיאור קצר בעברית",
     "deadline": "תאריך אחרון להגשה",
@@ -33,28 +34,25 @@ const SYSTEM_PROMPT = `אתה סוכן חיפוש הזדמנויות למוזי�
 חפש לפחות 5 הזדמנויות. התמקד בהזדמנויות עדכניות עם דדליין פתוח.
 אל תמציא — ספק רק תוצאות שמצאת בפועל עם קישורים אמיתיים.`
 
-export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url)
-  const businessId = searchParams.get('businessId')
-  const searchPrompt = searchParams.get('searchPrompt')
-  const provider = searchParams.get('provider') as LLMProvider | null
-  const apiKey = searchParams.get('apiKey')
-
-  if (!businessId || !searchPrompt) {
-    return NextResponse.json({
-      success: false,
-      error: 'נדרשים businessId ו-searchPrompt',
-    }, { status: 400 })
-  }
-
+export async function POST(request: NextRequest) {
   try {
-    const client = getLLMClient(provider || undefined)
+    const { businessId, searchPrompt, feedback, provider, apiKey } = await request.json()
+
+    if (!businessId || !searchPrompt) {
+      return NextResponse.json({
+        success: false,
+        error: 'נדרשים businessId ו-searchPrompt',
+      }, { status: 400 })
+    }
+
+    const userContent = feedback
+      ? `${searchPrompt}\n\n## משוב מהמשתמש על תוצאות קודמות\n${feedback}`
+      : searchPrompt
+
+    const client = getLLMClient(provider as LLMProvider)
     const result = await client.chat({
       system: SYSTEM_PROMPT,
-      messages: [{
-        role: 'user',
-        content: searchPrompt,
-      }],
+      messages: [{ role: 'user', content: userContent }],
       enableWebSearch: true,
       maxTokens: 4096,
       apiKey: apiKey || undefined,

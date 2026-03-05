@@ -95,8 +95,10 @@ export default function AuditionsTab({ businessId }: AuditionsTabProps) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  const HIDDEN_STATUSES: ScoutResultStatus[] = ['not_useful', 'not_available']
   const filteredResults = filter === 'all'
-    ? results : results.filter(r => r.status === filter)
+    ? results.filter(r => !HIDDEN_STATUSES.includes(r.status))
+    : results.filter(r => r.status === filter)
 
   // --- Handlers ---
 
@@ -122,18 +124,36 @@ export default function AuditionsTab({ businessId }: AuditionsTabProps) {
     await scoutConfigStore.save(businessId, trimmed, messages)
   }
 
+  const buildFeedback = (): string => {
+    const useful = results.filter(r => r.status === 'useful' || r.status === 'apply')
+    const notUseful = results.filter(r => r.status === 'not_useful')
+    const lines: string[] = []
+    if (useful.length) {
+      lines.push('המשתמש סימן כרלוונטי: ' + useful.map(r => r.title).join(', '))
+    }
+    if (notUseful.length) {
+      lines.push('המשתמש סימן כלא רלוונטי (אל תחזיר דומים): ' + notUseful.map(r => r.title).join(', '))
+    }
+    return lines.join('\n')
+  }
+
   const handleManualSearch = async () => {
     if (!searchPrompt) return
     setSearching(true)
     try {
       const apiKey = provider === 'anthropic' ? anthropicKey : ''
-      const params = new URLSearchParams({
-        businessId: String(businessId),
-        searchPrompt,
-        provider,
-        ...(apiKey && { apiKey }),
+      const feedback = buildFeedback()
+      const response = await fetch('/api/scout/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessId,
+          searchPrompt,
+          feedback,
+          provider,
+          ...(apiKey && { apiKey }),
+        }),
       })
-      const response = await fetch(`/api/scout/run?${params}`)
       const data = await response.json()
       if (data.success && data.results?.length) {
         for (const result of data.results) {
