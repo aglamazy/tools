@@ -20,3 +20,5 @@ next-env.d.ts
 .taskbot-worktrees/
 task-logs/
 .taskbot-state
+run.log
+.taskbot-run.pid
