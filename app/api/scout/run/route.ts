@@ -1,83 +1,70 @@
 /**
  * Scout Run API Route
- * Daily cron job + manual trigger for searching audition opportunities
+ * Daily cron job + manual trigger — runs the saved search prompt to find opportunities.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import Anthropic from '@anthropic-ai/sdk'
+import { getLLMClient, type LLMProvider } from '@/app/services/llm'
 
-const SEARCH_PROMPT = `אתה סוכן חיפוש אודישנים ותחרויות מוזיקה. קיבלת קונפיגורציית חיפוש מהמשתמש.
+const SYSTEM_PROMPT = `אתה סוכן חיפוש הזדמנויות למוזיקאים. תקבל פרומפט חיפוש שמתאר מה המשתמש מחפש.
 
-חפש באינטרנט הזדמנויות רלוונטיות על פי הקונפיגורציה. לכל הזדמנות שמצאת, החזר מידע מובנה.
+חפש באינטרנט הזדמנויות קונקרטיות ופתוחות. לכל הזדמנות, ספק:
+- שם מדויק
+- קישור ישיר לדף ההרשמה/הגשה (לא לאתר הראשי)
+- מקור (באיזה אתר/ארגון מצאת)
+- תיאור קצר בעברית
+- דדליין להגשה (אם ידוע)
+- פרטים נוספים (פרס, מיקום, דרישות)
 
-החזר את התוצאות בפורמט JSON בתוך תגית <results>:
+החזר תוצאות בפורמט JSON בתגית <results>:
 <results>
 [
   {
     "title": "שם ההזדמנות",
-    "url": "קישור לדף",
-    "source": "מאיפה מצאת (אתר, ארגון)",
+    "url": "קישור ישיר להרשמה",
+    "source": "שם האתר/הארגון",
     "summary": "תיאור קצר בעברית",
-    "deadline": "תאריך אחרון להגשה (אם ידוע)",
-    "details": "פרטים נוספים (פרס, מיקום, דרישות)"
+    "deadline": "תאריך אחרון להגשה",
+    "details": "פרס, מיקום, דרישות"
   }
 ]
 </results>
 
-חפש לפחות 3-5 הזדמנויות. התמקד בהזדמנויות עדכניות ופתוחות.`
+חפש לפחות 5 הזדמנויות. התמקד בהזדמנויות עדכניות עם דדליין פתוח.
+אל תמציא — ספק רק תוצאות שמצאת בפועל עם קישורים אמיתיים.`
 
 export async function GET(request: NextRequest) {
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) {
-    return NextResponse.json({ success: false, error: 'ANTHROPIC_API_KEY לא מוגדר' }, { status: 500 })
-  }
-
-  // Accept businessId and config from query params (manual trigger) or process all (cron)
   const { searchParams } = new URL(request.url)
   const businessId = searchParams.get('businessId')
-  const configParam = searchParams.get('config')
+  const searchPrompt = searchParams.get('searchPrompt')
+  const provider = searchParams.get('provider') as LLMProvider | null
+  const apiKey = searchParams.get('apiKey')
 
-  if (!businessId || !configParam) {
+  if (!businessId || !searchPrompt) {
     return NextResponse.json({
       success: false,
-      error: 'נדרשים businessId ו-config',
+      error: 'נדרשים businessId ו-searchPrompt',
     }, { status: 400 })
   }
 
-  let config: Record<string, unknown>
   try {
-    config = JSON.parse(configParam)
-  } catch {
-    return NextResponse.json({ success: false, error: 'config לא תקין' }, { status: 400 })
-  }
-
-  try {
-    const client = new Anthropic({ apiKey })
-
-    const response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 4096,
-      system: SEARCH_PROMPT,
+    const client = getLLMClient(provider || undefined)
+    const result = await client.chat({
+      system: SYSTEM_PROMPT,
       messages: [{
         role: 'user',
-        content: `קונפיגורציית חיפוש:\n${JSON.stringify(config, null, 2)}\n\nחפש הזדמנויות עדכניות.`,
+        content: searchPrompt,
       }],
-      tools: [{
-        type: 'web_search_20250305' as const,
-        name: 'web_search',
-        max_uses: 10,
-      }],
+      enableWebSearch: true,
+      maxTokens: 4096,
+      apiKey: apiKey || undefined,
     })
 
-    // Extract results from response
-    let fullText = ''
-    for (const block of response.content) {
-      if (block.type === 'text') {
-        fullText += block.text
-      }
+    if (result.error) {
+      return NextResponse.json({ success: false, error: result.error }, { status: 500 })
     }
 
-    const resultsMatch = fullText.match(/<results>\s*([\s\S]*?)\s*<\/results>/)
+    const resultsMatch = result.text.match(/<results>\s*([\s\S]*?)\s*<\/results>/)
     let results: Array<{
       title: string
       url?: string
@@ -95,7 +82,6 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Format results as ScoutResult-compatible objects
     const now = new Date().toISOString()
     const scoutResults = results.map(r => ({
       businessId: Number(businessId),

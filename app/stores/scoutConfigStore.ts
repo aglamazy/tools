@@ -11,13 +11,13 @@ export const scoutConfigStore = {
     }
   },
 
-  save: async (businessId: number, config: Record<string, unknown>, conversationHistory: ScoutConfig['conversationHistory']): Promise<number | null> => {
+  save: async (businessId: number, searchPrompt: string, conversationHistory: ScoutConfig['conversationHistory']): Promise<number | null> => {
     try {
       const existing = await db.scoutConfigs.where('businessId').equals(businessId).first()
       const now = new Date().toISOString()
       if (existing?.id) {
         await db.scoutConfigs.update(existing.id, {
-          config,
+          searchPrompt,
           conversationHistory,
           updatedAt: now,
         })
@@ -25,7 +25,7 @@ export const scoutConfigStore = {
       } else {
         return await db.scoutConfigs.add({
           businessId,
-          config,
+          searchPrompt,
           conversationHistory,
           createdAt: now,
           updatedAt: now,

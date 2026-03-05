@@ -2,7 +2,7 @@ export type ScoutConfig = {
   id?: number
   syncId?: string
   businessId: number
-  config: Record<string, unknown>
+  searchPrompt: string
   conversationHistory: { role: 'user' | 'assistant'; content: string }[]
   createdAt: string
   updatedAt: string

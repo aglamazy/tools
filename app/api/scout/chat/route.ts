@@ -1,92 +1,107 @@
 /**
  * Scout Chat API Route
- * Proxies chat to Claude API with web search tools for audition scout configuration
+ * Interactive search training — helps user find opportunities, then saves a
+ * standalone search prompt that the cron job can run without conversation context.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import Anthropic from '@anthropic-ai/sdk'
+import { getLLMClient, type LLMProvider, type LLMMessage } from '@/app/services/llm'
 
-const SYSTEM_PROMPT = `אתה עוזר למוזיקאים למצוא אודישנים, תחרויות והזדמנויות הופעה.
+const SYSTEM_PROMPT = `אתה עוזר למוזיקאים למצוא הזדמנויות קונקרטיות: אודישנים, תחרויות, הופעות, קולות קוראים.
 
-תפקידך:
-1. להבין מה המשתמש מחפש (כלי נגינה, סגנון, מיקום, סוג הזדמנות)
-2. לחפש באינטרנט דוגמאות רלוונטיות ולהראות למשתמש
-3. לבנות קונפיגורציית חיפוש בהתאם לדרישות
+## איך לעזור למשתמש
+1. שאל מה הוא מחפש — כלי נגינה, סגנון, מיקום, גיל, רמה, סוג הזדמנות
+2. חפש באינטרנט הזדמנויות אמיתיות ופתוחות
+3. לכל הזדמנות שמצאת, ספק:
+   - שם ותיאור קצר
+   - **קישור ישיר לדף ההרשמה/הגשה** (לא רק לאתר הראשי)
+   - דדליין להגשה (אם ידוע)
+   - פרטים רלוונטיים (פרס, מיקום, דרישות)
+4. שאל אם התוצאות רלוונטיות, מה לשנות, מה להוסיף או להוריד
 
-כשהמשתמש מרוצה מהתוצאות, שמור קונפיגורציה בפורמט JSON בתוך תגית <search_config>:
-<search_config>
-{
-  "keywords": ["מילות מפתח לחיפוש"],
-  "instrument": "כלי הנגינה",
-  "locations": ["מיקומים רלוונטיים"],
-  "opportunityTypes": ["audition", "competition", "performance"],
-  "languages": ["he", "en"],
-  "summary": "תיאור חופשי של מה שמחפשים",
-  "exclusions": ["מה לא לכלול"]
-}
-</search_config>
+## שמירת תוצאות מובנות
+כשמצאת הזדמנויות, שמור אותן גם בפורמט JSON בתגית <results>:
+<results>
+[
+  {
+    "title": "שם ההזדמנות",
+    "url": "קישור ישיר להרשמה",
+    "source": "שם האתר/הארגון",
+    "summary": "תיאור קצר בעברית",
+    "deadline": "תאריך אחרון להגשה",
+    "details": "פרס, מיקום, דרישות"
+  }
+]
+</results>
 
-ענה תמיד בעברית. חפש באינטרנט כדי לתת דוגמאות אמיתיות.`
+## שמירת פרומפט חיפוש
+אחרי כל תשובה שלך, צור גרסה מעודכנת של פרומפט חיפוש עצמאי.
+זהו פרומפט שסוכן AI אחר יוכל להריץ בלי הקשר השיחה — הוא מכיל את כל מה שצריך כדי לחפש.
+
+שמור אותו בתגית <search_prompt>:
+<search_prompt>
+חפש אודישנים ותחרויות בינלאומיות לנגני חליל צעירים (גיל 18-30).
+התמקד ב: תחרויות סולו, תחרויות קאמרית, אודישנים לתזמורות צעירות.
+אזורים: אירופה, ישראל.
+לא לכלול: קורסי מאסטר, סדנאות.
+שפות חיפוש: עברית, אנגלית, גרמנית.
+חפש הזדמנויות עם דדליין פתוח או בחודשים הקרובים.
+לכל תוצאה ספק קישור ישיר לדף ההרשמה.
+</search_prompt>
+
+עדכן את הפרומפט בכל תשובה על פי מה שלמדת מהמשתמש.
+ענה תמיד בעברית.`
 
 export async function POST(request: NextRequest) {
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) {
-    return NextResponse.json({ success: false, error: 'ANTHROPIC_API_KEY לא מוגדר' }, { status: 500 })
-  }
-
   try {
-    const { messages } = await request.json()
+    const { messages, provider, apiKey } = await request.json()
 
     if (!Array.isArray(messages) || messages.length === 0) {
       return NextResponse.json({ success: false, error: 'הודעות חסרות' }, { status: 400 })
     }
 
-    const client = new Anthropic({ apiKey })
-
-    const response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 4096,
+    const client = getLLMClient(provider as LLMProvider)
+    const result = await client.chat({
       system: SYSTEM_PROMPT,
-      messages: messages.map((m: { role: string; content: string }) => ({
-        role: m.role as 'user' | 'assistant',
-        content: m.content,
-      })),
-      tools: [{
-        type: 'web_search_20250305' as const,
-        name: 'web_search',
-        max_uses: 5,
-      }],
+      messages: messages as LLMMessage[],
+      enableWebSearch: true,
+      apiKey,
     })
 
-    // Extract text and search config from response
-    let assistantText = ''
-    let searchConfig: Record<string, unknown> | null = null
-
-    for (const block of response.content) {
-      if (block.type === 'text') {
-        assistantText += block.text
-      }
+    if (result.error) {
+      return NextResponse.json({ success: false, error: result.error }, { status: 500 })
     }
 
-    // Extract search config if present
-    const configMatch = assistantText.match(/<search_config>\s*([\s\S]*?)\s*<\/search_config>/)
-    if (configMatch) {
+    let assistantText = result.text
+    let searchPrompt: string | null = null
+    let results: Array<Record<string, string>> = []
+
+    // Extract search prompt if present
+    const promptMatch = assistantText.match(/<search_prompt>\s*([\s\S]*?)\s*<\/search_prompt>/)
+    if (promptMatch) {
+      searchPrompt = promptMatch[1].trim()
+      assistantText = assistantText.replace(/<search_prompt>[\s\S]*?<\/search_prompt>/, '').trim()
+    }
+
+    // Extract structured results if present
+    const resultsMatch = assistantText.match(/<results>\s*([\s\S]*?)\s*<\/results>/)
+    if (resultsMatch) {
       try {
-        searchConfig = JSON.parse(configMatch[1])
-        // Remove the config tag from visible text
-        assistantText = assistantText.replace(/<search_config>[\s\S]*?<\/search_config>/, '').trim()
+        results = JSON.parse(resultsMatch[1])
       } catch {
-        console.error('[Scout Chat] Failed to parse search config')
+        console.error('[Scout Chat] Failed to parse results')
       }
+      assistantText = assistantText.replace(/<results>[\s\S]*?<\/results>/, '').trim()
     }
 
     return NextResponse.json({
       success: true,
       message: assistantText,
-      searchConfig,
+      searchPrompt,
+      results,
     })
   } catch (err: any) {
     console.error('[Scout Chat] Error:', err)
-    return NextResponse.json({ success: false, error: 'שגיאה בתקשורת עם Claude' }, { status: 500 })
+    return NextResponse.json({ success: false, error: 'שגיאה בתקשורת עם AI' }, { status: 500 })
   }
 }
