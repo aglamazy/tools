@@ -61,7 +61,7 @@ function calculateProjectSummaries(entries: WeekEntry[]): ProjectSummary[] {
     .sort((a, b) => b.totalHours - a.totalHours)
 }
 
-type ViewMode = 'daily' | 'weekly' | 'monthly'
+type ViewMode = 'daily' | 'weekly' | 'monthly' | 'recent'
 
 export default function TimingTab({ businessId }: TimingTabProps) {
   const [business, setBusiness] = useState<Business | null>(null)
@@ -266,27 +266,39 @@ export default function TimingTab({ businessId }: TimingTabProps) {
   }
 
   const loadWeekEntries = async () => {
-    let start: string
-    let end: string
-
-    if (viewMode === 'daily') {
-      start = selectedDate
-      end = selectedDate
-    } else if (viewMode === 'monthly') {
-      const dates = getMonthDates(monthOffset)
-      start = dates.start
-      end = dates.end
-    } else {
-      const dates = getWeekDates(weekOffset)
-      start = dates.start
-      end = dates.end
-    }
-
-    const entries = await timeEntryStore.getByDateRange(start, end)
     const allProjects = await projectStore.getByBusinessId(businessId)
     const projectIds = allProjects.map(p => p.id!)
     const allTasks = await Promise.all(projectIds.map(pid => harvestTaskStore.getByProjectId(pid)))
     const businessTaskIds = new Set(allTasks.flat().map(t => t.id!))
+
+    let entries: TimeEntry[]
+
+    if (viewMode === 'recent') {
+      // Get all entries, sort by createdAt desc, take last 50
+      const all = await timeEntryStore.getAll()
+      entries = all
+        .filter(e => businessTaskIds.has(e.taskId))
+        .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+        .slice(0, 50)
+    } else {
+      let start: string
+      let end: string
+
+      if (viewMode === 'daily') {
+        start = selectedDate
+        end = selectedDate
+      } else if (viewMode === 'monthly') {
+        const dates = getMonthDates(monthOffset)
+        start = dates.start
+        end = dates.end
+      } else {
+        const dates = getWeekDates(weekOffset)
+        start = dates.start
+        end = dates.end
+      }
+
+      entries = await timeEntryStore.getByDateRange(start, end)
+    }
 
     const enriched: WeekEntry[] = []
     for (const entry of entries) {
@@ -300,7 +312,11 @@ export default function TimingTab({ businessId }: TimingTabProps) {
         projectColor: project?.color || '#3b82f6',
       })
     }
-    setWeekEntries(enriched.sort((a, b) => b.date.localeCompare(a.date)))
+    if (viewMode === 'recent') {
+      setWeekEntries(enriched) // already sorted by createdAt
+    } else {
+      setWeekEntries(enriched.sort((a, b) => b.date.localeCompare(a.date)))
+    }
     setWeekTotal(enriched.reduce((sum, e) => sum + e.hours, 0))
   }
 
@@ -764,7 +780,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
 
       {/* View Mode Selector */}
       <div style={{ marginBottom: '1rem', display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
-        {(['daily', 'weekly', 'monthly'] as const).map((mode) => (
+        {(['daily', 'weekly', 'monthly', 'recent'] as const).map((mode) => (
           <button
             key={mode}
             onClick={() => setViewMode(mode)}
@@ -779,7 +795,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
               fontWeight: viewMode === mode ? 600 : 400,
             }}
           >
-            {mode === 'daily' ? 'יומי' : mode === 'weekly' ? 'שבועי' : 'חודשי'}
+            {mode === 'daily' ? 'יומי' : mode === 'weekly' ? 'שבועי' : mode === 'monthly' ? 'חודשי' : 'אחרונים'}
           </button>
         ))}
       </div>
@@ -1520,6 +1536,59 @@ export default function TimingTab({ businessId }: TimingTabProps) {
           ) : (
             <p style={{ color: '#64748b', textAlign: 'center' }}>
               אין רישומי זמן בחודש זה
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Recent View */}
+      {viewMode === 'recent' && (
+        <div style={{ marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+            <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>רישומים אחרונים</h3>
+            <span style={{ fontWeight: 500, color: '#64748b' }}>
+              {formatHours(weekTotal)} שעות
+            </span>
+          </div>
+
+          {weekEntries.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              {weekEntries.map((entry) => (
+                <div
+                  key={entry.id}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '1rem',
+                    background: '#f8fafc',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '0.5rem',
+                    fontSize: '0.95rem',
+                  }}
+                >
+                  <div
+                    onClick={() => handleEditEntry(entry)}
+                    style={{ flex: 1, cursor: 'pointer' }}
+                  >
+                    <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>
+                      {entry.projectName}
+                      <span style={{ color: '#64748b', margin: '0 0.5rem' }}>›</span>
+                      {entry.taskName}
+                    </div>
+                    <div style={{ color: '#64748b', fontSize: '0.85rem' }}>
+                      {formatDisplayDate(entry.date)}
+                      {entry.startTime && entry.endTime ? ` · ${entry.startTime} - ${entry.endTime}` : ''}
+                      {' · '}{formatHours(entry.hours)} שעות
+                    </div>
+                  </div>
+                  <span style={{ fontWeight: 600, fontSize: '1.1rem' }}>{formatHours(entry.hours)}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p style={{ color: '#64748b', textAlign: 'center' }}>
+              אין רישומי זמן
             </p>
           )}
         </div>
