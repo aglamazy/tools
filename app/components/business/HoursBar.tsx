@@ -43,8 +43,11 @@ export default function HoursBar({ entries, onEntryClick, onEmptyClick }: HoursB
   sortedEntries.forEach(entry => {
     const start = timeToHours(entry.startTime)
     const end = timeToHours(entry.endTime)
+    // For midnight-crossing entries (end < start), show until 24:00
+    const effectiveEnd = end < start ? 24 : end
     if (start < minHour) minHour = Math.floor(start)
-    if (end > maxHour) maxHour = Math.ceil(end)
+    if (start > maxHour) maxHour = Math.ceil(start + 1) // ensure late starts are visible
+    if (effectiveEnd > maxHour) maxHour = Math.ceil(effectiveEnd)
   })
 
   minHour = Math.max(0, minHour)
@@ -128,8 +131,10 @@ export default function HoursBar({ entries, onEntryClick, onEmptyClick }: HoursB
           {sortedEntries.map((entry, idx) => {
             const start = timeToHours(entry.startTime)
             const end = timeToHours(entry.endTime)
+            // For midnight-crossing entries, render until end of visible range
+            const effectiveEnd = end < start ? maxHour : end
             const top = (start - minHour) * HOUR_HEIGHT
-            const height = (end - start) * HOUR_HEIGHT
+            const height = (effectiveEnd - start) * HOUR_HEIGHT
 
             return (
               <div
