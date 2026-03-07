@@ -193,3 +193,137 @@ body {
 .status-dot.disconnected {
   background: #ef4444;
 }
+
+/* Form Filler Section */
+.form-filler-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.form-filler-header h3 {
+  font-size: 1rem;
+  color: #1e293b;
+  margin: 0;
+}
+
+.field-count {
+  font-size: 0.8rem;
+  color: #64748b;
+  background: #f1f5f9;
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.25rem;
+}
+
+.form-filler-loading {
+  text-align: center;
+  padding: 1rem;
+  color: #64748b;
+  font-style: italic;
+}
+
+.fields-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: calc(100vh - 320px);
+  overflow-y: auto;
+  padding-left: 0.25rem;
+}
+
+.field-card {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.375rem;
+  padding: 0.625rem;
+}
+
+.field-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.375rem;
+}
+
+.field-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #334155;
+}
+
+.field-status {
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+
+.field-card input,
+.field-card textarea,
+.field-card select {
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.25rem;
+  font-size: 0.8rem;
+  outline: none;
+  font-family: inherit;
+  direction: rtl;
+}
+
+.field-card textarea {
+  resize: vertical;
+  min-height: 3rem;
+}
+
+.field-card input:focus,
+.field-card textarea:focus,
+.field-card select:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+.field-card.file-field {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.field-card.file-field .field-label {
+  color: #991b1b;
+}
+
+.form-filler-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.btn-secondary {
+  width: 100%;
+  background: #f1f5f9;
+  color: #475569;
+  font-weight: 500;
+  border: 1px solid #cbd5e1;
+}
+
+.btn-secondary:hover {
+  background: #e2e8f0;
+}
+
+.save-feedback {
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  border-radius: 0.375rem;
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.save-feedback.success {
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.save-feedback.error {
+  background: #fef2f2;
+  color: #dc2626;
+}
