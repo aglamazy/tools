@@ -11,7 +11,7 @@
  * - Content-based dedup: records with same content but different syncIds are merged
  */
 
-import type { BackupData } from './backupService'
+import { type BackupData, isLocalOnlySettingsKey } from './backupService'
 
 // Tables that have unique constraints (besides id/syncId)
 const UNIQUE_KEY_TABLES: Record<string, string> = {
@@ -293,7 +293,12 @@ export function mergeBackups(local: BackupData, cloud: BackupData): BackupData {
   // Merge each DB table
   for (const tableName of TABLE_ORDER) {
     const localRecords = (local.stores as any)[tableName] || []
-    const cloudRecords = (cloud.stores as any)[tableName] || []
+    let cloudRecords = (cloud.stores as any)[tableName] || []
+
+    // Strip local-only keys from cloud appSettings so they never overwrite local credentials
+    if (tableName === 'appSettings') {
+      cloudRecords = cloudRecords.filter((r: any) => !isLocalOnlySettingsKey(r.key))
+    }
     const deletedSyncIds = allDeletions[tableName] || new Set<string>()
     ;(merged.stores as any)[tableName] = mergeTable(
       tableName,

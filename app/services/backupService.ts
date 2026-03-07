@@ -21,6 +21,46 @@ import { timerStore } from '@/app/stores/timerStore'
 import { initializeAppSettings } from '@/app/services/appSettingsService'
 import { GOOGLE_TOKEN_SETTING_KEYS } from '@/app/services/googleTokenService'
 
+/**
+ * Local-only appSettings keys — never uploaded to cloud, never overwritten by sync.
+ * Each device keeps its own copy of these credentials/tokens.
+ * Includes Google token keys from googleTokenService for completeness.
+ */
+export const LOCAL_ONLY_SETTINGS_KEYS = [
+  'claudeApiKey',
+  ...GOOGLE_TOKEN_SETTING_KEYS,
+]
+
+/** Check if an appSettings key is local-only (exact match or google_ prefix) */
+export function isLocalOnlySettingsKey(key: string): boolean {
+  return LOCAL_ONLY_SETTINGS_KEYS.includes(key) || key.startsWith('google_')
+}
+
+/**
+ * Read all local-only appSettings from the DB.
+ * Used to preserve them before a clear+replace operation.
+ */
+export async function readLocalOnlySettings(): Promise<any[]> {
+  const all = await db.appSettings.toArray()
+  return all.filter(s => isLocalOnlySettingsKey(s.key))
+}
+
+/**
+ * Restore local-only appSettings after a clear+replace operation.
+ * Only adds keys that are not already present (avoids unique constraint violations).
+ * Strips old `id` to let auto-increment assign a fresh one (avoids PK conflicts).
+ */
+export async function restoreLocalOnlySettings(preserved: any[]): Promise<void> {
+  for (const setting of preserved) {
+    const exists = await db.appSettings.where('key').equals(setting.key).count()
+    if (exists === 0) {
+      const { id, ...withoutId } = setting
+      await db.appSettings.add(withoutId)
+      console.log(`[BackupRestore] Restored local-only key: ${setting.key}`)
+    }
+  }
+}
+
 export interface BackupData {
   version: string
   timestamp: string
@@ -72,7 +112,7 @@ export async function exportAllStores(): Promise<BackupData> {
       db.categories.toArray(),
       db.businessCategories.toArray(),
       db.tasks.toArray(),
-      db.appSettings.toArray().then(rows => rows.filter(r => !GOOGLE_TOKEN_SETTING_KEYS.includes(r.key) && r.key !== 'claudeApiKey')),
+      db.appSettings.toArray().then(rows => rows.filter(r => !isLocalOnlySettingsKey(r.key))),
       db.businesses.toArray(),
       db.projects.toArray(),
       db.harvestTasks.toArray(),
@@ -89,6 +129,9 @@ export async function exportAllStores(): Promise<BackupData> {
       Promise.resolve(timerStore.export()),
     ])
 
+    // Filter out local-only keys (API keys, tokens) — they stay on this device only
+    const filteredAppSettings = appSettings.filter(s => !isLocalOnlySettingsKey(s.key))
+
     return {
       version: '1.0',
       timestamp: new Date().toISOString(),
@@ -98,7 +141,7 @@ export async function exportAllStores(): Promise<BackupData> {
         categories,
         businessCategories,
         tasks,
-        appSettings,
+        appSettings: filteredAppSettings,
         businesses,
         projects,
         harvestTasks,
@@ -177,21 +220,12 @@ export async function importAllStores(backup: BackupData): Promise<void> {
       await db.tasks.bulkAdd(stores.tasks)
     }
     if (stores.appSettings?.length > 0) {
-      // Preserve local-only keys (API keys, tokens) that are excluded from backup
-      const preserveKeys = [...GOOGLE_TOKEN_SETTING_KEYS, 'claudeApiKey']
-      const localOnly = await db.appSettings
-        .filter(r => preserveKeys.includes(r.key))
-        .toArray()
+      // Preserve local-only keys (API keys, tokens) before clearing
+      const preservedLocalOnly = await readLocalOnlySettings()
       await db.appSettings.clear()
       await db.appSettings.bulkAdd(stores.appSettings)
-      // Re-add preserved local-only settings
-      for (const row of localOnly) {
-        const exists = await db.appSettings.where('key').equals(row.key).first()
-        if (!exists) {
-          delete row.id
-          await db.appSettings.add(row)
-        }
-      }
+      // Restore local-only keys that were not in the backup
+      await restoreLocalOnlySettings(preservedLocalOnly)
     }
     if (stores.businesses?.length > 0) {
       await db.businesses.clear()

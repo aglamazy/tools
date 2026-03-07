@@ -9,7 +9,7 @@ import { db } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { timerStore } from '@/app/stores/timerStore'
 import { initializeAppSettings } from '@/app/services/appSettingsService'
-import type { BackupData } from './backupService'
+import { type BackupData, readLocalOnlySettings, restoreLocalOnlySettings } from './backupService'
 
 // FK annotations → { annotationField, fkField }
 const FK_ANNOTATIONS: Record<string, { annotationField: string; fkField: string; parentTable: string }> = {
@@ -32,6 +32,9 @@ const INSERT_ORDER = [
  * and resolves _parentSyncId annotations to local IDs.
  */
 export async function applyMergedBackup(merged: BackupData): Promise<void> {
+  // Preserve local-only appSettings (API keys, tokens) before clearing tables
+  const preservedLocalOnly = await readLocalOnlySettings()
+
   // syncId → local id maps, built as we insert parent tables
   const syncIdToLocalId: Record<string, Map<string, number>> = {}
 
@@ -105,6 +108,9 @@ export async function applyMergedBackup(merged: BackupData): Promise<void> {
     await subjectStore.import(merged.stores.subjectStore)
   }
   timerStore.import(merged.stores.timerStore ?? null)
+
+  // Restore local-only appSettings that were preserved before the transaction
+  await restoreLocalOnlySettings(preservedLocalOnly)
 
   await initializeAppSettings()
   console.log('[ApplyMerged] Merged backup applied successfully')
