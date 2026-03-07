@@ -15,6 +15,7 @@ type TimeEntry = {
 type HoursBarProps = {
   entries: TimeEntry[]
   onEntryClick?: (entry: TimeEntry) => void
+  onEmptyClick?: (hour: number) => void
 }
 
 function timeToHours(time: string): number {
@@ -22,7 +23,7 @@ function timeToHours(time: string): number {
   return h + m / 60
 }
 
-export default function HoursBar({ entries, onEntryClick }: HoursBarProps) {
+export default function HoursBar({ entries, onEntryClick, onEmptyClick }: HoursBarProps) {
   // Filter entries that have start and end times
   const timedEntries = entries.filter(e => e.startTime && e.endTime)
 
@@ -88,6 +89,14 @@ export default function HoursBar({ entries, onEntryClick }: HoursBarProps) {
 
         {/* Timeline column */}
         <div
+          onClick={(e) => {
+            if (!onEmptyClick) return
+            if (e.target !== e.currentTarget) return
+            const rect = e.currentTarget.getBoundingClientRect()
+            const y = e.clientY - rect.top
+            const clickedHour = Math.floor(minHour + y / HOUR_HEIGHT)
+            onEmptyClick(clickedHour)
+          }}
           style={{
             flex: 1,
             position: 'relative',
@@ -96,6 +105,7 @@ export default function HoursBar({ entries, onEntryClick }: HoursBarProps) {
             borderRadius: '0.5rem',
             border: '1px solid #e2e8f0',
             overflow: 'hidden',
+            cursor: onEmptyClick ? 'pointer' : 'default',
           }}
         >
           {/* Hour grid lines */}
@@ -109,6 +119,7 @@ export default function HoursBar({ entries, onEntryClick }: HoursBarProps) {
                 right: 0,
                 height: '1px',
                 background: idx === 0 ? 'transparent' : '#e2e8f0',
+                pointerEvents: 'none',
               }}
             />
           ))}

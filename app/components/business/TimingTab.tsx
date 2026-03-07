@@ -478,6 +478,38 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     }
   }
 
+  const handleDayEmptyClick = async (hour?: number) => {
+    const startHour = hour ?? 9
+    const startTime = `${startHour.toString().padStart(2, '0')}:00`
+    const endHour = Math.min(startHour + 1, 23)
+    const endTime = `${endHour.toString().padStart(2, '0')}:00`
+
+    // Use last entry's project/task as default, falling back to selected
+    let defaultProjectId = selectedProjectId
+    let defaultTaskId = selectedTaskId
+    if (weekEntries.length > 0) {
+      const lastEntry = weekEntries[0] // sorted by date desc
+      const task = await harvestTaskStore.getById(lastEntry.taskId)
+      if (task) {
+        defaultProjectId = task.projectId
+        defaultTaskId = lastEntry.taskId
+      }
+    }
+
+    setEditingEntry(null)
+    setFormData({
+      projectId: defaultProjectId,
+      taskId: defaultTaskId,
+      date: selectedDate,
+      startTime,
+      endTime,
+      endNextDay: false,
+    })
+    if (defaultProjectId) {
+      void harvestTaskStore.getActiveByProjectId(defaultProjectId).then(setFormTasks)
+    }
+  }
+
   const handleCalendarEventClick = (event: CalendarEvent) => {
     // Open the time entry form pre-filled with the calendar event times
     console.log('[Calendar] Event clicked:', event)
@@ -923,6 +955,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
                     const fullEntry = weekEntries.find(e => e.id === entry.id)
                     if (fullEntry) handleEditEntry(fullEntry)
                   }}
+                  onEmptyClick={(hour) => void handleDayEmptyClick(hour)}
                 />
 
                 {/* Daily entries list */}
@@ -987,6 +1020,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
                   </div>
                 ) : (
                   <div
+                    onClick={() => void handleDayEmptyClick()}
                     style={{
                       display: 'flex',
                       flexDirection: 'column',
@@ -998,10 +1032,11 @@ export default function TimingTab({ businessId }: TimingTabProps) {
                       borderRadius: '0.5rem',
                       minHeight: '200px',
                       color: '#64748b',
+                      cursor: 'pointer',
                     }}
                   >
                     <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>⏱️</div>
-                    <p>אין רישומי זמן ביום זה</p>
+                    <p>אין רישומי זמן ביום זה — לחץ להוספה</p>
                   </div>
                 )}
               </div>
@@ -1015,6 +1050,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
                   const fullEntry = weekEntries.find(e => e.id === entry.id)
                   if (fullEntry) handleEditEntry(fullEntry)
                 }}
+                onEmptyClick={(hour) => void handleDayEmptyClick(hour)}
               />
 
               {/* Daily entries list */}
@@ -1078,8 +1114,11 @@ export default function TimingTab({ businessId }: TimingTabProps) {
                   })()}
                 </div>
               ) : (
-                <p style={{ color: '#64748b', textAlign: 'center' }}>
-                  אין רישומי זמן ביום זה
+                <p
+                  onClick={() => void handleDayEmptyClick()}
+                  style={{ color: '#64748b', textAlign: 'center', cursor: 'pointer' }}
+                >
+                  אין רישומי זמן ביום זה — לחץ להוספה
                 </p>
               )}
             </>
