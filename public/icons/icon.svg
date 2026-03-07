@@ -1,19 +1,26 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
   <defs>
-    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#4b6cb7"/>
-      <stop offset="100%" stop-color="#182848"/>
+    <linearGradient id="grad1" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#7B2D8E"/>
+      <stop offset="50%" stop-color="#2A7B9B"/>
+      <stop offset="100%" stop-color="#1DBBB4"/>
+    </linearGradient>
+    <linearGradient id="arrow" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#2A7B9B"/>
+      <stop offset="100%" stop-color="#1DBBB4"/>
     </linearGradient>
   </defs>
 
-  <!-- Background -->
-  <rect width="256" height="256" fill="url(#bgGrad)" />
+  <!-- Background circle for icon clarity -->
+  <rect width="256" height="256" rx="48" fill="white"/>
 
-  <!-- Letter A made from lines -->
-  <line x1="70" y1="200" x2="128" y2="60" stroke="white" stroke-width="20" stroke-linecap="round"/>
-  <line x1="186" y1="200" x2="128" y2="60" stroke="white" stroke-width="20" stroke-linecap="round"/>
-  <line x1="100" y1="150" x2="156" y2="150" stroke="white" stroke-width="18" stroke-linecap="round"/>
+  <!-- Stylized A shape -->
+  <path d="M88 200 L128 56 L168 200" fill="none" stroke="url(#grad1)" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- A crossbar -->
+  <line x1="100" y1="155" x2="156" y2="155" stroke="url(#grad1)" stroke-width="20" stroke-linecap="round"/>
 
-  <!-- Letter Y made from lines, overlapping A on the right side -->
-  <line x1="70" y1="60" x2="99" y2="140" stroke="white" stroke-width="20" stroke-linecap="round"/>
+  <!-- Upward arrow overlaid -->
+  <line x1="130" y1="150" x2="195" y2="50" stroke="url(#arrow)" stroke-width="20" stroke-linecap="round"/>
+  <!-- Arrow head -->
+  <polyline points="170,48 198,48 198,76" fill="none" stroke="url(#arrow)" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
