@@ -298,6 +298,29 @@ export default function TimingTab({ businessId }: TimingTabProps) {
       }
 
       entries = await timeEntryStore.getByDateRange(start, end)
+
+      // Also fetch previous-day entries that cross midnight into our range
+      const prevDay = adjustDate(start, -1)
+      const prevDayEntries = await timeEntryStore.getByDateRange(prevDay, prevDay)
+      for (const entry of prevDayEntries) {
+        if (!businessTaskIds.has(entry.taskId)) continue
+        // Compare as HH:MM strings — if end is before start, it crosses midnight
+        if (entry.endTime < entry.startTime) {
+          // Midnight-crossing: create synthetic entry for the next day (00:00 → endTime)
+          const nextDay = adjustDate(entry.date, 1)
+          if (nextDay >= start && nextDay <= end) {
+            const [endHr, endMin] = entry.endTime.split(':').map(Number)
+            entries.push({
+              ...entry,
+              id: undefined, // synthetic, not directly editable
+              date: nextDay,
+              startTime: '00:00',
+              endTime: entry.endTime,
+              hours: endHr + endMin / 60,
+            } as TimeEntry)
+          }
+        }
+      }
     }
 
     const enriched: WeekEntry[] = []
