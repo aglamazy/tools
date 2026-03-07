@@ -13,6 +13,7 @@ import StudentsTab from './StudentsTab'
 import AccountingTab from './AccountingTab'
 import ProfileTab from './ProfileTab'
 import AuditionsTab from './AuditionsTab'
+import ReceiptsTab from './ReceiptsTab'
 
 const TABS: TabItem[] = [
   { id: 'income', label: 'הכנסות', icon: '💰' },
@@ -23,6 +24,7 @@ const TABS: TabItem[] = [
 const TEACHER_TABS: TabItem[] = [
   { id: 'students', label: 'תלמידים', icon: '👨‍🎓' },
   { id: 'accounting', label: 'חשבונאות חודשית', icon: '📊' },
+  { id: 'receipts', label: 'קבלות', icon: '🧾' },
   { id: 'settings', label: 'הגדרות', icon: '⚙️' },
 ]
 
@@ -83,6 +85,7 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
             <>
               {activeTab === 'students' && <StudentsTab businessId={businessId} />}
               {activeTab === 'accounting' && <AccountingTab businessId={businessId} />}
+              {activeTab === 'receipts' && <ReceiptsTab businessId={businessId} />}
               {activeTab === 'settings' && <BusinessSettingsTab businessId={businessId} />}
             </>
           )}
