@@ -19,6 +19,7 @@ import { db } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { timerStore } from '@/app/stores/timerStore'
 import { initializeAppSettings } from '@/app/services/appSettingsService'
+import { GOOGLE_TOKEN_SETTING_KEYS } from '@/app/services/googleTokenService'
 
 export interface BackupData {
   version: string
@@ -38,6 +39,7 @@ export interface BackupData {
     capitalEntries: any[]
     financialInstitutions: any[]
     ypayDocuments: any[]
+    taxDocuments?: any[]
     // localStorage data
     subjectStore: any
     timerStore: any
@@ -63,13 +65,14 @@ export async function exportAllStores(): Promise<BackupData> {
       capitalEntries,
       financialInstitutions,
       ypayDocuments,
+      taxDocuments,
     ] = await Promise.all([
       db.transactions.toArray(),
       db.importedFiles.toArray(),
       db.categories.toArray(),
       db.businessCategories.toArray(),
       db.tasks.toArray(),
-      db.appSettings.toArray(),
+      db.appSettings.toArray().then(rows => rows.filter(r => !GOOGLE_TOKEN_SETTING_KEYS.includes(r.key) && r.key !== 'claudeApiKey')),
       db.businesses.toArray(),
       db.projects.toArray(),
       db.harvestTasks.toArray(),
@@ -77,6 +80,7 @@ export async function exportAllStores(): Promise<BackupData> {
       db.capitalEntries.toArray(),
       db.financialInstitutions.toArray(),
       db.ypayDocuments.toArray(),
+      db.taxDocuments.toArray(),
     ])
 
     // Let stores export their own data
@@ -102,6 +106,7 @@ export async function exportAllStores(): Promise<BackupData> {
         capitalEntries,
         financialInstitutions,
         ypayDocuments,
+        taxDocuments,
         subjectStore: subjectStoreData,
         timerStore: timerStoreData,
       },
@@ -141,6 +146,7 @@ export async function importAllStores(backup: BackupData): Promise<void> {
       capitalEntries: stores.capitalEntries?.length ?? 0,
       financialInstitutions: stores.financialInstitutions?.length ?? 0,
       ypayDocuments: stores.ypayDocuments?.length ?? 0,
+      taxDocuments: stores.taxDocuments?.length ?? 0,
     }
     console.log('[BackupRestore] importing backup', counts)
 
@@ -171,8 +177,21 @@ export async function importAllStores(backup: BackupData): Promise<void> {
       await db.tasks.bulkAdd(stores.tasks)
     }
     if (stores.appSettings?.length > 0) {
+      // Preserve local-only keys (API keys, tokens) that are excluded from backup
+      const preserveKeys = [...GOOGLE_TOKEN_SETTING_KEYS, 'claudeApiKey']
+      const localOnly = await db.appSettings
+        .filter(r => preserveKeys.includes(r.key))
+        .toArray()
       await db.appSettings.clear()
       await db.appSettings.bulkAdd(stores.appSettings)
+      // Re-add preserved local-only settings
+      for (const row of localOnly) {
+        const exists = await db.appSettings.where('key').equals(row.key).first()
+        if (!exists) {
+          delete row.id
+          await db.appSettings.add(row)
+        }
+      }
     }
     if (stores.businesses?.length > 0) {
       await db.businesses.clear()
@@ -201,6 +220,10 @@ export async function importAllStores(backup: BackupData): Promise<void> {
     if (stores.ypayDocuments?.length > 0) {
       await db.ypayDocuments.clear()
       await db.ypayDocuments.bulkAdd(stores.ypayDocuments)
+    }
+    if (stores.taxDocuments && stores.taxDocuments.length > 0) {
+      await db.taxDocuments.clear()
+      await db.taxDocuments.bulkAdd(stores.taxDocuments)
     }
 
     // Let stores import their own data

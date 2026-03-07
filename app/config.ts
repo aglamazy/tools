@@ -15,6 +15,7 @@ export const routes = {
   futurePayments: '/app/future-payments',
   settings: '/app/settings',
   gmail: '/app/gmail',
+  taxes: '/app/taxes',
   capital: '/app/capital',
   devDb: '/app/dev-db',
   admin: '/app/admin',

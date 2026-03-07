@@ -261,7 +261,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
 
   // Check calendar connection on mount
   useEffect(() => {
-    setCalendarConnected(hasCalendarAccess())
+    hasCalendarAccess().then(setCalendarConnected)
   }, [])
 
   // Load calendar events when in daily view and date changes

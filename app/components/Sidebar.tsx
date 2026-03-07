@@ -45,6 +45,14 @@ const allTools: Tool[] = [
     requiredTier: UserTier.FREE,
   },
   {
+    id: 'taxes',
+    title: 'מסים',
+    href: routes.taxes,
+    icon: '🏛️',
+    available: true,
+    requiredTier: UserTier.PRO,
+  },
+  {
     id: 'todo',
     title: 'משימות',
     href: routes.todo,

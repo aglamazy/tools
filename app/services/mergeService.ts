@@ -40,6 +40,7 @@ const CONTENT_KEY_FNS: Record<string, (r: any) => string> = {
   projects: (r) => `${r.businessId}|${r.name}`,
   harvestTasks: (r) => `${r.projectId}|${r.name}`,
   timeEntries: (r) => `${r.taskId}|${r.date}|${r.startTime}|${r.endTime}|${r.hours}`,
+  taxDocuments: (r) => `${r.businessId}|${r.month}|${r.fileName}`,
 }
 
 // All DB tables in the backup (order matters: parents before children)
@@ -47,6 +48,7 @@ const TABLE_ORDER = [
   'transactions', 'importedFiles', 'categories', 'businessCategories',
   'tasks', 'appSettings', 'businesses', 'projects', 'harvestTasks',
   'timeEntries', 'capitalEntries', 'financialInstitutions', 'ypayDocuments',
+  'taxDocuments',
 ]
 
 function getTimestamp(record: any): string {

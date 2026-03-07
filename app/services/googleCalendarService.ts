@@ -1,14 +1,17 @@
 /**
  * Google Calendar Service
- * Handles fetching calendar events from Google Calendar API
+ * Handles fetching calendar events from Google Calendar API.
+ * Token management is delegated to googleTokenService.
  */
 
-import { getFirebaseAuth } from '@/app/lib/firebase'
-import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth'
+import {
+  hasGoogleAccess,
+  getAccessToken,
+  requestGoogleAccess,
+  clearGoogleAccess,
+} from '@/app/services/googleTokenService'
 
-const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly'
 const CALENDAR_API_BASE = 'https://www.googleapis.com/calendar/v3'
-const CALENDAR_TOKEN_KEY = 'google_calendar_token'
 
 export type CalendarEvent = {
   id: string
@@ -20,127 +23,71 @@ export type CalendarEvent = {
   isAllDay: boolean
 }
 
-// Store the access token in memory (loaded from storage on init)
-let calendarAccessToken: string | null = null
-
 /**
- * Initialize calendar token from storage
+ * Check if we have calendar (Google) access
  */
-function loadTokenFromStorage(): void {
-  if (typeof window === 'undefined') return
-  try {
-    const stored = sessionStorage.getItem(CALENDAR_TOKEN_KEY)
-    if (stored) {
-      calendarAccessToken = stored
-    }
-  } catch {
-    // Ignore storage errors
-  }
-}
-
-/**
- * Save token to storage
- */
-function saveTokenToStorage(token: string): void {
-  if (typeof window === 'undefined') return
-  try {
-    sessionStorage.setItem(CALENDAR_TOKEN_KEY, token)
-  } catch {
-    // Ignore storage errors
-  }
-}
-
-/**
- * Clear token from storage
- */
-function clearTokenFromStorage(): void {
-  if (typeof window === 'undefined') return
-  try {
-    sessionStorage.removeItem(CALENDAR_TOKEN_KEY)
-  } catch {
-    // Ignore storage errors
-  }
-}
-
-// Load token on module init
-loadTokenFromStorage()
-
-/**
- * Check if we have a calendar access token
- */
-export function hasCalendarAccess(): boolean {
-  if (!calendarAccessToken) {
-    loadTokenFromStorage()
-  }
-  return calendarAccessToken !== null
+export async function hasCalendarAccess(): Promise<boolean> {
+  return hasGoogleAccess()
 }
 
 /**
  * Get the current calendar access token
  */
-export function getCalendarAccessToken(): string | null {
-  return calendarAccessToken
+export async function getCalendarAccessToken(): Promise<string | null> {
+  return getAccessToken()
+}
+
+/**
+ * Request calendar access via Google OAuth popup
+ */
+export async function requestCalendarAccess(): Promise<{ success: boolean; error?: string }> {
+  return requestGoogleAccess()
 }
 
 /**
  * Clear the calendar access token (e.g., on sign out)
  */
-export function clearCalendarAccess(): void {
-  calendarAccessToken = null
-  clearTokenFromStorage()
-}
-
-/**
- * Request calendar access by re-authenticating with Google
- * This triggers a popup that requests the calendar.readonly scope
- */
-export async function requestCalendarAccess(): Promise<{ success: boolean; error?: string }> {
-  try {
-    const auth = getFirebaseAuth()
-    const provider = new GoogleAuthProvider()
-
-    // Add calendar scope
-    provider.addScope(CALENDAR_SCOPE)
-    // Force account selection to ensure fresh consent
-    provider.setCustomParameters({
-      prompt: 'consent',
-    })
-
-    const result = await signInWithPopup(auth, provider)
-
-    // Get the OAuth credential which contains the access token
-    const credential = GoogleAuthProvider.credentialFromResult(result)
-    if (credential?.accessToken) {
-      calendarAccessToken = credential.accessToken
-      saveTokenToStorage(credential.accessToken)
-      return { success: true }
-    }
-
-    return { success: false, error: 'לא התקבל טוקן גישה ללוח שנה' }
-  } catch (err: any) {
-    console.error('[Calendar] Auth failed:', err.code, err.message)
-
-    if (err.code === 'auth/popup-closed-by-user') {
-      return { success: false, error: 'החלון נסגר לפני השלמת ההתחברות' }
-    }
-    if (err.code === 'auth/popup-blocked') {
-      return { success: false, error: 'החלון נחסם. אפשר חלונות קופצים ונסה שוב' }
-    }
-
-    return { success: false, error: 'שגיאה בהתחברות ללוח שנה' }
-  }
+export async function clearCalendarAccess(): Promise<void> {
+  return clearGoogleAccess()
 }
 
 /**
  * Fetch calendar events for a specific date
  */
 export async function fetchCalendarEvents(date: string): Promise<{ events: CalendarEvent[]; error?: string }> {
-  if (!calendarAccessToken) {
-    return { events: [], error: 'לא מחובר ללוח שנה' }
+  let token = await getAccessToken()
+  if (!token) {
+    return { events: [], error: 'Not connected to calendar' }
   }
 
+  const result = await fetchEventsWithToken(date, token)
+
+  // If 401, try refreshing once and retry
+  if (result.retryAuth) {
+    token = await getAccessToken()
+    if (!token) {
+      return { events: [], error: 'Token refresh failed. Please reconnect to calendar.' }
+    }
+    const retry = await fetchEventsWithToken(date, token)
+    if (retry.retryAuth) {
+      await clearGoogleAccess()
+      return { events: [], error: 'Authorization expired. Please reconnect to calendar.' }
+    }
+    return { events: retry.events, error: retry.error }
+  }
+
+  return { events: result.events, error: result.error }
+}
+
+// ---------------------------------------------------------------------------
+// Internal
+// ---------------------------------------------------------------------------
+
+async function fetchEventsWithToken(
+  date: string,
+  token: string
+): Promise<{ events: CalendarEvent[]; error?: string; retryAuth?: boolean }> {
   try {
-    // Create time bounds for the date (full day in local timezone)
     const startOfDay = new Date(`${date}T00:00:00`)
     const endOfDay = new Date(`${date}T23:59:59`)
 
@@ -155,22 +102,19 @@ export async function fetchCalendarEvents(date: string): Promise<{ events: Calen
       `${CALENDAR_API_BASE}/calendars/primary/events?${params}`,
       {
         headers: {
-          Authorization: `Bearer ${calendarAccessToken}`,
+          Authorization: `Bearer ${token}`,
         },
       }
     )
 
     if (response.status === 401) {
-      // Token expired or invalid
-      calendarAccessToken = null
-      clearTokenFromStorage()
-      return { events: [], error: 'פג תוקף ההרשאה. התחבר מחדש ללוח שנה' }
+      return { events: [], retryAuth: true }
     }
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}))
       console.error('[Calendar] API error:', response.status, errorData)
-      return { events: [], error: 'שגיאה בטעינת אירועים מלוח שנה' }
+      return { events: [], error: 'Error loading calendar events' }
     }
 
     const data = await response.json()
@@ -184,7 +128,6 @@ export async function fetchCalendarEvents(date: string): Promise<{ events: Calen
         let endTime = ''
 
         if (!isAllDay) {
-          // Parse the dateTime and extract local time
           const startDate = new Date(item.start.dateTime)
           const endDate = new Date(item.end.dateTime)
           startTime = `${startDate.getHours().toString().padStart(2, '0')}:${startDate.getMinutes().toString().padStart(2, '0')}`
@@ -193,7 +136,7 @@ export async function fetchCalendarEvents(date: string): Promise<{ events: Calen
 
         return {
           id: item.id,
-          summary: item.summary || '(ללא כותרת)',
+          summary: item.summary || '(No title)',
           start: item.start.dateTime || item.start.date,
           end: item.end.dateTime || item.end.date,
           startTime,
@@ -205,6 +148,6 @@ export async function fetchCalendarEvents(date: string): Promise<{ events: Calen
     return { events }
   } catch (err: any) {
     console.error('[Calendar] Fetch error:', err)
-    return { events: [], error: 'שגיאת רשת בטעינת לוח שנה' }
+    return { events: [], error: 'Network error loading calendar' }
   }
 }

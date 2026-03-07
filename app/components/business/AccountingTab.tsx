@@ -62,7 +62,7 @@ export default function AccountingTab({ businessId }: AccountingTabProps) {
   const [formError, setFormError] = useState('')
 
   useEffect(() => {
-    setCalendarConnected(hasCalendarAccess())
+    hasCalendarAccess().then(setCalendarConnected)
   }, [])
 
   const loadStudents = useCallback(async () => {
@@ -91,7 +91,7 @@ export default function AccountingTab({ businessId }: AccountingTabProps) {
   }, [])
 
   const loadEvents = useCallback(async () => {
-    if (!hasCalendarAccess()) return
+    if (!(await hasCalendarAccess())) return
 
     setLoading(true)
     setError('')
