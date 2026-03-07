@@ -109,6 +109,34 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     router.replace(`${pathname}?${params.toString()}`, { scroll: false })
   }, [searchParams, pathname, router])
 
+  const handleViewModeChange = useCallback((newMode: ViewMode) => {
+    const prevMode = viewMode
+    // Sync offsets when switching between views so we stay on the same date
+    if (prevMode === 'daily' && newMode === 'weekly') {
+      // Calculate week offset from selectedDate
+      const sel = new Date(selectedDate + 'T12:00:00')
+      const now = new Date()
+      const selSunday = new Date(sel)
+      selSunday.setDate(sel.getDate() - sel.getDay())
+      const nowSunday = new Date(now)
+      nowSunday.setDate(now.getDate() - now.getDay())
+      const diffWeeks = Math.round((selSunday.getTime() - nowSunday.getTime()) / (7 * 24 * 60 * 60 * 1000))
+      setWeekOffset(diffWeeks)
+    } else if (prevMode === 'daily' && newMode === 'monthly') {
+      const sel = new Date(selectedDate + 'T12:00:00')
+      const now = new Date()
+      setMonthOffset((sel.getFullYear() - now.getFullYear()) * 12 + sel.getMonth() - now.getMonth())
+    } else if (prevMode === 'weekly' && newMode === 'daily') {
+      // Jump to first day of the viewed week
+      const { start } = getWeekDates(weekOffset)
+      setSelectedDate(start)
+    } else if (prevMode === 'monthly' && newMode === 'daily') {
+      const { start } = getMonthDates(monthOffset)
+      setSelectedDate(start)
+    }
+    setViewMode(newMode)
+  }, [viewMode, selectedDate, weekOffset, monthOffset])
+
   useEffect(() => {
     updateUrlParams({
       view: viewMode,
@@ -381,25 +409,28 @@ export default function TimingTab({ businessId }: TimingTabProps) {
   const handleStop = async () => {
     if (!activeTimer) return
 
+    // Clear timer immediately so it can't come back via re-render or sync
+    const stoppedTimer = activeTimer
+    setActiveTimer(null)
+    timerStore.clear()
+
     const hours = elapsedSeconds / 3600
     const today = formatLocalDate(new Date())
 
     // Calculate start and end times
-    const startDate = new Date(activeTimer.startedAt)
+    const startDate = new Date(stoppedTimer.startedAt)
     const endDate = new Date()
     const startTime = `${startDate.getHours().toString().padStart(2, '0')}:${startDate.getMinutes().toString().padStart(2, '0')}`
     const endTime = `${endDate.getHours().toString().padStart(2, '0')}:${endDate.getMinutes().toString().padStart(2, '0')}`
 
     await timeEntryStore.add({
-      taskId: activeTimer.taskId,
+      taskId: stoppedTimer.taskId,
       date: today,
       startTime,
       endTime,
       hours,
     })
 
-    setActiveTimer(null)
-    timerStore.clear()
     await loadWeekEntries()
   }
 
@@ -841,7 +872,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
         {(['daily', 'weekly', 'monthly', 'recent'] as const).map((mode) => (
           <button
             key={mode}
-            onClick={() => setViewMode(mode)}
+            onClick={() => handleViewModeChange(mode)}
             style={{
               padding: '0.5rem 1rem',
               background: viewMode === mode ? '#3b82f6' : '#f1f5f9',
@@ -1545,6 +1576,10 @@ export default function TimingTab({ businessId }: TimingTabProps) {
                             return (
                               <div
                                 key={date}
+                                onClick={() => {
+                                  setSelectedDate(date)
+                                  setViewMode('daily')
+                                }}
                                 style={{
                                   background: isCurrentMonth ? 'white' : '#f1f5f9',
                                   border: '1px solid #e2e8f0',
@@ -1552,6 +1587,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
                                   padding: '0.25rem',
                                   minHeight: '60px',
                                   opacity: isCurrentMonth ? 1 : 0.5,
+                                  cursor: 'pointer',
                                 }}
                               >
                                 <div style={{

@@ -327,7 +327,8 @@ export function mergeBackups(local: BackupData, cloud: BackupData): BackupData {
 
   // Non-DB stores: local wins (localStorage data)
   merged.stores.subjectStore = local.stores.subjectStore ?? cloud.stores.subjectStore
-  merged.stores.timerStore = local.stores.timerStore ?? cloud.stores.timerStore
+  // Local timer always wins — if cleared locally (null), don't restore from cloud
+  merged.stores.timerStore = local.stores.timerStore
 
   return merged
 }
