@@ -1,6 +1,7 @@
 'use client'
 
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useEffect, useState, useRef, useCallback } from 'react'
+import { useSearchParams, usePathname, useRouter } from 'next/navigation'
 import { projectStore } from '@/app/stores/projectStore'
 import { harvestTaskStore } from '@/app/stores/harvestTaskStore'
 import { timeEntryStore } from '@/app/stores/timeEntryStore'
@@ -63,7 +64,19 @@ function calculateProjectSummaries(entries: WeekEntry[]): ProjectSummary[] {
 
 type ViewMode = 'daily' | 'weekly' | 'monthly' | 'recent'
 
+const VIEW_MODES: ViewMode[] = ['daily', 'weekly', 'monthly', 'recent']
+
 export default function TimingTab({ businessId }: TimingTabProps) {
+  const searchParams = useSearchParams()
+  const pathname = usePathname()
+  const router = useRouter()
+
+  // Read initial state from URL params
+  const initialViewMode = (VIEW_MODES.includes(searchParams.get('view') as ViewMode) ? searchParams.get('view') : 'weekly') as ViewMode
+  const initialDate = searchParams.get('date') || formatLocalDate(new Date())
+  const initialWeekOffset = Number(searchParams.get('wo')) || 0
+  const initialMonthOffset = Number(searchParams.get('mo')) || 0
+
   const [business, setBusiness] = useState<Business | null>(null)
   const [projects, setProjects] = useState<Project[]>([])
   const [tasks, setTasks] = useState<HarvestTask[]>([])
@@ -76,12 +89,34 @@ export default function TimingTab({ businessId }: TimingTabProps) {
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
   const [formData, setFormData] = useState<TimeEntryFormData | null>(null)
   const [formTasks, setFormTasks] = useState<HarvestTask[]>([])
-  const [weekOffset, setWeekOffset] = useState(0)
+  const [weekOffset, setWeekOffset] = useState(initialWeekOffset)
   const [editingEntry, setEditingEntry] = useState<WeekEntry | null>(null)
-  const [viewMode, setViewMode] = useState<ViewMode>('weekly')
-  const [selectedDate, setSelectedDate] = useState(formatLocalDate(new Date()))
-  const [monthOffset, setMonthOffset] = useState(0)
+  const [viewMode, setViewMode] = useState<ViewMode>(initialViewMode)
+  const [selectedDate, setSelectedDate] = useState(initialDate)
+  const [monthOffset, setMonthOffset] = useState(initialMonthOffset)
   const [editingTask, setEditingTask] = useState<HarvestTask | null>(null)
+
+  // Sync view state to URL params
+  const updateUrlParams = useCallback((updates: Record<string, string | number>) => {
+    const params = new URLSearchParams(Array.from(searchParams.entries()))
+    for (const [key, val] of Object.entries(updates)) {
+      if (val === 0 || val === '' || val === 'weekly') {
+        params.delete(key)
+      } else {
+        params.set(key, String(val))
+      }
+    }
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+  }, [searchParams, pathname, router])
+
+  useEffect(() => {
+    updateUrlParams({
+      view: viewMode,
+      date: viewMode === 'daily' ? selectedDate : '',
+      wo: viewMode === 'weekly' ? weekOffset : 0,
+      mo: viewMode === 'monthly' ? monthOffset : 0,
+    })
+  }, [viewMode, selectedDate, weekOffset, monthOffset])
 
   // Calendar state
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([])
