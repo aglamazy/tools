@@ -13,19 +13,24 @@ import StudentsTab from './StudentsTab'
 import AccountingTab from './AccountingTab'
 import ProfileTab from './ProfileTab'
 import AuditionsTab from './AuditionsTab'
+import OpenDocumentsTab from './OpenDocumentsTab'
+import BizSettingsTab from './BizSettingsTab'
 import ExtensionLink from './ExtensionLink'
 
 const TABS: TabItem[] = [
   { id: 'income', label: 'הכנסות', icon: '💰' },
   { id: 'timing', label: 'תיעוד זמן', icon: '⏱️' },
-  { id: 'settings', label: 'פרויקטים', icon: '📂' },
+  { id: 'open-docs', label: 'מסמכים פתוחים', icon: '📄' },
+  { id: 'projects', label: 'פרויקטים', icon: '📂' },
+  { id: 'settings', label: 'הגדרות', icon: '⚙️' },
   { id: 'extension', label: 'תוסף', icon: '🧩' },
 ]
 
 const TEACHER_TABS: TabItem[] = [
   { id: 'students', label: 'תלמידים', icon: '👨‍🎓' },
   { id: 'accounting', label: 'חשבונאות חודשית', icon: '📊' },
-  { id: 'settings', label: 'פרויקטים', icon: '📂' },
+  { id: 'projects', label: 'פרויקטים', icon: '📂' },
+  { id: 'settings', label: 'הגדרות', icon: '⚙️' },
   { id: 'extension', label: 'תוסף', icon: '🧩' },
 ]
 
@@ -33,7 +38,8 @@ const ARTIST_TABS: TabItem[] = [
   { id: 'profile', label: 'פרופיל', icon: '📋' },
   { id: 'auditions', label: 'אודישנים', icon: '🔍' },
   { id: 'income', label: 'הכנסות', icon: '💰' },
-  { id: 'settings', label: 'פרויקטים', icon: '📂' },
+  { id: 'projects', label: 'פרויקטים', icon: '📂' },
+  { id: 'settings', label: 'הגדרות', icon: '⚙️' },
   { id: 'extension', label: 'תוסף', icon: '🧩' },
 ]
 
@@ -87,7 +93,8 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
             <>
               {activeTab === 'students' && <StudentsTab businessId={businessId} />}
               {activeTab === 'accounting' && <AccountingTab businessId={businessId} />}
-              {activeTab === 'settings' && <BusinessSettingsTab businessId={businessId} />}
+              {activeTab === 'projects' && <BusinessSettingsTab businessId={businessId} />}
+              {activeTab === 'settings' && <BizSettingsTab businessId={businessId} />}
               {activeTab === 'extension' && <ExtensionLink />}
             </>
           )}
@@ -99,7 +106,8 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
               {activeTab === 'profile' && <ProfileTab businessId={businessId} />}
               {activeTab === 'auditions' && <AuditionsTab businessId={businessId} />}
               {activeTab === 'income' && <IncomeTab businessId={businessId} />}
-              {activeTab === 'settings' && <BusinessSettingsTab businessId={businessId} />}
+              {activeTab === 'projects' && <BusinessSettingsTab businessId={businessId} />}
+              {activeTab === 'settings' && <BizSettingsTab businessId={businessId} />}
               {activeTab === 'extension' && <ExtensionLink />}
             </>
           )}
@@ -110,7 +118,9 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
             <>
               {activeTab === 'income' && <IncomeTab businessId={businessId} />}
               {activeTab === 'timing' && <TimingTab businessId={businessId} />}
-              {activeTab === 'settings' && <BusinessSettingsTab businessId={businessId} />}
+              {activeTab === 'open-docs' && <OpenDocumentsTab businessId={businessId} />}
+              {activeTab === 'projects' && <BusinessSettingsTab businessId={businessId} />}
+              {activeTab === 'settings' && <BizSettingsTab businessId={businessId} />}
               {activeTab === 'extension' && <ExtensionLink />}
             </>
           )}

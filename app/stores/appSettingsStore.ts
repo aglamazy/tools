@@ -7,11 +7,6 @@ export interface CardTypeIndicatorsSettings {
   indicators: string[]
 }
 
-export interface YpayCredentials {
-  clientId: string
-  clientSecret: string
-}
-
 export type AccountOwners = Record<string, string> // key = "card:1234" or "bank:5678", value = Firebase UID
 
 export interface DriveSyncSettings {
@@ -144,43 +139,6 @@ export const appSettingsStore = {
       }
     } catch (error) {
       console.error('Error setting driveSync settings:', error)
-      throw error
-    }
-  },
-
-  /**
-   * Get YPAY API credentials
-   */
-  getYpayCredentials: async (): Promise<YpayCredentials | null> => {
-    try {
-      const setting = await db.appSettings.where('key').equals('ypayCredentials').first()
-      return setting ? (setting.value as YpayCredentials) : null
-    } catch (error) {
-      console.error('Error getting ypayCredentials:', error)
-      return null
-    }
-  },
-
-  /**
-   * Set YPAY API credentials
-   */
-  setYpayCredentials: async (credentials: YpayCredentials): Promise<void> => {
-    try {
-      const existing = await db.appSettings.where('key').equals('ypayCredentials').first()
-      if (existing) {
-        await db.appSettings.update(existing.id!, {
-          value: credentials,
-          updatedAt: new Date().toISOString(),
-        })
-      } else {
-        await db.appSettings.add({
-          key: 'ypayCredentials',
-          value: credentials,
-          updatedAt: new Date().toISOString(),
-        })
-      }
-    } catch (error) {
-      console.error('Error setting ypayCredentials:', error)
       throw error
     }
   },

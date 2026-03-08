@@ -182,7 +182,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
   const loadExistingDocs = async () => {
     setLoadingDocs(true)
     try {
-      const docs = await ypayService.listDocuments()
+      const docs = await ypayService.listDocuments(business!)
       setYpayDocs(docs)
     } catch (err: any) {
       setError(err.message || 'שגיאה בטעינת מסמכים מ-YPAY')

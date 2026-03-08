@@ -3,7 +3,7 @@
 
 import { appSettingsStore } from '@/app/stores/appSettingsStore'
 
-export type { CardTypeIndicatorsSettings, DriveSyncSettings, YpayCredentials } from '@/app/stores/appSettingsStore'
+export type { CardTypeIndicatorsSettings, DriveSyncSettings } from '@/app/stores/appSettingsStore'
 
 export const getCardTypeIndicators = appSettingsStore.getCardTypeIndicators
 export const setCardTypeIndicators = appSettingsStore.setCardTypeIndicators

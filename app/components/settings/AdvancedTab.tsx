@@ -8,8 +8,6 @@ import {
   getCardTypeIndicators,
   setCardTypeIndicators,
 } from '@/app/services/appSettingsService'
-import { appSettingsStore } from '@/app/stores/appSettingsStore'
-import { ypayService } from '@/app/services/ypayService'
 import {
   clearDirectoryHandle,
   getDirectoryMeta,
@@ -39,52 +37,12 @@ export default function AdvancedTab() {
   const [dirError, setDirError] = useState('')
   const [dirMeta, setDirMeta] = useState<{ name: string; savedAt: string } | null>(null)
   const [alertModal, setAlertModal] = useState<{ isOpen: boolean; message: string }>({ isOpen: false, message: '' })
-  const [ypayClientId, setYpayClientId] = useState('')
-  const [ypayClientSecret, setYpayClientSecret] = useState('')
-  const [ypayStatus, setYpayStatus] = useState<{ type: 'idle' | 'success' | 'error'; message: string }>({ type: 'idle', message: '' })
 
   useEffect(() => {
     loadDatabaseStats()
     loadCardTypeIndicators()
     initDirectoryHandle()
-    loadYpayCredentials()
   }, [])
-
-  const loadYpayCredentials = async () => {
-    const creds = await appSettingsStore.getYpayCredentials()
-    if (creds) {
-      setYpayClientId(creds.clientId)
-      setYpayClientSecret(creds.clientSecret)
-    }
-  }
-
-  const getYpayCreds = () => ({ clientId: ypayClientId.trim(), clientSecret: ypayClientSecret.trim() })
-
-  const saveYpayCredentials = async () => {
-    const creds = getYpayCreds()
-    setYpayClientId(creds.clientId)
-    setYpayClientSecret(creds.clientSecret)
-    await appSettingsStore.setYpayCredentials(creds)
-    ypayService.clearToken()
-    setYpayStatus({ type: 'success', message: 'נשמר' })
-  }
-
-  const testYpayConnection = async () => {
-    const creds = getYpayCreds()
-    setYpayClientId(creds.clientId)
-    setYpayClientSecret(creds.clientSecret)
-    if (!creds.clientId || !creds.clientSecret) {
-      setYpayStatus({ type: 'error', message: 'יש להזין Client ID ו-Secret' })
-      return
-    }
-    setYpayStatus({ type: 'idle', message: 'בודק...' })
-    const result = await ypayService.testConnection(creds)
-    if (result.success) {
-      await appSettingsStore.setYpayCredentials(creds)
-      ypayService.clearToken()
-    }
-    setYpayStatus({ type: result.success ? 'success' : 'error', message: result.message })
-  }
 
   const loadDatabaseStats = async () => {
     try {
@@ -426,50 +384,6 @@ export default function AdvancedTab() {
             עדיין לא הוגדרה תיקייה. בחר תיקייה כדי לדלג על בחירת תיקייה בכל פעם שפותחים קובץ.
           </p>
         )}
-      </section>
-
-      {/* YPAY API Credentials */}
-      <section style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid #e2e8f0', borderRadius: '0.75rem', background: '#faf5ff' }}>
-        <h2 style={{ margin: '0 0 0.5rem', fontSize: '1.05rem' }}>YPAY - חשבוניות</h2>
-        <p style={{ margin: '0 0 0.5rem', color: '#6b21a8', fontSize: '0.9rem' }}>הגדרות חיבור לשירות החשבוניות של YPAY</p>
-        <p style={{ margin: '0 0 1rem', color: '#92400e', fontSize: '0.8rem' }}>
-          שים לב: החיבור ל-YPAY עובר דרך השרת של האפליקציה (בגלל מגבלות CORS). הפרטים לא נשמרים בשרת.
-        </p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <label style={{ minWidth: '90px', fontWeight: 500, fontSize: '0.9rem' }}>Client ID:</label>
-            <input
-              type="text"
-              value={ypayClientId}
-              onChange={(e) => setYpayClientId(e.target.value)}
-              style={{ flex: 1, padding: '0.5rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', fontSize: '0.9rem' }}
-              placeholder="Client ID"
-            />
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <label style={{ minWidth: '90px', fontWeight: 500, fontSize: '0.9rem' }}>Secret:</label>
-            <input
-              type="password"
-              value={ypayClientSecret}
-              onChange={(e) => setYpayClientSecret(e.target.value)}
-              style={{ flex: 1, padding: '0.5rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', fontSize: '0.9rem' }}
-              placeholder="Client Secret"
-            />
-          </div>
-          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-            <button onClick={saveYpayCredentials} className="file-picker" style={{ padding: '0.5rem 1rem', fontSize: '0.875rem' }}>
-              שמור
-            </button>
-            <button onClick={testYpayConnection} className="upload-another-btn" style={{ padding: '0.5rem 1rem', fontSize: '0.875rem' }}>
-              בדוק חיבור
-            </button>
-            {ypayStatus.message && (
-              <span style={{ fontSize: '0.85rem', color: ypayStatus.type === 'success' ? '#16a34a' : ypayStatus.type === 'error' ? '#dc2626' : '#64748b' }}>
-                {ypayStatus.message}
-              </span>
-            )}
-          </div>
-        </div>
       </section>
 
       <Modal isOpen={alertModal.isOpen} onClose={() => setAlertModal({ isOpen: false, message: '' })} maxWidth="400px">

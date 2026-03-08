@@ -102,6 +102,8 @@ export interface Business {
   name: string
   type: BusinessType
   vatType?: 'exempt' | 'authorized'
+  ypayClientId?: string
+  ypayClientSecret?: string
   pinnedToSidebar?: boolean
   createdAt: string
   updatedAt: string
@@ -152,7 +154,11 @@ export interface YpayDocument {
   transactionId: string // Unique reference to the transaction
   url: string // Link to the PDF document
   serialNumber: string // Document serial number from YPAY
-  docType: number // 108 = קבלה, 109 = חשבונית מס קבלה
+  docType: number // 104 = חשבונית עסקה, 108 = קבלה, 109 = חשבונית מס קבלה
+  amount?: number // Document total amount
+  projectName?: string // For business invoices
+  monthName?: string // For business invoices
+  paidAt?: string // ISO timestamp when payment was received
   createdAt: string // ISO timestamp
   updatedAt?: string
 }
@@ -459,6 +465,28 @@ class FinanceDB extends Dexie {
       capitalEntries: '++id, syncId, date, institution, accountNumber, description, assetType, currency, employer, investmentTrack, agent, soldDate, [institution+accountNumber+description], fileId',
       financialInstitutions: '++id, syncId, name, type',
       ypayDocuments: '++id, syncId, &transactionId',
+      students: '++id, syncId, businessId, name, archived',
+      profileQAs: '++id, syncId, businessId, [businessId+answerType]',
+      scoutResults: '++id, syncId, businessId, status, [businessId+status]',
+      scoutConfigs: '++id, syncId, &businessId',
+      taxDocuments: '++id, syncId, businessId, month, year, [businessId+year]',
+    })
+
+    // Define schema version 16 - add docType index to ypayDocuments
+    this.version(16).stores({
+      transactions: '++id, syncId, type, month, accountNumber, cardNumber, date, chargingDate, [type+month], [cardNumber+month], [accountNumber+month], fileId',
+      importedFiles: '++id, syncId, fileName, fileType, processingMonth, [fileType+processingMonth], [cardNumber+processingMonth]',
+      categories: '++id, syncId, name, type',
+      businessCategories: '++id, syncId, &business',
+      tasks: '++id, syncId, createdAt, priority',
+      appSettings: '++id, syncId, &key',
+      businesses: '++id, syncId, &name, type',
+      projects: '++id, syncId, businessId, name, archived',
+      harvestTasks: '++id, syncId, projectId, name, archived',
+      timeEntries: '++id, syncId, taskId, date, startTime, endTime, [taskId+date]',
+      capitalEntries: '++id, syncId, date, institution, accountNumber, description, assetType, currency, employer, investmentTrack, agent, soldDate, [institution+accountNumber+description], fileId',
+      financialInstitutions: '++id, syncId, name, type',
+      ypayDocuments: '++id, syncId, &transactionId, docType',
       students: '++id, syncId, businessId, name, archived',
       profileQAs: '++id, syncId, businessId, [businessId+answerType]',
       scoutResults: '++id, syncId, businessId, status, [businessId+status]',

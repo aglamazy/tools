@@ -15,14 +15,16 @@ type MonthlyCalendarViewProps = {
   weekEntries: WeekEntry[]
   weekTotal: number
   hasYpay: boolean
+  createdInvoices: Record<string, string>
   onExportToExcel: (projectName: string, entries: WeekEntry[]) => void
   onCreateInvoice: (projectName: string, totalHours: number) => void
+  onEmailReport: (projectName: string, entries: WeekEntry[]) => void
   onDayClick: (date: string) => void
 }
 
 export default function MonthlyCalendarView({
   monthOffset, onMonthOffsetChange, weekEntries, weekTotal,
-  hasYpay, onExportToExcel, onCreateInvoice, onDayClick,
+  hasYpay, createdInvoices, onExportToExcel, onCreateInvoice, onEmailReport, onDayClick,
 }: MonthlyCalendarViewProps) {
   return (
     <div style={{ marginBottom: '1rem' }}>
@@ -122,16 +124,37 @@ export default function MonthlyCalendarView({
                           border: 'none', borderRadius: '0.375rem', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 500,
                         }}
                       >📊 Excel</button>
-                      {hasYpay && (
-                        <button
-                          onClick={() => onCreateInvoice(project.projectName, projectTotal)}
-                          title="חשבונית עסקה"
-                          style={{
-                            padding: '0.375rem 0.75rem', background: '#6366f1', color: 'white',
-                            border: 'none', borderRadius: '0.375rem', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 500,
-                          }}
-                        >חשבונית עסקה</button>
-                      )}
+                      {hasYpay && (() => {
+                        const serialNumber = createdInvoices[project.projectName]
+                        return serialNumber ? (
+                          <>
+                            <button
+                              onClick={() => onEmailReport(project.projectName, project.entries)}
+                              title="שלח דוח + חשבונית במייל"
+                              style={{
+                                padding: '0.375rem 0.75rem', background: '#0ea5e9', color: 'white',
+                                border: 'none', borderRadius: '0.375rem', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 500,
+                              }}
+                            >📧 שלח</button>
+                            <span style={{
+                              padding: '0.375rem 0.75rem', background: '#ecfdf5', color: '#059669',
+                              borderRadius: '0.375rem', fontSize: '0.85rem', fontWeight: 600,
+                              border: '1px solid #6ee7b7',
+                            }}>
+                              חשבונית #{serialNumber}
+                            </span>
+                          </>
+                        ) : (
+                          <button
+                            onClick={() => onCreateInvoice(project.projectName, projectTotal)}
+                            title="חשבונית עסקה"
+                            style={{
+                              padding: '0.375rem 0.75rem', background: '#6366f1', color: 'white',
+                              border: 'none', borderRadius: '0.375rem', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 500,
+                            }}
+                          >חשבונית עסקה</button>
+                        )
+                      })()}
                     </div>
                   </div>
                   {/* Calendar Grid */}

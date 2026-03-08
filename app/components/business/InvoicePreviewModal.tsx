@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react'
 import { ypayService } from '@/app/services/ypayService'
+import type { Business } from '@/app/db/financeDB'
 
 export type InvoicePreview = {
   projectName: string
@@ -18,7 +19,9 @@ export type InvoicePreview = {
 
 type InvoicePreviewModalProps = {
   preview: InvoicePreview
+  business: Business
   onClose: () => void
+  onCreated: (serialNumber: string) => void
   onError: (message: string) => void
 }
 
@@ -37,7 +40,7 @@ function PreviewRow({ label, value, highlight }: { label: string; value: string;
   )
 }
 
-export default function InvoicePreviewModal({ preview, onClose, onError }: InvoicePreviewModalProps) {
+export default function InvoicePreviewModal({ preview, business, onClose, onCreated, onError }: InvoicePreviewModalProps) {
   const [creating, setCreating] = useState(false)
 
   const handleCreate = async () => {
@@ -49,7 +52,7 @@ export default function InvoicePreviewModal({ preview, onClose, onError }: Invoi
         businessID: preview.contactBusinessID,
         phone: preview.contactPhone,
       }
-      const result = await ypayService.createBusinessInvoice({
+      const result = await ypayService.createBusinessInvoice(business, {
         projectName: preview.projectName,
         totalHours: preview.totalHours,
         hourlyRate: preview.hourlyRate,
@@ -58,6 +61,7 @@ export default function InvoicePreviewModal({ preview, onClose, onError }: Invoi
         contact,
       })
       window.open(result.url, '_blank')
+      onCreated(result.serialNumber)
       onClose()
     } catch (err: any) {
       onError(err.message || 'שגיאה ביצירת חשבונית עסקה')

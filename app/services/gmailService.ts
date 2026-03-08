@@ -5,13 +5,13 @@
 
 import { getFirebaseAuth } from '@/app/lib/firebase'
 import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth'
+import { tokenStore } from '@/app/stores/tokenStore'
 
 const GMAIL_SCOPES = [
   'https://www.googleapis.com/auth/gmail.modify',
   'https://www.googleapis.com/auth/gmail.settings.basic',
 ]
 const GMAIL_API_BASE = 'https://www.googleapis.com/gmail/v1/users/me'
-const GMAIL_TOKEN_KEY = 'google_gmail_token'
 
 export type GmailMessage = {
   id: string
@@ -23,54 +23,14 @@ export type GmailMessage = {
   unsubscribeUrl: string | null
 }
 
+const GMAIL_TOKEN_KEY = 'google_gmail_token'
+
 // Store the access token in memory (loaded from storage on init)
-let gmailAccessToken: string | null = null
-const TOKEN_LIFETIME_MS = 55 * 60 * 1000 // 55 minutes (Google tokens last 60 min)
-
-function loadTokenFromStorage(): void {
-  if (typeof window === 'undefined') return
-  try {
-    const stored = localStorage.getItem(GMAIL_TOKEN_KEY)
-    if (stored) {
-      const { token, expiresAt } = JSON.parse(stored)
-      if (expiresAt > Date.now()) {
-        gmailAccessToken = token
-      } else {
-        localStorage.removeItem(GMAIL_TOKEN_KEY)
-      }
-    }
-  } catch {
-    localStorage.removeItem(GMAIL_TOKEN_KEY)
-  }
-}
-
-function saveTokenToStorage(token: string): void {
-  if (typeof window === 'undefined') return
-  try {
-    localStorage.setItem(GMAIL_TOKEN_KEY, JSON.stringify({
-      token,
-      expiresAt: Date.now() + TOKEN_LIFETIME_MS,
-    }))
-  } catch {
-    // Ignore storage errors
-  }
-}
-
-function clearTokenFromStorage(): void {
-  if (typeof window === 'undefined') return
-  try {
-    localStorage.removeItem(GMAIL_TOKEN_KEY)
-  } catch {
-    // Ignore storage errors
-  }
-}
-
-// Load token on module init
-loadTokenFromStorage()
+let gmailAccessToken: string | null = tokenStore.load(GMAIL_TOKEN_KEY)
 
 export function hasGmailAccess(): boolean {
   if (!gmailAccessToken) {
-    loadTokenFromStorage()
+    gmailAccessToken = tokenStore.load(GMAIL_TOKEN_KEY)
   }
   return gmailAccessToken !== null
 }
@@ -81,7 +41,7 @@ export function getGmailAccessToken(): string | null {
 
 export function clearGmailAccess(): void {
   gmailAccessToken = null
-  clearTokenFromStorage()
+  tokenStore.clear(GMAIL_TOKEN_KEY)
 }
 
 /**
@@ -104,7 +64,7 @@ export async function requestGmailAccess(): Promise<{ success: boolean; error?: 
     const credential = GoogleAuthProvider.credentialFromResult(result)
     if (credential?.accessToken) {
       gmailAccessToken = credential.accessToken
-      saveTokenToStorage(credential.accessToken)
+      tokenStore.save(GMAIL_TOKEN_KEY, credential.accessToken)
       return { success: true }
     }
 
@@ -151,7 +111,7 @@ export async function fetchInboxMessages(
 
     if (listResponse.status === 401) {
       gmailAccessToken = null
-      clearTokenFromStorage()
+      tokenStore.clear(GMAIL_TOKEN_KEY)
       return { messages: [], error: 'פג תוקף ההרשאה. התחבר מחדש ל-Gmail' }
     }
 
@@ -166,7 +126,7 @@ export async function fetchInboxMessages(
         }
         // Scope not granted — re-auth needed
         gmailAccessToken = null
-        clearTokenFromStorage()
+        tokenStore.clear(GMAIL_TOKEN_KEY)
         return { messages: [], error: 'חסרות הרשאות Gmail. התחבר מחדש כדי לאשר גישה' }
       }
 
@@ -242,7 +202,7 @@ export async function trashMessage(messageId: string): Promise<{ success: boolea
 
     if (response.status === 401) {
       gmailAccessToken = null
-      clearTokenFromStorage()
+      tokenStore.clear(GMAIL_TOKEN_KEY)
       return { success: false, error: 'פג תוקף ההרשאה. התחבר מחדש ל-Gmail' }
     }
 
@@ -276,7 +236,7 @@ export async function fetchMessageBody(
 
     if (response.status === 401) {
       gmailAccessToken = null
-      clearTokenFromStorage()
+      tokenStore.clear(GMAIL_TOKEN_KEY)
       return { body: '', contentType: 'text', error: 'פג תוקף ההרשאה. התחבר מחדש ל-Gmail' }
     }
 
@@ -353,7 +313,7 @@ export async function searchMessages(query: string): Promise<{ messageIds: strin
 
     if (response.status === 401) {
       gmailAccessToken = null
-      clearTokenFromStorage()
+      tokenStore.clear(GMAIL_TOKEN_KEY)
       return { messageIds: [], error: 'פג תוקף ההרשאה. התחבר מחדש ל-Gmail' }
     }
 
@@ -401,7 +361,7 @@ export async function archiveMessages(messageIds: string[], addLabelIds?: string
 
     if (response.status === 401) {
       gmailAccessToken = null
-      clearTokenFromStorage()
+      tokenStore.clear(GMAIL_TOKEN_KEY)
       return { success: false, error: 'פג תוקף ההרשאה. התחבר מחדש ל-Gmail' }
     }
 
@@ -448,7 +408,7 @@ export async function trashMessages(messageIds: string[]): Promise<{ success: bo
 
     if (response.status === 401) {
       gmailAccessToken = null
-      clearTokenFromStorage()
+      tokenStore.clear(GMAIL_TOKEN_KEY)
       return { success: false, error: 'פג תוקף ההרשאה. התחבר מחדש ל-Gmail' }
     }
 
@@ -518,7 +478,7 @@ export async function createFilter(
 
     if (response.status === 401) {
       gmailAccessToken = null
-      clearTokenFromStorage()
+      tokenStore.clear(GMAIL_TOKEN_KEY)
       return { success: false, error: 'פג תוקף ההרשאה. התחבר מחדש ל-Gmail' }
     }
 
@@ -555,7 +515,7 @@ export async function listLabels(): Promise<{ labels: GmailLabel[]; error?: stri
 
     if (response.status === 401) {
       gmailAccessToken = null
-      clearTokenFromStorage()
+      tokenStore.clear(GMAIL_TOKEN_KEY)
       return { labels: [], error: 'פג תוקף ההרשאה. התחבר מחדש ל-Gmail' }
     }
 
@@ -593,7 +553,7 @@ export async function listFilters(): Promise<{ filters: GmailFilter[]; error?: s
 
     if (response.status === 401) {
       gmailAccessToken = null
-      clearTokenFromStorage()
+      tokenStore.clear(GMAIL_TOKEN_KEY)
       return { filters: [], error: 'פג תוקף ההרשאה. התחבר מחדש ל-Gmail' }
     }
 
@@ -634,7 +594,7 @@ export async function deleteFilter(filterId: string): Promise<{ success: boolean
 
     if (response.status === 401) {
       gmailAccessToken = null
-      clearTokenFromStorage()
+      tokenStore.clear(GMAIL_TOKEN_KEY)
       return { success: false, error: 'פג תוקף ההרשאה. התחבר מחדש ל-Gmail' }
     }
 
@@ -649,28 +609,65 @@ export async function deleteFilter(filterId: string): Promise<{ success: boolean
   }
 }
 
+export type EmailAttachment = {
+  filename: string
+  mimeType: string
+  /** Base64-encoded content */
+  base64: string
+}
+
 /**
- * Send an email via Gmail API
+ * Send an email via Gmail API, optionally with attachments
  */
 export async function sendEmail(
   to: string,
   subject: string,
-  htmlBody: string
+  htmlBody: string,
+  attachments?: EmailAttachment[],
 ): Promise<{ success: boolean; error?: string }> {
   if (!gmailAccessToken) {
     return { success: false, error: 'לא מחובר ל-Gmail' }
   }
 
   try {
-    // Build RFC 2822 email
-    const emailLines = [
-      `To: ${to}`,
-      `Subject: =?UTF-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=`,
-      'Content-Type: text/html; charset=UTF-8',
-      '',
-      htmlBody,
-    ]
-    const rawEmail = emailLines.join('\r\n')
+    const boundary = `bndry_${Math.random().toString(36).slice(2)}`
+    const encodedSubject = `=?UTF-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=`
+
+    let rawEmail: string
+    if (attachments && attachments.length > 0) {
+      const parts = [
+        `To: ${to}`,
+        `Subject: ${encodedSubject}`,
+        'MIME-Version: 1.0',
+        `Content-Type: multipart/mixed; boundary="${boundary}"`,
+        '',
+        `--${boundary}`,
+        'Content-Type: text/html; charset=UTF-8',
+        '',
+        htmlBody,
+      ]
+      for (const att of attachments) {
+        parts.push(
+          `--${boundary}`,
+          `Content-Type: ${att.mimeType}; name="${att.filename}"`,
+          'Content-Transfer-Encoding: base64',
+          `Content-Disposition: attachment; filename="${att.filename}"`,
+          '',
+          att.base64,
+        )
+      }
+      parts.push(`--${boundary}--`, '')
+      rawEmail = parts.join('\r\n')
+    } else {
+      rawEmail = [
+        `To: ${to}`,
+        `Subject: ${encodedSubject}`,
+        'Content-Type: text/html; charset=UTF-8',
+        '',
+        htmlBody,
+      ].join('\r\n')
+    }
+
     // URL-safe base64 encode
     const encoded = btoa(unescape(encodeURIComponent(rawEmail)))
       .replace(/\+/g, '-')
@@ -691,7 +688,7 @@ export async function sendEmail(
 
     if (response.status === 401) {
       gmailAccessToken = null
-      clearTokenFromStorage()
+      tokenStore.clear(GMAIL_TOKEN_KEY)
       return { success: false, error: 'פג תוקף ההרשאה. התחבר מחדש ל-Gmail' }
     }
 

@@ -7,10 +7,9 @@ import { harvestTaskStore } from '@/app/stores/harvestTaskStore'
 import { timeEntryStore } from '@/app/stores/timeEntryStore'
 import { timerStore, type ActiveTimer } from '@/app/stores/timerStore'
 import { businessStore } from '@/app/stores/businessStore'
-import { appSettingsStore } from '@/app/stores/appSettingsStore'
-import type { Project, HarvestTask, Business, TimeEntry } from '@/app/db/financeDB'
+import { db, type Project, type HarvestTask, type Business, type TimeEntry } from '@/app/db/financeDB'
 import TimeEntryForm, { type TimeEntryFormData } from './TimeEntryForm'
-import FormModal, { FormField, inputStyle } from '../FormModal'
+import AddTaskModal, { type EditingTask } from './AddTaskModal'
 import Modal from '@/app/components/Modal'
 import DailyView from './DailyView'
 import WeeklyView from './WeeklyView'
@@ -18,8 +17,12 @@ import MonthlyCalendarView from './MonthlyCalendarView'
 import RecentView from './RecentView'
 import TimerSection from './TimerSection'
 import InvoicePreviewModal, { type InvoicePreview } from './InvoicePreviewModal'
-import { exportToExcel } from './excelExport'
-import { type WeekEntry, type ViewMode, VIEW_MODES, calculateProjectSummaries } from './timingTypes'
+import ProjectSummary from './ProjectSummary'
+import ViewModeSelector from './ViewModeSelector'
+import { exportToExcel, generateExcelBase64 } from './excelExport'
+import { hasGmailAccess, requestGmailAccess, sendEmail, type EmailAttachment } from '@/app/services/gmailService'
+import { ypayService } from '@/app/services/ypayService'
+import { type WeekEntry, type ViewMode, VIEW_MODES } from './timingTypes'
 import {
   hasCalendarAccess,
   requestCalendarAccess,
@@ -66,14 +69,27 @@ export default function TimingTab({ businessId }: TimingTabProps) {
   const [viewMode, setViewMode] = useState<ViewMode>(initialViewMode)
   const [selectedDate, setSelectedDate] = useState(initialDate)
   const [monthOffset, setMonthOffset] = useState(initialMonthOffset)
-  const [editingTask, setEditingTask] = useState<HarvestTask | null>(null)
-  const [hasYpay, setHasYpay] = useState(false)
+  const [editingTask, setEditingTask] = useState<EditingTask | null>(null)
   const [invoicePreview, setInvoicePreview] = useState<InvoicePreview | null>(null)
   const [invoiceError, setInvoiceError] = useState<string | null>(null)
+  const [createdInvoices, setCreatedInvoices] = useState<Record<string, string>>({})
+  const hasYpay = !!(business?.ypayClientId && business?.ypayClientSecret)
 
+  // Load existing invoices for the selected month
   useEffect(() => {
-    appSettingsStore.getYpayCredentials().then(creds => setHasYpay(!!creds))
-  }, [])
+    const { monthName } = getMonthDates(monthOffset)
+    db.ypayDocuments
+      .filter(doc => doc.transactionId.startsWith('invoice:') && doc.transactionId.endsWith(`:${monthName}`))
+      .toArray()
+      .then(docs => {
+        const map: Record<string, string> = {}
+        for (const doc of docs) {
+          const projectName = doc.transactionId.replace('invoice:', '').replace(`:${monthName}`, '')
+          map[projectName] = doc.serialNumber
+        }
+        setCreatedInvoices(map)
+      })
+  }, [monthOffset])
 
   function getLastWorkingDay(offset: number): string {
     const now = new Date()
@@ -560,9 +576,6 @@ export default function TimingTab({ businessId }: TimingTabProps) {
       projectId: selectedProjectId,
       name: '',
       hourlyRate: project?.defaultHourlyRate,
-      archived: false,
-      createdAt: '',
-      updatedAt: '',
     })
   }
 
@@ -636,10 +649,8 @@ export default function TimingTab({ businessId }: TimingTabProps) {
 
   const handleCalendarEventClick = (event: CalendarEvent) => {
     // Open the time entry form pre-filled with the calendar event times
-    console.log('[Calendar] Event clicked:', event)
     const startTime = event.startTime && event.startTime.length > 0 ? event.startTime : '09:00'
     const endTime = event.endTime && event.endTime.length > 0 ? event.endTime : '10:00'
-    console.log('[Calendar] Using times:', startTime, '-', endTime)
 
     setEditingEntry(null)
     setFormData({
@@ -658,6 +669,98 @@ export default function TimingTab({ businessId }: TimingTabProps) {
   const handleExportToExcel = (projectName: string, projectEntries: WeekEntry[]) => {
     if (!business) return
     exportToExcel(projectName, projectEntries, monthOffset)
+  }
+
+  const handleEmailReport = async (projectName: string, projectEntries: WeekEntry[]) => {
+    if (!business) return
+    const project = projects.find(p => p.name === projectName)
+    if (!project?.contactEmail) {
+      setInvoiceError('לא הוגדר אימייל איש קשר לפרויקט')
+      return
+    }
+
+    // Ensure Gmail access
+    if (!hasGmailAccess()) {
+      const result = await requestGmailAccess()
+      if (!result.success) {
+        setInvoiceError(result.error || 'לא ניתן להתחבר ל-Gmail')
+        return
+      }
+    }
+
+    const { monthName } = getMonthDates(monthOffset)
+    const attachments: EmailAttachment[] = []
+
+    // Generate Excel attachment
+    const { base64: excelBase64, fileName: excelFileName } = generateExcelBase64(projectName, projectEntries, monthOffset)
+    attachments.push({
+      filename: excelFileName,
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      base64: excelBase64,
+    })
+
+    // Check for invoice document and try to download PDF
+    const invoiceDoc = await db.ypayDocuments
+      .filter(d => d.transactionId === `invoice:${projectName}:${monthName}`)
+      .first()
+
+    let invoicePdfAttached = false
+    if (invoiceDoc?.url) {
+      const pdfResult = await ypayService.downloadPdf(invoiceDoc.url)
+      if (pdfResult.success && pdfResult.base64) {
+        attachments.push({
+          filename: `חשבונית_${invoiceDoc.serialNumber}_${projectName}.pdf`,
+          mimeType: 'application/pdf',
+          base64: pdfResult.base64,
+        })
+        invoicePdfAttached = true
+      }
+    }
+
+    const totalHours = projectEntries.reduce((sum, e) => sum + e.hours, 0)
+    const businessName = business?.name || ''
+    const subject = `${businessName} — דוח שעות ${projectName} — ${monthName}`
+    const invoiceUrl = invoiceDoc?.url?.replace('/document/view/', '/document/pdf/')
+    const html = `
+      <div dir="rtl" style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b;">
+        <div style="background: linear-gradient(135deg, #1e40af, #3b82f6); padding: 1.5rem 2rem; border-radius: 0.75rem 0.75rem 0 0;">
+          <h1 style="margin: 0; color: white; font-size: 1.25rem; font-weight: 600;">${businessName}</h1>
+          <p style="margin: 0.25rem 0 0; color: #bfdbfe; font-size: 0.9rem;">דוח שעות — ${monthName}</p>
+        </div>
+        <div style="border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 0.75rem 0.75rem; padding: 1.5rem 2rem; background: #ffffff;">
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 1rem;">
+            <tr>
+              <td style="padding: 0.5rem 0; color: #64748b; font-size: 0.9rem;">פרויקט</td>
+              <td style="padding: 0.5rem 0; font-weight: 600; font-size: 0.95rem;">${projectName}</td>
+            </tr>
+            <tr>
+              <td style="padding: 0.5rem 0; color: #64748b; font-size: 0.9rem;">סה״כ שעות</td>
+              <td style="padding: 0.5rem 0; font-weight: 700; font-size: 1.1rem; color: #1e40af;">${totalHours.toFixed(2)}</td>
+            </tr>
+            ${invoiceDoc ? `
+            <tr>
+              <td style="padding: 0.5rem 0; color: #64748b; font-size: 0.9rem;">חשבונית עסקה</td>
+              <td style="padding: 0.5rem 0; font-weight: 600;">#${invoiceDoc.serialNumber}${invoicePdfAttached ? ' (מצורפת)' : ` — <a href="${invoiceUrl}" style="color: #2563eb;">צפה בחשבונית</a>`}</td>
+            </tr>` : ''}
+          </table>
+          <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 1rem 0;" />
+          <p style="color: #475569; font-size: 0.9rem; margin: 0;">מצורפים: דוח שעות מפורט${invoicePdfAttached ? ' + חשבונית עסקה' : ''}.</p>
+        </div>
+        <div style="text-align: center; padding: 1rem 0 0.5rem;">
+          <a href="https://aglamazo.com" style="color: #94a3b8; text-decoration: none; font-size: 0.8rem;">
+            <strong style="color: #64748b;">Aglamazo</strong> — הראש השקט של העסק שלך
+          </a>
+        </div>
+      </div>
+    `
+
+    // TODO: remove hardcoded email after testing
+    const result = await sendEmail('yaakov.aglamaz@gmail.com', subject, html, attachments)
+    if (result.success) {
+      setInvoiceError(`המייל נשלח בהצלחה ל-yaakov.aglamaz@gmail.com`)
+    } else {
+      setInvoiceError(result.error || 'שגיאה בשליחת מייל')
+    }
   }
 
   return (
@@ -681,63 +784,8 @@ export default function TimingTab({ businessId }: TimingTabProps) {
         onManualEntry={handleOpenManualEntry}
       />
 
-      {/* View Mode Selector */}
-      <div style={{ marginBottom: '1rem', display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
-        {(['daily', 'weekly', 'monthly', 'recent'] as const).map((mode) => (
-          <button
-            key={mode}
-            onClick={() => handleViewModeChange(mode)}
-            style={{
-              padding: '0.5rem 1rem',
-              background: viewMode === mode ? '#3b82f6' : '#f1f5f9',
-              color: viewMode === mode ? 'white' : '#475569',
-              border: `1px solid ${viewMode === mode ? '#3b82f6' : '#cbd5e1'}`,
-              borderRadius: '0.5rem',
-              cursor: 'pointer',
-              fontSize: '0.9rem',
-              fontWeight: viewMode === mode ? 600 : 400,
-            }}
-          >
-            {mode === 'daily' ? 'יומי' : mode === 'weekly' ? 'שבועי' : mode === 'monthly' ? 'חודשי' : 'אחרונים'}
-          </button>
-        ))}
-      </div>
-
-      {/* Project Summary */}
-      {weekEntries.length > 0 && (
-        <div style={{
-          background: '#fef3c7',
-          border: '1px solid #fbbf24',
-          borderRadius: '0.5rem',
-          padding: '1rem',
-          marginBottom: '1.5rem',
-        }}>
-          <h3 style={{ margin: '0 0 0.75rem 0', fontSize: '0.95rem', fontWeight: 600, color: '#92400e' }}>
-            סיכום לפי פרויקט
-          </h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {calculateProjectSummaries(weekEntries).map(summary => (
-              <div
-                key={summary.projectName}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  padding: '0.5rem 0.75rem',
-                  background: 'white',
-                  borderRadius: '0.375rem',
-                  fontSize: '0.9rem',
-                }}
-              >
-                <span style={{ fontWeight: 500 }}>{summary.projectName}</span>
-                <span style={{ fontWeight: 600, color: '#92400e' }}>
-                  {formatHours(summary.totalHours)}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <ViewModeSelector viewMode={viewMode} onViewModeChange={handleViewModeChange} />
+      <ProjectSummary weekEntries={weekEntries} />
 
       {viewMode === 'daily' && (
         <DailyView
@@ -777,6 +825,8 @@ export default function TimingTab({ businessId }: TimingTabProps) {
           hasYpay={hasYpay}
           onExportToExcel={handleExportToExcel}
           onCreateInvoice={handleCreateInvoice}
+          onEmailReport={handleEmailReport}
+          createdInvoices={createdInvoices}
           onDayClick={(date) => { setSelectedDate(date); setViewMode('daily') }}
         />
       )}
@@ -806,43 +856,20 @@ export default function TimingTab({ businessId }: TimingTabProps) {
         />
       )}
 
-      {/* Add Task Modal */}
-      {editingTask && (
-        <FormModal
-          isOpen={!!editingTask}
-          onClose={() => setEditingTask(null)}
-          onSave={handleSaveNewTask}
-          title="משימה חדשה"
-        >
-          <FormField label="שם">
-            <input
-              type="text"
-              value={editingTask.name}
-              onChange={(e) => setEditingTask({ ...editingTask, name: e.target.value })}
-              placeholder="לדוגמה: פיתוח, עיצוב, ניהול"
-              autoFocus
-              style={inputStyle}
-            />
-          </FormField>
-
-          <FormField label="תעריף שעתי (אופציונלי)">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <input
-                type="number"
-                value={editingTask.hourlyRate || ''}
-                onChange={(e) => setEditingTask({ ...editingTask, hourlyRate: e.target.value ? Number(e.target.value) : undefined })}
-                placeholder="0"
-                style={{ ...inputStyle, flex: 1 }}
-              />
-              <span style={{ color: '#64748b', whiteSpace: 'nowrap' }}>₪ / שעה</span>
-            </div>
-          </FormField>
-        </FormModal>
-      )}
+      <AddTaskModal
+        editingTask={editingTask}
+        onClose={() => setEditingTask(null)}
+        onSave={handleSaveNewTask}
+        onChange={setEditingTask}
+      />
       {invoicePreview && (
         <InvoicePreviewModal
           preview={invoicePreview}
+          business={business!}
           onClose={() => setInvoicePreview(null)}
+          onCreated={(serialNumber) => {
+            setCreatedInvoices(prev => ({ ...prev, [invoicePreview!.projectName]: serialNumber }))
+          }}
           onError={setInvoiceError}
         />
       )}

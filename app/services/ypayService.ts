@@ -1,5 +1,9 @@
-import { appSettingsStore, YpayCredentials } from '@/app/stores/appSettingsStore'
 import { db, type Transaction, type Business } from '@/app/db/financeDB'
+
+export type YpayCredentials = {
+  clientId: string
+  clientSecret: string
+}
 
 export type YpayContact = {
   email: string             // required - used for matching
@@ -55,33 +59,14 @@ export enum YpayCreditCardType {
   Diners = 5,
 }
 
-let cachedToken: { token: string; expiresAt: number } | null = null
+function getCredentials(business: Business): YpayCredentials {
+  if (!business.ypayClientId || !business.ypayClientSecret) {
+    throw new Error('פרטי התחברות YPAY לא הוגדרו לעסק')
+  }
+  return { clientId: business.ypayClientId, clientSecret: business.ypayClientSecret }
+}
 
 export const ypayService = {
-  getAccessToken: async (): Promise<string> => {
-    if (cachedToken && Date.now() < cachedToken.expiresAt - 60000) {
-      return cachedToken.token
-    }
-
-    const credentials = await appSettingsStore.getYpayCredentials()
-    if (!credentials) {
-      throw new Error('YPAY credentials not configured')
-    }
-
-    const response = await fetch('/api/ypay', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(credentials),
-    })
-
-    const data = await response.json()
-    if (!data.success) {
-      throw new Error(data.message)
-    }
-
-    return data.access_token
-  },
-
   testConnection: async (credentials: YpayCredentials): Promise<{ success: boolean; message: string }> => {
     const response = await fetch('/api/ypay', {
       method: 'POST',
@@ -92,10 +77,7 @@ export const ypayService = {
   },
 
   createDocument: async (transaction: Transaction, business: Business, contact: YpayContact): Promise<{ url: string; serialNumber: string }> => {
-    const credentials = await appSettingsStore.getYpayCredentials()
-    if (!credentials) {
-      throw new Error('פרטי התחברות YPAY לא הוגדרו')
-    }
+    const credentials = getCredentials(business)
 
     if (!business.vatType) {
       throw new Error('סוג עוסק לא הוגדר לעסק')
@@ -104,14 +86,12 @@ export const ypayService = {
     // קבלה for exempt, חשבונית מס קבלה for authorized
     const docType = business.vatType === 'exempt' ? YpayDocType.Receipt : YpayDocType.TaxInvoiceReceipt
 
-    // Build document payload
     const items = [{
       description: transaction.description,
       quantity: 1,
       price: transaction.amount,
     }]
 
-    // Payment method: bank transfer as default
     const methods = [{
       type: YpayPaymentMethod.BankTransfer,
       total: transaction.amount,
@@ -136,7 +116,6 @@ export const ypayService = {
       throw new Error(data.message || 'שגיאה ביצירת מסמך')
     }
 
-    // Store document reference in DB
     await db.ypayDocuments.add({
       transactionId: String(transaction.id),
       url: data.url,
@@ -148,7 +127,7 @@ export const ypayService = {
     return { url: data.url, serialNumber: data.serialNumber }
   },
 
-  createBusinessInvoice: async (params: {
+  createBusinessInvoice: async (business: Business, params: {
     projectName: string
     totalHours: number
     hourlyRate: number
@@ -156,10 +135,7 @@ export const ypayService = {
     date: string
     contact?: YpayContact
   }): Promise<{ url: string; serialNumber: string }> => {
-    const credentials = await appSettingsStore.getYpayCredentials()
-    if (!credentials) {
-      throw new Error('פרטי התחברות YPAY לא הוגדרו')
-    }
+    const credentials = getCredentials(business)
 
     const amount = params.totalHours * params.hourlyRate
 
@@ -187,14 +163,22 @@ export const ypayService = {
       throw new Error(data.message || 'שגיאה ביצירת חשבונית עסקה')
     }
 
+    await db.ypayDocuments.add({
+      transactionId: `invoice:${params.projectName}:${params.monthName}`,
+      url: data.url,
+      serialNumber: data.serialNumber,
+      docType: YpayDocType.BusinessInvoice,
+      amount,
+      projectName: params.projectName,
+      monthName: params.monthName,
+      createdAt: new Date().toISOString(),
+    })
+
     return { url: data.url, serialNumber: data.serialNumber }
   },
 
-  listDocuments: async (): Promise<Array<{ serial_number: string; url: string; docType?: number }>> => {
-    const credentials = await appSettingsStore.getYpayCredentials()
-    if (!credentials) {
-      throw new Error('פרטי התחברות YPAY לא הוגדרו')
-    }
+  listDocuments: async (business: Business): Promise<Array<{ serial_number: string; url: string; docType?: number }>> => {
+    const credentials = getCredentials(business)
 
     const response = await fetch('/api/ypay', {
       method: 'POST',
@@ -213,8 +197,17 @@ export const ypayService = {
     return data.documents || []
   },
 
-  clearToken: () => {
-    cachedToken = null
+  downloadPdf: async (pdfUrl: string): Promise<{ success: boolean; base64?: string; error?: string }> => {
+    try {
+      const response = await fetch('/api/ypay/pdf?' + new URLSearchParams({ url: pdfUrl }))
+      const data = await response.json()
+      if (!data.success) {
+        return { success: false, error: data.message || 'שגיאה בהורדת PDF' }
+      }
+      return { success: true, base64: data.base64 }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
   },
 }
 
