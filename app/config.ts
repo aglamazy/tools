@@ -12,6 +12,7 @@ export const routes = {
   cashFlow: '/app/cash-flow',
   budget: '/app/budget',
   todo: '/app/todo',
+  creditCards: '/app/credit-cards',
   futurePayments: '/app/future-payments',
   settings: '/app/settings',
   gmail: '/app/gmail',

@@ -43,6 +43,7 @@ const allModules: Module[] = [
     items: [
       { id: 'cash-flow', title: 'תזרים מזומנים', href: routes.cashFlow, icon: '💰', available: true, requiredTier: UserTier.FREE },
       { id: 'budget', title: 'תקציב', href: routes.budget, icon: '📊', available: true, requiredTier: UserTier.FREE },
+      { id: 'credit-cards', title: 'כרטיסי אשראי', href: routes.creditCards, icon: '💳', available: true, requiredTier: UserTier.FREE },
       { id: 'future-payments', title: 'תחזית תשלומים', href: routes.futurePayments, icon: '💳', available: true, requiredTier: UserTier.PRO },
       { id: 'capital', title: 'הון', href: routes.capital, icon: '💎', available: true, requiredTier: UserTier.PRO },
     ],

@@ -25,10 +25,6 @@ export const metadata: Metadata = {
   title: branding.name,
   description: branding.tagline,
   manifest: '/manifest.json',
-  icons: {
-    icon: '/icons/icon.svg',
-    apple: '/icons/icon.svg',
-  },
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
