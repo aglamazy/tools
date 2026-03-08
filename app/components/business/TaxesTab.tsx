@@ -17,19 +17,21 @@ type HouseholdMember = { uid: string; label: string }
 async function loadHouseholdMembers(): Promise<HouseholdMember[]> {
   const currentUser = getUser()
   const members: HouseholdMember[] = []
-  if (currentUser) {
-    members.push({ uid: currentUser.uid, label: currentUser.email || currentUser.uid })
-  }
   try {
     const info = await getHouseholdInfo()
     if (info.household) {
+      const emails = (info.household as any).memberEmails || {}
+      const names = (info.household as any).memberNames || {}
       for (const uid of info.household.members) {
-        if (!members.find(m => m.uid === uid)) {
-          members.push({ uid, label: uid })
-        }
+        members.push({ uid, label: names[uid] || emails[uid] || uid })
       }
+      return members
     }
   } catch { /* no household */ }
+  // Fallback: just current user
+  if (currentUser) {
+    members.push({ uid: currentUser.uid, label: currentUser.displayName || currentUser.email || currentUser.uid })
+  }
   return members
 }
 

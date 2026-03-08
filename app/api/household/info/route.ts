@@ -51,12 +51,14 @@ export async function POST(request: NextRequest) {
 
     const householdData = householdDoc.data()!
 
-    // Get member emails for display
+    // Get member emails and display names for display
     const memberEmails: Record<string, string> = {}
+    const memberNames: Record<string, string> = {}
     for (const memberId of householdData.members || []) {
       try {
         const memberUser = await auth.getUser(memberId)
         memberEmails[memberId] = memberUser.email || 'לא ידוע'
+        memberNames[memberId] = memberUser.displayName || ''
       } catch {
         memberEmails[memberId] = 'לא ידוע'
       }
@@ -84,6 +86,7 @@ export async function POST(request: NextRequest) {
         ownerId: householdData.ownerId,
         members: householdData.members,
         memberEmails,
+        memberNames,
         createdAt: householdData.createdAt,
       },
       role: householdRole,

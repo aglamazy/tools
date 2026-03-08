@@ -14,6 +14,7 @@ import {
   updatePassword,
   reauthenticateWithCredential,
   EmailAuthProvider,
+  updateProfile,
   type User,
   type Unsubscribe,
 } from 'firebase/auth'
@@ -244,6 +245,29 @@ export async function changePassword(
   } catch (err: any) {
     console.error('[Auth] Change password failed:', err.code, err.message)
     return { success: false, error: getErrorMessage(err.code) }
+  }
+}
+
+/**
+ * Update user display name
+ */
+export async function updateDisplayName(displayName: string): Promise<{ success: boolean; error?: string }> {
+  if (!isFirebaseConfigured()) {
+    return { success: false, error: 'Firebase not configured' }
+  }
+
+  const auth = getFirebaseAuth()
+  const user = auth.currentUser
+  if (!user) {
+    return { success: false, error: 'לא מחובר' }
+  }
+
+  try {
+    await updateProfile(user, { displayName })
+    return { success: true }
+  } catch (err: any) {
+    console.error('[Auth] Update display name failed:', err.code, err.message)
+    return { success: false, error: 'שגיאה בעדכון שם התצוגה' }
   }
 }
 

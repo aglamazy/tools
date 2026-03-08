@@ -8,7 +8,7 @@ import {
   clearCachedAvatar,
   type AuthUser,
 } from '@/app/stores/authStore'
-import { signOut, changePassword } from '@/app/services/firebaseAuthService'
+import { signOut, changePassword, updateDisplayName } from '@/app/services/firebaseAuthService'
 import { isFirebaseConfigured } from '@/app/lib/firebase'
 import { getSyncPassword } from './CloudSyncManager'
 import AuthModal from './AuthModal'
@@ -78,6 +78,11 @@ export default function AuthStatus() {
   const [showAuthModal, setShowAuthModal] = useState(false)
   const [showMenu, setShowMenu] = useState(false)
   const [showChangePassword, setShowChangePassword] = useState(false)
+  const [showEditProfile, setShowEditProfile] = useState(false)
+  const [profileName, setProfileName] = useState('')
+  const [profileError, setProfileError] = useState<string | null>(null)
+  const [profileSaved, setProfileSaved] = useState(false)
+  const [profileLoading, setProfileLoading] = useState(false)
   const [cpCurrent, setCpCurrent] = useState('')
   const [cpNew, setCpNew] = useState('')
   const [cpError, setCpError] = useState<string | null>(null)
@@ -197,6 +202,25 @@ export default function AuthStatus() {
     await signOut()
   }
 
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setProfileError(null)
+    setProfileSaved(false)
+    setProfileLoading(true)
+    try {
+      const result = await updateDisplayName(profileName.trim())
+      if (result.success) {
+        setProfileSaved(true)
+        // Update local user state
+        if (user) setUser({ ...user, displayName: profileName.trim() })
+      } else {
+        setProfileError(result.error || 'שגיאה בעדכון הפרופיל')
+      }
+    } finally {
+      setProfileLoading(false)
+    }
+  }
+
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault()
     setCpError(null)
@@ -266,7 +290,7 @@ export default function AuthStatus() {
             style={{
               position: 'absolute',
               top: '100%',
-              right: 0,
+              left: 0,
               marginTop: '0.5rem',
               background: 'white',
               border: '1px solid #e5e7eb',
@@ -287,8 +311,14 @@ export default function AuthStatus() {
                 whiteSpace: 'nowrap',
               }}
             >
-              {user.email}
+              {user.displayName || user.email}
             </div>
+            <button
+              onClick={() => { setShowMenu(false); setProfileName(user.displayName || ''); setProfileError(null); setProfileSaved(false); setShowEditProfile(true) }}
+              style={{ width: '100%', padding: '0.75rem 1rem', background: 'none', border: 'none', borderBottom: '1px solid #e5e7eb', color: '#374151', fontSize: '0.9rem', cursor: 'pointer', textAlign: 'right' }}
+            >
+              עריכת פרופיל
+            </button>
             <button
               onClick={() => { setShowMenu(false); setShowChangePassword(true); setCpError(null); setCpSuccess(false) }}
               style={{ width: '100%', padding: '0.75rem 1rem', background: 'none', border: 'none', borderBottom: '1px solid #e5e7eb', color: '#374151', fontSize: '0.9rem', cursor: 'pointer', textAlign: 'right' }}
@@ -305,11 +335,45 @@ export default function AuthStatus() {
         </>
       )}
 
+      {/* Edit profile inline panel */}
+      {showEditProfile && (
+        <>
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 99, background: 'rgba(0,0,0,0.3)' }} onClick={() => setShowEditProfile(false)} />
+          <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: '0.5rem', background: 'white', border: '1px solid #e5e7eb', borderRadius: '0.5rem', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)', zIndex: 100, width: '240px', padding: '1rem' }}>
+            <div style={{ fontWeight: 600, marginBottom: '0.75rem', fontSize: '0.9rem' }}>עריכת פרופיל</div>
+            {profileSaved ? (
+              <div style={{ color: '#16a34a', fontSize: '0.875rem', textAlign: 'center', padding: '0.5rem 0' }}>הפרופיל עודכן בהצלחה</div>
+            ) : (
+              <form onSubmit={handleSaveProfile} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                {profileError && <div style={{ color: '#dc2626', fontSize: '0.8rem' }}>{profileError}</div>}
+                <label style={{ fontSize: '0.8rem', color: '#6b7280' }}>שם תצוגה</label>
+                <input
+                  type="text"
+                  placeholder="שם מלא"
+                  value={profileName}
+                  onChange={(e) => setProfileName(e.target.value)}
+                  required
+                  style={{ padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.875rem' }}
+                />
+                <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>{user?.email}</div>
+                <button
+                  type="submit"
+                  disabled={profileLoading}
+                  style={{ padding: '0.5rem', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '0.375rem', fontSize: '0.875rem', cursor: profileLoading ? 'not-allowed' : 'pointer', opacity: profileLoading ? 0.7 : 1 }}
+                >
+                  {profileLoading ? '...' : 'שמור'}
+                </button>
+              </form>
+            )}
+          </div>
+        </>
+      )}
+
       {/* Change password inline panel */}
       {showChangePassword && (
         <>
           <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 99, background: 'rgba(0,0,0,0.3)' }} onClick={() => setShowChangePassword(false)} />
-          <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: '0.5rem', background: 'white', border: '1px solid #e5e7eb', borderRadius: '0.5rem', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)', zIndex: 100, width: '240px', padding: '1rem' }}>
+          <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: '0.5rem', background: 'white', border: '1px solid #e5e7eb', borderRadius: '0.5rem', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)', zIndex: 100, width: '240px', padding: '1rem' }}>
             <div style={{ fontWeight: 600, marginBottom: '0.75rem', fontSize: '0.9rem' }}>שנה סיסמה</div>
             {cpSuccess ? (
               <div style={{ color: '#16a34a', fontSize: '0.875rem', textAlign: 'center', padding: '0.5rem 0' }}>הסיסמה שונתה בהצלחה</div>
