@@ -122,10 +122,52 @@
         fieldData.options = Array.from(el.options).map(o => ({ value: o.value, text: o.text }))
       }
 
+      // For file elements, include accepted types
+      if (type === 'file' && el.accept) {
+        fieldData.accept = el.accept
+      }
+
       fields.push(fieldData)
     }
 
     return { fields }
+  }
+
+  // Fill a file input using DataTransfer API
+  function fillFileField(selector, fileInfo) {
+    const el = document.querySelector(selector)
+    if (!el || el.type !== 'file') {
+      console.warn('[Aglamaz] File field not found or not a file input:', selector)
+      return false
+    }
+
+    try {
+      // Convert data URL to a File object
+      const byteString = atob(fileInfo.dataUrl.split(',')[1])
+      const mimeType = fileInfo.type
+      const ab = new ArrayBuffer(byteString.length)
+      const ia = new Uint8Array(ab)
+      for (let i = 0; i < byteString.length; i++) {
+        ia[i] = byteString.charCodeAt(i)
+      }
+      const blob = new Blob([ab], { type: mimeType })
+      const file = new File([blob], fileInfo.name, { type: mimeType })
+
+      // Use DataTransfer to set the file on the input
+      const dataTransfer = new DataTransfer()
+      dataTransfer.items.add(file)
+      el.files = dataTransfer.files
+
+      // Dispatch events so frameworks detect the change
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+      el.dispatchEvent(new Event('change', { bubbles: true }))
+
+      console.log('[Aglamaz] File attached:', fileInfo.name)
+      return true
+    } catch (err) {
+      console.error('[Aglamaz] Failed to attach file:', err)
+      return false
+    }
   }
 
   // Fill a single field with a value
@@ -187,6 +229,12 @@
         results.push({ selector, success: fillField(selector, value) })
       }
       sendResponse({ results })
+      return true
+    }
+
+    if (message.type === 'FILL_FILE_FIELD') {
+      const success = fillFileField(message.selector, message.file)
+      sendResponse({ success })
       return true
     }
 

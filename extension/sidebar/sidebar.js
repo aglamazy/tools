@@ -167,6 +167,8 @@ let currentFields = [];
 let fieldSuggestions = {};
 // Track original suggestions to detect user edits
 let originalSuggestions = {};
+// Track selected files for file upload fields
+let selectedFiles = {};
 
 // Listen for form field messages from content script
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -262,11 +264,57 @@ function renderFields() {
     card.appendChild(header);
 
     if (field.type === 'file') {
-      const notice = document.createElement('span');
-      notice.style.fontSize = '0.75rem';
-      notice.style.color = '#991b1b';
-      notice.textContent = 'לא נמצא — העלה קובץ';
-      card.appendChild(notice);
+      const fileWrapper = document.createElement('div');
+      fileWrapper.className = 'file-upload-wrapper';
+
+      const fileInput = document.createElement('input');
+      fileInput.type = 'file';
+      fileInput.dataset.fieldId = field.id;
+      fileInput.dataset.selector = field.selector;
+
+      // Determine accepted file types from the form field's accept attribute
+      const acceptAttr = field.accept || '';
+      if (acceptAttr) {
+        fileInput.accept = acceptAttr;
+      } else {
+        // Default: images and mp4 videos
+        fileInput.accept = 'image/*,video/mp4';
+      }
+
+      const fileLabel = document.createElement('label');
+      fileLabel.className = 'file-upload-label';
+      fileLabel.textContent = 'בחר קובץ';
+      fileLabel.appendChild(fileInput);
+
+      const fileName = document.createElement('span');
+      fileName.className = 'file-upload-name';
+      fileName.textContent = 'לא נבחר קובץ';
+
+      fileInput.addEventListener('change', () => {
+        const file = fileInput.files[0];
+        if (file) {
+          fileName.textContent = file.name;
+          // Read file as base64 for transfer to content script
+          const reader = new FileReader();
+          reader.onload = () => {
+            selectedFiles[field.id] = {
+              name: file.name,
+              type: file.type,
+              size: file.size,
+              dataUrl: reader.result,
+              selector: field.selector,
+            };
+          };
+          reader.readAsDataURL(file);
+        } else {
+          fileName.textContent = 'לא נבחר קובץ';
+          delete selectedFiles[field.id];
+        }
+      });
+
+      fileWrapper.appendChild(fileLabel);
+      fileWrapper.appendChild(fileName);
+      card.appendChild(fileWrapper);
     } else if (field.type === 'select' && field.options) {
       const select = document.createElement('select');
       select.dataset.fieldId = field.id;
@@ -326,6 +374,22 @@ fillFormBtn.addEventListener('click', async () => {
     }, (response) => {
       console.log('[Aglamaz] Fill result:', response);
     });
+
+    // Send file uploads separately
+    const fileEntries = Object.values(selectedFiles);
+    for (const fileData of fileEntries) {
+      chrome.tabs.sendMessage(tab.id, {
+        type: 'FILL_FILE_FIELD',
+        selector: fileData.selector,
+        file: {
+          name: fileData.name,
+          type: fileData.type,
+          dataUrl: fileData.dataUrl,
+        },
+      }, (response) => {
+        console.log('[Aglamaz] File fill result:', response);
+      });
+    }
   }
 });
 
