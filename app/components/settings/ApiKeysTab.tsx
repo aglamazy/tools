@@ -92,7 +92,7 @@ export default function ApiKeysTab() {
             {maskKey(claudeApiKey)}
           </div>
           <button
-            onClick={() => setEditing(true)}
+            onClick={() => { setClaudeApiKey(''); setEditing(true) }}
             style={{
               padding: '0.5rem 1rem',
               fontSize: '0.85rem',
@@ -112,7 +112,7 @@ export default function ApiKeysTab() {
           <input
             type="password"
             placeholder="sk-ant-..."
-            value={editing ? '' : claudeApiKey}
+            value={claudeApiKey}
             onChange={e => setClaudeApiKey(e.target.value)}
             style={{
               flex: 1,
