@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { subscribeToAuth } from '@/app/stores/authStore'
+import { userTierStore, UserTier } from '@/app/stores/userTierStore'
 import {
   isCloudBackupAvailable,
   hasEncryptionPasswordSetup,
@@ -66,6 +67,13 @@ export default function CloudSyncManager() {
     const checkAndPromptPassword = async () => {
       // Only prompt once per session
       if (promptedRef.current) return
+
+      // Only run on app pages, not public pages (landing, pricing, etc.)
+      const path = typeof window !== 'undefined' ? window.location.pathname : ''
+      if (!path.startsWith('/app') && !path.startsWith('/business')) return
+
+      // Cloud sync requires a paid tier
+      if (!userTierStore.hasAccess(UserTier.HOME)) return
 
       if (getSyncPassword()) {
         // Already have password - do initial check now
@@ -150,6 +158,9 @@ export default function CloudSyncManager() {
     const doSync = async () => {
       // Prevent concurrent syncs
       if (isSyncingRef.current) return
+
+      // Cloud sync requires a paid tier
+      if (!userTierStore.hasAccess(UserTier.HOME)) return
 
       // Wait for initial restore check to complete
       if (!initialCheckDoneRef.current) return
