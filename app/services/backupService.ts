@@ -19,7 +19,7 @@ import { db } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { timerStore } from '@/app/stores/timerStore'
 import { initializeAppSettings } from '@/app/services/appSettingsService'
-import { GOOGLE_TOKEN_SETTING_KEYS } from '@/app/services/googleTokenService'
+
 
 export interface BackupData {
   version: string
@@ -72,7 +72,7 @@ export async function exportAllStores(): Promise<BackupData> {
       db.categories.toArray(),
       db.businessCategories.toArray(),
       db.tasks.toArray(),
-      db.appSettings.toArray().then(rows => rows.filter(r => !GOOGLE_TOKEN_SETTING_KEYS.includes(r.key) && r.key !== 'claudeApiKey')),
+      db.appSettings.toArray(),
       db.businesses.toArray(),
       db.projects.toArray(),
       db.harvestTasks.toArray(),
@@ -177,21 +177,8 @@ export async function importAllStores(backup: BackupData): Promise<void> {
       await db.tasks.bulkAdd(stores.tasks)
     }
     if (stores.appSettings?.length > 0) {
-      // Preserve local-only keys (API keys, tokens) that are excluded from backup
-      const preserveKeys = [...GOOGLE_TOKEN_SETTING_KEYS, 'claudeApiKey']
-      const localOnly = await db.appSettings
-        .filter(r => preserveKeys.includes(r.key))
-        .toArray()
       await db.appSettings.clear()
       await db.appSettings.bulkAdd(stores.appSettings)
-      // Re-add preserved local-only settings
-      for (const row of localOnly) {
-        const exists = await db.appSettings.where('key').equals(row.key).first()
-        if (!exists) {
-          delete row.id
-          await db.appSettings.add(row)
-        }
-      }
     }
     if (stores.businesses?.length > 0) {
       await db.businesses.clear()
