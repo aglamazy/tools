@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { businessStore } from '@/app/stores/businessStore'
@@ -9,7 +9,7 @@ import { config, routes } from '@/app/config'
 import type { Business } from '@/app/db/financeDB'
 import { BUSINESS_TYPE_CONFIG } from '@/app/types/businessColors'
 
-type Tool = {
+type MenuItem = {
   id: string
   title: string
   href: string
@@ -18,113 +18,71 @@ type Tool = {
   requiredTier: UserTier
 }
 
-const allTools: Tool[] = [
-  // Free features
-  {
-    id: 'import',
-    title: 'ייבוא קבצים',
-    href: routes.import,
-    icon: '📥',
-    available: true,
-    requiredTier: UserTier.FREE,
-  },
-  {
-    id: 'cash-flow',
-    title: 'תזרים מזומנים',
-    href: routes.cashFlow,
-    icon: '💰',
-    available: true,
-    requiredTier: UserTier.FREE,
-  },
-  {
-    id: 'budget',
-    title: 'תקציב',
-    href: routes.budget,
-    icon: '📊',
-    available: true,
-    requiredTier: UserTier.FREE,
-  },
-  {
-    id: 'taxes',
-    title: 'מסים',
-    href: routes.taxes,
-    icon: '🏛️',
-    available: true,
-    requiredTier: UserTier.PRO,
-  },
-  {
-    id: 'todo',
-    title: 'משימות',
-    href: routes.todo,
-    icon: '✓',
-    available: true,
-    requiredTier: UserTier.FREE,
-  },
-  {
-    id: 'future-payments',
-    title: 'תחזית תשלומים',
-    href: routes.futurePayments,
-    icon: '💳',
-    available: true,
-    requiredTier: UserTier.PRO,
-  },
-  {
-    id: 'settings',
-    title: 'הגדרות',
-    href: routes.settings,
-    icon: '⚙️',
-    available: true,
-    requiredTier: UserTier.FREE,
-  },
-  {
-    id: 'about',
-    title: 'אודות',
-    href: routes.about,
-    icon: 'ℹ️',
-    available: true,
-    requiredTier: UserTier.FREE,
-  },
-  {
-    id: 'guide',
-    title: 'מדריך שימוש',
-    href: routes.guide,
-    icon: '📖',
-    available: true,
-    requiredTier: UserTier.FREE,
-  },
+type Module = {
+  id: string
+  label: string
+  icon: string
+  items: MenuItem[]
+  includeBusinesses?: boolean
+}
 
-  // Pro features
+const allModules: Module[] = [
   {
-    id: 'gmail',
-    title: 'Gmail',
-    href: routes.gmail,
-    icon: '📧',
-    available: true,
-    requiredTier: UserTier.PRO,
+    id: 'main',
+    label: 'ראשי',
+    icon: '🏠',
+    items: [
+      { id: 'dashboard', title: 'משק בית', href: routes.dashboard, icon: '🏠', available: true, requiredTier: UserTier.FREE },
+      { id: 'import', title: 'ייבוא קבצים', href: routes.import, icon: '📥', available: true, requiredTier: UserTier.FREE },
+    ],
   },
   {
-    id: 'capital',
-    title: 'הון',
-    href: routes.capital,
-    icon: '💎',
-    available: true,
-    requiredTier: UserTier.PRO,
+    id: 'finance',
+    label: 'כספים',
+    icon: '💰',
+    items: [
+      { id: 'cash-flow', title: 'תזרים מזומנים', href: routes.cashFlow, icon: '💰', available: true, requiredTier: UserTier.FREE },
+      { id: 'budget', title: 'תקציב', href: routes.budget, icon: '📊', available: true, requiredTier: UserTier.FREE },
+      { id: 'future-payments', title: 'תחזית תשלומים', href: routes.futurePayments, icon: '💳', available: true, requiredTier: UserTier.PRO },
+      { id: 'capital', title: 'הון', href: routes.capital, icon: '💎', available: true, requiredTier: UserTier.PRO },
+    ],
   },
   {
-    id: 'dev-db',
-    title: 'Dev DB',
-    href: routes.devDb,
-    icon: '🛠️',
-    available: true,
-    requiredTier: UserTier.PRO,
+    id: 'tax-business',
+    label: 'מסים ועסקים',
+    icon: '🏛️',
+    includeBusinesses: true,
+    items: [
+      { id: 'taxes', title: 'מסים', href: routes.taxes, icon: '🏛️', available: true, requiredTier: UserTier.PRO },
+    ],
   },
   {
-    id: 'admin',
-    title: 'ניהול',
-    href: routes.admin,
-    icon: '👑',
-    available: true,
-    requiredTier: UserTier.OWNER,
+    id: 'tools',
+    label: 'כלים',
+    icon: '✓',
+    items: [
+      { id: 'todo', title: 'משימות', href: routes.todo, icon: '✓', available: true, requiredTier: UserTier.FREE },
+      { id: 'gmail', title: 'Gmail', href: routes.gmail, icon: '📧', available: true, requiredTier: UserTier.PRO },
+    ],
+  },
+  {
+    id: 'system',
+    label: 'מערכת',
+    icon: '⚙️',
+    items: [
+      { id: 'settings', title: 'הגדרות', href: routes.settings, icon: '⚙️', available: true, requiredTier: UserTier.FREE },
+      { id: 'admin', title: 'ניהול', href: routes.admin, icon: '👑', available: true, requiredTier: UserTier.OWNER },
+      { id: 'dev-db', title: 'Dev DB', href: routes.devDb, icon: '🛠️', available: true, requiredTier: UserTier.PRO },
+    ],
+  },
+  {
+    id: 'info',
+    label: 'מידע',
+    icon: 'ℹ️',
+    items: [
+      { id: 'guide', title: 'מדריך שימוש', href: routes.guide, icon: '📖', available: true, requiredTier: UserTier.FREE },
+      { id: 'about', title: 'אודות', href: routes.about, icon: 'ℹ️', available: true, requiredTier: UserTier.FREE },
+    ],
   },
 ]
 
@@ -137,17 +95,31 @@ const tierLabels: Record<UserTier, string> = {
 
 export default function Sidebar() {
   const pathname = usePathname()
-  const [isCollapsed, setIsCollapsed] = useState(false)
+  const [expandedModule, setExpandedModule] = useState<string | null>(null)
   const [pinnedBusinesses, setPinnedBusinesses] = useState<Business[]>([])
   const [userTier, setUserTier] = useState<UserTier>(userTierStore.get())
-  const [upgradePrompt, setUpgradePrompt] = useState<{ tool: Tool } | null>(null)
+  const [upgradePrompt, setUpgradePrompt] = useState<{ item: MenuItem } | null>(null)
 
-  // Hide dev-db unless developer mode is on
-  const tools = config.developerMode ? allTools : allTools.filter(t => t.id !== 'dev-db')
+  // Filter modules based on config and access
+  const modules = useMemo(() => allModules.map(mod => ({
+    ...mod,
+    items: mod.items
+      .filter(item => config.developerMode || item.id !== 'dev-db')
+      .filter(item => item.requiredTier !== UserTier.OWNER || userTierStore.hasAccess(UserTier.OWNER)),
+  })).filter(mod => mod.items.length > 0 || (mod.includeBusinesses && pinnedBusinesses.length > 0)),
+  [pinnedBusinesses, userTier])
 
-  const handleLockedClick = (tool: Tool) => {
-    setUpgradePrompt({ tool })
-  }
+  // Auto-expand module that contains the current route
+  useEffect(() => {
+    const activeModule = modules.find(mod => {
+      if (mod.items.some(item => pathname === item.href)) return true
+      if (mod.includeBusinesses && pathname.startsWith('/business/')) return true
+      return false
+    })
+    if (activeModule) {
+      setExpandedModule(activeModule.id)
+    }
+  }, [pathname, modules])
 
   useEffect(() => {
     const loadPinnedBusinesses = async () => {
@@ -156,11 +128,9 @@ export default function Sidebar() {
     }
     void loadPinnedBusinesses()
 
-    // Listen for pin changes
     const handleRefresh = () => void loadPinnedBusinesses()
     window.addEventListener('sidebar-refresh', handleRefresh)
 
-    // Subscribe to tier changes
     const unsubscribeTier = userTierStore.subscribe((tier) => {
       setUserTier(tier)
     })
@@ -171,83 +141,91 @@ export default function Sidebar() {
     }
   }, [])
 
+  const toggleModule = (moduleId: string) => {
+    setExpandedModule(prev => prev === moduleId ? null : moduleId)
+  }
+
+  const handleLockedClick = (item: MenuItem) => {
+    setUpgradePrompt({ item })
+  }
+
   return (
-    <aside className={`sidebar ${isCollapsed ? 'collapsed' : ''}`}>
+    <aside className="sidebar">
       <nav className="sidebar-nav">
-        <button
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className="sidebar-toggle"
-          aria-label={isCollapsed ? 'הרחב תפריט' : 'צמצם תפריט'}
-        >
-          {isCollapsed ? '◀' : '▶'}
-        </button>
-
-        <ul className="nav-list">
-          {tools.map((tool) => {
-            const hasAccess = userTierStore.hasAccess(tool.requiredTier)
-            const isLocked = !hasAccess
-
-            // Hide admin-only items entirely if user lacks access
-            if (tool.requiredTier === UserTier.OWNER && !hasAccess) return null
+        <ul className="mod-list">
+          {modules.map((mod) => {
+            const isExpanded = expandedModule === mod.id
+            const hasActivePage = mod.items.some(item => pathname === item.href) ||
+              (mod.includeBusinesses && pathname.startsWith('/business/'))
 
             return (
-              <li key={tool.id}>
-                {tool.available && hasAccess ? (
-                  <Link
-                    href={tool.href}
-                    className={`nav-item ${pathname === tool.href ? 'active' : ''}`}
-                    title={isCollapsed ? tool.title : undefined}
-                  >
-                    <span className="nav-icon">{tool.icon}</span>
-                    {!isCollapsed && <span className="nav-title">{tool.title}</span>}
-                  </Link>
-                ) : (
-                  <div
-                    className={`nav-item disabled ${isLocked ? 'locked' : ''}`}
-                    title={isCollapsed ? tool.title : `${tool.title}${isLocked ? ' (נעול)' : ''}`}
-                    onClick={isLocked ? () => handleLockedClick(tool) : undefined}
-                    style={isLocked ? { cursor: 'pointer' } : undefined}
-                  >
-                    <span className="nav-icon">{tool.icon}</span>
-                    {!isCollapsed && (
-                      <>
-                        <span className="nav-title">{tool.title}</span>
-                        {isLocked && <span className="nav-lock">🔒</span>}
-                        {!tool.available && !isLocked && <span className="nav-badge">בקרוב</span>}
-                      </>
-                    )}
-                  </div>
+              <li key={mod.id} className="mod-group">
+                <button
+                  className={`mod-btn ${hasActivePage ? 'mod-active' : ''} ${isExpanded ? 'mod-expanded' : ''}`}
+                  onClick={() => toggleModule(mod.id)}
+                  title={mod.label}
+                >
+                  <span className="mod-icon">{mod.icon}</span>
+                  <span className="mod-label">{mod.label}</span>
+                  <span className={`mod-arrow ${isExpanded ? 'open' : ''}`}>&#9662;</span>
+                </button>
+
+                {isExpanded && (
+                  <ul className="mod-menu">
+                    {mod.items.map((item) => {
+                      const hasAccess = userTierStore.hasAccess(item.requiredTier)
+                      const isLocked = !hasAccess
+                      const isActive = pathname === item.href
+
+                      return (
+                        <li key={item.id}>
+                          {item.available && hasAccess ? (
+                            <Link
+                              href={item.href}
+                              className={`mod-menu-item ${isActive ? 'active' : ''}`}
+                            >
+                              <span className="mod-menu-icon">{item.icon}</span>
+                              <span className="mod-menu-title">{item.title}</span>
+                            </Link>
+                          ) : (
+                            <div
+                              className={`mod-menu-item disabled ${isLocked ? 'locked' : ''}`}
+                              onClick={isLocked ? () => handleLockedClick(item) : undefined}
+                            >
+                              <span className="mod-menu-icon">{item.icon}</span>
+                              <span className="mod-menu-title">{item.title}</span>
+                              {isLocked && <span className="mod-menu-lock">🔒</span>}
+                            </div>
+                          )}
+                        </li>
+                      )
+                    })}
+
+                    {mod.includeBusinesses && userTierStore.hasAccess(UserTier.PRO) && pinnedBusinesses.map((business) => (
+                      <li key={`business-${business.id}`}>
+                        <Link
+                          href={`/business/${business.id}`}
+                          className={`mod-menu-item ${pathname === `/business/${business.id}` ? 'active' : ''}`}
+                        >
+                          <span className="mod-menu-icon">{BUSINESS_TYPE_CONFIG[business.type].icon}</span>
+                          <span className="mod-menu-title">{business.name}</span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
                 )}
               </li>
             )
           })}
-
-          {userTierStore.hasAccess(UserTier.PRO) && pinnedBusinesses.length > 0 && (
-            <>
-              <li style={{ borderTop: '1px solid #e2e8f0', margin: '0.5rem 0' }} />
-              {pinnedBusinesses.map((business) => (
-                <li key={`business-${business.id}`}>
-                  <Link
-                    href={`/business/${business.id}`}
-                    className={`nav-item ${pathname === `/business/${business.id}` ? 'active' : ''}`}
-                    title={isCollapsed ? business.name : undefined}
-                  >
-                    <span className="nav-icon">{BUSINESS_TYPE_CONFIG[business.type].icon}</span>
-                    {!isCollapsed && <span className="nav-title">{business.name}</span>}
-                  </Link>
-                </li>
-              ))}
-            </>
-          )}
         </ul>
       </nav>
 
       {upgradePrompt && (
         <div className="upgrade-modal-overlay" onClick={() => setUpgradePrompt(null)}>
           <div className="upgrade-modal" onClick={(e) => e.stopPropagation()}>
-            <h3>🔒 {upgradePrompt.tool.title}</h3>
+            <h3>🔒 {upgradePrompt.item.title}</h3>
             <p>
-              תכונה זו דורשת מנוי <strong>{tierLabels[upgradePrompt.tool.requiredTier]}</strong>
+              תכונה זו דורשת מנוי <strong>{tierLabels[upgradePrompt.item.requiredTier]}</strong>
             </p>
             <p className="upgrade-modal-current">
               המנוי הנוכחי שלך: {tierLabels[userTier]}
