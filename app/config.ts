@@ -19,6 +19,7 @@ export const routes = {
   taxes: '/app/taxes',
   capital: '/app/capital',
   devDb: '/app/dev-db',
+  profile: '/app/profile',
   admin: '/app/admin',
   businessCategories: '/app/business-categories',
   about: '/about',

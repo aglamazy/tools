@@ -3,6 +3,13 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { signInWithGoogle, signOut, subscribeToAuthState, getIdToken, type AuthUser } from '@/app/services/firebaseAuthService'
 
+interface ProfileEntry {
+  id?: string
+  question: string
+  answer: string | string[]
+  answerType: string
+}
+
 interface FormField {
   id: string
   type: string
@@ -33,6 +40,9 @@ export default function ExtensionSidebarPage() {
   const [filling, setFilling] = useState(false)
   const [saving, setSaving] = useState(false)
   const [feedback, setFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null)
+  const [tab, setTab] = useState<'scan' | 'profile'>('scan')
+  const [profileEntries, setProfileEntries] = useState<ProfileEntry[]>([])
+  const [loadingProfile, setLoadingProfile] = useState(false)
   const pendingResolve = useRef<((fields: FormField[]) => void) | null>(null)
   const fillResolve = useRef<(() => void) | null>(null)
 
@@ -196,6 +206,57 @@ export default function ExtensionSidebarPage() {
     setSaving(false)
   }, [fields, editedValues, suggestions, showFeedback])
 
+  // Fetch profile entries
+  const fetchProfile = useCallback(async () => {
+    setLoadingProfile(true)
+    try {
+      const token = await getIdToken()
+      const res = await fetch('/api/profile-qa', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (res.ok) {
+        const json = await res.json()
+        setProfileEntries(json.data || [])
+      }
+    } catch (err) {
+      console.error('[Sidebar] Fetch profile error:', err)
+    }
+    setLoadingProfile(false)
+  }, [])
+
+  // Load profile when switching to profile tab
+  useEffect(() => {
+    if (tab === 'profile' && user && profileEntries.length === 0) fetchProfile()
+  }, [tab, user, profileEntries.length, fetchProfile])
+
+  const deleteProfileEntry = useCallback(async (id: string) => {
+    try {
+      const token = await getIdToken()
+      await fetch('/api/profile-qa', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ id }),
+      })
+      setProfileEntries(prev => prev.filter(e => e.id !== id))
+    } catch {
+      showFeedback('שגיאה במחיקה', 'error')
+    }
+  }, [showFeedback])
+
+  const updateProfileEntry = useCallback(async (id: string, answer: string) => {
+    try {
+      const token = await getIdToken()
+      await fetch('/api/profile-qa', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ id, answer }),
+      })
+      setProfileEntries(prev => prev.map(e => e.id === id ? { ...e, answer } : e))
+    } catch {
+      showFeedback('שגיאה בעדכון', 'error')
+    }
+  }, [showFeedback])
+
   if (loading) {
     return <div style={containerStyle}><p style={{ color: '#64748b' }}>טוען...</p></div>
   }
@@ -239,10 +300,56 @@ export default function ExtensionSidebarPage() {
         </div>
       </header>
 
-      {/* Scan Button */}
-      <button onClick={scanForm} disabled={scanning || suggesting} style={primaryBtnStyle}>
-        {scanning ? 'סורק...' : suggesting ? 'מחפש התאמות...' : '📋 סרוק טופס'}
-      </button>
+      {/* Tab switcher */}
+      <div style={tabBarStyle}>
+        <button onClick={() => setTab('scan')} style={tab === 'scan' ? activeTabStyle : inactiveTabStyle}>
+          סרוק טופס
+        </button>
+        <button onClick={() => { setTab('profile'); fetchProfile() }} style={tab === 'profile' ? activeTabStyle : inactiveTabStyle}>
+          הפרופיל שלי
+        </button>
+      </div>
+
+      {/* ── Profile Tab ── */}
+      {tab === 'profile' && (
+        <div style={{ marginTop: '0.75rem' }}>
+          {loadingProfile && <p style={{ color: '#64748b', fontSize: '0.8rem' }}>טוען פרופיל...</p>}
+          {!loadingProfile && profileEntries.length === 0 && (
+            <p style={{ color: '#94a3b8', fontSize: '0.8rem', fontStyle: 'italic', textAlign: 'center', marginTop: '2rem' }}>
+              אין עובדות בפרופיל עדיין
+            </p>
+          )}
+          <div style={fieldsListStyle}>
+            {profileEntries.map(entry => (
+              <div key={entry.id} style={cardStyle}>
+                <div style={cardHeaderStyle}>
+                  <span style={{ fontSize: '0.8rem', fontWeight: 500, color: '#475569' }}>{entry.question}</span>
+                  <button
+                    onClick={() => entry.id && deleteProfileEntry(entry.id)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', color: '#94a3b8', padding: '0.125rem 0.25rem' }}
+                    title="מחק"
+                  >✕</button>
+                </div>
+                <input
+                  defaultValue={typeof entry.answer === 'string' ? entry.answer : Array.isArray(entry.answer) ? entry.answer.join(', ') : ''}
+                  onBlur={e => {
+                    const val = e.target.value
+                    if (val !== entry.answer && entry.id) updateProfileEntry(entry.id, val)
+                  }}
+                  style={inputStyle}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Scan Tab ── */}
+      {tab === 'scan' && (
+        <>
+          <button onClick={scanForm} disabled={scanning || suggesting} style={{ ...primaryBtnStyle, marginTop: '0.75rem' }}>
+            {scanning ? 'סורק...' : suggesting ? 'מחפש התאמות...' : '📋 סרוק טופס'}
+          </button>
 
       {/* No fields */}
       {scanned && fields.length === 0 && !scanning && (
@@ -315,6 +422,8 @@ export default function ExtensionSidebarPage() {
               </button>
             </div>
           )}
+        </>
+      )}
         </>
       )}
 
@@ -429,6 +538,38 @@ const cardHeaderStyle: React.CSSProperties = {
   justifyContent: 'space-between',
   alignItems: 'center',
   marginBottom: '0.25rem',
+}
+
+const tabBarStyle: React.CSSProperties = {
+  display: 'flex',
+  gap: '0',
+  borderBottom: '2px solid #e2e8f0',
+}
+
+const activeTabStyle: React.CSSProperties = {
+  flex: 1,
+  padding: '0.5rem',
+  background: 'none',
+  border: 'none',
+  borderBottom: '2px solid #3b82f6',
+  marginBottom: '-2px',
+  fontSize: '0.85rem',
+  fontWeight: 600,
+  color: '#3b82f6',
+  cursor: 'pointer',
+}
+
+const inactiveTabStyle: React.CSSProperties = {
+  flex: 1,
+  padding: '0.5rem',
+  background: 'none',
+  border: 'none',
+  borderBottom: '2px solid transparent',
+  marginBottom: '-2px',
+  fontSize: '0.85rem',
+  fontWeight: 500,
+  color: '#94a3b8',
+  cursor: 'pointer',
 }
 
 const inputStyle: React.CSSProperties = {

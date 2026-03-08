@@ -71,6 +71,7 @@ const allModules: Module[] = [
     label: 'מערכת',
     icon: '⚙️',
     items: [
+      { id: 'profile', title: 'פרופיל', href: routes.profile, icon: '👤', available: true, requiredTier: UserTier.FREE },
       { id: 'settings', title: 'הגדרות', href: routes.settings, icon: '⚙️', available: true, requiredTier: UserTier.FREE },
       { id: 'admin', title: 'ניהול', href: routes.admin, icon: '👑', available: true, requiredTier: UserTier.OWNER },
       { id: 'dev-db', title: 'Dev DB', href: routes.devDb, icon: '🛠️', available: true, requiredTier: UserTier.PRO },
