@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { signInWithGoogle, signOut, subscribeToAuthState, type AuthUser } from '@/app/services/firebaseAuthService'
+import { signInWithGoogle, signOut, subscribeToAuthState, getIdToken, type AuthUser } from '@/app/services/firebaseAuthService'
 
 interface FormField {
   id: string
@@ -15,13 +15,26 @@ interface FormField {
   options?: { value: string; text: string }[]
 }
 
+interface FieldSuggestion {
+  value: string
+  source: 'profile' | 'ai' | 'none'
+}
+
 export default function ExtensionSidebarPage() {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [loading, setLoading] = useState(true)
+  // Form scan state
   const [fields, setFields] = useState<FormField[]>([])
+  const [suggestions, setSuggestions] = useState<Record<string, FieldSuggestion>>({})
+  const [editedValues, setEditedValues] = useState<Record<string, string>>({})
   const [scanning, setScanning] = useState(false)
+  const [suggesting, setSuggesting] = useState(false)
   const [scanned, setScanned] = useState(false)
+  const [filling, setFilling] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [feedback, setFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null)
   const pendingResolve = useRef<((fields: FormField[]) => void) | null>(null)
+  const fillResolve = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     const unsub = subscribeToAuthState((u) => {
@@ -40,14 +53,26 @@ export default function ExtensionSidebarPage() {
         pendingResolve.current(msg.fields || [])
         pendingResolve.current = null
       }
+      if (msg.type === 'FILL_RESULT' && fillResolve.current) {
+        fillResolve.current()
+        fillResolve.current = null
+      }
     }
     window.addEventListener('message', handleMessage)
     return () => window.removeEventListener('message', handleMessage)
   }, [])
 
+  const showFeedback = useCallback((text: string, type: 'success' | 'error') => {
+    setFeedback({ text, type })
+    setTimeout(() => setFeedback(null), 3000)
+  }, [])
+
+  // Scan form fields via bridge
   const scanForm = useCallback(async () => {
     setScanning(true)
     setScanned(false)
+    setSuggestions({})
+    setEditedValues({})
 
     const extractedFields = await new Promise<FormField[]>((resolve) => {
       pendingResolve.current = resolve
@@ -63,7 +88,113 @@ export default function ExtensionSidebarPage() {
     setFields(extractedFields)
     setScanning(false)
     setScanned(true)
+
+    if (extractedFields.length === 0) return
+
+    // Get suggestions from profile + AI
+    setSuggesting(true)
+    try {
+      const token = await getIdToken()
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (token) headers['Authorization'] = `Bearer ${token}`
+
+      // Fetch profile
+      const profileRes = await fetch('/api/profile-qa', { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      const profileData = profileRes.ok ? (await profileRes.json()).data || [] : []
+
+      // Get suggestions
+      const suggestRes = await fetch('/api/form-filler/suggest', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ fields: extractedFields, profileData }),
+      })
+
+      if (suggestRes.ok) {
+        const s = (await suggestRes.json()).suggestions || {}
+        setSuggestions(s)
+        const initial: Record<string, string> = {}
+        for (const f of extractedFields) {
+          initial[f.id] = s[f.id]?.value || ''
+        }
+        setEditedValues(initial)
+      }
+    } catch (err) {
+      console.error('[Sidebar] Suggest error:', err)
+    }
+    setSuggesting(false)
   }, [])
+
+  // Fill form via bridge
+  const fillForm = useCallback(async () => {
+    const toFill = fields
+      .filter(f => editedValues[f.id] && f.type !== 'file')
+      .map(f => ({ selector: f.selector, value: editedValues[f.id] }))
+    if (toFill.length === 0) return
+
+    setFilling(true)
+    await new Promise<void>((resolve) => {
+      fillResolve.current = resolve
+      window.parent.postMessage({ type: 'FILL_FIELDS', fields: toFill }, '*')
+      setTimeout(() => {
+        if (fillResolve.current === resolve) {
+          fillResolve.current = null
+          resolve()
+        }
+      }, 3000)
+    })
+    setFilling(false)
+    showFeedback(`מולאו ${toFill.length} שדות`, 'success')
+  }, [fields, editedValues, showFeedback])
+
+  // Save new/modified answers to profile
+  const saveFacts = useCallback(async () => {
+    const newFacts: { question: string; answer: string; answerType: string }[] = []
+    for (const field of fields) {
+      const val = editedValues[field.id] || ''
+      const orig = suggestions[field.id]?.value || ''
+      if (val && val !== orig) {
+        newFacts.push({
+          question: field.label || field.name || field.id,
+          answer: val,
+          answerType: field.type === 'textarea' ? 'paragraph' : field.type === 'date' ? 'date' : 'word',
+        })
+      }
+    }
+    if (newFacts.length === 0) {
+      showFeedback('אין עובדות חדשות לשמירה', 'error')
+      return
+    }
+
+    setSaving(true)
+    try {
+      const token = await getIdToken()
+      const res = await fetch('/api/profile-qa', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ facts: newFacts }),
+      })
+      if (res.ok) {
+        showFeedback(`נשמרו ${newFacts.length} עובדות חדשות`, 'success')
+        // Update suggestions so they won't be re-saved
+        setSuggestions(prev => {
+          const updated = { ...prev }
+          for (const fact of newFacts) {
+            const f = fields.find(f => (f.label || f.name || f.id) === fact.question)
+            if (f) updated[f.id] = { value: fact.answer, source: 'profile' }
+          }
+          return updated
+        })
+      } else {
+        showFeedback('שגיאה בשמירה', 'error')
+      }
+    } catch {
+      showFeedback('שגיאה בשמירה', 'error')
+    }
+    setSaving(false)
+  }, [fields, editedValues, suggestions, showFeedback])
 
   if (loading) {
     return <div style={containerStyle}><p style={{ color: '#64748b' }}>טוען...</p></div>
@@ -89,8 +220,17 @@ export default function ExtensionSidebarPage() {
     )
   }
 
+  const statusEmoji = (fieldId: string) => {
+    const s = suggestions[fieldId]
+    if (!s) return ''
+    if (s.source === 'profile') return '🟢'
+    if (s.source === 'ai') return '🟡'
+    return '🔴'
+  }
+
   return (
     <div style={{ ...containerStyle, justifyContent: 'flex-start', padding: '1rem' }}>
+      {/* Header */}
       <header style={headerStyle}>
         <h2 style={{ fontSize: '1.25rem', color: '#3b82f6', margin: 0 }}>Aglamaz</h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -99,34 +239,94 @@ export default function ExtensionSidebarPage() {
         </div>
       </header>
 
-      <button onClick={scanForm} disabled={scanning} style={primaryBtnStyle}>
-        {scanning ? 'סורק...' : '📋 סרוק טופס'}
+      {/* Scan Button */}
+      <button onClick={scanForm} disabled={scanning || suggesting} style={primaryBtnStyle}>
+        {scanning ? 'סורק...' : suggesting ? 'מחפש התאמות...' : '📋 סרוק טופס'}
       </button>
 
-      {scanned && fields.length === 0 && (
+      {/* No fields */}
+      {scanned && fields.length === 0 && !scanning && (
         <p style={{ color: '#dc2626', fontSize: '0.85rem', textAlign: 'center', marginTop: '1rem' }}>
           לא נמצאו שדות בדף הנוכחי
         </p>
       )}
 
+      {/* Fields list */}
       {fields.length > 0 && (
-        <div style={{ marginTop: '1rem' }}>
-          <p style={{ fontSize: '0.85rem', color: '#334155', marginBottom: '0.5rem', fontWeight: 500 }}>
-            נמצאו {fields.length} שדות:
+        <>
+          <p style={{ fontSize: '0.85rem', color: '#334155', margin: '0.75rem 0 0.5rem', fontWeight: 500 }}>
+            {fields.length} שדות
+            {suggesting && <span style={{ color: '#64748b', fontWeight: 400 }}> — מנתח...</span>}
           </p>
+
           <div style={fieldsListStyle}>
             {fields.map((field, i) => (
-              <div key={field.id + i} style={cardStyle}>
-                <div style={{ fontSize: '0.8rem', fontWeight: 500, color: '#475569' }}>
-                  {field.label || field.name || field.id}
-                  {field.required && <span style={{ color: '#dc2626' }}> *</span>}
+              <div key={field.id + i} style={field.type === 'file' ? fileCardStyle : cardStyle}>
+                <div style={cardHeaderStyle}>
+                  <span style={{ fontSize: '0.8rem', fontWeight: 500, color: '#475569' }}>
+                    {field.label || field.name || field.id}
+                    {field.required && <span style={{ color: '#dc2626' }}> *</span>}
+                  </span>
+                  <span style={{ fontSize: '0.9rem', flexShrink: 0 }}>{statusEmoji(field.id)}</span>
                 </div>
-                <div style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: '0.125rem' }}>
-                  {field.type}{field.name ? ` · ${field.name}` : ''}
-                </div>
+
+                {field.type === 'file' ? (
+                  <span style={{ fontSize: '0.7rem', color: '#991b1b' }}>העלה קובץ ידנית</span>
+                ) : field.type === 'select' && field.options ? (
+                  <select
+                    value={editedValues[field.id] || ''}
+                    onChange={e => setEditedValues(prev => ({ ...prev, [field.id]: e.target.value }))}
+                    style={inputStyle}
+                  >
+                    <option value="">—</option>
+                    {field.options.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.text}</option>
+                    ))}
+                  </select>
+                ) : field.type === 'textarea' ? (
+                  <textarea
+                    value={editedValues[field.id] || ''}
+                    onChange={e => setEditedValues(prev => ({ ...prev, [field.id]: e.target.value }))}
+                    placeholder={field.placeholder || field.label || ''}
+                    rows={2}
+                    style={{ ...inputStyle, resize: 'vertical', minHeight: '2.5rem', fontFamily: 'inherit' }}
+                  />
+                ) : (
+                  <input
+                    type={field.type === 'date' ? 'date' : 'text'}
+                    value={editedValues[field.id] || ''}
+                    onChange={e => setEditedValues(prev => ({ ...prev, [field.id]: e.target.value }))}
+                    placeholder={field.placeholder || field.label || ''}
+                    style={inputStyle}
+                  />
+                )}
               </div>
             ))}
           </div>
+
+          {/* Action buttons */}
+          {!suggesting && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.75rem' }}>
+              <button onClick={fillForm} disabled={filling} style={primaryBtnStyle}>
+                {filling ? 'ממלא...' : 'מלא טופס ►'}
+              </button>
+              <button onClick={saveFacts} disabled={saving} style={secondaryBtnStyle}>
+                {saving ? 'שומר...' : 'שמור עובדות חדשות'}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Feedback toast */}
+      {feedback && (
+        <div style={{
+          position: 'fixed', bottom: '1rem', left: '1rem', right: '1rem',
+          padding: '0.5rem', borderRadius: '0.375rem', fontSize: '0.8rem', textAlign: 'center',
+          background: feedback.type === 'success' ? '#f0fdf4' : '#fef2f2',
+          color: feedback.type === 'success' ? '#166534' : '#dc2626',
+        }}>
+          {feedback.text}
         </div>
       )}
     </div>
@@ -180,6 +380,18 @@ const primaryBtnStyle: React.CSSProperties = {
   cursor: 'pointer',
 }
 
+const secondaryBtnStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '0.625rem 1.25rem',
+  background: '#f1f5f9',
+  color: '#475569',
+  border: '1px solid #cbd5e1',
+  borderRadius: '0.375rem',
+  fontSize: '0.875rem',
+  fontWeight: 500,
+  cursor: 'pointer',
+}
+
 const smallBtnStyle: React.CSSProperties = {
   padding: '0.25rem 0.5rem',
   background: '#e2e8f0',
@@ -194,7 +406,7 @@ const fieldsListStyle: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   gap: '0.375rem',
-  maxHeight: 'calc(100vh - 200px)',
+  maxHeight: 'calc(100vh - 260px)',
   overflowY: 'auto',
 }
 
@@ -203,4 +415,29 @@ const cardStyle: React.CSSProperties = {
   border: '1px solid #e2e8f0',
   borderRadius: '0.375rem',
   padding: '0.5rem 0.625rem',
+}
+
+const fileCardStyle: React.CSSProperties = {
+  background: '#fef2f2',
+  border: '1px solid #fecaca',
+  borderRadius: '0.375rem',
+  padding: '0.5rem 0.625rem',
+}
+
+const cardHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  marginBottom: '0.25rem',
+}
+
+const inputStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '0.4rem 0.5rem',
+  border: '1px solid #cbd5e1',
+  borderRadius: '0.25rem',
+  fontSize: '0.8rem',
+  outline: 'none',
+  direction: 'rtl',
+  boxSizing: 'border-box',
 }

@@ -55,7 +55,9 @@ Rules:
 - source "none" = no data available (file uploads, or truly unknown)
 - Answer in the same language as the form labels (usually Hebrew)
 - Keep answers appropriate for the field type (short for text inputs, longer for textareas)
-- For date fields, use YYYY-MM-DD format`
+- For date fields, look at the placeholder or format hint in the field (e.g. "TT.MM.JJJJ" means dd.mm.yyyy, "mm/dd/yyyy" means US format). Output the date in the format the form expects. If no hint, use YYYY-MM-DD.
+- The user's profile may store dates in d/m/yy format (e.g. "5/3/90" = March 5, 1990). Convert to the form's expected format.
+- The form may be in any language. Match fields to profile semantically regardless of language.`
 
 export async function POST(request: NextRequest) {
   try {
