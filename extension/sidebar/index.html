@@ -8,72 +8,7 @@
   </style>
 </head>
 <body>
-  <div id="app">
-    <!-- Login Screen -->
-    <div id="login-screen" class="screen">
-      <div class="logo-section">
-        <h1>Aglamaz</h1>
-        <p>עוזר למילוי טפסים</p>
-      </div>
-      <form id="login-form">
-        <div class="form-group">
-          <label for="email">אימייל</label>
-          <input type="email" id="email" required placeholder="example@email.com" dir="ltr">
-        </div>
-        <div class="form-group">
-          <label for="password">סיסמה</label>
-          <input type="password" id="password" required placeholder="סיסמה">
-        </div>
-        <button type="submit" id="login-btn" class="btn btn-primary">התחבר</button>
-        <div id="login-error" class="error-message" style="display:none"></div>
-      </form>
-    </div>
-
-    <!-- Main Screen (logged in) -->
-    <div id="main-screen" class="screen" style="display:none">
-      <header class="main-header">
-        <h2>Aglamaz</h2>
-        <button id="logout-btn" class="btn btn-small">התנתק</button>
-      </header>
-      <div class="user-info">
-        <span id="user-email"></span>
-      </div>
-      <div id="content-area" class="content-area">
-        <!-- Form Filler Section -->
-        <div id="form-filler-section" style="display:none">
-          <div class="form-filler-header">
-            <h3>📋 עוזר מילוי טפסים</h3>
-            <span id="field-count" class="field-count"></span>
-          </div>
-          <div id="form-filler-loading" class="form-filler-loading" style="display:none">
-            <span>מנתח שדות...</span>
-          </div>
-          <div id="fields-list" class="fields-list"></div>
-          <div class="form-filler-actions">
-            <button id="save-facts-btn" class="btn btn-secondary" style="display:none">שמור עובדות חדשות</button>
-            <button id="fill-form-btn" class="btn btn-primary" style="display:none">מלא טופס ►</button>
-          </div>
-          <div id="save-feedback" class="save-feedback" style="display:none"></div>
-        </div>
-        <!-- No form detected -->
-        <div id="no-form-section">
-          <p class="placeholder-text">לא זוהה טופס בדף הנוכחי</p>
-          <button id="demo-btn" class="btn btn-primary" style="margin-top:1rem">דמו — פתח טופס לדוגמה</button>
-        </div>
-      </div>
-      <div id="update-banner" class="update-banner" style="display:none">
-        <span>גרסה חדשה זמינה!</span>
-        <a href="https://tools.aglamaz.com/extension" target="_blank">עדכן עכשיו</a>
-      </div>
-    </div>
-
-    <!-- Status Bar -->
-    <footer class="status-bar">
-      <span id="connection-status" class="status-dot connected"></span>
-      <span id="version-display"></span>
-    </footer>
-  </div>
-
-  <script src="sidebar.js"></script>
+  <iframe id="sidebar-frame" src="http://localhost:3100/extension/sidebar"></iframe>
+  <script src="bridge.js"></script>
 </body>
 </html>

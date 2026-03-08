@@ -48,19 +48,44 @@
     const parentLabel = el.closest('label')
     if (parentLabel) {
       const clone = parentLabel.cloneNode(true)
-      // Remove the input itself from clone to get label text only
       const inputs = clone.querySelectorAll('input, textarea, select')
       inputs.forEach(i => i.remove())
       const text = clone.textContent.trim()
       if (text) return text
     }
-    // 3. Previous sibling or aria-label
+    // 3. aria-label / aria-labelledby
     if (el.getAttribute('aria-label')) return el.getAttribute('aria-label')
     if (el.getAttribute('aria-labelledby')) {
       const labelEl = document.getElementById(el.getAttribute('aria-labelledby'))
       if (labelEl) return labelEl.textContent.trim()
     }
-    // 4. Placeholder as fallback
+    // 4. title attribute
+    if (el.title) return el.title
+    // 5. Table layout: previous <td> or <th> in the same <tr>
+    const parentTd = el.closest('td')
+    if (parentTd) {
+      const prevTd = parentTd.previousElementSibling
+      if (prevTd && (prevTd.tagName === 'TD' || prevTd.tagName === 'TH')) {
+        const text = prevTd.textContent.trim()
+        if (text) return text
+      }
+      // Also check <th> in the same row
+      const tr = parentTd.closest('tr')
+      if (tr) {
+        const th = tr.querySelector('th')
+        if (th) {
+          const text = th.textContent.trim()
+          if (text) return text
+        }
+      }
+    }
+    // 6. Previous sibling element with text
+    let prev = el.previousElementSibling
+    if (!prev && el.parentElement) prev = el.parentElement.previousElementSibling
+    if (prev && prev.textContent.trim() && !prev.querySelector('input, textarea, select')) {
+      return prev.textContent.trim()
+    }
+    // 7. Placeholder as fallback
     return el.placeholder || el.name || ''
   }
 
