@@ -6,7 +6,9 @@ import { subjectStore } from '@/app/stores/subjectStore'
 import { businessStore } from '@/app/stores/businessStore'
 import { projectStore } from '@/app/stores/projectStore'
 import { ypayService, YpayDocType } from '@/app/services/ypayService'
+import { hasGmailAccess, requestGmailAccess, sendEmail, type EmailAttachment } from '@/app/services/gmailService'
 import ProjectEditModal from './ProjectEditModal'
+import Modal from '@/app/components/Modal'
 import type { Category } from '@/app/types/category'
 
 type IncomeTabProps = {
@@ -34,6 +36,8 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
   const [loadingDocs, setLoadingDocs] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [lastCreatedUrl, setLastCreatedUrl] = useState<string | null>(null)
+  const [sendingDoc, setSendingDoc] = useState<number | null>(null)
+  const [statusMessage, setStatusMessage] = useState<string | null>(null)
 
   useEffect(() => {
     loadBusiness()
@@ -211,6 +215,83 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     }
   }
 
+  const handleSendReceipt = async (transaction: TransactionWithDoc) => {
+    if (!business || !transaction.ypayDoc) return
+
+    // Ensure Gmail access
+    if (!hasGmailAccess()) {
+      const result = await requestGmailAccess()
+      if (!result.success) {
+        setStatusMessage(result.error || 'לא ניתן להתחבר ל-Gmail')
+        return
+      }
+    }
+
+    setSendingDoc(transaction.id!)
+    try {
+      const attachments: EmailAttachment[] = []
+
+      // Download PDF
+      if (transaction.ypayDoc.url) {
+        const pdfResult = await ypayService.downloadPdf(transaction.ypayDoc.url)
+        if (pdfResult.success && pdfResult.base64) {
+          const docTypeLabel = business.vatType === 'authorized' ? 'חשבונית_מס_קבלה' : 'קבלה'
+          attachments.push({
+            filename: `${docTypeLabel}_${transaction.ypayDoc.serialNumber}.pdf`,
+            mimeType: 'application/pdf',
+            base64: pdfResult.base64,
+          })
+        }
+      }
+
+      const docTypeLabel = business.vatType === 'authorized' ? 'חשבונית מס קבלה' : 'קבלה'
+      const subject = `${business.name} — ${docTypeLabel} #${transaction.ypayDoc.serialNumber}`
+      const html = `
+        <div dir="rtl" style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b;">
+          <div style="background: linear-gradient(135deg, #059669, #10b981); padding: 1.5rem 2rem; border-radius: 0.75rem 0.75rem 0 0;">
+            <h1 style="margin: 0; color: white; font-size: 1.25rem; font-weight: 600;">${business.name}</h1>
+            <p style="margin: 0.25rem 0 0; color: #a7f3d0; font-size: 0.9rem;">${docTypeLabel} #${transaction.ypayDoc.serialNumber}</p>
+          </div>
+          <div style="border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 0.75rem 0.75rem; padding: 1.5rem 2rem; background: #ffffff;">
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 1rem;">
+              <tr>
+                <td style="padding: 0.5rem 0; color: #64748b; font-size: 0.9rem;">תאריך</td>
+                <td style="padding: 0.5rem 0; font-weight: 600;">${transaction.date}</td>
+              </tr>
+              <tr>
+                <td style="padding: 0.5rem 0; color: #64748b; font-size: 0.9rem;">תיאור</td>
+                <td style="padding: 0.5rem 0; font-weight: 600;">${transaction.description}</td>
+              </tr>
+              <tr>
+                <td style="padding: 0.5rem 0; color: #64748b; font-size: 0.9rem;">סכום</td>
+                <td style="padding: 0.5rem 0; font-weight: 700; font-size: 1.1rem; color: #059669;">₪${transaction.amount.toLocaleString()}</td>
+              </tr>
+            </table>
+            <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 1rem 0;" />
+            <p style="color: #475569; font-size: 0.9rem; margin: 0;">מצורף: ${docTypeLabel}${attachments.length > 0 ? '' : ` — <a href="${transaction.ypayDoc.url}" style="color: #059669;">צפה במסמך</a>`}.</p>
+          </div>
+          <div style="text-align: center; padding: 1rem 0 0.5rem;">
+            <a href="https://aglamazo.com" style="color: #94a3b8; text-decoration: none; font-size: 0.8rem;">
+              <strong style="color: #64748b;">Aglamazo</strong> — הראש השקט של העסק שלך
+            </a>
+          </div>
+        </div>
+      `
+
+      // TODO: remove hardcoded email after testing
+      const result = await sendEmail('yaakov.aglamaz@gmail.com', subject, html, attachments)
+      if (result.success) {
+        setStatusMessage('המסמך נשלח בהצלחה')
+      } else {
+        setStatusMessage(result.error || 'שגיאה בשליחת מייל')
+      }
+    } catch (err: any) {
+      setStatusMessage(err.message || 'שגיאה בשליחת מייל')
+    } finally {
+      setSendingDoc(null)
+    }
+  }
+
   const getMonthTotal = () => {
     return transactions.reduce((sum, t) => sum + t.amount, 0)
   }
@@ -308,14 +389,27 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
                   </td>
                   <td style={{ padding: '0.6rem 0.5rem', textAlign: 'center' }}>
                     {t.ypayDoc ? (
-                      <a
-                        href={t.ypayDoc.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ color: '#10b981', textDecoration: 'none', fontWeight: 500 }}
-                      >
-                        {t.ypayDoc.serialNumber}
-                      </a>
+                      <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', justifyContent: 'center' }}>
+                        <a
+                          href={t.ypayDoc.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ color: '#10b981', textDecoration: 'none', fontWeight: 500 }}
+                        >
+                          {t.ypayDoc.serialNumber}
+                        </a>
+                        <button
+                          onClick={() => void handleSendReceipt(t)}
+                          disabled={sendingDoc === t.id}
+                          title="שלח ללקוח"
+                          style={{
+                            padding: '0.2rem 0.5rem', fontSize: '0.75rem',
+                            background: sendingDoc === t.id ? '#f1f5f9' : '#0ea5e9', color: sendingDoc === t.id ? '#64748b' : 'white',
+                            border: 'none', borderRadius: '0.25rem',
+                            cursor: sendingDoc === t.id ? 'wait' : 'pointer',
+                          }}
+                        >{sendingDoc === t.id ? '...' : '📧'}</button>
+                      </div>
                     ) : linkingDoc === t.id ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', minWidth: '200px' }}>
                         <input
@@ -432,6 +526,13 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
         onClose={() => setEditingProjectContact(null)}
         onSave={handleSaveProjectContact}
       />
+
+      <Modal isOpen={!!statusMessage} onClose={() => setStatusMessage(null)} maxWidth="400px">
+        <div style={{ textAlign: 'center', padding: '1.5rem', direction: 'rtl' }}>
+          <p style={{ fontSize: '1.05rem', margin: '0 0 1.25rem' }}>{statusMessage}</p>
+          <button onClick={() => setStatusMessage(null)} className="file-picker"><span>אישור</span></button>
+        </div>
+      </Modal>
     </div>
   )
 }
