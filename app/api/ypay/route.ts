@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
     if (action === 'createDocument') {
       const { docType, items, methods, contact } = body
 
-      if (!docType || !items || !methods) {
+      if (!docType || !items) {
         return NextResponse.json({ success: false, message: 'חסרים פרטי מסמך' })
       }
 
@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
         body: JSON.stringify({
           docType,
           items,
-          methods,
+          ...(methods ? { methods } : {}),
           ...(contact ? { contact } : {}),
         }),
       })

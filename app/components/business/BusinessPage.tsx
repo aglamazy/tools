@@ -18,14 +18,14 @@ import ExtensionLink from './ExtensionLink'
 const TABS: TabItem[] = [
   { id: 'income', label: 'הכנסות', icon: '💰' },
   { id: 'timing', label: 'תיעוד זמן', icon: '⏱️' },
-  { id: 'settings', label: 'הגדרות', icon: '⚙️' },
+  { id: 'settings', label: 'פרויקטים', icon: '📂' },
   { id: 'extension', label: 'תוסף', icon: '🧩' },
 ]
 
 const TEACHER_TABS: TabItem[] = [
   { id: 'students', label: 'תלמידים', icon: '👨‍🎓' },
   { id: 'accounting', label: 'חשבונאות חודשית', icon: '📊' },
-  { id: 'settings', label: 'הגדרות', icon: '⚙️' },
+  { id: 'settings', label: 'פרויקטים', icon: '📂' },
   { id: 'extension', label: 'תוסף', icon: '🧩' },
 ]
 
@@ -33,7 +33,7 @@ const ARTIST_TABS: TabItem[] = [
   { id: 'profile', label: 'פרופיל', icon: '📋' },
   { id: 'auditions', label: 'אודישנים', icon: '🔍' },
   { id: 'income', label: 'הכנסות', icon: '💰' },
-  { id: 'settings', label: 'הגדרות', icon: '⚙️' },
+  { id: 'settings', label: 'פרויקטים', icon: '📂' },
   { id: 'extension', label: 'תוסף', icon: '🧩' },
 ]
 

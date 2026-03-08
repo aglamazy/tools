@@ -34,6 +34,8 @@ export default [
           message: "Use custom Modal component from @/app/components/Modal instead of native prompt(). If you really need native prompt (e.g., in development/debugging), add: // eslint-disable-next-line no-restricted-globals"
         }
       ],
+      // Limit file length
+      "max-lines": ["error", { max: 850, skipBlankLines: true, skipComments: true }],
       // Enforce localStorage access only through store classes
       "no-restricted-syntax": [
         "error",

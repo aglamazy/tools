@@ -1,6 +1,6 @@
 'use client'
 
-import React, { Suspense, useEffect, useState } from 'react'
+import React, { Suspense, useState, useCallback } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 
 export type TabItem = {
@@ -34,19 +34,12 @@ function SettingsTabsContent({ tabs, defaultTab, children }: SettingsTabsProps) 
 
   const [activeTab, setActiveTab] = useState(initialTab)
 
-  useEffect(() => {
-    const tabParam = searchParams.get('tab')
-    if (tabParam && tabParam !== activeTab && tabs.some((t) => t.id === tabParam)) {
-      setActiveTab(tabParam)
-    }
-  }, [searchParams, tabs, activeTab])
-
-  const handleTabChange = (tabId: string) => {
+  const handleTabChange = useCallback((tabId: string) => {
     setActiveTab(tabId)
-    const params = new URLSearchParams(Array.from(searchParams.entries()))
+    const params = new URLSearchParams(window.location.search)
     params.set('tab', tabId)
-    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
-  }
+    window.history.replaceState(null, '', `${pathname}?${params.toString()}`)
+  }, [pathname])
 
   const tabStyle = (tabId: string) => ({
     padding: '0.75rem 1.5rem',

@@ -148,6 +148,48 @@ export const ypayService = {
     return { url: data.url, serialNumber: data.serialNumber }
   },
 
+  createBusinessInvoice: async (params: {
+    projectName: string
+    totalHours: number
+    hourlyRate: number
+    monthName: string
+    date: string
+    contact?: YpayContact
+  }): Promise<{ url: string; serialNumber: string }> => {
+    const credentials = await appSettingsStore.getYpayCredentials()
+    if (!credentials) {
+      throw new Error('פרטי התחברות YPAY לא הוגדרו')
+    }
+
+    const amount = params.totalHours * params.hourlyRate
+
+    const items = [{
+      description: `${params.projectName} - ${params.monthName} (${params.totalHours.toFixed(2)} שעות × ${params.hourlyRate} ₪)`,
+      quantity: 1,
+      price: amount,
+    }]
+
+    const response = await fetch('/api/ypay', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...credentials,
+        action: 'createDocument',
+        docType: YpayDocType.BusinessInvoice,
+        items,
+        date: params.date,
+        ...(params.contact ? { contact: params.contact } : {}),
+      }),
+    })
+
+    const data = await response.json()
+    if (!data.success) {
+      throw new Error(data.message || 'שגיאה ביצירת חשבונית עסקה')
+    }
+
+    return { url: data.url, serialNumber: data.serialNumber }
+  },
+
   listDocuments: async (): Promise<Array<{ serial_number: string; url: string; docType?: number }>> => {
     const credentials = await appSettingsStore.getYpayCredentials()
     if (!credentials) {

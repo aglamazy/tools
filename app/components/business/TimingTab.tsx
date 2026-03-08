@@ -7,64 +7,36 @@ import { harvestTaskStore } from '@/app/stores/harvestTaskStore'
 import { timeEntryStore } from '@/app/stores/timeEntryStore'
 import { timerStore, type ActiveTimer } from '@/app/stores/timerStore'
 import { businessStore } from '@/app/stores/businessStore'
-import type { Project, HarvestTask, TimeEntry, Business } from '@/app/db/financeDB'
+import { appSettingsStore } from '@/app/stores/appSettingsStore'
+import type { Project, HarvestTask, Business, TimeEntry } from '@/app/db/financeDB'
 import TimeEntryForm, { type TimeEntryFormData } from './TimeEntryForm'
 import FormModal, { FormField, inputStyle } from '../FormModal'
-import HoursBar from './HoursBar'
-import CalendarColumn from './CalendarColumn'
+import Modal from '@/app/components/Modal'
+import DailyView from './DailyView'
+import WeeklyView from './WeeklyView'
+import MonthlyCalendarView from './MonthlyCalendarView'
+import RecentView from './RecentView'
+import TimerSection from './TimerSection'
+import InvoicePreviewModal, { type InvoicePreview } from './InvoicePreviewModal'
+import { exportToExcel } from './excelExport'
+import { type WeekEntry, type ViewMode, VIEW_MODES, calculateProjectSummaries } from './timingTypes'
 import {
   hasCalendarAccess,
   requestCalendarAccess,
   fetchCalendarEvents,
   type CalendarEvent,
 } from '@/app/services/googleCalendarService'
-import * as XLSX from 'xlsx'
 import {
   formatLocalDate,
-  formatDisplayDate,
-  getDayName,
-  adjustDate,
-  formatTime,
   formatHours,
+  adjustDate,
   getWeekDates,
-  formatWeekRange,
   getMonthDates,
-  getCalendarDays,
-  DAY_NAMES_HE,
 } from '@/app/lib/dateUtils'
 
 type TimingTabProps = {
   businessId: number
 }
-
-type WeekEntry = TimeEntry & {
-  projectName: string
-  taskName: string
-  projectColor: string
-}
-
-type ProjectSummary = {
-  projectName: string
-  totalHours: number
-}
-
-
-function calculateProjectSummaries(entries: WeekEntry[]): ProjectSummary[] {
-  const projectMap = new Map<string, number>()
-
-  entries.forEach(entry => {
-    const current = projectMap.get(entry.projectName) || 0
-    projectMap.set(entry.projectName, current + entry.hours)
-  })
-
-  return Array.from(projectMap.entries())
-    .map(([projectName, totalHours]) => ({ projectName, totalHours }))
-    .sort((a, b) => b.totalHours - a.totalHours)
-}
-
-type ViewMode = 'daily' | 'weekly' | 'monthly' | 'recent'
-
-const VIEW_MODES: ViewMode[] = ['daily', 'weekly', 'monthly', 'recent']
 
 export default function TimingTab({ businessId }: TimingTabProps) {
   const searchParams = useSearchParams()
@@ -95,6 +67,53 @@ export default function TimingTab({ businessId }: TimingTabProps) {
   const [selectedDate, setSelectedDate] = useState(initialDate)
   const [monthOffset, setMonthOffset] = useState(initialMonthOffset)
   const [editingTask, setEditingTask] = useState<HarvestTask | null>(null)
+  const [hasYpay, setHasYpay] = useState(false)
+  const [invoicePreview, setInvoicePreview] = useState<InvoicePreview | null>(null)
+  const [invoiceError, setInvoiceError] = useState<string | null>(null)
+
+  useEffect(() => {
+    appSettingsStore.getYpayCredentials().then(creds => setHasYpay(!!creds))
+  }, [])
+
+  function getLastWorkingDay(offset: number): string {
+    const now = new Date()
+    const year = now.getFullYear()
+    const month = now.getMonth() + offset
+    const lastDay = new Date(year, month + 1, 0)
+    while (lastDay.getDay() === 5 || lastDay.getDay() === 6) {
+      lastDay.setDate(lastDay.getDate() - 1)
+    }
+    return lastDay.toISOString().split('T')[0]
+  }
+
+  const handleCreateInvoice = (projectName: string, totalHours: number) => {
+    const project = projects.find(p => p.name === projectName)
+    if (!project?.defaultHourlyRate) {
+      setInvoiceError('לא הוגדר תעריף שעתי לפרויקט')
+      return
+    }
+    if (!project.contactEmail) {
+      setInvoiceError('לא הוגדר אימייל איש קשר לפרויקט')
+      return
+    }
+
+    const { monthName } = getMonthDates(monthOffset)
+    const amount = totalHours * project.defaultHourlyRate
+    const date = getLastWorkingDay(monthOffset)
+
+    setInvoicePreview({
+      projectName,
+      totalHours,
+      hourlyRate: project.defaultHourlyRate,
+      amount,
+      monthName,
+      date,
+      contactEmail: project.contactEmail,
+      contactBusinessID: project.contactBusinessID,
+      contactPhone: project.contactPhone,
+      description: `${projectName} - ${monthName} (${totalHours.toFixed(2)} שעות × ${project.defaultHourlyRate} ₪)`,
+    })
+  }
 
   // Sync view state to URL params
   const updateUrlParams = useCallback((updates: Record<string, string | number>) => {
@@ -638,234 +657,29 @@ export default function TimingTab({ businessId }: TimingTabProps) {
 
   const handleExportToExcel = (projectName: string, projectEntries: WeekEntry[]) => {
     if (!business) return
-
-    const monthData = getMonthDates(monthOffset)
-
-    // Sort entries by date ascending
-    const sortedEntries = [...projectEntries].sort((a, b) => a.date.localeCompare(b.date))
-
-    // Create worksheet data
-    const wsData: any[][] = []
-
-    // Header
-    wsData.push([projectName])
-    wsData.push([monthData.monthName])
-    wsData.push([]) // Empty row
-
-    // Summary header (RTL order)
-    wsData.push(['סה"כ שעות', 'שעות סיום', 'שעות התחלה', 'תאריך', 'משימה'])
-
-    // Data rows - sorted by date ascending
-    let projectTotal = 0
-
-    sortedEntries.forEach(entry => {
-      // RTL order: Hours, End Time, Start Time, Date, Task
-      wsData.push([
-        formatHours(entry.hours),
-        entry.endTime,
-        entry.startTime,
-        formatDisplayDate(entry.date),
-        entry.taskName,
-      ])
-      projectTotal += entry.hours
-    })
-
-    // Project total
-    wsData.push([formatHours(projectTotal), '', '', `סה"כ ${projectName}:`, ''])
-
-    // Create workbook
-    const wb = XLSX.utils.book_new()
-    const ws = XLSX.utils.aoa_to_sheet(wsData)
-
-    // Set RTL mode
-    if (!ws['!views']) ws['!views'] = []
-    ws['!views'][0] = { rightToLeft: true }
-
-    // Set column widths (RTL order)
-    ws['!cols'] = [
-      { wch: 12 }, // Hours
-      { wch: 12 }, // End time
-      { wch: 12 }, // Start time
-      { wch: 12 }, // Date
-      { wch: 25 }, // Task
-    ]
-
-    // Style the header rows
-    if (!ws['!rows']) ws['!rows'] = []
-    ws['!rows'][0] = { hpt: 20 } // Project name row height
-    ws['!rows'][1] = { hpt: 18 } // Month row height
-
-    // Merge cells for header
-    ws['!merges'] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }, // Project name across all columns
-      { s: { r: 1, c: 0 }, e: { r: 1, c: 4 } }, // Month across all columns
-    ]
-
-    // Add worksheet to workbook
-    XLSX.utils.book_append_sheet(wb, ws, monthData.monthName)
-
-    // Generate file name
-    const fileName = `${projectName}_${monthData.monthName.replace(' ', '_')}.xlsx`
-
-    // Download file
-    XLSX.writeFile(wb, fileName)
+    exportToExcel(projectName, projectEntries, monthOffset)
   }
-
-  const { days } = getWeekDates(weekOffset)
-  const isCurrentWeek = weekOffset === 0
 
   return (
     <div>
-      {/* Timer Section */}
-      <div style={{
-        background: activeTimer ? '#ecfdf5' : '#f8fafc',
-        border: `1px solid ${activeTimer ? '#6ee7b7' : '#e2e8f0'}`,
-        borderRadius: '0.75rem',
-        padding: '1.5rem',
-        marginBottom: '1.5rem',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
-          <select
-            value={selectedProjectId || ''}
-            onChange={(e) => setSelectedProjectId(Number(e.target.value))}
-            disabled={!!activeTimer}
-            style={{
-              padding: '0.5rem',
-              borderRadius: '0.375rem',
-              border: '1px solid #d1d5db',
-              fontSize: '0.95rem',
-              minWidth: '150px',
-            }}
-          >
-            <option value="">בחר פרויקט</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
-
-          <select
-            value={selectedTaskId || ''}
-            onChange={(e) => {
-              const value = e.target.value
-              if (value === '__show_more__') {
-                setTasks(allTasks)
-                setShowAllTasks(true)
-              } else {
-                setSelectedTaskId(Number(value))
-              }
-            }}
-            disabled={!!activeTimer || !selectedProjectId}
-            style={{
-              padding: '0.5rem',
-              borderRadius: '0.375rem',
-              border: '1px solid #d1d5db',
-              fontSize: '0.95rem',
-              minWidth: '150px',
-            }}
-          >
-            <option value="">בחר משימה</option>
-            {tasks.map((t) => (
-              <option key={t.id} value={t.id}>{t.name}</option>
-            ))}
-            {!showAllTasks && allTasks.length > RECENT_TASKS_LIMIT && (
-              <option value="__show_more__" style={{ fontStyle: 'italic', color: '#6b7280' }}>
-                ··· הצג עוד {allTasks.length - RECENT_TASKS_LIMIT} משימות
-              </option>
-            )}
-          </select>
-
-          <button
-            onClick={handleAddTask}
-            disabled={!selectedProjectId || !!activeTimer}
-            style={{
-              padding: '0.5rem 1rem',
-              fontSize: '0.875rem',
-              background: '#3b82f6',
-              color: 'white',
-              border: 'none',
-              borderRadius: '0.375rem',
-              cursor: selectedProjectId && !activeTimer ? 'pointer' : 'not-allowed',
-              opacity: selectedProjectId && !activeTimer ? 1 : 0.5,
-            }}
-          >
-            + הוסף משימה
-          </button>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
-          <div style={{
-            fontSize: '2.5rem',
-            fontFamily: 'monospace',
-            fontWeight: 600,
-            color: activeTimer ? '#059669' : '#64748b',
-          }}>
-            {formatTime(elapsedSeconds)}
-          </div>
-
-          {activeTimer ? (
-            <button
-              onClick={() => void handleStop()}
-              style={{
-                padding: '0.75rem 2rem',
-                fontSize: '1rem',
-                fontWeight: 600,
-                background: '#dc2626',
-                color: 'white',
-                border: 'none',
-                borderRadius: '0.5rem',
-                cursor: 'pointer',
-              }}
-            >
-              עצור
-            </button>
-          ) : (
-            <button
-              onClick={() => void handleStart()}
-              disabled={!selectedTaskId}
-              style={{
-                padding: '0.75rem 2rem',
-                fontSize: '1rem',
-                fontWeight: 600,
-                background: selectedTaskId ? '#059669' : '#9ca3af',
-                color: 'white',
-                border: 'none',
-                borderRadius: '0.5rem',
-                cursor: selectedTaskId ? 'pointer' : 'not-allowed',
-              }}
-            >
-              התחל
-            </button>
-          )}
-
-          <button
-            onClick={handleOpenManualEntry}
-            disabled={!!activeTimer}
-            style={{
-              padding: '0.75rem 1.5rem',
-              fontSize: '0.9rem',
-              background: '#f1f5f9',
-              color: '#475569',
-              border: '1px solid #cbd5e1',
-              borderRadius: '0.5rem',
-              cursor: activeTimer ? 'not-allowed' : 'pointer',
-              opacity: activeTimer ? 0.5 : 1,
-            }}
-          >
-            + הוספה ידנית
-          </button>
-        </div>
-
-        {projects.length === 0 && (
-          <p style={{ color: '#64748b', marginTop: '1rem', fontSize: '0.9rem' }}>
-            אין פרויקטים. צור פרויקט בלשונית הגדרות.
-          </p>
-        )}
-        {selectedProjectId && tasks.length === 0 && (
-          <p style={{ color: '#64748b', marginTop: '1rem', fontSize: '0.9rem' }}>
-            אין משימות בפרויקט זה. צור משימה בלשונית הגדרות.
-          </p>
-        )}
-      </div>
+      <TimerSection
+        projects={projects}
+        tasks={tasks}
+        allTasks={allTasks}
+        selectedProjectId={selectedProjectId}
+        selectedTaskId={selectedTaskId}
+        activeTimer={activeTimer}
+        elapsedSeconds={elapsedSeconds}
+        showAllTasks={showAllTasks}
+        recentTasksLimit={RECENT_TASKS_LIMIT}
+        onProjectChange={setSelectedProjectId}
+        onTaskChange={(value) => setSelectedTaskId(Number(value))}
+        onShowAllTasks={() => { setTasks(allTasks); setShowAllTasks(true) }}
+        onAddTask={handleAddTask}
+        onStart={handleStart}
+        onStop={handleStop}
+        onManualEntry={handleOpenManualEntry}
+      />
 
       {/* View Mode Selector */}
       <div style={{ marginBottom: '1rem', display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
@@ -925,768 +739,56 @@ export default function TimingTab({ businessId }: TimingTabProps) {
         </div>
       )}
 
-      {/* Daily View */}
       {viewMode === 'daily' && (
-        <div style={{ marginBottom: '1rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <button
-                onClick={() => setSelectedDate(adjustDate(selectedDate, -1))}
-                style={{
-                  padding: '0.5rem 0.75rem',
-                  background: '#f1f5f9',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '0.5rem',
-                  cursor: 'pointer',
-                  fontSize: '1rem',
-                }}
-                title="יום קודם"
-              >
-                →
-              </button>
-              <div style={{ position: 'relative' }}>
-                <span
-                  onClick={() => {
-                    const input = document.getElementById('date-picker-input') as HTMLInputElement
-                    input?.showPicker()
-                  }}
-                  style={{
-                    padding: '0.5rem 0.75rem',
-                    border: '1px solid #cbd5e1',
-                    borderRadius: '0.5rem',
-                    fontSize: '0.9rem',
-                    cursor: 'pointer',
-                    display: 'inline-block',
-                    background: 'white',
-                  }}
-                >
-                  {getDayName(selectedDate)} {formatDisplayDate(selectedDate)}
-                </span>
-                <input
-                  id="date-picker-input"
-                  type="date"
-                  value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value)}
-                  style={{
-                    position: 'absolute',
-                    opacity: 0,
-                    width: 0,
-                    height: 0,
-                    pointerEvents: 'none',
-                  }}
-                />
-              </div>
-              <button
-                onClick={() => setSelectedDate(adjustDate(selectedDate, 1))}
-                style={{
-                  padding: '0.5rem 0.75rem',
-                  background: '#f1f5f9',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '0.5rem',
-                  cursor: 'pointer',
-                  fontSize: '1rem',
-                }}
-                title="יום הבא"
-              >
-                ←
-              </button>
-              <button
-                onClick={() => setSelectedDate(formatLocalDate(new Date()))}
-                style={{
-                  padding: '0.5rem 1rem',
-                  background: '#dbeafe',
-                  border: '1px solid #93c5fd',
-                  borderRadius: '0.5rem',
-                  cursor: 'pointer',
-                  fontSize: '0.9rem',
-                  color: '#1e40af',
-                }}
-              >
-                היום
-              </button>
-              {!calendarConnected && (
-                <button
-                  onClick={handleConnectCalendar}
-                  style={{
-                    padding: '0.5rem 1rem',
-                    background: '#f0fdf4',
-                    border: '1px solid #86efac',
-                    borderRadius: '0.5rem',
-                    cursor: 'pointer',
-                    fontSize: '0.9rem',
-                    color: '#166534',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.375rem',
-                  }}
-                >
-                  <span>📅</span>
-                  חבר יומן
-                </button>
-              )}
-            </div>
-            <span style={{ fontWeight: 500, color: '#64748b' }}>
-              {formatHours(weekTotal)} שעות
-            </span>
-          </div>
-
-          {/* Two-column layout when calendar connected, single column otherwise */}
-          {calendarConnected ? (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
-              {/* Calendar Events Column */}
-              <div>
-                <h4 style={{ margin: '0 0 0.75rem 0', fontSize: '0.95rem', fontWeight: 600, color: '#374151' }}>
-                  📅 יומן Google
-                </h4>
-                <CalendarColumn
-                  events={calendarEvents}
-                  loading={calendarLoading}
-                  error={calendarError}
-                  isConnected={calendarConnected}
-                  onConnectClick={handleConnectCalendar}
-                  onEventClick={handleCalendarEventClick}
-                />
-              </div>
-
-              {/* Time Entries Column */}
-              <div>
-                <h4 style={{ margin: '0 0 0.75rem 0', fontSize: '0.95rem', fontWeight: 600, color: '#374151' }}>
-                  ⏱️ רישומי זמן
-                </h4>
-                {/* Hours bar visualization */}
-                <HoursBar
-                  entries={weekEntries}
-                  onEntryClick={(entry) => {
-                    const fullEntry = weekEntries.find(e => e.id === entry.id)
-                    if (fullEntry) handleEditEntry(fullEntry)
-                  }}
-                  onEmptyClick={(hour) => void handleDayEmptyClick(hour)}
-                />
-
-                {/* Daily entries list */}
-                {weekEntries.length > 0 ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                    {(() => {
-                      const sortedEntries = [...weekEntries].sort((a, b) => {
-                        if (!a.startTime && !b.startTime) return 0
-                        if (!a.startTime) return 1
-                        if (!b.startTime) return -1
-                        return a.startTime.localeCompare(b.startTime)
-                      })
-
-                      return sortedEntries.map((entry) => (
-                        <div
-                          key={entry.id}
-                          style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            padding: '1rem',
-                            background: '#f8fafc',
-                            border: '1px solid #e2e8f0',
-                            borderRadius: '0.5rem',
-                            fontSize: '0.95rem',
-                          }}
-                        >
-                          <div
-                            onClick={() => handleEditEntry(entry)}
-                            style={{ flex: 1, cursor: 'pointer' }}
-                          >
-                            <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>
-                              {entry.projectName}
-                              <span style={{ color: '#64748b', margin: '0 0.5rem' }}>›</span>
-                              {entry.taskName}
-                            </div>
-                            <div style={{ color: '#64748b', fontSize: '0.85rem' }}>
-                              {entry.startTime && entry.endTime ? `${entry.startTime} - ${entry.endTime}` : formatHours(entry.hours) + ' שעות'}
-                            </div>
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                            <span style={{ fontWeight: 600, fontSize: '1.1rem' }}>{formatHours(entry.hours)}</span>
-                            <button
-                              onClick={() => void handleStartFromEntry(entry)}
-                              title="התחל טיימר עם אותו פרויקט ומשימה"
-                              style={{
-                                padding: '0.25rem 0.5rem',
-                                fontSize: '0.8rem',
-                                background: '#ecfdf5',
-                                border: '1px solid #6ee7b7',
-                                borderRadius: '0.25rem',
-                                cursor: 'pointer',
-                                color: '#059669',
-                              }}
-                            >
-                              ▶
-                            </button>
-                          </div>
-                        </div>
-                      ))
-                    })()}
-                  </div>
-                ) : (
-                  <div
-                    onClick={() => void handleDayEmptyClick()}
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      padding: '2rem',
-                      background: '#f8fafc',
-                      border: '1px solid #e2e8f0',
-                      borderRadius: '0.5rem',
-                      minHeight: '200px',
-                      color: '#64748b',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>⏱️</div>
-                    <p>אין רישומי זמן ביום זה — לחץ להוספה</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : (
-            <>
-              {/* Hours bar visualization */}
-              <HoursBar
-                entries={weekEntries}
-                onEntryClick={(entry) => {
-                  const fullEntry = weekEntries.find(e => e.id === entry.id)
-                  if (fullEntry) handleEditEntry(fullEntry)
-                }}
-                onEmptyClick={(hour) => void handleDayEmptyClick(hour)}
-              />
-
-              {/* Daily entries list */}
-              {weekEntries.length > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  {(() => {
-                    const sortedEntries = [...weekEntries].sort((a, b) => {
-                      if (!a.startTime && !b.startTime) return 0
-                      if (!a.startTime) return 1
-                      if (!b.startTime) return -1
-                      return a.startTime.localeCompare(b.startTime)
-                    })
-
-                    return sortedEntries.map((entry) => (
-                      <div
-                        key={entry.id}
-                        style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          padding: '1rem',
-                          background: '#f8fafc',
-                          border: '1px solid #e2e8f0',
-                          borderRadius: '0.5rem',
-                          fontSize: '0.95rem',
-                        }}
-                      >
-                        <div
-                          onClick={() => handleEditEntry(entry)}
-                          style={{ flex: 1, cursor: 'pointer' }}
-                        >
-                          <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>
-                            {entry.projectName}
-                            <span style={{ color: '#64748b', margin: '0 0.5rem' }}>›</span>
-                            {entry.taskName}
-                          </div>
-                          <div style={{ color: '#64748b', fontSize: '0.85rem' }}>
-                            {entry.startTime && entry.endTime ? `${entry.startTime} - ${entry.endTime}` : formatHours(entry.hours) + ' שעות'}
-                          </div>
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                          <span style={{ fontWeight: 600, fontSize: '1.1rem' }}>{formatHours(entry.hours)}</span>
-                          <button
-                            onClick={() => void handleStartFromEntry(entry)}
-                            title="התחל טיימר עם אותו פרויקט ומשימה"
-                            style={{
-                              padding: '0.25rem 0.5rem',
-                              fontSize: '0.8rem',
-                              background: '#ecfdf5',
-                              border: '1px solid #6ee7b7',
-                              borderRadius: '0.25rem',
-                              cursor: 'pointer',
-                              color: '#059669',
-                            }}
-                          >
-                            ▶
-                          </button>
-                        </div>
-                      </div>
-                    ))
-                  })()}
-                </div>
-              ) : (
-                <p
-                  onClick={() => void handleDayEmptyClick()}
-                  style={{ color: '#64748b', textAlign: 'center', cursor: 'pointer' }}
-                >
-                  אין רישומי זמן ביום זה — לחץ להוספה
-                </p>
-              )}
-            </>
-          )}
-        </div>
+        <DailyView
+          selectedDate={selectedDate}
+          onDateChange={setSelectedDate}
+          weekEntries={weekEntries}
+          weekTotal={weekTotal}
+          calendarConnected={calendarConnected}
+          calendarEvents={calendarEvents}
+          calendarLoading={calendarLoading}
+          calendarError={calendarError}
+          onConnectCalendar={handleConnectCalendar}
+          onCalendarEventClick={handleCalendarEventClick}
+          onEditEntry={handleEditEntry}
+          onStartFromEntry={handleStartFromEntry}
+          onEmptyClick={(hour) => void handleDayEmptyClick(hour)}
+        />
       )}
 
-      {/* Weekly View */}
       {viewMode === 'weekly' && (
-        <div style={{ marginBottom: '1rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <button
-                onClick={() => setWeekOffset(weekOffset - 1)}
-                style={{
-                  padding: '0.25rem 0.5rem',
-                  background: '#f1f5f9',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '0.25rem',
-                  cursor: 'pointer',
-                  fontSize: '0.9rem',
-                }}
-              >
-                ►
-              </button>
-              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>
-                {isCurrentWeek ? 'השבוע הנוכחי' : formatWeekRange(days)}
-              </h3>
-              <button
-                onClick={() => setWeekOffset(weekOffset + 1)}
-                disabled={isCurrentWeek}
-                style={{
-                  padding: '0.25rem 0.5rem',
-                  background: '#f1f5f9',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '0.25rem',
-                  cursor: isCurrentWeek ? 'not-allowed' : 'pointer',
-                  fontSize: '0.9rem',
-                  opacity: isCurrentWeek ? 0.5 : 1,
-                }}
-              >
-                ◄
-              </button>
-            {!isCurrentWeek && (
-              <button
-                onClick={() => setWeekOffset(0)}
-                style={{
-                  padding: '0.25rem 0.5rem',
-                  background: '#dbeafe',
-                  border: '1px solid #93c5fd',
-                  borderRadius: '0.25rem',
-                  cursor: 'pointer',
-                  fontSize: '0.8rem',
-                  color: '#1e40af',
-                }}
-              >
-                היום
-              </button>
-            )}
-          </div>
-          <span style={{ fontWeight: 500, color: '#64748b' }}>
-            {formatHours(weekTotal)} שעות
-          </span>
-        </div>
-
-        {/* Week days grid */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(7, 1fr)',
-          gap: '0.5rem',
-          marginBottom: '1rem',
-        }}>
-          {days.map((day, i) => {
-            const dayEntries = weekEntries.filter(e => e.date === day)
-            const dayTotal = dayEntries.reduce((sum, e) => sum + e.hours, 0)
-            const isToday = day === formatLocalDate(new Date())
-
-            return (
-              <div
-                key={day}
-                style={{
-                  padding: '0.5rem',
-                  background: isToday ? '#dbeafe' : '#f8fafc',
-                  border: `1px solid ${isToday ? '#93c5fd' : '#e2e8f0'}`,
-                  borderRadius: '0.5rem',
-                  textAlign: 'center',
-                }}
-              >
-                <div style={{ fontSize: '0.8rem', color: '#64748b' }}>{DAY_NAMES_HE[i]}</div>
-                <div style={{ fontSize: '1rem', fontWeight: 600 }}>
-                  {dayTotal > 0 ? formatHours(dayTotal) : '-'}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-
-        {/* Entries list */}
-        {weekEntries.length > 0 ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {weekEntries.map((entry) => (
-              <div
-                key={entry.id}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  padding: '0.75rem',
-                  background: '#f8fafc',
-                  border: '1px solid #e2e8f0',
-                  borderRadius: '0.5rem',
-                  fontSize: '0.9rem',
-                }}
-              >
-                <div
-                  onClick={() => handleEditEntry(entry)}
-                  style={{ flex: 1, cursor: 'pointer' }}
-                >
-                  <span style={{ fontWeight: 500 }}>{entry.projectName}</span>
-                  <span style={{ color: '#64748b', margin: '0 0.5rem' }}>›</span>
-                  <span>{entry.taskName}</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                  <span style={{ color: '#64748b' }}>{formatDisplayDate(entry.date)}</span>
-                  <span style={{ fontWeight: 600 }}>{formatHours(entry.hours)}</span>
-                  <button
-                    onClick={() => void handleStartFromEntry(entry)}
-                    title="התחל טיימר עם אותו פרויקט ומשימה"
-                    style={{
-                      padding: '0.25rem 0.5rem',
-                      fontSize: '0.8rem',
-                      background: '#ecfdf5',
-                      border: '1px solid #6ee7b7',
-                      borderRadius: '0.25rem',
-                      cursor: 'pointer',
-                      color: '#059669',
-                    }}
-                  >
-                    ▶
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p style={{ color: '#64748b', textAlign: 'center' }}>
-            אין רישומי זמן השבוע
-          </p>
-        )}
-        </div>
+        <WeeklyView
+          weekOffset={weekOffset}
+          onWeekOffsetChange={setWeekOffset}
+          weekEntries={weekEntries}
+          weekTotal={weekTotal}
+          onEditEntry={handleEditEntry}
+          onStartFromEntry={handleStartFromEntry}
+        />
       )}
 
-      {/* Monthly View */}
       {viewMode === 'monthly' && (
-        <div style={{ marginBottom: '1rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <button
-                onClick={() => setMonthOffset(monthOffset - 1)}
-                style={{
-                  padding: '0.25rem 0.5rem',
-                  background: '#f1f5f9',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '0.25rem',
-                  cursor: 'pointer',
-                  fontSize: '0.9rem',
-                }}
-              >
-                ►
-              </button>
-              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>
-                {getMonthDates(monthOffset).monthName}
-              </h3>
-              <button
-                onClick={() => setMonthOffset(monthOffset + 1)}
-                disabled={monthOffset === 0}
-                style={{
-                  padding: '0.25rem 0.5rem',
-                  background: '#f1f5f9',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '0.25rem',
-                  cursor: monthOffset === 0 ? 'not-allowed' : 'pointer',
-                  fontSize: '0.9rem',
-                  opacity: monthOffset === 0 ? 0.5 : 1,
-                }}
-              >
-                ◄
-              </button>
-              {monthOffset !== 0 && (
-                <button
-                  onClick={() => setMonthOffset(0)}
-                  style={{
-                    padding: '0.25rem 0.5rem',
-                    background: '#dbeafe',
-                    border: '1px solid #93c5fd',
-                    borderRadius: '0.25rem',
-                    cursor: 'pointer',
-                    fontSize: '0.8rem',
-                    color: '#1e40af',
-                  }}
-                >
-                  חודש נוכחי
-                </button>
-              )}
-            </div>
-            <span style={{ fontWeight: 500, color: '#64748b' }}>
-              {formatHours(weekTotal)} שעות
-            </span>
-          </div>
-
-          {/* Group entries by project */}
-          {weekEntries.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {(() => {
-                const projectGroups = new Map<string, { projectName: string; entries: WeekEntry[] }>()
-
-                weekEntries.forEach(entry => {
-                  if (!projectGroups.has(entry.projectName)) {
-                    projectGroups.set(entry.projectName, {
-                      projectName: entry.projectName,
-                      entries: [],
-                    })
-                  }
-                  projectGroups.get(entry.projectName)!.entries.push(entry)
-                })
-
-                const calendarDays = getCalendarDays(monthOffset)
-
-                return Array.from(projectGroups.values()).map(project => {
-                  const projectTotal = project.entries.reduce((sum, e) => sum + e.hours, 0)
-
-                  // Group entries by date
-                  const entriesByDate = new Map<string, { hours: number; tasks: string[] }>()
-                  project.entries.forEach(entry => {
-                    if (!entriesByDate.has(entry.date)) {
-                      entriesByDate.set(entry.date, { hours: 0, tasks: [] })
-                    }
-                    const dayData = entriesByDate.get(entry.date)!
-                    dayData.hours += entry.hours
-                    if (!dayData.tasks.includes(entry.taskName)) {
-                      dayData.tasks.push(entry.taskName)
-                    }
-                  })
-
-                  // Check if this project has entries for Friday (5) or Saturday (6)
-                  const hasSaturdayEntries = project.entries.some(entry => new Date(entry.date).getDay() === 6)
-                  const hasFridayEntries = project.entries.some(entry => new Date(entry.date).getDay() === 5)
-
-                  // Saturday entries → show both Fri+Sat, Friday only → show Fri, neither → Sun-Thu only
-                  let visibleDays: string[]
-                  let numColumns: number
-                  let excludeDays: number[]
-
-                  if (hasSaturdayEntries) {
-                    visibleDays = DAY_NAMES_HE
-                    numColumns = 7
-                    excludeDays = []
-                  } else if (hasFridayEntries) {
-                    visibleDays = DAY_NAMES_HE.slice(0, 6)
-                    numColumns = 6
-                    excludeDays = [6] // exclude Saturday
-                  } else {
-                    visibleDays = DAY_NAMES_HE.slice(0, 5)
-                    numColumns = 5
-                    excludeDays = [5, 6] // exclude Friday and Saturday
-                  }
-
-                  // Filter calendar days based on this project's weekend entries
-                  const filteredDays = calendarDays.filter(({ date }) => {
-                    const dayOfWeek = new Date(date).getDay()
-                    return !excludeDays.includes(dayOfWeek)
-                  })
-
-                  return (
-                    <div
-                      key={project.projectName}
-                      style={{
-                        background: '#f8fafc',
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '0.5rem',
-                        overflow: 'hidden',
-                      }}
-                    >
-                      <div style={{
-                        padding: '1rem',
-                        background: '#e0f2fe',
-                        borderBottom: '1px solid #bae6fd',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                      }}>
-                        <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>
-                          {project.projectName}
-                        </h4>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                          <span style={{ fontWeight: 600, fontSize: '1.1rem' }}>
-                            {formatHours(projectTotal)}
-                          </span>
-                          <button
-                            onClick={() => handleExportToExcel(project.projectName, project.entries)}
-                            title="ייצא ל-Excel"
-                            style={{
-                              padding: '0.375rem 0.75rem',
-                              background: '#10b981',
-                              color: 'white',
-                              border: 'none',
-                              borderRadius: '0.375rem',
-                              cursor: 'pointer',
-                              fontSize: '0.85rem',
-                              fontWeight: 500,
-                            }}
-                          >
-                            📊 Excel
-                          </button>
-                        </div>
-                      </div>
-                      {/* Calendar Grid */}
-                      <div style={{ padding: '0.5rem', direction: 'rtl' }}>
-                        {/* Day headers */}
-                        <div style={{
-                          display: 'grid',
-                          gridTemplateColumns: `repeat(${numColumns}, minmax(0, 1fr))`,
-                          gap: '2px',
-                        }}>
-                          {visibleDays.map(day => (
-                            <div
-                              key={day}
-                              style={{
-                                textAlign: 'center',
-                                padding: '0.25rem',
-                                fontSize: '0.75rem',
-                                fontWeight: 600,
-                                color: '#64748b',
-                                border: '1px solid transparent',
-                              }}
-                            >
-                              {day}
-                            </div>
-                          ))}
-                        </div>
-                        {/* Calendar days - 5 rows */}
-                        <div style={{
-                          display: 'grid',
-                          gridTemplateColumns: `repeat(${numColumns}, minmax(0, 1fr))`,
-                          gap: '2px',
-                        }}>
-                          {filteredDays.map(({ date, isCurrentMonth }) => {
-                            const dayData = entriesByDate.get(date)
-                            const dayNum = parseInt(date.split('-')[2])
-                            return (
-                              <div
-                                key={date}
-                                onClick={() => {
-                                  setSelectedDate(date)
-                                  setViewMode('daily')
-                                }}
-                                style={{
-                                  background: isCurrentMonth ? 'white' : '#f1f5f9',
-                                  border: '1px solid #e2e8f0',
-                                  borderRadius: '0.25rem',
-                                  padding: '0.25rem',
-                                  minHeight: '60px',
-                                  opacity: isCurrentMonth ? 1 : 0.5,
-                                  cursor: 'pointer',
-                                }}
-                              >
-                                <div style={{
-                                  fontSize: '0.7rem',
-                                  color: '#94a3b8',
-                                  marginBottom: '0.125rem',
-                                }}>
-                                  {dayNum}
-                                </div>
-                                {dayData && (
-                                  <>
-                                    <div style={{
-                                      fontSize: '0.8rem',
-                                      fontWeight: 600,
-                                      color: '#0369a1',
-                                    }}>
-                                      {formatHours(dayData.hours)}
-                                    </div>
-                                    <div style={{
-                                      fontSize: '0.65rem',
-                                      color: '#64748b',
-                                      overflow: 'hidden',
-                                      textOverflow: 'ellipsis',
-                                      whiteSpace: 'nowrap',
-                                    }}>
-                                      {dayData.tasks.join(', ')}
-                                    </div>
-                                  </>
-                                )}
-                              </div>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })
-              })()}
-            </div>
-          ) : (
-            <p style={{ color: '#64748b', textAlign: 'center' }}>
-              אין רישומי זמן בחודש זה
-            </p>
-          )}
-        </div>
+        <MonthlyCalendarView
+          monthOffset={monthOffset}
+          onMonthOffsetChange={setMonthOffset}
+          weekEntries={weekEntries}
+          weekTotal={weekTotal}
+          hasYpay={hasYpay}
+          onExportToExcel={handleExportToExcel}
+          onCreateInvoice={handleCreateInvoice}
+          onDayClick={(date) => { setSelectedDate(date); setViewMode('daily') }}
+        />
       )}
 
-      {/* Recent View */}
       {viewMode === 'recent' && (
-        <div style={{ marginBottom: '1rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-            <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>רישומים אחרונים</h3>
-            <span style={{ fontWeight: 500, color: '#64748b' }}>
-              {formatHours(weekTotal)} שעות
-            </span>
-          </div>
-
-          {weekEntries.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              {weekEntries.map((entry) => (
-                <div
-                  key={entry.id}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    padding: '1rem',
-                    background: '#f8fafc',
-                    border: '1px solid #e2e8f0',
-                    borderRadius: '0.5rem',
-                    fontSize: '0.95rem',
-                  }}
-                >
-                  <div
-                    onClick={() => handleEditEntry(entry)}
-                    style={{ flex: 1, cursor: 'pointer' }}
-                  >
-                    <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>
-                      {entry.projectName}
-                      <span style={{ color: '#64748b', margin: '0 0.5rem' }}>›</span>
-                      {entry.taskName}
-                    </div>
-                    <div style={{ color: '#64748b', fontSize: '0.85rem' }}>
-                      {formatDisplayDate(entry.date)}
-                      {entry.startTime && entry.endTime ? ` · ${entry.startTime} - ${entry.endTime}` : ''}
-                      {' · '}{formatHours(entry.hours)} שעות
-                    </div>
-                  </div>
-                  <span style={{ fontWeight: 600, fontSize: '1.1rem' }}>{formatHours(entry.hours)}</span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p style={{ color: '#64748b', textAlign: 'center' }}>
-              אין רישומי זמן
-            </p>
-          )}
-        </div>
+        <RecentView
+          weekEntries={weekEntries}
+          weekTotal={weekTotal}
+          onEditEntry={handleEditEntry}
+        />
       )}
+
 
       {/* Time Entry Form Modal */}
       {formData && (
@@ -1737,6 +839,26 @@ export default function TimingTab({ businessId }: TimingTabProps) {
           </FormField>
         </FormModal>
       )}
+      {invoicePreview && (
+        <InvoicePreviewModal
+          preview={invoicePreview}
+          onClose={() => setInvoicePreview(null)}
+          onError={setInvoiceError}
+        />
+      )}
+
+      {/* Invoice Error Modal */}
+      <Modal isOpen={!!invoiceError} onClose={() => setInvoiceError(null)} maxWidth="400px">
+        <div style={{ textAlign: 'center', padding: '1.5rem', direction: 'rtl' }}>
+          <p style={{ fontSize: '1.05rem', margin: '0 0 1.25rem' }}>{invoiceError}</p>
+          <button
+            onClick={() => setInvoiceError(null)}
+            className="file-picker"
+          >
+            <span>אישור</span>
+          </button>
+        </div>
+      </Modal>
     </div>
   )
 }
