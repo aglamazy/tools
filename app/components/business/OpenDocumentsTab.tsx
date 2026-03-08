@@ -48,29 +48,35 @@ export default function OpenDocumentsTab({ businessId }: OpenDocumentsTabProps) 
   const [formData, setFormData] = useState<ManualInvoiceForm | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const loadDocuments = async () => {
+  const loadDocuments = async (projectNames: Set<string>) => {
     const docs = await db.ypayDocuments
       .where('docType')
       .equals(YpayDocType.BusinessInvoice)
       .toArray()
-    docs.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    setDocuments(docs)
+    const filtered = docs.filter(d => d.projectName && projectNames.has(d.projectName))
+    filtered.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    setDocuments(filtered)
     setLoading(false)
   }
 
   useEffect(() => {
-    void loadDocuments()
-    projectStore.getByBusinessId(businessId).then(setProjects)
+    projectStore.getByBusinessId(businessId).then(bizProjects => {
+      setProjects(bizProjects)
+      const projectNames = new Set(bizProjects.map(p => p.name))
+      void loadDocuments(projectNames)
+    })
   }, [businessId])
+
+  const projectNames = new Set(projects.map(p => p.name))
 
   const handleMarkPaid = async (doc: YpayDocument) => {
     await db.ypayDocuments.update(doc.id!, { paidAt: new Date().toISOString() })
-    await loadDocuments()
+    await loadDocuments(projectNames)
   }
 
   const handleUnmarkPaid = async (doc: YpayDocument) => {
     await db.ypayDocuments.update(doc.id!, { paidAt: undefined })
-    await loadDocuments()
+    await loadDocuments(projectNames)
   }
 
   const handleAddManual = async () => {
@@ -98,12 +104,12 @@ export default function OpenDocumentsTab({ businessId }: OpenDocumentsTabProps) 
       createdAt: new Date().toISOString(),
     })
     setFormData(null)
-    await loadDocuments()
+    await loadDocuments(projectNames)
   }
 
   const handleDelete = async (doc: YpayDocument) => {
     await db.ypayDocuments.delete(doc.id!)
-    await loadDocuments()
+    await loadDocuments(projectNames)
   }
 
   const openDocs = documents.filter(d => !d.paidAt)
