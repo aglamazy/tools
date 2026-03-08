@@ -9,7 +9,7 @@ import { db } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { timerStore } from '@/app/stores/timerStore'
 import { initializeAppSettings } from '@/app/services/appSettingsService'
-import { type BackupData, readLocalOnlySettings, restoreLocalOnlySettings } from './backupService'
+import { type BackupData, readLocalOnlySettings } from './backupService'
 
 // FK annotations → { annotationField, fkField }
 const FK_ANNOTATIONS: Record<string, { annotationField: string; fkField: string; parentTable: string }> = {
@@ -100,6 +100,17 @@ export async function applyMergedBackup(merged: BackupData): Promise<void> {
 
         syncIdToLocalId[tableName] = tableIdMap
       }
+
+      // Restore local-only appSettings INSIDE the transaction so it's atomic
+      // with the clear+insert — if the transaction fails, everything rolls back.
+      for (const setting of preservedLocalOnly) {
+        const exists = await db.appSettings.where('key').equals(setting.key).count()
+        if (exists === 0) {
+          const { id, ...withoutId } = setting
+          await db.appSettings.add(withoutId)
+          console.log(`[ApplyMerged] Restored local-only key: ${setting.key}`)
+        }
+      }
     },
   )
 
@@ -108,9 +119,6 @@ export async function applyMergedBackup(merged: BackupData): Promise<void> {
     await subjectStore.import(merged.stores.subjectStore)
   }
   timerStore.import(merged.stores.timerStore ?? null)
-
-  // Restore local-only appSettings that were preserved before the transaction
-  await restoreLocalOnlySettings(preservedLocalOnly)
 
   await initializeAppSettings()
   console.log('[ApplyMerged] Merged backup applied successfully')

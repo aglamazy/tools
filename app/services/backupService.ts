@@ -52,11 +52,15 @@ export async function readLocalOnlySettings(): Promise<any[]> {
  */
 export async function restoreLocalOnlySettings(preserved: any[]): Promise<void> {
   for (const setting of preserved) {
-    const exists = await db.appSettings.where('key').equals(setting.key).count()
-    if (exists === 0) {
-      const { id, ...withoutId } = setting
-      await db.appSettings.add(withoutId)
-      console.log(`[BackupRestore] Restored local-only key: ${setting.key}`)
+    try {
+      const exists = await db.appSettings.where('key').equals(setting.key).count()
+      if (exists === 0) {
+        const { id, ...withoutId } = setting
+        await db.appSettings.add(withoutId)
+        console.log(`[BackupRestore] Restored local-only key: ${setting.key}`)
+      }
+    } catch (err) {
+      console.error(`[BackupRestore] Failed to restore local-only key: ${setting.key}`, err)
     }
   }
 }
