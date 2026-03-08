@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react'
 import { db } from '@/app/db/financeDB'
 import { appSettingsStore } from '@/app/stores/appSettingsStore'
 import { getHouseholdInfo } from '@/app/services/householdService'
-import { getUser } from '@/app/stores/authStore'
+import { subscribeToAuth, type AuthUser } from '@/app/stores/authStore'
 
 type CardInfo = {
   cardNumber: string
@@ -20,12 +20,24 @@ export default function CreditCardsPage() {
   const [members, setMembers] = useState<HouseholdMember[]>([])
   const [accountOwners, setAccountOwners] = useState<Record<string, string>>({})
 
+  // Wait for auth before loading data
   useEffect(() => {
-    loadMembers()
-    loadCards()
+    let done = false
+    const unsub = subscribeToAuth((authState) => {
+      if (done) return
+      if (!authState.loading && authState.user) {
+        done = true
+        void loadAll(authState.user)
+      } else if (!authState.loading && !authState.user) {
+        done = true
+        setLoading(false)
+      }
+    })
+    return () => { done = true; unsub() }
   }, [])
 
-  const loadMembers = async () => {
+  const loadAll = async (user: AuthUser) => {
+    // Load members
     const memberList: HouseholdMember[] = []
     try {
       const info = await getHouseholdInfo()
@@ -37,15 +49,12 @@ export default function CreditCardsPage() {
         }
       }
     } catch { /* no household */ }
-    const currentUser = getUser()
-    if (currentUser && !memberList.find(m => m.uid === currentUser.uid)) {
-      memberList.push({ uid: currentUser.uid, label: currentUser.displayName || currentUser.email || currentUser.uid })
+    if (!memberList.find(m => m.uid === user.uid)) {
+      memberList.push({ uid: user.uid, label: user.displayName || user.email || user.uid })
     }
     setMembers(memberList)
-  }
 
-  const loadCards = async () => {
-    setLoading(true)
+    // Load cards
     const transactions = await db.transactions.where('type').equals('credit').toArray()
     const owners = await appSettingsStore.getAccountOwners()
     setAccountOwners(owners)
@@ -54,7 +63,7 @@ export default function CreditCardsPage() {
       const [dd, mm, yyyy] = d.split('/')
       return `${yyyy}${mm}${dd}`
     }
-    const byCard = new Map<string, string>() // cardNumber -> last date (DD/MM/YYYY)
+    const byCard = new Map<string, string>()
     for (const t of transactions) {
       if (!t.cardNumber || !t.date) continue
       const existing = byCard.get(t.cardNumber)
@@ -119,7 +128,7 @@ export default function CreditCardsPage() {
               <tbody>
                 {cards.map((card) => (
                   <tr key={card.cardNumber}>
-                    <td style={{ fontWeight: 600 }}>•••• {card.cardNumber}</td>
+                    <td style={{ fontWeight: 600 }}>{card.cardNumber}</td>
                     <td>
                       <select
                         value={card.ownerUid || ''}

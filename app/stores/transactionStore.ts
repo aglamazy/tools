@@ -488,18 +488,29 @@ export const transactionStore = {
    */
   autoClassify: async (selectedMonth: string): Promise<{ count: number; classifiedIds: string[] }> => {
     try {
-      // Load business-category mappings from IndexedDB
+      // 1. Load explicit business-category mappings
       const businessCategories = await db.businessCategories.toArray()
       const businessMap = new Map(businessCategories.map((bc) => [bc.business, bc.category]))
 
-      // Get transactions same way as budget page
+      // 2. Learn from all past classified transactions (any month)
+      const allClassified = await db.transactions
+        .filter(t => !!t.category && t.category.trim() !== '')
+        .toArray()
+
+      for (const t of allClassified) {
+        const name = t.type === 'credit' ? (t.merchant || t.description) : t.description
+        if (name && !businessMap.has(name)) {
+          businessMap.set(name, t.category!)
+        }
+      }
+
+      // 3. Get current month's transactions and classify unclassified ones
       const allTransactions = await transactionStore.getBudgetTransactions(selectedMonth)
       const classifiedIds: string[] = []
       const unclassified = allTransactions.filter((t) => !t.category || t.category.trim() === '')
 
       for (const transaction of unclassified) {
-        const business = transaction.business
-        const suggestedCategory = businessMap.get(business)
+        const suggestedCategory = businessMap.get(transaction.business)
 
         if (suggestedCategory) {
           await transactionStore.updateAny(transaction.id, { category: suggestedCategory })

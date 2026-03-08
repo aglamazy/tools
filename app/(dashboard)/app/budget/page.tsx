@@ -5,6 +5,9 @@ import { useSearchParams } from 'next/navigation'
 import { formatMonthDisplay } from '@/app/utils/formatters'
 import { transactionStore } from '@/app/stores/transactionStore'
 import { subjectStore } from '@/app/stores/subjectStore'
+import { appSettingsStore } from '@/app/stores/appSettingsStore'
+import { getHouseholdInfo } from '@/app/services/householdService'
+import { subscribeToAuth } from '@/app/stores/authStore'
 import type { BudgetTransaction } from '@/app/types/transactions'
 import type { Category } from '@/app/types/category'
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts'
@@ -32,6 +35,43 @@ function BudgetPageContent() {
   const [drillDownCategory, setDrillDownCategory] = useState<string | null>(null)
   const [isPieChartCollapsed, setIsPieChartCollapsed] = useState(false)
   const [typeFilter, setTypeFilter] = useState<'all' | 'income' | 'expense' | 'capital' | 'external'>('all')
+  const [cardOwnerFilter, setCardOwnerFilter] = useState<string>('all') // 'all' or uid
+  const [householdMembers, setHouseholdMembers] = useState<{ uid: string; label: string }[]>([])
+  const [accountOwners, setAccountOwners] = useState<Record<string, string>>({})
+
+  // Load household members for card owner filter
+  useEffect(() => {
+    let done = false
+    const unsub = subscribeToAuth((authState) => {
+      if (done) return
+      if (!authState.loading && authState.user) {
+        done = true
+        void (async () => {
+          const owners = await appSettingsStore.getAccountOwners()
+          setAccountOwners(owners)
+
+          const memberList: { uid: string; label: string }[] = []
+          try {
+            const info = await getHouseholdInfo()
+            if (info.household) {
+              const hNames = (info.household as any).memberNames || {}
+              const hEmails = (info.household as any).memberEmails || {}
+              for (const uid of info.household.members) {
+                memberList.push({ uid, label: hNames[uid] || hEmails[uid] || uid })
+              }
+            }
+          } catch { /* no household */ }
+          if (!memberList.find(m => m.uid === authState.user!.uid)) {
+            memberList.push({ uid: authState.user!.uid, label: authState.user!.displayName || authState.user!.email || authState.user!.uid })
+          }
+          setHouseholdMembers(memberList)
+        })()
+      } else if (!authState.loading) {
+        done = true
+      }
+    })
+    return () => { done = true; unsub() }
+  }, [])
 
   // Load available months from transactions and categories
   useEffect(() => {
@@ -213,6 +253,18 @@ function BudgetPageContent() {
       return false
     }
 
+    // Apply card/account owner filter
+    if (cardOwnerFilter !== 'all') {
+      const pm = t.paymentMethod || ''
+      let ownerUid: string | undefined
+      if (pm.startsWith('💳 ')) {
+        ownerUid = accountOwners[`card:${pm.replace('💳 ', '')}`]
+      } else {
+        ownerUid = accountOwners[`bank:${pm}`]
+      }
+      if (ownerUid !== cardOwnerFilter) return false
+    }
+
     // Apply type filter (income/expense/capital/external)
     if (typeFilter === 'capital') return capitalNames.has(t.category || '')
     if (typeFilter === 'external') return externalNames.has(t.category || '')
@@ -304,6 +356,26 @@ function BudgetPageContent() {
                     >
                       ✕ נושאים ({selectedCategories.size}): {Array.from(selectedCategories).join(', ')}
                     </button>
+                  )}
+                  {householdMembers.length > 1 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <label style={{ fontWeight: 500, fontSize: '0.875rem' }}>כרטיס של:</label>
+                      <select
+                        value={cardOwnerFilter}
+                        onChange={(e) => setCardOwnerFilter(e.target.value)}
+                        style={{
+                          padding: '0.5rem',
+                          borderRadius: '0.375rem',
+                          border: '1px solid #d1d5db',
+                          fontSize: '0.875rem',
+                        }}
+                      >
+                        <option value="all">הכל</option>
+                        {householdMembers.map(m => (
+                          <option key={m.uid} value={m.uid}>{m.label}</option>
+                        ))}
+                      </select>
+                    </div>
                   )}
                   <button
                     onClick={async () => {
