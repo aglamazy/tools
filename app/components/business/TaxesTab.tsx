@@ -8,7 +8,30 @@ import {
   downloadDriveFile,
 } from '@/app/services/googleDriveService'
 import { getAccessToken } from '@/app/services/googleTokenService'
+import { getUser } from '@/app/stores/authStore'
+import { getHouseholdInfo } from '@/app/services/householdService'
 import YesNoModal from '@/app/components/YesNoModal'
+
+type HouseholdMember = { uid: string; label: string }
+
+async function loadHouseholdMembers(): Promise<HouseholdMember[]> {
+  const currentUser = getUser()
+  const members: HouseholdMember[] = []
+  if (currentUser) {
+    members.push({ uid: currentUser.uid, label: currentUser.email || currentUser.uid })
+  }
+  try {
+    const info = await getHouseholdInfo()
+    if (info.household) {
+      for (const uid of info.household.members) {
+        if (!members.find(m => m.uid === uid)) {
+          members.push({ uid, label: uid })
+        }
+      }
+    }
+  } catch { /* no household */ }
+  return members
+}
 
 type SubTab = 'files' | 'summary'
 
@@ -52,11 +75,115 @@ export default function TaxesTab() {
       </div>
 
       {subTab === 'files' && <FilesSubTab />}
-      {subTab === 'summary' && (
-        <p style={{ color: '#64748b', textAlign: 'center', padding: '2rem' }}>
-          בקרוב - סיכום שנתי
-        </p>
-      )}
+      {subTab === 'summary' && <AnnualSummarySubTab />}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Annual Summary Sub-Tab
+// ---------------------------------------------------------------------------
+
+const HEBREW_MONTHS = [
+  'ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני',
+  'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר',
+]
+
+function AnnualSummarySubTab() {
+  const [docs, setDocs] = useState<TaxDocument[]>([])
+  const [loading, setLoading] = useState(true)
+  const currentYear = new Date().getFullYear()
+  const currentMonth = new Date().getMonth() // 0-based
+
+  useEffect(() => {
+    db.taxDocuments
+      .filter(d => d.year === currentYear)
+      .toArray()
+      .then(all => {
+        setDocs(all)
+        setLoading(false)
+      })
+  }, [currentYear])
+
+  if (loading) return <p style={{ textAlign: 'center', color: '#94a3b8' }}>טוען...</p>
+
+  // Build monthly rows (Jan through current month)
+  const monthlyData = Array.from({ length: currentMonth + 1 }, (_, i) => {
+    const monthStr = `${String(i + 1).padStart(2, '0')}/${currentYear}`
+    const monthDocs = docs.filter(d => d.month === monthStr)
+    return {
+      month: i,
+      label: HEBREW_MONTHS[i],
+      grossIncome: monthDocs.reduce((s, d) => s + (d.grossIncome || 0), 0),
+      incomeTax: monthDocs.reduce((s, d) => s + (d.incomeTax || 0), 0),
+      nationalInsurance: monthDocs.reduce((s, d) => s + (d.nationalInsurance || 0), 0),
+      healthInsurance: monthDocs.reduce((s, d) => s + (d.healthInsurance || 0), 0),
+      netIncome: monthDocs.reduce((s, d) => s + (d.netIncome || 0), 0),
+    }
+  })
+
+  const totals = {
+    grossIncome: monthlyData.reduce((s, m) => s + m.grossIncome, 0),
+    incomeTax: monthlyData.reduce((s, m) => s + m.incomeTax, 0),
+    nationalInsurance: monthlyData.reduce((s, m) => s + m.nationalInsurance, 0),
+    healthInsurance: monthlyData.reduce((s, m) => s + m.healthInsurance, 0),
+    netIncome: monthlyData.reduce((s, m) => s + m.netIncome, 0),
+  }
+
+  const fmt = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
+
+  const cellStyle: React.CSSProperties = {
+    padding: '0.5rem 0.75rem',
+    fontSize: '0.85rem',
+    textAlign: 'left' as const,
+    direction: 'ltr',
+  }
+
+  const headerStyle: React.CSSProperties = {
+    ...cellStyle,
+    fontWeight: 600,
+    background: '#f8fafc',
+    color: '#475569',
+    borderBottom: '2px solid #e2e8f0',
+  }
+
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <h3 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>סיכום שנתי {currentYear}</h3>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+        <thead>
+          <tr>
+            <th style={{ ...headerStyle, textAlign: 'right', direction: 'rtl' }}>חודש</th>
+            <th style={headerStyle}>ברוטו</th>
+            <th style={headerStyle}>מס הכנסה</th>
+            <th style={headerStyle}>ביטוח לאומי</th>
+            <th style={headerStyle}>ביטוח בריאות</th>
+            <th style={headerStyle}>נטו</th>
+          </tr>
+        </thead>
+        <tbody>
+          {monthlyData.map(row => (
+            <tr key={row.month} style={{ borderBottom: '1px solid #f1f5f9' }}>
+              <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 500 }}>{row.label}</td>
+              <td style={cellStyle}>{row.grossIncome ? fmt(row.grossIncome) : '—'}</td>
+              <td style={cellStyle}>{row.incomeTax ? fmt(row.incomeTax) : '—'}</td>
+              <td style={cellStyle}>{row.nationalInsurance ? fmt(row.nationalInsurance) : '—'}</td>
+              <td style={cellStyle}>{row.healthInsurance ? fmt(row.healthInsurance) : '—'}</td>
+              <td style={cellStyle}>{row.netIncome ? fmt(row.netIncome) : '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr style={{ borderTop: '2px solid #e2e8f0', background: '#f0fdf4' }}>
+            <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 700 }}>סה&quot;כ</td>
+            <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.grossIncome)}</td>
+            <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.incomeTax)}</td>
+            <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.nationalInsurance)}</td>
+            <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.healthInsurance)}</td>
+            <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.netIncome)}</td>
+          </tr>
+        </tfoot>
+      </table>
     </div>
   )
 }
@@ -73,18 +200,19 @@ function FilesSubTab() {
   const [error, setError] = useState<string | null>(null)
   const [driveConnected, setDriveConnected] = useState(false)
   const [claudeApiKey, setClaudeApiKey] = useState('')
+  const [members, setMembers] = useState<HouseholdMember[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const loadDocs = useCallback(async () => {
-    const all = await db.taxDocuments
-      .reverse()
-      .sortBy('uploadedAt')
+    const all = (await db.taxDocuments.toArray())
+      .sort((a, b) => (b.uploadedAt || '').localeCompare(a.uploadedAt || ''))
     setDocs(all)
     setLoading(false)
   }, [])
 
   useEffect(() => {
     loadDocs()
+    loadHouseholdMembers().then(setMembers)
     getAccessToken().then(token => setDriveConnected(!!token))
     // Load saved Claude API key
     db.appSettings.where('key').equals('claudeApiKey').first().then(row => {
@@ -126,6 +254,7 @@ function FilesSubTab() {
       const now = new Date().toISOString()
       const id = await db.taxDocuments.add({
         businessId: 0,
+        userId: getUser()?.uid,
         fileName: file.name,
         driveFileId,
         driveWebViewLink,
@@ -216,6 +345,11 @@ function FilesSubTab() {
     } catch (err: any) {
       setError(err.message || 'Failed to download file from Drive')
     }
+  }
+
+  const handleAssignUser = async (docId: number, userId: string) => {
+    await db.taxDocuments.update(docId, { userId: userId || undefined, updatedAt: new Date().toISOString() })
+    await loadDocs()
   }
 
   const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean; doc: TaxDocument | null }>({ isOpen: false, doc: null })
@@ -393,6 +527,27 @@ function FilesSubTab() {
                     {doc.netIncome?.toLocaleString('he-IL')}
                   </div>
                 </div>
+              )}
+
+              {/* User assignment */}
+              {members.length > 0 && (
+                <select
+                  value={doc.userId || ''}
+                  onChange={e => doc.id && handleAssignUser(doc.id, e.target.value)}
+                  style={{
+                    padding: '0.25rem 0.5rem',
+                    fontSize: '0.75rem',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '0.25rem',
+                    background: doc.userId ? '#f0fdf4' : '#fff',
+                    color: '#475569',
+                  }}
+                >
+                  <option value="">משתמש</option>
+                  {members.map(m => (
+                    <option key={m.uid} value={m.uid}>{m.label}</option>
+                  ))}
+                </select>
               )}
 
               {/* Actions */}

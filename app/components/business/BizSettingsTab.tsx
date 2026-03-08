@@ -4,6 +4,8 @@ import React, { useEffect, useState } from 'react'
 import { businessStore } from '@/app/stores/businessStore'
 import type { Business } from '@/app/db/financeDB'
 import { ypayService } from '@/app/services/ypayService'
+import { getUser } from '@/app/stores/authStore'
+import { getHouseholdInfo } from '@/app/services/householdService'
 
 type BizSettingsTabProps = {
   businessId: number
@@ -14,10 +16,33 @@ export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
   const [ypayClientId, setYpayClientId] = useState('')
   const [ypayClientSecret, setYpayClientSecret] = useState('')
   const [ypayStatus, setYpayStatus] = useState<{ type: 'idle' | 'success' | 'error'; message: string }>({ type: 'idle', message: '' })
+  const [householdMembers, setHouseholdMembers] = useState<{ uid: string; label: string }[]>([])
+  const [selectedUserId, setSelectedUserId] = useState<string>('')
+  const [ownerSaved, setOwnerSaved] = useState(false)
 
   useEffect(() => {
     void loadBusiness()
+    void loadHouseholdMembers()
   }, [businessId])
+
+  const loadHouseholdMembers = async () => {
+    const currentUser = getUser()
+    const members: { uid: string; label: string }[] = []
+    if (currentUser) {
+      members.push({ uid: currentUser.uid, label: currentUser.email || currentUser.uid })
+    }
+    try {
+      const info = await getHouseholdInfo()
+      if (info.household) {
+        for (const uid of info.household.members) {
+          if (!members.find(m => m.uid === uid)) {
+            members.push({ uid, label: uid })
+          }
+        }
+      }
+    } catch { /* no household */ }
+    setHouseholdMembers(members)
+  }
 
   const loadBusiness = async () => {
     const b = await businessStore.getById(businessId)
@@ -25,7 +50,14 @@ export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
       setBusiness(b)
       setYpayClientId(b.ypayClientId || '')
       setYpayClientSecret(b.ypayClientSecret || '')
+      setSelectedUserId(b.userId || '')
     }
+  }
+
+  const saveOwner = async () => {
+    await businessStore.update(businessId, { userId: selectedUserId || undefined })
+    setOwnerSaved(true)
+    setTimeout(() => setOwnerSaved(false), 2000)
   }
 
   const saveYpayCredentials = async () => {
@@ -53,7 +85,29 @@ export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
   if (!business) return null
 
   return (
-    <div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+      {/* Owner assignment */}
+      <section style={{ padding: '1rem', border: '1px solid #e2e8f0', borderRadius: '0.75rem', background: '#f0f9ff' }}>
+        <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem', fontWeight: 600 }}>בעלים</h3>
+        <p style={{ margin: '0 0 1rem', color: '#1e40af', fontSize: '0.85rem' }}>שייך את העסק למשתמש במשק הבית</p>
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+          <select
+            value={selectedUserId}
+            onChange={e => setSelectedUserId(e.target.value)}
+            style={{ flex: 1, padding: '0.5rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', fontSize: '0.9rem' }}
+          >
+            <option value="">לא משויך</option>
+            {householdMembers.map(m => (
+              <option key={m.uid} value={m.uid}>{m.label}</option>
+            ))}
+          </select>
+          <button onClick={() => void saveOwner()} className="file-picker" style={{ padding: '0.5rem 1rem', fontSize: '0.875rem' }}>
+            שמור
+          </button>
+          {ownerSaved && <span style={{ fontSize: '0.85rem', color: '#16a34a' }}>נשמר</span>}
+        </div>
+      </section>
+
       <section style={{ padding: '1rem', border: '1px solid #e2e8f0', borderRadius: '0.75rem', background: '#faf5ff' }}>
         <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem', fontWeight: 600 }}>YPAY - חשבוניות</h3>
         <p style={{ margin: '0 0 1rem', color: '#6b21a8', fontSize: '0.85rem' }}>הגדרות חיבור לשירות החשבוניות של YPAY</p>

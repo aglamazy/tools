@@ -105,6 +105,7 @@ export interface Business {
   ypayClientId?: string
   ypayClientSecret?: string
   pinnedToSidebar?: boolean
+  userId?: string // Firebase UID of the owning user
   createdAt: string
   updatedAt: string
 }
@@ -180,6 +181,7 @@ export interface TaxDocument {
   employer?: string
   annualTaxableIncome?: number // הכנסה שנתית לנמס
   extractedData?: any // Raw extraction JSON
+  userId?: string // Firebase UID of the owning user
   uploadedAt: string
   updatedAt?: string
 }
@@ -492,6 +494,28 @@ class FinanceDB extends Dexie {
       scoutResults: '++id, syncId, businessId, status, [businessId+status]',
       scoutConfigs: '++id, syncId, &businessId',
       taxDocuments: '++id, syncId, businessId, month, year, [businessId+year]',
+    })
+
+    // Define schema version 17 - add userId to businesses and taxDocuments
+    this.version(17).stores({
+      transactions: '++id, syncId, type, month, accountNumber, cardNumber, date, chargingDate, [type+month], [cardNumber+month], [accountNumber+month], fileId',
+      importedFiles: '++id, syncId, fileName, fileType, processingMonth, [fileType+processingMonth], [cardNumber+processingMonth]',
+      categories: '++id, syncId, name, type',
+      businessCategories: '++id, syncId, &business',
+      tasks: '++id, syncId, createdAt, priority',
+      appSettings: '++id, syncId, &key',
+      businesses: '++id, syncId, &name, type, userId',
+      projects: '++id, syncId, businessId, name, archived',
+      harvestTasks: '++id, syncId, projectId, name, archived',
+      timeEntries: '++id, syncId, taskId, date, startTime, endTime, [taskId+date]',
+      capitalEntries: '++id, syncId, date, institution, accountNumber, description, assetType, currency, employer, investmentTrack, agent, soldDate, [institution+accountNumber+description], fileId',
+      financialInstitutions: '++id, syncId, name, type',
+      ypayDocuments: '++id, syncId, &transactionId, docType',
+      students: '++id, syncId, businessId, name, archived',
+      profileQAs: '++id, syncId, businessId, [businessId+answerType]',
+      scoutResults: '++id, syncId, businessId, status, [businessId+status]',
+      scoutConfigs: '++id, syncId, &businessId',
+      taxDocuments: '++id, syncId, businessId, userId, month, year, [businessId+year]',
     })
 
     // Auto-inject syncId and updatedAt on create/update
