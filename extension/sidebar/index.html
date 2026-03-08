@@ -38,7 +38,27 @@
         <span id="user-email"></span>
       </div>
       <div id="content-area" class="content-area">
-        <p class="placeholder-text">תוכן יתווסף בקרוב...</p>
+        <!-- Form Filler Section -->
+        <div id="form-filler-section" style="display:none">
+          <div class="form-filler-header">
+            <h3>📋 עוזר מילוי טפסים</h3>
+            <span id="field-count" class="field-count"></span>
+          </div>
+          <div id="form-filler-loading" class="form-filler-loading" style="display:none">
+            <span>מנתח שדות...</span>
+          </div>
+          <div id="fields-list" class="fields-list"></div>
+          <div class="form-filler-actions">
+            <button id="save-facts-btn" class="btn btn-secondary" style="display:none">שמור עובדות חדשות</button>
+            <button id="fill-form-btn" class="btn btn-primary" style="display:none">מלא טופס ►</button>
+          </div>
+          <div id="save-feedback" class="save-feedback" style="display:none"></div>
+        </div>
+        <!-- No form detected -->
+        <div id="no-form-section">
+          <p class="placeholder-text">לא זוהה טופס בדף הנוכחי</p>
+          <button id="demo-btn" class="btn btn-primary" style="margin-top:1rem">דמו — פתח טופס לדוגמה</button>
+        </div>
       </div>
       <div id="update-banner" class="update-banner" style="display:none">
         <span>גרסה חדשה זמינה!</span>

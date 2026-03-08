@@ -3,7 +3,15 @@
   "name": "Aglamaz Form Assistant",
   "version": "1.0.0",
   "description": "עוזר למילוי טפסים — Aglamaz",
-  "permissions": ["sidePanel", "activeTab", "storage"],
+  "permissions": ["sidePanel", "activeTab", "storage", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
   "side_panel": {
     "default_path": "sidebar/index.html"
   },
