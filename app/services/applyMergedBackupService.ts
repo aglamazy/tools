@@ -22,7 +22,7 @@ const FK_ANNOTATIONS: Record<string, { annotationField: string; fkField: string;
 const INSERT_ORDER = [
   'businesses', 'categories', 'appSettings', 'businessCategories',
   'importedFiles', 'transactions', 'tasks', 'financialInstitutions',
-  'capitalEntries', 'ypayDocuments',
+  'capitalEntries', 'ypayDocuments', 'taxDocuments',
   'projects', 'harvestTasks', 'timeEntries',
 ]
 
@@ -41,7 +41,8 @@ export async function applyMergedBackup(merged: BackupData): Promise<void> {
   await db.transaction('rw',
     [db.transactions, db.importedFiles, db.categories, db.businessCategories,
      db.tasks, db.appSettings, db.businesses, db.projects, db.harvestTasks,
-     db.timeEntries, db.capitalEntries, db.financialInstitutions, db.ypayDocuments],
+     db.timeEntries, db.capitalEntries, db.financialInstitutions, db.ypayDocuments,
+     db.taxDocuments],
     async () => {
       // Clear all tables
       for (const tableName of INSERT_ORDER) {
