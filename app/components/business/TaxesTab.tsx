@@ -13,6 +13,7 @@ import { getAccessToken } from '@/app/services/googleTokenService'
 import { getUser } from '@/app/stores/authStore'
 import { getHouseholdInfo } from '@/app/services/householdService'
 import YesNoModal from '@/app/components/YesNoModal'
+import { useTaxExemptStatus, type TaxStatus } from '@/app/components/TaxExemptBadge'
 
 type HouseholdMember = { uid: string; label: string }
 
@@ -44,11 +45,75 @@ const SUB_TABS: { id: SubTab; label: string }[] = [
   { id: 'summary', label: 'סיכום שנתי' },
 ]
 
+const TAX_STATUS_STYLES: Record<TaxStatus, { bg: string; border: string; text: string; label: string }> = {
+  green: { bg: '#f0fdf4', border: '#86efac', text: '#16a34a', label: 'תקין — ההכנסה בטווח הפטור' },
+  yellow: { bg: '#fefce8', border: '#fde047', text: '#a16207', label: 'זהירות — מתקרב לתקרת הפטור' },
+  red: { bg: '#fef2f2', border: '#fca5a5', text: '#dc2626', label: 'חריגה — ההכנסה עברה את תקרת הפטור' },
+}
+
+function TaxExemptStatusBanner() {
+  const info = useTaxExemptStatus()
+  if (!info) return null
+
+  const style = TAX_STATUS_STYLES[info.status]
+  const fmt = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
+  const remainingToLimit = Math.max(0, info.limit - info.currentIncome)
+
+  return (
+    <div style={{
+      marginBottom: '1rem',
+      padding: '0.75rem 1rem',
+      background: style.bg,
+      border: `1px solid ${style.border}`,
+      borderRadius: '0.5rem',
+      fontSize: '0.9rem',
+      color: style.text,
+    }}>
+      <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>{style.label}</div>
+      <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap', fontSize: '0.85rem', color: '#475569' }}>
+        <div>
+          <span style={{ color: '#64748b' }}>הכנסה שנתית נוכחית: </span>
+          <strong>{fmt(info.currentIncome)}</strong>
+        </div>
+        <div>
+          <span style={{ color: '#64748b' }}>תקרת פטור: </span>
+          <strong>{fmt(info.limit)}</strong>
+        </div>
+        <div>
+          <span style={{ color: '#64748b' }}>נותר עד לתקרה: </span>
+          <strong>{fmt(remainingToLimit)}</strong>
+        </div>
+        <div>
+          <span style={{ color: '#64748b' }}>הכנסה חודשית מקסימלית: </span>
+          <strong>{fmt(info.maxMonthlyIncome)}</strong>
+        </div>
+      </div>
+      {/* Progress bar */}
+      <div style={{
+        marginTop: '0.5rem',
+        height: 6,
+        background: '#e2e8f0',
+        borderRadius: 3,
+        overflow: 'hidden',
+      }}>
+        <div style={{
+          height: '100%',
+          width: `${Math.min(100, (info.currentIncome / info.limit) * 100)}%`,
+          background: style.text,
+          borderRadius: 3,
+          transition: 'width 0.3s ease',
+        }} />
+      </div>
+    </div>
+  )
+}
+
 export default function TaxesTab() {
   const [subTab, setSubTab] = useState<SubTab>('files')
 
   return (
     <div>
+      <TaxExemptStatusBanner />
       {/* Sub-tab bar */}
       <div style={{
         display: 'flex',

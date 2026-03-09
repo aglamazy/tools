@@ -202,6 +202,43 @@ export const appSettingsStore = {
   },
 
   /**
+   * Get annual tax-exempt limit (platform-level setting configured by admin)
+   */
+  getAnnualTaxLimit: async (): Promise<number | null> => {
+    try {
+      const setting = await db.appSettings.where('key').equals('annualTaxLimit').first()
+      return setting ? (setting.value as number) : null
+    } catch (error) {
+      console.error('Error getting annualTaxLimit:', error)
+      return null
+    }
+  },
+
+  /**
+   * Set annual tax-exempt limit
+   */
+  setAnnualTaxLimit: async (limit: number): Promise<void> => {
+    try {
+      const existing = await db.appSettings.where('key').equals('annualTaxLimit').first()
+      if (existing) {
+        await db.appSettings.update(existing.id!, {
+          value: limit,
+          updatedAt: new Date().toISOString(),
+        })
+      } else {
+        await db.appSettings.add({
+          key: 'annualTaxLimit',
+          value: limit,
+          updatedAt: new Date().toISOString(),
+        })
+      }
+    } catch (error) {
+      console.error('Error setting annualTaxLimit:', error)
+      throw error
+    }
+  },
+
+  /**
    * Initialize default settings if not already set
    */
   initialize: async (): Promise<void> => {
