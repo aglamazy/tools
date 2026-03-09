@@ -124,7 +124,15 @@ export default function ExtensionSidebarPage() {
         setSuggestions(s)
         const initial: Record<string, string> = {}
         for (const f of extractedFields) {
-          initial[f.id] = s[f.id]?.value || ''
+          let val = s[f.id]?.value || ''
+          // For select fields: map human-readable text to the form's option value
+          if (f.type === 'select' && f.options && val) {
+            const matchedOpt = f.options.find(o =>
+              o.text.trim().toLowerCase() === val.trim().toLowerCase()
+            )
+            if (matchedOpt) val = matchedOpt.value
+          }
+          initial[f.id] = val
         }
         setEditedValues(initial)
       }
@@ -163,9 +171,15 @@ export default function ExtensionSidebarPage() {
       const val = editedValues[field.id] || ''
       const orig = suggestions[field.id]?.value || ''
       if (val && val !== orig) {
+        // For select fields: save the human-readable text, not the option value
+        let answerToSave = val
+        if (field.type === 'select' && field.options) {
+          const matchedOpt = field.options.find(o => o.value === val)
+          if (matchedOpt) answerToSave = matchedOpt.text
+        }
         newFacts.push({
           question: field.label || field.name || field.id,
-          answer: val,
+          answer: answerToSave,
           answerType: field.type === 'textarea' ? 'paragraph' : field.type === 'date' ? 'date' : 'word',
         })
       }
@@ -293,7 +307,10 @@ export default function ExtensionSidebarPage() {
     <div style={{ ...containerStyle, justifyContent: 'flex-start', padding: '1rem' }}>
       {/* Header */}
       <header style={headerStyle}>
-        <h2 style={{ fontSize: '1.25rem', color: '#3b82f6', margin: 0 }}>Aglamaz</h2>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.35rem' }}>
+          <h2 style={{ fontSize: '1.25rem', color: '#3b82f6', margin: 0 }}>Aglamaz</h2>
+          <span style={{ fontSize: '0.6rem', color: '#94a3b8' }}>v1.0.6</span>
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <span style={{ fontSize: '0.7rem', color: '#64748b' }}>{user.email}</span>
           <button onClick={() => signOut()} style={smallBtnStyle}>יציאה</button>

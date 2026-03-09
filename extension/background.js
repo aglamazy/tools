@@ -1,6 +1,6 @@
 // Aglamaz Form Assistant — Service Worker
 
-const API_BASE = 'https://tools.aglamaz.com';
+const API_BASE = 'https://aglamazo.com';
 
 // Open side panel when extension icon is clicked
 chrome.action.onClicked.addListener((tab) => {

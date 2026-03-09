@@ -1,7 +1,7 @@
 const iframe = document.getElementById('sidebar-frame');
 iframe.src = SITE_URL + '/extension/sidebar';
 
-const ALLOWED_ORIGINS = new Set(['http://localhost:3100', 'https://tools.aglamaz.com', new URL(SITE_URL).origin]);
+const ALLOWED_ORIGINS = new Set(['http://localhost:3100', 'https://aglamazo.com', 'https://tools.aglamaz.com', new URL(SITE_URL).origin]);
 
 // Bridge: iframe postMessage → background script → content script
 window.addEventListener('message', (event) => {
