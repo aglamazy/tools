@@ -14,6 +14,7 @@ export type Business = {
   type: BusinessType
   vatType?: VatType
   isTaxFree?: boolean
+  userId?: string
   pinnedToSidebar?: boolean
   createdAt: string
   updatedAt: string

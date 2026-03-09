@@ -93,8 +93,8 @@ export default function BusinessForm({ business, onChange, onSave, onCancel, isN
                   <input
                     type="radio"
                     name="vatType"
-                    checked={business.vatType === 'exempt'}
-                    onChange={() => onChange({ ...business, vatType: 'exempt' })}
+                    checked={business.vatType === 'exempt' && !business.isTaxFree}
+                    onChange={() => onChange({ ...business, vatType: 'exempt', isTaxFree: false })}
                   />
                   <span>פטור</span>
                 </label>
@@ -107,20 +107,19 @@ export default function BusinessForm({ business, onChange, onSave, onCancel, isN
                   />
                   <span>עוסק מורשה</span>
                 </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="vatType"
+                    checked={business.isTaxFree === true}
+                    onChange={() => onChange({ ...business, vatType: 'exempt', isTaxFree: true })}
+                  />
+                  <span>פטור ממס</span>
+                </label>
               </div>
               <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
-                {business.vatType === 'exempt' ? 'יופק: קבלה' : business.vatType === 'authorized' ? 'יופק: חשבונית מס קבלה' : ''}
+                {business.isTaxFree ? 'לדוגמא השכרת דירה עד לתקרה' : business.vatType === 'exempt' ? 'יופק: קבלה' : business.vatType === 'authorized' ? 'יופק: חשבונית מס קבלה' : ''}
               </span>
-              {business.vatType === 'exempt' && (
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', marginTop: '0.75rem' }}>
-                  <input
-                    type="checkbox"
-                    checked={business.isTaxFree || false}
-                    onChange={(e) => onChange({ ...business, isTaxFree: e.target.checked })}
-                  />
-                  <span>ללא מיסים (הכנסה פטורה ממס הכנסה)</span>
-                </label>
-              )}
             </div>
           )}
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>

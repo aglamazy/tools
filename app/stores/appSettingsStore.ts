@@ -202,12 +202,21 @@ export const appSettingsStore = {
   },
 
   /**
-   * Get annual tax-exempt limit (platform-level setting configured by admin)
+   * Get tax-exempt limit for a specific year.
+   * Falls back to the legacy single-value format for backward compat.
    */
-  getAnnualTaxLimit: async (): Promise<number | null> => {
+  getAnnualTaxLimit: async (year?: number): Promise<number | null> => {
     try {
       const setting = await db.appSettings.where('key').equals('annualTaxLimit').first()
-      return setting ? (setting.value as number) : null
+      if (!setting) return null
+      const value = setting.value
+      // New format: { [year]: limit }
+      if (typeof value === 'object' && value !== null) {
+        const y = year ?? new Date().getFullYear()
+        return (value as Record<string, number>)[String(y)] ?? null
+      }
+      // Legacy format: single number (applies to any year)
+      return typeof value === 'number' ? value : null
     } catch (error) {
       console.error('Error getting annualTaxLimit:', error)
       return null
@@ -215,20 +224,54 @@ export const appSettingsStore = {
   },
 
   /**
-   * Set annual tax-exempt limit
+   * Get all per-year tax limits as a map.
+   * Migrates legacy single-value format on read.
    */
-  setAnnualTaxLimit: async (limit: number): Promise<void> => {
+  getAllTaxLimits: async (): Promise<Record<string, number>> => {
     try {
+      const setting = await db.appSettings.where('key').equals('annualTaxLimit').first()
+      if (!setting) return {}
+      const value = setting.value
+      if (typeof value === 'object' && value !== null) {
+        return value as Record<string, number>
+      }
+      // Legacy: single number — treat as current year
+      if (typeof value === 'number') {
+        return { [String(new Date().getFullYear())]: value }
+      }
+      return {}
+    } catch (error) {
+      console.error('Error getting tax limits:', error)
+      return {}
+    }
+  },
+
+  /**
+   * Set tax-exempt limit for a specific year
+   */
+  setAnnualTaxLimit: async (limit: number, year?: number): Promise<void> => {
+    try {
+      const y = String(year ?? new Date().getFullYear())
       const existing = await db.appSettings.where('key').equals('annualTaxLimit').first()
+      let allLimits: Record<string, number> = {}
       if (existing) {
+        const val = existing.value
+        if (typeof val === 'object' && val !== null) {
+          allLimits = { ...(val as Record<string, number>) }
+        } else if (typeof val === 'number') {
+          // Migrate legacy single value to current year
+          allLimits = { [String(new Date().getFullYear())]: val }
+        }
+        allLimits[y] = limit
         await db.appSettings.update(existing.id!, {
-          value: limit,
+          value: allLimits,
           updatedAt: new Date().toISOString(),
         })
       } else {
+        allLimits[y] = limit
         await db.appSettings.add({
           key: 'annualTaxLimit',
-          value: limit,
+          value: allLimits,
           updatedAt: new Date().toISOString(),
         })
       }

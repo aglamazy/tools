@@ -1,12 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import Link from 'next/link'
 import { db } from '@/app/db/financeDB'
 import { appSettingsStore } from '@/app/stores/appSettingsStore'
 import { subjectStore } from '@/app/stores/subjectStore'
 import type { Category } from '@/app/types/category'
-import { routes } from '@/app/config'
 
 export type TaxStatus = 'green' | 'yellow' | 'red'
 
@@ -17,72 +15,59 @@ export type TaxStatusInfo = {
   limit: number
 }
 
+const STATUS_RANK: Record<TaxStatus, number> = { green: 0, yellow: 1, red: 2 }
+
+function computeStatus(currentIncome: number, maxMonthlyIncome: number, limit: number): TaxStatus {
+  if (currentIncome > limit) return 'red'
+  if (currentIncome + maxMonthlyIncome > limit) return 'yellow'
+  return 'green'
+}
+
+/**
+ * Tax exemption status based on business transaction income (gross, before deductions).
+ * This matches the per-business columns in the annual summary table.
+ * When userId is provided, calculates for that user only.
+ * When omitted (sidebar badge), picks the worst status across all users.
+ */
 export function useTaxExemptStatus(): TaxStatusInfo | null {
   const [info, setInfo] = useState<TaxStatusInfo | null>(null)
 
   useEffect(() => {
     const load = async () => {
-      const limit = await appSettingsStore.getAnnualTaxLimit()
+      const currentYear = new Date().getFullYear()
+      const limit = await appSettingsStore.getAnnualTaxLimit(currentYear)
       if (!limit) return
 
-      const currentYear = new Date().getFullYear()
-
-      // Get income from tax documents
-      const taxDocs = await db.taxDocuments.filter(d => d.year === currentYear).toArray()
-      const taxDocIncome = taxDocs.reduce((s, d) => s + (d.grossIncome || 0), 0)
-
-      // Get income from business transactions (self-employed income)
+      // Sum income from vatType === 'exempt' businesses (פטור)
       const businesses = await db.businesses.toArray()
+      const exemptBizIds = new Set(businesses.filter(b => b.vatType === 'exempt').map(b => b.id!))
+      if (exemptBizIds.size === 0) return
+
+      // Build exempt business → income category names
       const categories = subjectStore.getAll() as Category[]
-      const bizCatNames = new Set<string>()
+      const exemptCatNames = new Set<string>()
       for (const cat of categories) {
-        if (cat.businessId && cat.type === 'income') {
-          bizCatNames.add(cat.name)
+        if (cat.businessId && exemptBizIds.has(cat.businessId) && cat.type === 'income') {
+          exemptCatNames.add(cat.name)
         }
       }
+      if (exemptCatNames.size === 0) return
 
-      let bizIncome = 0
-      if (bizCatNames.size > 0) {
-        const allTx = await db.transactions.toArray()
-        bizIncome = allTx
-          .filter(t => t.category && bizCatNames.has(t.category) && t.month?.endsWith(`/${currentYear}`))
-          .reduce((s, t) => s + (t.amount || 0), 0)
-      }
+      const allTx = await db.transactions.toArray()
+      const yearTx = allTx.filter(t => t.category && exemptCatNames.has(t.category) && t.month?.endsWith(`/${currentYear}`))
 
-      const currentIncome = taxDocIncome + bizIncome
-
-      // Calculate max monthly income from the data we have
-      const currentMonth = new Date().getMonth() // 0-based
+      const currentMonth = new Date().getMonth()
       const monthlyIncomes: number[] = []
       for (let m = 0; m <= currentMonth; m++) {
         const monthStr = `${String(m + 1).padStart(2, '0')}/${currentYear}`
-        const monthTaxIncome = taxDocs
-          .filter(d => d.month === monthStr)
-          .reduce((s, d) => s + (d.grossIncome || 0), 0)
-
-        let monthBizIncome = 0
-        if (bizCatNames.size > 0) {
-          const allTx = await db.transactions.toArray()
-          monthBizIncome = allTx
-            .filter(t => t.month === monthStr && t.category && bizCatNames.has(t.category))
-            .reduce((s, t) => s + (t.amount || 0), 0)
-        }
-
-        monthlyIncomes.push(monthTaxIncome + monthBizIncome)
+        monthlyIncomes.push(
+          yearTx.filter(t => t.month === monthStr).reduce((s, t) => s + (t.amount || 0), 0)
+        )
       }
 
-      const maxMonthlyIncome = monthlyIncomes.length > 0
-        ? Math.max(...monthlyIncomes)
-        : 0
-
-      let status: TaxStatus
-      if (currentIncome > limit) {
-        status = 'red'
-      } else if (currentIncome + maxMonthlyIncome > limit) {
-        status = 'yellow'
-      } else {
-        status = 'green'
-      }
+      const currentIncome = yearTx.reduce((s, t) => s + (t.amount || 0), 0)
+      const maxMonthlyIncome = monthlyIncomes.length > 0 ? Math.max(...monthlyIncomes) : 0
+      const status = computeStatus(currentIncome, maxMonthlyIncome, limit)
 
       setInfo({ status, currentIncome, maxMonthlyIncome, limit })
     }
@@ -114,22 +99,17 @@ export default function TaxExemptBadge() {
   const fmt = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
 
   return (
-    <Link
-      href={routes.taxes}
+    <span
       title={`${STATUS_LABELS[info.status]} — הכנסה: ${fmt(info.currentIncome)} / תקרה: ${fmt(info.limit)}`}
-      style={{ textDecoration: 'none' }}
-    >
-      <span
-        style={{
-          display: 'inline-block',
-          width: 8,
-          height: 8,
-          borderRadius: '50%',
-          background: colors.text,
-          border: `1px solid ${colors.border}`,
-          marginInlineStart: '0.35rem',
-        }}
-      />
-    </Link>
+      style={{
+        display: 'inline-block',
+        width: 8,
+        height: 8,
+        borderRadius: '50%',
+        background: colors.text,
+        border: `1px solid ${colors.border}`,
+        marginInlineStart: '0.35rem',
+      }}
+    />
   )
 }
