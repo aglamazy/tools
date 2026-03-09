@@ -22,6 +22,7 @@ export const routes = {
   profile: '/app/profile',
   admin: '/app/admin',
   businessCategories: '/app/business-categories',
+  terms: '/app/terms',
   about: '/about',
   guide: '/guide',
   pricing: '/pricing',
@@ -36,4 +37,7 @@ export const config = {
 
   // Sync cadence (minutes). Update here to change auto-sync frequency across app.
   syncIntervalMinutes: 5,
+
+  // Terms & Conditions latest version date. Update this to force re-acceptance.
+  tcVersion: '2026-03-09',
 }
