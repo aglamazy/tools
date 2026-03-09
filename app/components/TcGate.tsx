@@ -3,7 +3,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { subscribeToAuth } from '@/app/stores/authStore'
-import { tcStore } from '@/app/stores/tcStore'
+import { userTierStore } from '@/app/stores/userTierStore'
 import { routes } from '@/app/config'
 
 /**
@@ -16,7 +16,7 @@ export default function TcGate({ children }: { children: ReactNode }) {
   const router = useRouter()
   const [authReady, setAuthReady] = useState(false)
   const [loggedIn, setLoggedIn] = useState(false)
-  const [tcState, setTcState] = useState(tcStore.get())
+  const [tcState, setTcState] = useState(userTierStore.getTcState())
 
   useEffect(() => {
     const unsub = subscribeToAuth((s) => {
@@ -27,7 +27,7 @@ export default function TcGate({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    const unsub = tcStore.subscribe(setTcState)
+    const unsub = userTierStore.subscribeTc(setTcState)
     return unsub
   }, [])
 

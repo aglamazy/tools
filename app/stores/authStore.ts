@@ -6,7 +6,6 @@
 
 import { subscribeToAuthState, type AuthUser } from '@/app/services/firebaseAuthService'
 import { userTierStore, UserTier } from '@/app/stores/userTierStore'
-import { tcStore } from '@/app/stores/tcStore'
 
 export type { AuthUser }
 
@@ -42,11 +41,9 @@ export function initializeAuth() {
   unsubscribeFirebase = subscribeToAuthState((user) => {
     if (user) {
       userTierStore.subscribeFirestore(user.uid)
-      tcStore.subscribeFirestore(user.uid)
     } else {
       userTierStore.unsubscribeFirestore()
       userTierStore.set(UserTier.FREE)
-      tcStore.reset()
     }
 
     state = {
