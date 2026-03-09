@@ -7,6 +7,7 @@ import { getIdToken } from '@/app/services/firebaseAuthService'
 import { subscribeToAuth } from '@/app/stores/authStore'
 import { appSettingsStore } from '@/app/stores/appSettingsStore'
 import SettingsTabs from '@/app/components/settings/SettingsTabs'
+import RichEditor from '@/app/components/ui/RichEditor'
 
 type Member = {
   uid: string
@@ -69,6 +70,11 @@ export default function AdminPage() {
   const [taxLimitSaved, setTaxLimitSaved] = useState<string | null>(null)
   const [newTaxYear, setNewTaxYear] = useState('')
 
+  const [tcVersions, setTcVersions] = useState<{ version: string; text: string }[]>([])
+  const [tcDraft, setTcDraft] = useState('')
+  const [tcSaving, setTcSaving] = useState(false)
+  const [tcSaved, setTcSaved] = useState(false)
+
   const fetchAccounts = async () => {
     try {
       setError(null)
@@ -92,6 +98,23 @@ export default function AdminPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const fetchTcVersions = async () => {
+    try {
+      const token = await getIdToken()
+      if (!token) return
+      const res = await fetch('/api/admin/tc', {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const data = await res.json()
+      if (data.success) {
+        setTcVersions(data.versions)
+        if (data.versions.length > 0) {
+          setTcDraft(data.versions[0].text)
+        }
+      }
+    } catch { /* non-blocking */ }
   }
 
   const fetchProvisions = async () => {
@@ -127,6 +150,7 @@ export default function AdminPage() {
       setAuthorized(true)
       fetchAccounts()
       fetchProvisions()
+      fetchTcVersions()
       appSettingsStore.getAllTaxLimits().then(limits => {
         setTaxLimits(limits)
         const drafts: Record<string, string> = {}
@@ -264,6 +288,7 @@ export default function AdminPage() {
   const adminTabs = [
     { id: 'accounts', label: 'חשבונות', icon: '👥' },
     { id: 'provisions', label: 'הזמנות', icon: '📨' },
+    { id: 'tc', label: 'תנאי שימוש', icon: '📜' },
     { id: 'settings', label: 'הגדרות', icon: '⚙️' },
   ]
 
@@ -505,6 +530,106 @@ export default function AdminPage() {
                     <div className="banner">אין הזמנות ממתינות</div>
                   )}
                 </>
+              )}
+
+              {activeTab === 'tc' && (
+                <div>
+                  <h2 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.75rem' }}>עריכת תנאי שימוש</h2>
+                  <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '0.75rem' }}>
+                    כל שמירה יוצרת גרסה חדשה (לפי תאריך). משתמשים שאישרו גרסה ישנה יתבקשו לאשר מחדש.
+                  </p>
+                  <RichEditor
+                    value={tcDraft}
+                    onChange={(html) => { setTcDraft(html); setTcSaved(false) }}
+                  />
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.75rem' }}>
+                    <button
+                      onClick={async () => {
+                        if (!tcDraft.trim()) return
+                        setTcSaving(true)
+                        setTcSaved(false)
+                        try {
+                          const token = await getIdToken()
+                          const res = await fetch('/api/admin/tc', {
+                            method: 'POST',
+                            headers: {
+                              'Content-Type': 'application/json',
+                              Authorization: `Bearer ${token}`,
+                            },
+                            body: JSON.stringify({ text: tcDraft }),
+                          })
+                          const data = await res.json()
+                          if (data.success) {
+                            setTcSaved(true)
+                            await fetchTcVersions()
+                          }
+                        } catch { /* */ }
+                        setTcSaving(false)
+                      }}
+                      disabled={tcSaving || !tcDraft.trim() || (tcVersions.length > 0 && tcDraft === tcVersions[0].text)}
+                      style={{
+                        padding: '0.4rem 1.25rem',
+                        background: tcSaving || !tcDraft.trim() || (tcVersions.length > 0 && tcDraft === tcVersions[0].text) ? '#e5e7eb' : '#2563eb',
+                        color: tcSaving || !tcDraft.trim() || (tcVersions.length > 0 && tcDraft === tcVersions[0].text) ? '#9ca3af' : '#fff',
+                        border: 'none',
+                        borderRadius: '0.375rem',
+                        fontSize: '0.9rem',
+                        cursor: tcSaving ? 'wait' : 'pointer',
+                      }}
+                    >
+                      {tcSaving ? 'שומר...' : 'שמור גרסה חדשה'}
+                    </button>
+                    {tcSaved && <span style={{ fontSize: '0.85rem', color: '#16a34a' }}>נשמר בהצלחה</span>}
+                  </div>
+
+                  {tcVersions.length > 0 && (
+                    <div style={{ marginTop: '1.5rem' }}>
+                      <h3 style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: '0.5rem' }}>היסטוריית גרסאות</h3>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                        {tcVersions.map((v, i) => (
+                          <div
+                            key={v.version}
+                            style={{
+                              padding: '0.6rem 1rem',
+                              border: '1px solid #e5e7eb',
+                              borderRadius: '0.5rem',
+                              background: i === 0 ? '#eff6ff' : '#fff',
+                              cursor: 'pointer',
+                            }}
+                            onClick={() => { setTcDraft(v.text); setTcSaved(false) }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                              <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{v.version}</span>
+                              {i === 0 && (
+                                <span style={{
+                                  padding: '0.1rem 0.4rem',
+                                  borderRadius: '9999px',
+                                  fontSize: '0.7rem',
+                                  fontWeight: 600,
+                                  color: '#fff',
+                                  background: '#16a34a',
+                                }}>
+                                  פעילה
+                                </span>
+                              )}
+                            </div>
+                            <p style={{
+                              fontSize: '0.8rem',
+                              color: '#64748b',
+                              marginTop: '0.25rem',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              maxWidth: '100%',
+                            }}>
+                              {v.text}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
 
               {activeTab === 'settings' && (

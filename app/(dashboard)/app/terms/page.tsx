@@ -6,11 +6,14 @@ import { subscribeToAuthState, getIdToken, type AuthUser } from '@/app/services/
 import { userTierStore } from '@/app/stores/userTierStore'
 import { routes } from '@/app/config'
 
+const FALLBACK_TEXT = 'המערכת משמשת ככלי להבנה כללית של חישוב המיסים ואינה מוגדרת כמערכת מקצועית לחישוב או ראיית חשבון. המשתמש בה עושה זאת על אחריותו בלבד לצורך הבנה כללית של מצבו. עליו להיעזר ברואה חשבון/מנהל חשבונות כדי להבין את חובותיו ולהסדירן.'
+
 export default function TermsPage() {
   const router = useRouter()
   const [user, setUser] = useState<AuthUser | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [tcText, setTcText] = useState<string | null>(null)
 
   useEffect(() => {
     const unsub = subscribeToAuthState((u) => setUser(u))
@@ -27,6 +30,24 @@ export default function TermsPage() {
     return unsub
   }, [router])
 
+  // Fetch latest T&C text from server
+  useEffect(() => {
+    if (!user) return
+    const fetchTc = async () => {
+      try {
+        const token = await getIdToken()
+        const res = await fetch('/api/terms', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        })
+        const data = await res.json()
+        if (data.success && data.text) {
+          setTcText(data.text)
+        }
+      } catch { /* use fallback */ }
+    }
+    fetchTc()
+  }, [user])
+
   const handleAccept = async () => {
     setError(null)
     setSubmitting(true)
@@ -39,9 +60,7 @@ export default function TermsPage() {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
       })
-      if (res.ok) {
-        // Firestore listener in tcStore will pick up the change and trigger redirect
-      } else {
+      if (!res.ok) {
         setError('שגיאה באישור תנאי השימוש. נסה שוב.')
       }
     } catch {
@@ -65,11 +84,10 @@ export default function TermsPage() {
           תנאי שימוש
         </h1>
 
-        <div style={textBoxStyle}>
-          <p style={{ lineHeight: 1.8, fontSize: '1rem', color: '#1e293b' }}>
-            המערכת משמשת ככלי להבנה כללית של חישוב המיסים ואינה מוגדרת כמערכת מקצועית לחישוב או ראיית חשבון. המשתמש בה עושה זאת על אחריותו בלבד לצורך הבנה כללית של מצבו. עליו להיעזר ברואה חשבון/מנהל חשבונות כדי להבין את חובותיו ולהסדירן.
-          </p>
-        </div>
+        <div
+          style={textBoxStyle}
+          dangerouslySetInnerHTML={{ __html: tcText ?? `<p>${FALLBACK_TEXT}</p>` }}
+        />
 
         {error && (
           <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '0.5rem', color: '#dc2626', fontSize: '0.9rem', textAlign: 'center' }}>
@@ -105,6 +123,11 @@ const textBoxStyle: React.CSSProperties = {
   borderRadius: '0.5rem',
   padding: '1.25rem',
   marginBottom: '1.5rem',
+  lineHeight: 1.8,
+  fontSize: '1rem',
+  color: '#1e293b',
+  maxHeight: '60vh',
+  overflowY: 'auto',
 }
 
 const buttonStyle = (disabled: boolean): React.CSSProperties => ({
