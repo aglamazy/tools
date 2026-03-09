@@ -5,6 +5,7 @@ import { notFound } from 'next/navigation'
 import { userTierStore, UserTier } from '@/app/stores/userTierStore'
 import { getIdToken } from '@/app/services/firebaseAuthService'
 import { subscribeToAuth } from '@/app/stores/authStore'
+import { appSettingsStore } from '@/app/stores/appSettingsStore'
 
 type Member = {
   uid: string
@@ -63,6 +64,9 @@ export default function AdminPage() {
   const [provisionError, setProvisionError] = useState<string | null>(null)
   const [provisionSuccess, setProvisionSuccess] = useState(false)
 
+  const [taxLimit, setTaxLimit] = useState<string>('')
+  const [taxLimitSaved, setTaxLimitSaved] = useState(false)
+
   const fetchAccounts = async () => {
     try {
       setError(null)
@@ -110,6 +114,9 @@ export default function AdminPage() {
         fetched = true
         fetchAccounts()
         fetchProvisions()
+        appSettingsStore.getAnnualTaxLimit().then(v => {
+          if (v != null) setTaxLimit(String(v))
+        })
       }
     })
     return unsub
@@ -309,6 +316,50 @@ export default function AdminPage() {
           {provisionError && (
             <div style={{ marginTop: '0.5rem', color: '#dc2626', fontSize: '0.85rem' }}>{provisionError}</div>
           )}
+        </div>
+
+        {/* Annual Tax Limit */}
+        <div style={{ marginBottom: '1.5rem', padding: '1rem', border: '1px solid #e5e7eb', borderRadius: '0.5rem', background: '#f8fafc' }}>
+          <h2 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.75rem' }}>תקרת פטור ממס שנתית</h2>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <input
+              type="number"
+              dir="ltr"
+              placeholder="סכום שנתי"
+              value={taxLimit}
+              onChange={(e) => { setTaxLimit(e.target.value); setTaxLimitSaved(false) }}
+              style={{
+                width: '200px',
+                padding: '0.4rem 0.75rem',
+                border: '1px solid #d1d5db',
+                borderRadius: '0.375rem',
+                fontSize: '0.9rem',
+              }}
+            />
+            <button
+              onClick={async () => {
+                const val = Number(taxLimit)
+                if (!isNaN(val) && val > 0) {
+                  await appSettingsStore.setAnnualTaxLimit(val)
+                  setTaxLimitSaved(true)
+                }
+              }}
+              style={{
+                padding: '0.4rem 1rem',
+                background: '#2563eb',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '0.375rem',
+                fontSize: '0.9rem',
+                cursor: 'pointer',
+              }}
+            >
+              שמור
+            </button>
+            {taxLimitSaved && (
+              <span style={{ fontSize: '0.85rem', color: '#16a34a' }}>נשמר</span>
+            )}
+          </div>
         </div>
 
         {loading && <div className="banner">טוען...</div>}

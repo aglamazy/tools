@@ -8,6 +8,7 @@ import { userTierStore, UserTier } from '@/app/stores/userTierStore'
 import { config, routes } from '@/app/config'
 import type { Business } from '@/app/db/financeDB'
 import { BUSINESS_TYPE_CONFIG } from '@/app/types/businessColors'
+import TaxExemptBadge from '@/app/components/TaxExemptBadge'
 
 type MenuItem = {
   id: string
@@ -188,6 +189,7 @@ export default function Sidebar() {
                             >
                               <span className="mod-menu-icon">{item.icon}</span>
                               <span className="mod-menu-title">{item.title}</span>
+                              {item.id === 'taxes' && <TaxExemptBadge />}
                             </Link>
                           ) : (
                             <div
