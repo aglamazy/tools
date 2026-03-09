@@ -102,6 +102,7 @@ export interface Business {
   name: string
   type: BusinessType
   vatType?: 'exempt' | 'authorized'
+  isTaxFree?: boolean
   ypayClientId?: string
   ypayClientSecret?: string
   pinnedToSidebar?: boolean

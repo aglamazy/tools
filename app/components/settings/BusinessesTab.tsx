@@ -34,6 +34,7 @@ export default function BusinessesTab() {
             name: b.name,
             type: b.type,
             vatType: b.vatType,
+            isTaxFree: b.isTaxFree,
             pinnedToSidebar: b.pinnedToSidebar,
           } as BusinessUI
         })
@@ -81,6 +82,7 @@ export default function BusinessesTab() {
           name: trimmed.name,
           type: trimmed.type,
           vatType: trimmed.vatType,
+          isTaxFree: trimmed.isTaxFree,
           pinnedToSidebar: true,
         })
         if (id == null) {
@@ -93,6 +95,7 @@ export default function BusinessesTab() {
           name: trimmed.name,
           type: trimmed.type,
           vatType: trimmed.vatType,
+          isTaxFree: trimmed.isTaxFree,
         })
         if (!updated) {
           setAlertMessage('עדכון העסק נכשל')
