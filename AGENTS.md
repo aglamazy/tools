@@ -32,7 +32,12 @@ See also: ~/develop/AGENTS.md (common coding standards)
 - Don't re-implement what was already done
 - Check the conversation history for context
 
-### f) Use proper data access patterns
+### f) Bump extension version on each update
+- When making changes to the extension (files under `extension/`), bump the `version` in `extension/manifest.json`
+- Use semantic versioning: patch for fixes, minor for new features
+- Example: `1.0.6` → `1.0.7` for a bug fix, `1.0.6` → `1.1.0` for a new feature
+
+### g) Use proper data access patterns
 - **Frontend**: Use Store classes (subjectStore, transactionStore, etc.)
 - Don't bypass these patterns with direct localStorage/IndexedDB access
 - Each store is responsible for its own persistence
