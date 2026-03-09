@@ -6,6 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getLLMClient, type LLMProvider } from '@/app/services/llm'
+import { verifyIdToken, getAdminFirestore, isAdminConfigured } from '@/app/lib/firebaseAdmin'
 
 interface FormField {
   id: string
@@ -91,6 +92,32 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'שדות חסרים' }, { status: 400 })
     }
 
+    // Fetch saved site-specific credentials from Firestore for this hostname
+    let siteProfileData: ProfileQAEntry[] = []
+    if (hostname && isAdminConfigured()) {
+      try {
+        const authHeader = request.headers.get('Authorization')
+        if (authHeader?.startsWith('Bearer ')) {
+          const decoded = await verifyIdToken(authHeader.slice(7))
+          const siteName = hostname.replace(/^www\./, '').split('.')[0]
+          const firestore = getAdminFirestore()
+          const snapshot = await firestore.collection('profileQAs')
+            .where('uid', '==', decoded.uid)
+            .where('siteKey', '==', siteName)
+            .get()
+          siteProfileData = snapshot.docs.map(doc => {
+            const d = doc.data()
+            return { question: d.question, answer: d.answer, answerType: d.answerType, tags: d.tags }
+          })
+        }
+      } catch {
+        // Non-critical — continue without site data
+      }
+    }
+
+    // Merge site-specific profile data with general profile data
+    const allProfileData = [...(profileData || []), ...siteProfileData]
+
     // Build the user message with fields and profile data
     const fieldsDescription = fields.map(f => {
       let desc = `- ID: "${f.id}", Label: "${f.label}", Type: ${f.type}, Name: "${f.name}"`
@@ -100,8 +127,8 @@ export async function POST(request: NextRequest) {
       return desc
     }).join('\n')
 
-    const profileDescription = profileData && profileData.length > 0
-      ? profileData.map(p => {
+    const profileDescription = allProfileData.length > 0
+      ? allProfileData.map(p => {
         const answer = Array.isArray(p.answer) ? p.answer.join(', ') : p.answer
         return `- Q: "${p.question}" → A: "${answer}" (type: ${p.answerType}${p.tags?.length ? ', tags: ' + p.tags.join(', ') : ''})`
       }).join('\n')

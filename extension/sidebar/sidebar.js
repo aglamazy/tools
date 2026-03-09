@@ -245,7 +245,7 @@ function renderFields() {
     const suggestion = fieldSuggestions[field.id] || {};
     const suggestedValue = suggestion.value || '';
     const source = suggestion.source || 'none'; // 'profile', 'ai', 'none'
-    const isSiteSpecific = suggestion.siteSpecific === true;
+    const isSiteSpecific = suggestion.siteSpecific === true || isSiteSpecificField(field);
     const statusEmoji = source === 'profile' ? '🟢' : source === 'ai' ? '🟡' : '🔴';
 
     originalSuggestions[field.id] = suggestedValue;
@@ -496,6 +496,24 @@ function getSiteName(hostname) {
   // Remove www. prefix and TLD
   const parts = hostname.replace(/^www\./, '').split('.');
   return parts[0] || hostname;
+}
+
+// Detect if a form field is site-specific (credentials/login) based on its attributes
+function isSiteSpecificField(field) {
+  if (field.type === 'password') return true;
+  const hint = `${field.label} ${field.name} ${field.id} ${field.placeholder}`.toLowerCase();
+  const patterns = [
+    'username', 'user name', 'user_name',
+    'login', 'log in', 'log_in',
+    'password', 'passwort', 'סיסמ',
+    'account', 'konto',
+    'membership', 'member id',
+    'api key', 'api_key', 'apikey',
+    'access code', 'pin code', 'pincode',
+    'benutzer', 'kennung',
+    'שם משתמש', 'סיסמה',
+  ];
+  return patterns.some(p => hint.includes(p));
 }
 
 // Demo button — open demo form in active tab
