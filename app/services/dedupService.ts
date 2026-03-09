@@ -77,6 +77,10 @@ const TABLE_KEYS: Record<string, { label: string; keyFn: (row: any) => string }>
     label: 'מסמכי YPAY',
     keyFn: (r) => r.transactionId,
   },
+  taxDocuments: {
+    label: 'מסמכי מס',
+    keyFn: (r) => `${r.businessId}|${r.month}|${r.fileName}`,
+  },
 }
 
 /**

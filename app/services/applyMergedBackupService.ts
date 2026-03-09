@@ -10,6 +10,7 @@ import { subjectStore } from '@/app/stores/subjectStore'
 import { timerStore } from '@/app/stores/timerStore'
 import { initializeAppSettings } from '@/app/services/appSettingsService'
 import type { BackupData } from './backupService'
+import { SYNCED_DB_TABLES, getSyncedDexieTables } from './syncedTables'
 
 // FK annotations → { annotationField, fkField }
 const FK_ANNOTATIONS: Record<string, { annotationField: string; fkField: string; parentTable: string }> = {
@@ -19,12 +20,8 @@ const FK_ANNOTATIONS: Record<string, { annotationField: string; fkField: string;
 }
 
 // Insert order: parents before children
-const INSERT_ORDER = [
-  'businesses', 'categories', 'appSettings', 'businessCategories',
-  'importedFiles', 'transactions', 'tasks', 'financialInstitutions',
-  'capitalEntries', 'ypayDocuments',
-  'projects', 'harvestTasks', 'timeEntries',
-]
+// Single source of truth: syncedTables.ts
+const INSERT_ORDER = SYNCED_DB_TABLES
 
 /**
  * Apply a merged backup to the local database.
@@ -36,9 +33,7 @@ export async function applyMergedBackup(merged: BackupData): Promise<void> {
   const syncIdToLocalId: Record<string, Map<string, number>> = {}
 
   await db.transaction('rw',
-    [db.transactions, db.importedFiles, db.categories, db.businessCategories,
-     db.tasks, db.appSettings, db.businesses, db.projects, db.harvestTasks,
-     db.timeEntries, db.capitalEntries, db.financialInstitutions, db.ypayDocuments],
+    getSyncedDexieTables(),
     async () => {
       // Clear all tables
       for (const tableName of INSERT_ORDER) {

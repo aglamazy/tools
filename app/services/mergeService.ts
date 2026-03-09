@@ -12,6 +12,7 @@
  */
 
 import type { BackupData } from './backupService'
+import { SYNCED_DB_TABLES } from './syncedTables'
 
 // Tables that have unique constraints (besides id/syncId)
 const UNIQUE_KEY_TABLES: Record<string, string> = {
@@ -44,12 +45,8 @@ const CONTENT_KEY_FNS: Record<string, (r: any) => string> = {
 }
 
 // All DB tables in the backup (order matters: parents before children)
-const TABLE_ORDER = [
-  'transactions', 'importedFiles', 'categories', 'businessCategories',
-  'tasks', 'appSettings', 'businesses', 'projects', 'harvestTasks',
-  'timeEntries', 'capitalEntries', 'financialInstitutions', 'ypayDocuments',
-  'taxDocuments',
-]
+// Single source of truth: syncedTables.ts
+const TABLE_ORDER = SYNCED_DB_TABLES
 
 function getTimestamp(record: any): string {
   return record.updatedAt || record.importedAt || record.lastUpdated || record.createdAt || ''
