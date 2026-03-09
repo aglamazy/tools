@@ -343,7 +343,10 @@ export default function ExtensionSidebarPage() {
             </>
           )}
         </div>
-        <h2 style={{ fontSize: '1.25rem', color: '#3b82f6', margin: 0, position: 'absolute', left: '50%', transform: 'translateX(-50%)' }}>{branding.name}</h2>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.3rem', position: 'absolute', left: '50%', transform: 'translateX(-50%)' }}>
+          <h2 style={{ fontSize: '1.25rem', color: '#3b82f6', margin: 0 }}>{branding.name}</h2>
+          <span style={{ fontSize: '0.55rem', color: '#94a3b8' }}>v1.0.6</span>
+        </div>
         <div style={{ width: '32px' }} />
       </header>
 
