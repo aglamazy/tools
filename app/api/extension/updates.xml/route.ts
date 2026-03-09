@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 
 const EXTENSION_VERSION = '1.0.0'
-const DOWNLOAD_URL = 'https://tools.aglamaz.com/api/extension/download'
+const DOWNLOAD_URL = 'https://aglamazo.com/api/extension/download'
 
 export async function GET() {
   const xml = `<?xml version="1.0" encoding="UTF-8"?>

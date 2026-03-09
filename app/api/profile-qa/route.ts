@@ -72,18 +72,38 @@ export async function POST(request: NextRequest) {
     const ids: string[] = []
 
     for (const fact of facts) {
-      const docRef = await firestore.collection(COLLECTION).add({
-        uid,
-        businessId: bid,
-        question: fact.question,
-        answerType: fact.answerType || 'word',
-        isArray: false,
-        answer: fact.answer,
-        tags: fact.tags || [],
-        createdAt: now,
-        updatedAt: now,
-      })
-      ids.push(docRef.id)
+      // Dedup: check if a fact with the same question already exists for this user+business
+      const existing = await firestore.collection(COLLECTION)
+        .where('uid', '==', uid)
+        .where('businessId', '==', bid)
+        .where('question', '==', fact.question)
+        .limit(1)
+        .get()
+
+      if (!existing.empty) {
+        // Update existing fact instead of creating a duplicate
+        const docRef = existing.docs[0].ref
+        await docRef.update({
+          answer: fact.answer,
+          answerType: fact.answerType || 'word',
+          tags: fact.tags || [],
+          updatedAt: now,
+        })
+        ids.push(docRef.id)
+      } else {
+        const docRef = await firestore.collection(COLLECTION).add({
+          uid,
+          businessId: bid,
+          question: fact.question,
+          answerType: fact.answerType || 'word',
+          isArray: false,
+          answer: fact.answer,
+          tags: fact.tags || [],
+          createdAt: now,
+          updatedAt: now,
+        })
+        ids.push(docRef.id)
+      }
     }
 
     return NextResponse.json({ success: true, ids })

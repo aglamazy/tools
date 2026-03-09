@@ -40,7 +40,7 @@ Your job:
 - Match profile answers to form fields based on semantic similarity of the labels/questions
 - For fields without a direct match, generate an appropriate answer based on available profile context
 - For file upload fields, return source: "none"
-- For select/dropdown fields, return the exact option value that best matches
+- For select/dropdown fields, return the human-readable option TEXT (not the numeric value). The client will map the text back to the correct option value for the specific form.
 
 Return ONLY valid JSON in this exact format (no markdown, no explanation):
 {

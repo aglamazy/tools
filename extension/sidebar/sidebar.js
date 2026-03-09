@@ -1,6 +1,6 @@
 // Aglamaz Form Assistant — Sidebar Logic
 
-const API_BASE = 'https://tools.aglamaz.com';
+const API_BASE = 'https://aglamazo.com';
 // Firebase Auth REST API base
 const FIREBASE_AUTH_URL = 'https://identitytoolkit.googleapis.com/v1/accounts';
 
