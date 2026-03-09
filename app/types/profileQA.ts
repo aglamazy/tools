@@ -9,6 +9,7 @@ export type ProfileQA = {
   isArray: boolean
   answer: string | string[]
   tags?: string[]
+  siteKey?: string // Site-specific key (e.g. "weimar") for credentials tied to a specific site
   createdAt: string
   updatedAt: string
 }
