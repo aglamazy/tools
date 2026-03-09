@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { signInWithGoogle, signOut, subscribeToAuthState, getIdToken, type AuthUser } from '@/app/services/firebaseAuthService'
+import { branding } from '@/app/config'
 
 interface ProfileEntry {
   id?: string
@@ -43,6 +44,7 @@ export default function ExtensionSidebarPage() {
   const [tab, setTab] = useState<'scan' | 'profile'>('scan')
   const [profileEntries, setProfileEntries] = useState<ProfileEntry[]>([])
   const [loadingProfile, setLoadingProfile] = useState(false)
+  const [showAvatarMenu, setShowAvatarMenu] = useState(false)
   const pendingResolve = useRef<((fields: FormField[]) => void) | null>(null)
   const fillResolve = useRef<(() => void) | null>(null)
 
@@ -279,7 +281,7 @@ export default function ExtensionSidebarPage() {
     return (
       <div style={containerStyle}>
         <div style={{ textAlign: 'center' }}>
-          <h1 style={{ fontSize: '1.5rem', color: '#3b82f6', marginBottom: '0.25rem' }}>Aglamaz</h1>
+          <h1 style={{ fontSize: '1.5rem', color: '#3b82f6', marginBottom: '0.25rem' }}>{branding.name}</h1>
           <p style={{ color: '#64748b', marginBottom: '2rem' }}>עוזר למילוי טפסים</p>
           <button onClick={() => signInWithGoogle()} style={googleBtnStyle}>
             <svg width="18" height="18" viewBox="0 0 48 48" style={{ marginLeft: '0.5rem' }}>
@@ -307,14 +309,42 @@ export default function ExtensionSidebarPage() {
     <div style={{ ...containerStyle, justifyContent: 'flex-start', padding: '1rem' }}>
       {/* Header */}
       <header style={headerStyle}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.35rem' }}>
-          <h2 style={{ fontSize: '1.25rem', color: '#3b82f6', margin: 0 }}>Aglamaz</h2>
-          <span style={{ fontSize: '0.6rem', color: '#94a3b8' }}>v1.0.6</span>
+        <div style={{ position: 'relative' }}>
+          <button
+            onClick={() => setShowAvatarMenu(!showAvatarMenu)}
+            style={avatarBtnStyle}
+            title={user.email || ''}
+          >
+            <img
+              src={user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent((user.email?.charAt(0) || '?').toUpperCase())}&background=6366f1&color=fff&size=64&bold=true`}
+              alt=""
+              width={28}
+              height={28}
+              style={{ borderRadius: '50%' }}
+              referrerPolicy="no-referrer"
+            />
+          </button>
+          {showAvatarMenu && (
+            <>
+              <div
+                style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 99 }}
+                onClick={() => setShowAvatarMenu(false)}
+              />
+              <div style={avatarMenuStyle}>
+                <button onClick={() => { setShowAvatarMenu(false); signOut() }} style={logoutMenuItemStyle}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                    <polyline points="16 17 21 12 16 7" />
+                    <line x1="21" y1="12" x2="9" y2="12" />
+                  </svg>
+                  <span>יציאה</span>
+                </button>
+              </div>
+            </>
+          )}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <span style={{ fontSize: '0.7rem', color: '#64748b' }}>{user.email}</span>
-          <button onClick={() => signOut()} style={smallBtnStyle}>יציאה</button>
-        </div>
+        <h2 style={{ fontSize: '1.25rem', color: '#3b82f6', margin: 0, position: 'absolute', left: '50%', transform: 'translateX(-50%)' }}>{branding.name}</h2>
+        <div style={{ width: '32px' }} />
       </header>
 
       {/* Tab switcher */}
@@ -474,9 +504,52 @@ const headerStyle: React.CSSProperties = {
   display: 'flex',
   justifyContent: 'space-between',
   alignItems: 'center',
+  position: 'relative',
   marginBottom: '1rem',
   paddingBottom: '0.75rem',
   borderBottom: '1px solid #e2e8f0',
+}
+
+const avatarBtnStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: '32px',
+  height: '32px',
+  padding: 0,
+  background: 'transparent',
+  border: '2px solid #e0e7ff',
+  borderRadius: '50%',
+  cursor: 'pointer',
+  overflow: 'hidden',
+}
+
+const avatarMenuStyle: React.CSSProperties = {
+  position: 'absolute',
+  top: '100%',
+  right: 0,
+  marginTop: '0.35rem',
+  background: 'white',
+  border: '1px solid #e5e7eb',
+  borderRadius: '0.5rem',
+  boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)',
+  zIndex: 100,
+  minWidth: '120px',
+  overflow: 'hidden',
+}
+
+const logoutMenuItemStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '0.5rem',
+  width: '100%',
+  padding: '0.625rem 0.75rem',
+  background: 'none',
+  border: 'none',
+  color: '#dc2626',
+  fontSize: '0.85rem',
+  cursor: 'pointer',
+  textAlign: 'right',
 }
 
 const googleBtnStyle: React.CSSProperties = {
@@ -518,15 +591,6 @@ const secondaryBtnStyle: React.CSSProperties = {
   cursor: 'pointer',
 }
 
-const smallBtnStyle: React.CSSProperties = {
-  padding: '0.25rem 0.5rem',
-  background: '#e2e8f0',
-  color: '#475569',
-  border: 'none',
-  borderRadius: '0.25rem',
-  fontSize: '0.75rem',
-  cursor: 'pointer',
-}
 
 const fieldsListStyle: React.CSSProperties = {
   display: 'flex',
