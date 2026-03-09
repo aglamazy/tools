@@ -210,13 +210,32 @@ async function getSuggestions(fields) {
     const auth = await sendMessage({ type: 'GET_AUTH_TOKEN' });
     const token = auth?.authToken || '';
 
+    // Fetch user's profile facts so Claude can match them to form fields
+    let profileData = [];
+    try {
+      const profileResponse = await fetch(`${API_BASE}/api/profile-qa`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token && { Authorization: `Bearer ${token}` }),
+        },
+      });
+      if (profileResponse.ok) {
+        const profileResult = await profileResponse.json();
+        profileData = profileResult.data || profileResult.facts || profileResult || [];
+        if (!Array.isArray(profileData)) profileData = [];
+      }
+    } catch (err) {
+      console.error('[Aglamaz] Failed to fetch profile data:', err);
+    }
+
     const response = await fetch(`${API_BASE}/api/form-filler/suggest`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(token && { Authorization: `Bearer ${token}` }),
       },
-      body: JSON.stringify({ fields, pageUrl: currentPageUrl, hostname: currentHostname }),
+      body: JSON.stringify({ fields, profileData, pageUrl: currentPageUrl, hostname: currentHostname }),
     });
 
     if (response.ok) {
