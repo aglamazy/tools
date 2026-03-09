@@ -1,3 +1,4 @@
+// PUBLIC ROUTE — browser extension download
 import { NextResponse } from 'next/server'
 import { readFile, readdir } from 'fs/promises'
 import { join } from 'path'

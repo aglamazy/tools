@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { notFound } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import { userTierStore, UserTier } from '@/app/stores/userTierStore'
 import { getIdToken } from '@/app/services/firebaseAuthService'
 import { subscribeToAuth } from '@/app/stores/authStore'
@@ -50,6 +50,7 @@ const TIER_COLORS: Record<UserTier, string> = {
 }
 
 export default function AdminPage() {
+  const router = useRouter()
   const [accounts, setAccounts] = useState<Account[]>([])
   const [loading, setLoading] = useState(true)
   const [authorized, setAuthorized] = useState(false)
@@ -136,7 +137,8 @@ export default function AdminPage() {
     let fetched = false
     const unsubAuth = subscribeToAuth((authState) => {
       if (authState.initialized && !authState.user) {
-        notFound()
+        setAuthorized(false)
+        router.replace('/')
       }
     })
     const unsubTier = userTierStore.subscribe((tier) => {
@@ -144,7 +146,7 @@ export default function AdminPage() {
       if (tier === UserTier.FREE) return // Still loading or unauthorized
       fetched = true
       if (!userTierStore.hasAccess(UserTier.OWNER)) {
-        notFound()
+        router.replace('/')
         return
       }
       setAuthorized(true)

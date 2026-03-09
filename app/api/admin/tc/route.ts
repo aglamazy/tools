@@ -5,31 +5,14 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyIdToken, getAdminFirestore, isAdminConfigured } from '@/app/lib/firebaseAdmin'
+import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
+import { requireTier } from '@/app/lib/apiGuard'
 
 const TC_COLLECTION = 'tcVersions'
 
-async function verifyOwner(request: NextRequest): Promise<string | null> {
-  if (!isAdminConfigured()) return null
-  const authHeader = request.headers.get('Authorization')
-  if (!authHeader?.startsWith('Bearer ')) return null
-  try {
-    const decoded = await verifyIdToken(authHeader.slice(7))
-    const firestore = getAdminFirestore()
-    const userDoc = await firestore.collection('users').doc(decoded.uid).get()
-    const tier = userDoc.data()?.tier
-    if (tier !== 'owner') return null
-    return decoded.uid
-  } catch {
-    return null
-  }
-}
-
 export async function GET(request: NextRequest) {
-  const uid = await verifyOwner(request)
-  if (!uid) {
-    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
-  }
+  const guard = await requireTier(request, 'owner')
+  if (guard.error) return guard.error
 
   try {
     const firestore = getAdminFirestore()
@@ -48,10 +31,8 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const uid = await verifyOwner(request)
-  if (!uid) {
-    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
-  }
+  const guard = await requireTier(request, 'owner')
+  if (guard.error) return guard.error
 
   try {
     const { text } = await request.json()
@@ -65,7 +46,7 @@ export async function POST(request: NextRequest) {
     await firestore.collection(TC_COLLECTION).doc(version).set({
       text: text.trim(),
       version,
-      createdBy: uid,
+      createdBy: guard.uid,
       createdAt: new Date().toISOString(),
     })
 

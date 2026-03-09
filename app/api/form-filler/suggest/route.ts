@@ -1,3 +1,4 @@
+// CALLER-KEYED ROUTE — authenticated via caller's API key
 /**
  * Form Filler Suggest API Route
  * Receives form fields + user's ProfileQA data, returns suggested answers

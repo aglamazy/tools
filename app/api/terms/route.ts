@@ -5,23 +5,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyIdToken, getAdminFirestore, isAdminConfigured } from '@/app/lib/firebaseAdmin'
+import { getAdminFirestore, setUserClaims } from '@/app/lib/firebaseAdmin'
+import { requireAuth } from '@/app/lib/apiGuard'
 import { config } from '@/app/config'
 
 const TC_COLLECTION = 'tcVersions'
-
-async function verifyAuth(request: NextRequest): Promise<string | null> {
-  if (!isAdminConfigured()) return null
-  const authHeader = request.headers.get('Authorization')
-  if (!authHeader?.startsWith('Bearer ')) return null
-  try {
-    const token = authHeader.slice(7)
-    const decoded = await verifyIdToken(token)
-    return decoded.uid
-  } catch {
-    return null
-  }
-}
 
 async function getLatestTcVersion(firestore: FirebaseFirestore.Firestore) {
   const snapshot = await firestore.collection(TC_COLLECTION).orderBy('version', 'desc').limit(1).get()
@@ -32,10 +20,9 @@ async function getLatestTcVersion(firestore: FirebaseFirestore.Firestore) {
 
 // GET — return latest T&C text and acceptance status
 export async function GET(request: NextRequest) {
-  const uid = await verifyAuth(request)
-  if (!uid) {
-    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
-  }
+  const guard = await requireAuth(request)
+  if (guard.error) return guard.error
+  const uid = guard.uid
 
   try {
     const firestore = getAdminFirestore()
@@ -65,10 +52,9 @@ export async function GET(request: NextRequest) {
 
 // POST — accept T&C (stores latest version date)
 export async function POST(request: NextRequest) {
-  const uid = await verifyAuth(request)
-  if (!uid) {
-    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
-  }
+  const guard = await requireAuth(request)
+  if (guard.error) return guard.error
+  const uid = guard.uid
 
   try {
     const firestore = getAdminFirestore()
@@ -84,6 +70,9 @@ export async function POST(request: NextRequest) {
     } else {
       await userRef.set({ tier: 'free', tcAcceptedAt: version, tcAcceptedTimestamp: now })
     }
+
+    // Sync to custom claims so the proxy can check T&C without Firestore
+    await setUserClaims(uid, { tcAcceptedAt: version })
 
     return NextResponse.json({ success: true, tcAcceptedAt: version })
   } catch (err: unknown) {

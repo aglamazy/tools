@@ -4,34 +4,15 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyIdToken, getAdminFirestore, isAdminConfigured } from '@/app/lib/firebaseAdmin'
-import { UserTier } from '@/app/stores/userTierStore'
+import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
+import { requireTier } from '@/app/lib/apiGuard'
 
 export async function GET(request: NextRequest) {
-  if (!isAdminConfigured()) {
-    return NextResponse.json({ success: false, error: 'שרת לא מוגדר', errorCode: 'not-configured' })
-  }
-
-  const authHeader = request.headers.get('Authorization')
-  if (!authHeader?.startsWith('Bearer ')) {
-    return NextResponse.json({ success: false, error: 'לא מחובר', errorCode: 'not-authenticated' })
-  }
-
-  const idToken = authHeader.substring(7)
+  const guard = await requireTier(request, 'owner')
+  if (guard.error) return guard.error
 
   try {
-    const decodedToken = await verifyIdToken(idToken)
-    const callerUid = decodedToken.uid
-
-    // Verify caller is OWNER tier
     const firestore = getAdminFirestore()
-    const callerDoc = await firestore.collection('users').doc(callerUid).get()
-    const callerData = callerDoc.data()
-    const callerTier = (callerData?.tier as UserTier) || UserTier.FREE
-    if (callerTier !== UserTier.OWNER) {
-      return NextResponse.json({ success: false, error: 'אין הרשאה', errorCode: 'forbidden' })
-    }
-
     const snapshot = await firestore.collection('provisions').get()
     const provisions = snapshot.docs.map((doc) => {
       const data = doc.data()

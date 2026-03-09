@@ -1,3 +1,4 @@
+// CALLER-KEYED ROUTE — authenticated via caller's Claude API key
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(req: NextRequest) {

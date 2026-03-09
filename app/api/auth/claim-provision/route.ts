@@ -1,10 +1,11 @@
+// PUBLIC ROUTE — authentication bootstrapping (claims provisioned tier on first login)
 /**
  * Claim Provision API Route
  * Called after Google sign-in to apply any pre-provisioned tier
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyIdToken, getAdminFirestore, isAdminConfigured } from '@/app/lib/firebaseAdmin'
+import { verifyIdToken, getAdminFirestore, isAdminConfigured, setUserClaims } from '@/app/lib/firebaseAdmin'
 
 export async function POST(request: NextRequest) {
   if (!isAdminConfigured()) {
@@ -57,6 +58,9 @@ export async function POST(request: NextRequest) {
       claimedBy: uid,
     })
     await batch.commit()
+
+    // Sync tier to custom claims so the proxy can enforce it
+    await setUserClaims(uid, { tier })
 
     return NextResponse.json({ success: true, claimed: true, tier, isLifetime })
   } catch (error: any) {

@@ -1,3 +1,4 @@
+// PUBLIC ROUTE — browser extension update manifest
 import { NextResponse } from 'next/server'
 
 const EXTENSION_VERSION = '1.0.0'

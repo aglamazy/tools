@@ -1,3 +1,4 @@
+// PUBLIC ROUTE — OAuth callback endpoint
 import { NextRequest, NextResponse } from 'next/server'
 
 /**

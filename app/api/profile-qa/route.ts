@@ -6,30 +6,16 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyIdToken, getAdminFirestore, isAdminConfigured } from '@/app/lib/firebaseAdmin'
+import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
+import { requireTc } from '@/app/lib/apiGuard'
 
 const COLLECTION = 'profileQAs'
 
-// Verify Firebase auth token from Authorization header
-async function verifyAuth(request: NextRequest): Promise<string | null> {
-  if (!isAdminConfigured()) return null
-  const authHeader = request.headers.get('Authorization')
-  if (!authHeader?.startsWith('Bearer ')) return null
-  try {
-    const token = authHeader.slice(7)
-    const decoded = await verifyIdToken(token)
-    return decoded.uid
-  } catch {
-    return null
-  }
-}
-
 // GET — fetch all ProfileQA entries for a user (optionally filtered by businessId)
 export async function GET(request: NextRequest) {
-  const uid = await verifyAuth(request)
-  if (!uid) {
-    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
-  }
+  const guard = await requireTc(request)
+  if (guard.error) return guard.error
+  const uid = guard.uid
 
   const { searchParams } = new URL(request.url)
   const businessId = searchParams.get('businessId')
@@ -55,10 +41,9 @@ export async function GET(request: NextRequest) {
 
 // POST — save new facts from form filler
 export async function POST(request: NextRequest) {
-  const uid = await verifyAuth(request)
-  if (!uid) {
-    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
-  }
+  const guard = await requireTc(request)
+  if (guard.error) return guard.error
+  const uid = guard.uid
 
   try {
     const { facts, businessId } = await request.json() as {
@@ -125,10 +110,9 @@ export async function POST(request: NextRequest) {
 
 // PUT — update an existing ProfileQA entry
 export async function PUT(request: NextRequest) {
-  const uid = await verifyAuth(request)
-  if (!uid) {
-    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
-  }
+  const guard = await requireTc(request)
+  if (guard.error) return guard.error
+  const uid = guard.uid
 
   try {
     const { id, ...updates } = await request.json()
@@ -159,10 +143,9 @@ export async function PUT(request: NextRequest) {
 
 // DELETE — delete a ProfileQA entry
 export async function DELETE(request: NextRequest) {
-  const uid = await verifyAuth(request)
-  if (!uid) {
-    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
-  }
+  const guard = await requireTc(request)
+  if (guard.error) return guard.error
+  const uid = guard.uid
 
   try {
     const { id } = await request.json()

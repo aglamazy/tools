@@ -4,28 +4,18 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyIdToken, setUserClaims, getAdminFirestore, isAdminConfigured } from '@/app/lib/firebaseAdmin'
+import { setUserClaims, getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import { FieldValue } from 'firebase-admin/firestore'
+import { requireTc } from '@/app/lib/apiGuard'
 
 export async function POST(request: NextRequest) {
-  if (!isAdminConfigured()) {
-    return NextResponse.json({ success: false, error: 'שרת לא מוגדר', errorCode: 'not-configured' })
-  }
-
-  // Verify authentication
-  const authHeader = request.headers.get('Authorization')
-  if (!authHeader?.startsWith('Bearer ')) {
-    return NextResponse.json({ success: false, error: 'לא מחובר', errorCode: 'not-authenticated' })
-  }
-
-  const idToken = authHeader.substring(7)
+  const guard = await requireTc(request)
+  if (guard.error) return guard.error
+  const uid = guard.uid
+  const householdId = guard.claims.householdId
+  const householdRole = guard.claims.householdRole
 
   try {
-    const decodedToken = await verifyIdToken(idToken)
-    const uid = decodedToken.uid
-    const householdId = decodedToken.householdId as string
-    const householdRole = decodedToken.householdRole as string
-
     if (!householdId) {
       return NextResponse.json({
         success: false,

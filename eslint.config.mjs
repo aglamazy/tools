@@ -1,9 +1,11 @@
 import tsParser from "@typescript-eslint/parser";
 import noInlineTableLists from "./eslint-rules/no-inline-table-lists.js";
+import requireApiGuard from "./eslint-rules/require-api-guard.js";
 
 const localPlugin = {
   rules: {
     "no-inline-table-lists": noInlineTableLists,
+    "require-api-guard": requireApiGuard,
   },
 };
 
@@ -46,6 +48,8 @@ export default [
       ],
       // Prevent inline arrays of synced DB table names — use SYNCED_DB_TABLES from syncedTables.ts
       "local/no-inline-table-lists": "error",
+      // Require API routes to use guards from apiGuard.ts (see docs/SECURITY.md)
+      "local/require-api-guard": "error",
       // Limit file length
       "max-lines": ["error", { max: 850, skipBlankLines: true, skipComments: true }],
       // Enforce localStorage access only through store classes

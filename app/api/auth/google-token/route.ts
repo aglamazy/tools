@@ -1,3 +1,4 @@
+// PUBLIC ROUTE — OAuth code exchange endpoint
 import { NextRequest, NextResponse } from 'next/server'
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'

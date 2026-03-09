@@ -4,36 +4,18 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyIdToken, getAdminFirestore, isAdminConfigured } from '@/app/lib/firebaseAdmin'
+import { getAdminFirestore, setUserClaims } from '@/app/lib/firebaseAdmin'
+import { requireTier } from '@/app/lib/apiGuard'
 import { UserTier } from '@/app/stores/userTierStore'
 
 const VALID_TIERS = Object.values(UserTier)
 
 export async function POST(request: NextRequest) {
-  if (!isAdminConfigured()) {
-    return NextResponse.json({ success: false, error: 'שרת לא מוגדר', errorCode: 'not-configured' })
-  }
-
-  // Verify authentication
-  const authHeader = request.headers.get('Authorization')
-  if (!authHeader?.startsWith('Bearer ')) {
-    return NextResponse.json({ success: false, error: 'לא מחובר', errorCode: 'not-authenticated' })
-  }
-
-  const idToken = authHeader.substring(7)
+  const guard = await requireTier(request, 'owner')
+  if (guard.error) return guard.error
 
   try {
-    const decodedToken = await verifyIdToken(idToken)
-    const callerUid = decodedToken.uid
-
-    // Verify caller is OWNER tier (or bootstrap owner from env)
     const firestore = getAdminFirestore()
-    const callerDoc = await firestore.collection('users').doc(callerUid).get()
-    const callerData = callerDoc.data()
-    const callerTier = (callerData?.tier as UserTier) || UserTier.FREE
-    if (callerTier !== UserTier.OWNER) {
-      return NextResponse.json({ success: false, error: 'אין הרשאה', errorCode: 'forbidden' })
-    }
 
     // Parse and validate body
     const body = await request.json()
@@ -63,6 +45,11 @@ export async function POST(request: NextRequest) {
         batch.update(firestore.collection('users').doc(uid), updatePayload)
       }
       await batch.commit()
+
+      // Sync tier to custom claims for all members
+      for (const uid of memberUids) {
+        await setUserClaims(uid, { tier })
+      }
     } else {
       // Solo user: update that user's doc
       const userDoc = await firestore.collection('users').doc(accountId).get()
@@ -72,6 +59,9 @@ export async function POST(request: NextRequest) {
       } else {
         await firestore.collection('users').doc(accountId).update(updatePayload)
       }
+
+      // Sync tier to custom claims
+      await setUserClaims(accountId, { tier })
     }
 
     return NextResponse.json({ success: true })

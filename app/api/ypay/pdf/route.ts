@@ -1,3 +1,4 @@
+// CALLER-KEYED ROUTE — authenticated via caller's YPAY credentials
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function GET(request: NextRequest) {

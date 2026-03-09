@@ -4,29 +4,17 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyIdToken, setUserClaims, getAdminFirestore, isAdminConfigured } from '@/app/lib/firebaseAdmin'
-import { FieldValue } from 'firebase-admin/firestore'
+import { setUserClaims, getAdminFirestore } from '@/app/lib/firebaseAdmin'
+import { requireTc } from '@/app/lib/apiGuard'
 
 export async function POST(request: NextRequest) {
-  if (!isAdminConfigured()) {
-    return NextResponse.json({ success: false, error: 'שרת לא מוגדר', errorCode: 'not-configured' })
-  }
-
-  // Verify authentication
-  const authHeader = request.headers.get('Authorization')
-  if (!authHeader?.startsWith('Bearer ')) {
-    return NextResponse.json({ success: false, error: 'לא מחובר', errorCode: 'not-authenticated' })
-  }
-
-  const idToken = authHeader.substring(7)
+  const guard = await requireTc(request)
+  if (guard.error) return guard.error
+  const uid = guard.uid
 
   try {
-    const decodedToken = await verifyIdToken(idToken)
-    const uid = decodedToken.uid
-    const email = decodedToken.email
-
     // Check if user already has a household
-    if (decodedToken.householdId) {
+    if (guard.claims.householdId) {
       return NextResponse.json({
         success: false,
         error: 'כבר חבר במשק בית',
@@ -37,11 +25,8 @@ export async function POST(request: NextRequest) {
     const firestore = getAdminFirestore()
 
     // Verify user has HOME tier or higher
-    const userDoc = await firestore.collection('users').doc(uid).get()
-    const userData = userDoc.data()
-    const tier = userData?.tier || 'free'
     const tierRank: Record<string, number> = { free: 1, home: 2, pro: 3, owner: 4 }
-    if ((tierRank[tier] || 0) < tierRank['home']) {
+    if ((tierRank[guard.tier] || 0) < tierRank['home']) {
       return NextResponse.json({
         success: false,
         error: 'נדרשת מנוי בית כדי ליצור משק בית',

@@ -4,21 +4,15 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyIdToken, setUserClaims, getAdminFirestore, isAdminConfigured } from '@/app/lib/firebaseAdmin'
+import { setUserClaims, getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import { FieldValue } from 'firebase-admin/firestore'
+import { requireTc } from '@/app/lib/apiGuard'
 
 export async function POST(request: NextRequest) {
-  if (!isAdminConfigured()) {
-    return NextResponse.json({ success: false, error: 'שרת לא מוגדר', errorCode: 'not-configured' })
-  }
-
-  // Verify authentication
-  const authHeader = request.headers.get('Authorization')
-  if (!authHeader?.startsWith('Bearer ')) {
-    return NextResponse.json({ success: false, error: 'לא מחובר', errorCode: 'not-authenticated' })
-  }
-
-  const idToken = authHeader.substring(7)
+  const guard = await requireTc(request)
+  if (guard.error) return guard.error
+  const uid = guard.uid
+  const userEmail = guard.claims.email?.toLowerCase()
 
   try {
     const body = await request.json()
@@ -28,12 +22,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'מזהה הזמנה חסר', errorCode: 'invalid-invitation' })
     }
 
-    const decodedToken = await verifyIdToken(idToken)
-    const uid = decodedToken.uid
-    const userEmail = decodedToken.email?.toLowerCase()
-
     // Check if user already has a household
-    if (decodedToken.householdId) {
+    if (guard.claims.householdId) {
       return NextResponse.json({
         success: false,
         error: 'כבר חבר במשק בית. עזוב את משק הבית הנוכחי לפני הצטרפות לאחר.',
@@ -127,10 +117,11 @@ export async function POST(request: NextRequest) {
       { merge: true }
     )
 
-    // Set custom claims
+    // Set custom claims (include tier so proxy can enforce it)
     await setUserClaims(uid, {
       householdId,
       householdRole: 'member',
+      tier: 'home',
     })
 
     // Mark invitation as accepted

@@ -1,3 +1,4 @@
+// CALLER-KEYED ROUTE — authenticated via caller's API key
 /**
  * Scout Chat API Route
  * Interactive search training — helps user find opportunities, then saves a

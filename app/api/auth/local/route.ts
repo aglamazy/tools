@@ -1,3 +1,4 @@
+// PUBLIC ROUTE — local dev authentication
 /**
  * Local Auth API Route
  * Validates username/password against config/auth in Firestore (Admin SDK).
@@ -45,6 +46,6 @@ export async function POST(request: NextRequest) {
     { merge: true }
   )
 
-  const customToken = await getAdminAuth().createCustomToken('local-auth-user', { localAuth: true })
+  const customToken = await getAdminAuth().createCustomToken('local-auth-user', { localAuth: true, tier: 'owner' })
   return NextResponse.json({ success: true, customToken })
 }

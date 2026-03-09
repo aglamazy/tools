@@ -1,3 +1,4 @@
+// CALLER-KEYED ROUTE — authenticated via caller's API key
 /**
  * Scout Run API Route
  * Daily cron job + manual trigger — runs the saved search prompt to find opportunities.

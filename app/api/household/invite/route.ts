@@ -4,22 +4,15 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyIdToken, getAdminFirestore, isAdminConfigured } from '@/app/lib/firebaseAdmin'
+import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
+import { requireTc } from '@/app/lib/apiGuard'
 
 const INVITATION_EXPIRY_DAYS = 7
 
 export async function POST(request: NextRequest) {
-  if (!isAdminConfigured()) {
-    return NextResponse.json({ success: false, error: 'שרת לא מוגדר', errorCode: 'not-configured' })
-  }
-
-  // Verify authentication
-  const authHeader = request.headers.get('Authorization')
-  if (!authHeader?.startsWith('Bearer ')) {
-    return NextResponse.json({ success: false, error: 'לא מחובר', errorCode: 'not-authenticated' })
-  }
-
-  const idToken = authHeader.substring(7)
+  const guard = await requireTc(request)
+  if (guard.error) return guard.error
+  const uid = guard.uid
 
   try {
     const body = await request.json()
@@ -31,12 +24,8 @@ export async function POST(request: NextRequest) {
 
     const normalizedEmail = email.toLowerCase().trim()
 
-    const decodedToken = await verifyIdToken(idToken)
-    const uid = decodedToken.uid
-    const inviterEmail = decodedToken.email
-
     // Check if user is household owner
-    if (decodedToken.householdRole !== 'owner') {
+    if (guard.claims.householdRole !== 'owner') {
       return NextResponse.json({
         success: false,
         error: 'רק בעל משק הבית יכול להזמין',
@@ -44,7 +33,7 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    const householdId = decodedToken.householdId as string
+    const householdId = guard.claims.householdId
     if (!householdId) {
       return NextResponse.json({
         success: false,
@@ -102,7 +91,7 @@ export async function POST(request: NextRequest) {
     await invitationRef.set({
       householdId,
       inviterUid: uid,
-      inviterEmail: inviterEmail || null,
+      inviterEmail: guard.claims.email || null,
       inviteeEmail: normalizedEmail,
       status: 'pending',
       createdAt: now.toISOString(),
