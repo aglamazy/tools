@@ -2,9 +2,37 @@
 
 const API_BASE = 'https://aglamazo.com';
 
+// Track which tabs have the content script injected
+const injectedTabs = new Set();
+
+// Inject content script into a tab if not already injected
+async function injectContentScript(tabId) {
+  if (injectedTabs.has(tabId)) return;
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['content.js'],
+    });
+    injectedTabs.add(tabId);
+  } catch (e) {
+    console.error('[Aglamaz] Failed to inject content script:', e);
+  }
+}
+
+// Clean up when tab is closed or navigated
+chrome.tabs.onRemoved.addListener((tabId) => {
+  injectedTabs.delete(tabId);
+});
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status === 'loading') {
+    injectedTabs.delete(tabId);
+  }
+});
+
 // Open side panel when extension icon is clicked
 chrome.action.onClicked.addListener((tab) => {
   chrome.sidePanel.open({ tabId: tab.id });
+  injectContentScript(tab.id);
 });
 
 // Listen for messages from sidebar
@@ -43,14 +71,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
-  // Sidebar requests field extraction → forward to content script
+  // Sidebar requests field extraction → inject if needed, then forward to content script
   if (message.type === 'EXTRACT_FIELDS') {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       if (!tabs[0]?.id) {
         sendResponse({ fields: [] });
         return;
       }
-      chrome.tabs.sendMessage(tabs[0].id, { type: 'EXTRACT_FIELDS' }, (response) => {
+      const tabId = tabs[0].id;
+      await injectContentScript(tabId);
+      chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_FIELDS' }, (response) => {
         if (chrome.runtime.lastError) {
           sendResponse({ fields: [] });
           return;
@@ -61,14 +91,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
-  // Sidebar requests form fill → forward to content script
+  // Sidebar requests form fill → inject if needed, then forward to content script
   if (message.type === 'FILL_FIELDS') {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       if (!tabs[0]?.id) {
         sendResponse({ results: [] });
         return;
       }
-      chrome.tabs.sendMessage(tabs[0].id, { type: 'FILL_FIELDS', fields: message.fields }, (response) => {
+      const tabId = tabs[0].id;
+      await injectContentScript(tabId);
+      chrome.tabs.sendMessage(tabId, { type: 'FILL_FIELDS', fields: message.fields }, (response) => {
         sendResponse(response || { results: [] });
       });
     });
