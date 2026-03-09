@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import Sidebar from '@/app/components/Sidebar'
 import PageHeader from '@/app/components/PageHeader'
+import TcGate from '@/app/components/TcGate'
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
@@ -9,7 +10,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
       <div className="app-layout">
         <Sidebar />
         <div className="main-content">
-          {children}
+          <TcGate>{children}</TcGate>
         </div>
       </div>
     </>
