@@ -45,6 +45,8 @@ const steps: FormStep[] = [
       { id: 'why_applying', label: 'למה את/ה מגיש/ה מועמדות?', type: 'textarea', name: 'why_applying', placeholder: 'הסבר/י מדוע אתה מעוניין/ת להשתתף...', required: true },
       { id: 'cv_upload', label: 'קורות חיים (CV)', type: 'file', name: 'cv_upload', required: false, accept: '.pdf,.doc,.docx' },
       { id: 'recommendation_letter', label: 'מכתב המלצה', type: 'file', name: 'recommendation_letter', required: false, accept: '.pdf,.doc,.docx' },
+      { id: 'profile_photo', label: 'תמונת פרופיל', type: 'file', name: 'profile_photo', required: false, accept: 'image/*' },
+      { id: 'performance_video', label: 'סרטון ביצוע (MP4)', type: 'file', name: 'performance_video', required: false, accept: 'video/mp4' },
     ],
   },
 ]

@@ -283,12 +283,47 @@ body {
 }
 
 .field-card.file-field {
-  background: #fef2f2;
-  border-color: #fecaca;
+  background: #eff6ff;
+  border-color: #bfdbfe;
 }
 
 .field-card.file-field .field-label {
-  color: #991b1b;
+  color: #1e40af;
+}
+
+.file-upload-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.file-upload-label {
+  display: inline-block;
+  padding: 0.375rem 0.75rem;
+  background: #3b82f6;
+  color: white;
+  border-radius: 0.25rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.file-upload-label:hover {
+  background: #2563eb;
+}
+
+.file-upload-label input[type="file"] {
+  display: none;
+}
+
+.file-upload-name {
+  font-size: 0.75rem;
+  color: #64748b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
 }
 
 .form-filler-actions {
