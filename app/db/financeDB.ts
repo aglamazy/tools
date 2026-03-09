@@ -78,12 +78,18 @@ export interface BusinessCategory {
   lastUpdated: string
 }
 
+export type EisenhowerQuadrant = 'do' | 'schedule' | 'delegate' | 'eliminate'
+
 export interface Task {
   id?: number
   syncId?: string
   title: string
   completed: boolean
   priority: 'low' | 'medium' | 'high'
+  quadrant: EisenhowerQuadrant
+  deadline?: string // ISO date string (default: 10th of current month)
+  delegatedTo?: string // Firebase UID of partner
+  delegatedBy?: string // Firebase UID of delegator
   createdAt: string
   updatedAt?: string
 }
@@ -516,6 +522,52 @@ class FinanceDB extends Dexie {
       scoutResults: '++id, syncId, businessId, status, [businessId+status]',
       scoutConfigs: '++id, syncId, &businessId',
       taxDocuments: '++id, syncId, businessId, userId, month, year, [businessId+year]',
+    })
+
+    // Define schema version 18 - add quadrant, deadline, delegation to tasks
+    this.version(18).stores({
+      transactions: '++id, syncId, type, month, accountNumber, cardNumber, date, chargingDate, [type+month], [cardNumber+month], [accountNumber+month], fileId',
+      importedFiles: '++id, syncId, fileName, fileType, processingMonth, [fileType+processingMonth], [cardNumber+processingMonth]',
+      categories: '++id, syncId, name, type',
+      businessCategories: '++id, syncId, &business',
+      tasks: '++id, syncId, createdAt, priority, quadrant, deadline, delegatedTo',
+      appSettings: '++id, syncId, &key',
+      businesses: '++id, syncId, &name, type, userId',
+      projects: '++id, syncId, businessId, name, archived',
+      harvestTasks: '++id, syncId, projectId, name, archived',
+      timeEntries: '++id, syncId, taskId, date, startTime, endTime, [taskId+date]',
+      capitalEntries: '++id, syncId, date, institution, accountNumber, description, assetType, currency, employer, investmentTrack, agent, soldDate, [institution+accountNumber+description], fileId',
+      financialInstitutions: '++id, syncId, name, type',
+      ypayDocuments: '++id, syncId, &transactionId, docType',
+      students: '++id, syncId, businessId, name, archived',
+      profileQAs: '++id, syncId, businessId, [businessId+answerType]',
+      scoutResults: '++id, syncId, businessId, status, [businessId+status]',
+      scoutConfigs: '++id, syncId, &businessId',
+      taxDocuments: '++id, syncId, businessId, userId, month, year, [businessId+year]',
+    }).upgrade(async (trans) => {
+      // Migrate existing tasks: set default quadrant based on priority
+      const tasks = await trans.table('tasks').toArray()
+      for (const task of tasks) {
+        const updates: Record<string, any> = {}
+        if (!task.quadrant) {
+          // Map old priority to quadrant
+          if (task.priority === 'high') updates.quadrant = 'do'
+          else if (task.priority === 'medium') updates.quadrant = 'schedule'
+          else updates.quadrant = 'eliminate'
+        }
+        if (!task.deadline) {
+          // Default deadline: 10th of current month
+          const now = new Date()
+          const deadline = new Date(now.getFullYear(), now.getMonth(), 10)
+          if (deadline < now) {
+            deadline.setMonth(deadline.getMonth() + 1)
+          }
+          updates.deadline = deadline.toISOString()
+        }
+        if (Object.keys(updates).length > 0) {
+          await trans.table('tasks').update(task.id, updates)
+        }
+      }
     })
 
     // Auto-inject syncId and updatedAt on create/update

@@ -1,4 +1,4 @@
-import { db, Task } from '@/app/db/financeDB'
+import { db, Task, EisenhowerQuadrant } from '@/app/db/financeDB'
 import { transactionStore } from './transactionStore'
 import { getUser } from './authStore'
 import { appSettingsStore, AccountOwners } from './appSettingsStore'
@@ -6,11 +6,17 @@ import { routes } from '@/app/config'
 
 type Priority = 'low' | 'medium' | 'high'
 
+export type { EisenhowerQuadrant }
+
 export type UserTask = {
   id: number
   title: string
   completed: boolean
   priority: Priority
+  quadrant: EisenhowerQuadrant
+  deadline?: string
+  delegatedTo?: string
+  delegatedBy?: string
   createdAt: string
 }
 
@@ -20,17 +26,56 @@ export type AutoTask = {
   description: string
   type: 'missing-file' | 'uncategorized' | 'expected-payment' | 'other'
   priority: Priority
+  quadrant: EisenhowerQuadrant
+  deadline: string
   link: string
   createdAt: string
   month: string // Format: MM/YYYY - the month this task references
 }
 
+/**
+ * Determine Eisenhower quadrant for an auto-task based on its deadline.
+ * - Deadline within 3 days → Q1 (Do: urgent + important)
+ * - Deadline in the future → Q2 (Schedule: important, not urgent)
+ * - Past deadline → Q1 (overdue = urgent)
+ */
+function computeAutoTaskQuadrant(deadline: Date): EisenhowerQuadrant {
+  const now = new Date()
+  const diffDays = Math.ceil((deadline.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+
+  if (diffDays <= 3) return 'do' // Urgent & important (includes overdue)
+  return 'schedule' // Important but not urgent
+}
+
+/**
+ * Get the default deadline for auto-tasks: 10th of the relevant month.
+ * If the month is in the past, the deadline is already overdue.
+ */
+function getAutoTaskDeadline(month: string): Date {
+  const [mm, yyyy] = month.split('/').map(Number)
+  return new Date(yyyy, mm - 1, 10) // 10th of that month
+}
+
 export const todoStore = {
-  async addTask(title: string, priority: Priority): Promise<UserTask> {
+  async addTask(
+    title: string,
+    priority: Priority,
+    quadrant: EisenhowerQuadrant = 'do',
+    deadline?: string
+  ): Promise<UserTask> {
+    const defaultDeadline = deadline || (() => {
+      const now = new Date()
+      const d = new Date(now.getFullYear(), now.getMonth(), 10)
+      if (d < now) d.setMonth(d.getMonth() + 1)
+      return d.toISOString()
+    })()
+
     const task: Omit<Task, 'id'> = {
       title,
       completed: false,
       priority,
+      quadrant,
+      deadline: defaultDeadline,
       createdAt: new Date().toISOString(),
     }
     const id = await db.tasks.add(task)
@@ -44,6 +89,10 @@ export const todoStore = {
       title: t.title,
       completed: t.completed,
       priority: t.priority,
+      quadrant: t.quadrant || 'do',
+      deadline: t.deadline,
+      delegatedTo: t.delegatedTo,
+      delegatedBy: t.delegatedBy,
       createdAt: t.createdAt,
     }))
   },
@@ -61,6 +110,30 @@ export const todoStore = {
 
   async updateTask(id: number, updates: Partial<Omit<Task, 'id'>>): Promise<void> {
     await db.tasks.update(id, updates)
+  },
+
+  async moveTask(id: number, quadrant: EisenhowerQuadrant): Promise<void> {
+    await db.tasks.update(id, { quadrant })
+  },
+
+  async delegateTask(id: number, toUid: string): Promise<void> {
+    const currentUid = getUser()?.uid
+    await db.tasks.update(id, {
+      delegatedTo: toUid,
+      delegatedBy: currentUid,
+      quadrant: 'delegate' as EisenhowerQuadrant,
+    })
+  },
+
+  async undelegateTask(id: number): Promise<void> {
+    const task = await db.tasks.get(id)
+    if (task) {
+      await db.tasks.update(id, {
+        delegatedTo: undefined,
+        delegatedBy: undefined,
+        quadrant: 'do' as EisenhowerQuadrant,
+      })
+    }
   },
 
   async getAutoTasks(): Promise<AutoTask[]> {
@@ -202,12 +275,15 @@ async function checkMissingFiles(owners: AccountOwners, currentUid: string | und
   // If no accounts/cards exist yet, suggest checking imports for recent months
   if (bankAccounts.size === 0 && creditCards.size === 0) {
     const currentMonth = getCurrentMonth()
+    const deadline = getAutoTaskDeadline(currentMonth)
     tasks.push({
       id: `missing-initial-${currentMonth}`,
       title: `[${currentMonth}] לא נמצאו קבצים מיובאים`,
       description: 'יש להתחיל לייבא קבצי בנק וכרטיסי אשראי',
       type: 'missing-file',
       priority: 'high',
+      quadrant: computeAutoTaskQuadrant(deadline),
+      deadline: deadline.toISOString(),
       link: routes.import,
       createdAt: new Date().toISOString(),
       month: currentMonth,
@@ -227,12 +303,15 @@ async function checkMissingFiles(owners: AccountOwners, currentUid: string | und
       if (!hasFile) {
         // Priority: high for latest month, medium for older months
         const priority: Priority = month === latestMonthInRange ? 'high' : 'medium'
+        const deadline = getAutoTaskDeadline(month)
         tasks.push({
           id: `missing-bank-${account}-${month}`,
           title: `[${month}] חסר קובץ בנק ${account}`,
           description: `לא נמצא קובץ בנק מיובא עבור חשבון ${account} לחודש ${month}`,
           type: 'missing-file',
           priority,
+          quadrant: computeAutoTaskQuadrant(deadline),
+          deadline: deadline.toISOString(),
           link: `${routes.import}?month=${encodeURIComponent(month)}`,
           createdAt: new Date().toISOString(),
           month,
@@ -251,12 +330,15 @@ async function checkMissingFiles(owners: AccountOwners, currentUid: string | und
       if (!hasFile) {
         // Priority: high for latest month, medium for older months
         const priority: Priority = month === latestMonthInRange ? 'high' : 'medium'
+        const deadline = getAutoTaskDeadline(month)
         tasks.push({
           id: `missing-credit-${card}-${month}`,
           title: `[${month}] חסר קובץ כרטיס אשראי ${card}`,
           description: `לא נמצא קובץ כרטיס אשראי מיובא עבור כרטיס ${card} לחודש ${month}`,
           type: 'missing-file',
           priority,
+          quadrant: computeAutoTaskQuadrant(deadline),
+          deadline: deadline.toISOString(),
           link: `${routes.import}?month=${encodeURIComponent(month)}`,
           createdAt: new Date().toISOString(),
           month,
@@ -298,12 +380,15 @@ async function checkUncategorizedTransactions(currentMonth: string, owners: Acco
   const uncategorized = visibleTransactions.filter(t => !t.category || t.category.trim() === '')
 
   if (uncategorized.length > 0) {
+    const deadline = getAutoTaskDeadline(currentMonth)
     tasks.push({
       id: `uncategorized-${currentMonth}`,
       title: `[${currentMonth}] יש ${uncategorized.length} עסקאות לא מסווגות`,
       description: `נמצאו עסקאות בחודש ${currentMonth} שטרם סווגו לנושאים`,
       type: 'uncategorized',
       priority: uncategorized.length > 20 ? 'high' : 'medium',
+      quadrant: computeAutoTaskQuadrant(deadline),
+      deadline: deadline.toISOString(),
       link: `${routes.budget}?filter=unclassified&month=${encodeURIComponent(currentMonth)}`,
       createdAt: new Date().toISOString(),
       month: currentMonth,
