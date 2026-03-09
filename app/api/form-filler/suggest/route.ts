@@ -29,6 +29,7 @@ interface ProfileQAEntry {
 interface FieldSuggestion {
   value: string
   source: 'profile' | 'ai' | 'none'
+  siteSpecific?: boolean
 }
 
 const SYSTEM_PROMPT = `You are a form-filling assistant for musicians and artists.
@@ -57,16 +58,33 @@ Rules:
 - Keep answers appropriate for the field type (short for text inputs, longer for textareas)
 - For date fields, look at the placeholder or format hint in the field (e.g. "TT.MM.JJJJ" means dd.mm.yyyy, "mm/dd/yyyy" means US format). Output the date in the format the form expects. If no hint, use YYYY-MM-DD.
 - The user's profile may store dates in d/m/yy format (e.g. "5/3/90" = March 5, 1990). Convert to the form's expected format.
-- The form may be in any language. Match fields to profile semantically regardless of language.`
+- The form may be in any language. Match fields to profile semantically regardless of language.
+
+Site-specific fields:
+- Detect if a field is site-specific, meaning its value is unique to this particular website/service (not a general personal fact).
+- Examples of site-specific fields: username/login for this site, password, account number, membership ID, API key, site-specific codes.
+- Examples of NON site-specific fields: full name, email, phone, address, date of birth — these are general personal facts.
+- For site-specific fields, add "siteSpecific": true in the response object for that field.
+- For site-specific fields, if matching profile data exists with matching site tags, use it. Otherwise return source "none".
+- The page URL/hostname will be provided so you know which site the form belongs to.
+
+Updated response format:
+{
+  "field_id_1": { "value": "suggested answer", "source": "profile" },
+  "field_id_2": { "value": "", "source": "none", "siteSpecific": true },
+  "field_id_3": { "value": "", "source": "none" }
+}`
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { fields, profileData, provider, apiKey } = body as {
+    const { fields, profileData, provider, apiKey, pageUrl, hostname } = body as {
       fields: FormField[]
       profileData?: ProfileQAEntry[]
       provider?: string
       apiKey?: string
+      pageUrl?: string
+      hostname?: string
     }
 
     if (!Array.isArray(fields) || fields.length === 0) {
@@ -89,7 +107,8 @@ export async function POST(request: NextRequest) {
       }).join('\n')
       : 'No profile data available.'
 
-    const userMessage = `Form fields:\n${fieldsDescription}\n\nUser profile data:\n${profileDescription}`
+    const siteInfo = hostname ? `\nPage URL: ${pageUrl || ''}\nHostname: ${hostname}\n` : ''
+    const userMessage = `${siteInfo}Form fields:\n${fieldsDescription}\n\nUser profile data:\n${profileDescription}`
 
     const client = getLLMClient((provider as LLMProvider) || 'anthropic')
     const result = await client.chat({

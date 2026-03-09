@@ -169,6 +169,9 @@ let fieldSuggestions = {};
 let originalSuggestions = {};
 // Track selected files for file upload fields
 let selectedFiles = {};
+// Current page info for site-specific credential storage
+let currentPageUrl = '';
+let currentHostname = '';
 
 // Listen for form field messages from content script
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -187,6 +190,8 @@ function handleFieldsExtracted(data) {
   }
 
   currentFields = data.fields;
+  currentPageUrl = data.pageUrl || '';
+  currentHostname = data.hostname || '';
   formFillerSection.style.display = 'block';
   noFormSection.style.display = 'none';
   fieldCount.textContent = `נמצאו ${data.fields.length} שדות`;
@@ -211,7 +216,7 @@ async function getSuggestions(fields) {
         'Content-Type': 'application/json',
         ...(token && { Authorization: `Bearer ${token}` }),
       },
-      body: JSON.stringify({ fields }),
+      body: JSON.stringify({ fields, pageUrl: currentPageUrl, hostname: currentHostname }),
     });
 
     if (response.ok) {
@@ -240,13 +245,15 @@ function renderFields() {
     const suggestion = fieldSuggestions[field.id] || {};
     const suggestedValue = suggestion.value || '';
     const source = suggestion.source || 'none'; // 'profile', 'ai', 'none'
+    const isSiteSpecific = suggestion.siteSpecific === true;
     const statusEmoji = source === 'profile' ? '🟢' : source === 'ai' ? '🟡' : '🔴';
 
     originalSuggestions[field.id] = suggestedValue;
 
     const card = document.createElement('div');
-    card.className = 'field-card' + (field.type === 'file' ? ' file-field' : '');
+    card.className = 'field-card' + (field.type === 'file' ? ' file-field' : '') + (isSiteSpecific ? ' site-specific' : '');
     card.dataset.fieldId = field.id;
+    if (isSiteSpecific) card.dataset.siteSpecific = 'true';
 
     const header = document.createElement('div');
     header.className = 'field-card-header';
@@ -254,6 +261,15 @@ function renderFields() {
     const label = document.createElement('span');
     label.className = 'field-label';
     label.textContent = field.label || field.name || field.id;
+
+    if (isSiteSpecific) {
+      const siteTag = document.createElement('span');
+      siteTag.className = 'site-tag';
+      const siteName = getSiteName(currentHostname);
+      siteTag.textContent = `🔑 ${siteName}`;
+      siteTag.title = `שדה ספציפי לאתר ${siteName}`;
+      label.appendChild(siteTag);
+    }
 
     const status = document.createElement('span');
     status.className = 'field-status';
@@ -412,11 +428,22 @@ saveFactsBtn.addEventListener('click', async () => {
       else if (field?.type === 'date') answerType = 'date';
       else if (field?.type === 'file') answerType = 'file';
 
-      newFacts.push({
-        question: field?.label || field?.name || fieldId,
+      const isSiteSpecific = card.dataset.siteSpecific === 'true';
+      const siteName = getSiteName(currentHostname);
+      const questionLabel = field?.label || field?.name || fieldId;
+
+      const factEntry = {
+        question: isSiteSpecific ? `${siteName}:${questionLabel}` : questionLabel,
         answer: currentValue,
         answerType,
-      });
+      };
+
+      // Add siteKey for site-specific fields so they are stored separately
+      if (isSiteSpecific) {
+        factEntry.siteKey = siteName;
+      }
+
+      newFacts.push(factEntry);
     }
   }
 
@@ -461,6 +488,14 @@ function showSaveFeedback(text, type) {
   saveFeedback.className = 'save-feedback ' + type;
   saveFeedback.style.display = 'block';
   setTimeout(() => { saveFeedback.style.display = 'none'; }, 3000);
+}
+
+// Extract a short site name from hostname (e.g. "weimar" from "www.weimar.de")
+function getSiteName(hostname) {
+  if (!hostname) return 'unknown';
+  // Remove www. prefix and TLD
+  const parts = hostname.replace(/^www\./, '').split('.');
+  return parts[0] || hostname;
 }
 
 // Demo button — open demo form in active tab

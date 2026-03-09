@@ -130,7 +130,7 @@
       fields.push(fieldData)
     }
 
-    return { fields }
+    return { fields, pageUrl: window.location.href, hostname: window.location.hostname }
   }
 
   // Fill a file input using DataTransfer API

@@ -33,12 +33,16 @@ export async function GET(request: NextRequest) {
 
   const { searchParams } = new URL(request.url)
   const businessId = searchParams.get('businessId')
+  const siteKey = searchParams.get('siteKey')
 
   try {
     const firestore = getAdminFirestore()
     let query: FirebaseFirestore.Query = firestore.collection(COLLECTION).where('uid', '==', uid)
     if (businessId) {
       query = query.where('businessId', '==', Number(businessId))
+    }
+    if (siteKey) {
+      query = query.where('siteKey', '==', siteKey)
     }
     const snapshot = await query.get()
     const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
@@ -58,7 +62,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const { facts, businessId } = await request.json() as {
-      facts: { question: string; answer: string; answerType: string; tags?: string[] }[]
+      facts: { question: string; answer: string; answerType: string; tags?: string[]; siteKey?: string }[]
       businessId?: number
     }
 
@@ -72,13 +76,17 @@ export async function POST(request: NextRequest) {
     const ids: string[] = []
 
     for (const fact of facts) {
-      // Dedup: check if a fact with the same question already exists for this user+business
-      const existing = await firestore.collection(COLLECTION)
+      // Dedup: check if a fact with the same question (and siteKey if present) already exists
+      let query: FirebaseFirestore.Query = firestore.collection(COLLECTION)
         .where('uid', '==', uid)
         .where('businessId', '==', bid)
         .where('question', '==', fact.question)
-        .limit(1)
-        .get()
+
+      if (fact.siteKey) {
+        query = query.where('siteKey', '==', fact.siteKey)
+      }
+
+      const existing = await query.limit(1).get()
 
       if (!existing.empty) {
         // Update existing fact instead of creating a duplicate
@@ -87,6 +95,7 @@ export async function POST(request: NextRequest) {
           answer: fact.answer,
           answerType: fact.answerType || 'word',
           tags: fact.tags || [],
+          ...(fact.siteKey && { siteKey: fact.siteKey }),
           updatedAt: now,
         })
         ids.push(docRef.id)
@@ -99,6 +108,7 @@ export async function POST(request: NextRequest) {
           isArray: false,
           answer: fact.answer,
           tags: fact.tags || [],
+          ...(fact.siteKey && { siteKey: fact.siteKey }),
           createdAt: now,
           updatedAt: now,
         })
