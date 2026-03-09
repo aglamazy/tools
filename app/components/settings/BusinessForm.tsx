@@ -50,7 +50,7 @@ export default function BusinessForm({ business, onChange, onSave, onCancel, isN
                   type="radio"
                   name="businessType"
                   checked={business.type === BusinessType.Personal}
-                  onChange={() => onChange({ ...business, type: BusinessType.Personal })}
+                  onChange={() => onChange({ ...business, type: BusinessType.Personal, isTaxFree: false })}
                 />
                 <span>🏠 אישי/בית</span>
               </label>
@@ -103,7 +103,7 @@ export default function BusinessForm({ business, onChange, onSave, onCancel, isN
                     type="radio"
                     name="vatType"
                     checked={business.vatType === 'authorized'}
-                    onChange={() => onChange({ ...business, vatType: 'authorized' })}
+                    onChange={() => onChange({ ...business, vatType: 'authorized', isTaxFree: false })}
                   />
                   <span>עוסק מורשה</span>
                 </label>
@@ -111,6 +111,16 @@ export default function BusinessForm({ business, onChange, onSave, onCancel, isN
               <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
                 {business.vatType === 'exempt' ? 'יופק: קבלה' : business.vatType === 'authorized' ? 'יופק: חשבונית מס קבלה' : ''}
               </span>
+              {business.vatType === 'exempt' && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', marginTop: '0.75rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={business.isTaxFree || false}
+                    onChange={(e) => onChange({ ...business, isTaxFree: e.target.checked })}
+                  />
+                  <span>ללא מיסים (הכנסה פטורה ממס הכנסה)</span>
+                </label>
+              )}
             </div>
           )}
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>

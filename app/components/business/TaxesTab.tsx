@@ -235,6 +235,14 @@ function AnnualSummaryTable({ docs, businesses, transactions, bizCategoryMap, cu
       bizIncome[biz.id!] = bizTx.reduce((s, t) => s + (t.amount || 0), 0)
     }
 
+    // Tax-free income: sum income from businesses marked isTaxFree
+    let taxFreeIncome = 0
+    for (const biz of businesses) {
+      if (biz.isTaxFree) {
+        taxFreeIncome += bizIncome[biz.id!] || 0
+      }
+    }
+
     return {
       month: i,
       label: HEBREW_MONTHS[i],
@@ -244,8 +252,11 @@ function AnnualSummaryTable({ docs, businesses, transactions, bizCategoryMap, cu
       healthInsurance: monthDocs.reduce((s, d) => s + (d.healthInsurance || 0), 0),
       netIncome: monthDocs.reduce((s, d) => s + (d.netIncome || 0), 0),
       bizIncome,
+      taxFreeIncome,
     }
   })
+
+  const hasTaxFreeBusinesses = businesses.some(b => b.isTaxFree)
 
   const totals = {
     grossIncome: monthlyData.reduce((s, m) => s + m.grossIncome, 0),
@@ -253,6 +264,7 @@ function AnnualSummaryTable({ docs, businesses, transactions, bizCategoryMap, cu
     nationalInsurance: monthlyData.reduce((s, m) => s + m.nationalInsurance, 0),
     healthInsurance: monthlyData.reduce((s, m) => s + m.healthInsurance, 0),
     netIncome: monthlyData.reduce((s, m) => s + m.netIncome, 0),
+    taxFreeIncome: monthlyData.reduce((s, m) => s + m.taxFreeIncome, 0),
     bizIncome: Object.fromEntries(businesses.map(biz => [
       biz.id!,
       monthlyData.reduce((s, m) => s + (m.bizIncome[biz.id!] || 0), 0),
@@ -299,6 +311,9 @@ function AnnualSummaryTable({ docs, businesses, transactions, bizCategoryMap, cu
             <th style={headerStyle}>ביטוח לאומי</th>
             <th style={headerStyle}>ביטוח בריאות</th>
             <th style={headerStyle}>נטו</th>
+            {hasTaxFreeBusinesses && (
+              <th style={{ ...headerStyle, background: '#ecfdf5', color: '#059669' }}>פטור ממס</th>
+            )}
             {businesses.map(biz => (
               <th key={biz.id} style={{ ...headerStyle, background: '#faf5ff', color: '#7c3aed' }}>{biz.name}</th>
             ))}
@@ -313,6 +328,11 @@ function AnnualSummaryTable({ docs, businesses, transactions, bizCategoryMap, cu
               <td style={cellStyle}>{row.nationalInsurance ? fmt(row.nationalInsurance) : '—'}</td>
               <td style={cellStyle}>{row.healthInsurance ? fmt(row.healthInsurance) : '—'}</td>
               <td style={cellStyle}>{row.netIncome ? fmt(row.netIncome) : '—'}</td>
+              {hasTaxFreeBusinesses && (
+                <td style={{ ...cellStyle, background: '#f0fdf4' }}>
+                  {row.taxFreeIncome ? fmt(row.taxFreeIncome) : '—'}
+                </td>
+              )}
               {businesses.map(biz => (
                 <td
                   key={biz.id}
@@ -339,6 +359,11 @@ function AnnualSummaryTable({ docs, businesses, transactions, bizCategoryMap, cu
             <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.nationalInsurance)}</td>
             <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.healthInsurance)}</td>
             <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.netIncome)}</td>
+            {hasTaxFreeBusinesses && (
+              <td style={{ ...cellStyle, fontWeight: 700, background: '#f0fdf4', color: '#059669' }}>
+                {fmt(totals.taxFreeIncome)}
+              </td>
+            )}
             {businesses.map(biz => (
               <td key={biz.id} style={{ ...cellStyle, fontWeight: 700, background: '#fefce8' }}>
                 {fmt(totals.bizIncome[biz.id!] || 0)}
