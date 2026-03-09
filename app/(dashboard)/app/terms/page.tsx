@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { subscribeToAuthState, getIdToken, type AuthUser } from '@/app/services/firebaseAuthService'
-import { tcStore } from '@/app/stores/tcStore'
+import { userTierStore } from '@/app/stores/userTierStore'
 import { routes } from '@/app/config'
 
 export default function TermsPage() {
@@ -19,7 +19,7 @@ export default function TermsPage() {
 
   // If user already accepted, redirect to dashboard
   useEffect(() => {
-    const unsub = tcStore.subscribe((state) => {
+    const unsub = userTierStore.subscribeTc((state) => {
       if (!state.loading && state.accepted) {
         router.replace(routes.dashboard)
       }
