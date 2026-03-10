@@ -97,7 +97,7 @@ const tierLabels: Record<UserTier, string> = {
   [UserTier.OWNER]: 'בעלים',
 }
 
-export default function Sidebar() {
+export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose?: () => void }) {
   const pathname = usePathname()
   const [expandedModule, setExpandedModule] = useState<string | null>(null)
   const [pinnedBusinesses, setPinnedBusinesses] = useState<Business[]>([])
@@ -154,7 +154,7 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${isOpen ? 'sidebar-open' : ''}`}>
       <nav className="sidebar-nav">
         <ul className="mod-list">
           {modules.map((mod) => {
@@ -187,6 +187,7 @@ export default function Sidebar() {
                             <Link
                               href={item.href}
                               className={`mod-menu-item ${isActive ? 'active' : ''}`}
+                              onClick={onClose}
                             >
                               <span className="mod-menu-icon">{item.icon}</span>
                               <span className="mod-menu-title">{item.title}</span>
@@ -210,6 +211,7 @@ export default function Sidebar() {
                         <Link
                           href={`/business/${business.id}`}
                           className={`mod-menu-item ${pathname === `/business/${business.id}` ? 'active' : ''}`}
+                          onClick={onClose}
                         >
                           <span className="mod-menu-icon">{BUSINESS_TYPE_CONFIG[business.type].icon}</span>
                           <span className="mod-menu-title">{business.name}</span>
