@@ -107,7 +107,7 @@ export function BusinessStatusBadge({ businessId }: { businessId: number }) {
 
   return (
     <span
-      title={`${STATUS_LABELS[info.status]} — הכנסה: ${fmt(info.currentIncome)} / תקרה: ${fmt(info.limit)}`}
+      title={`השכרת דירה: ${STATUS_LABELS[info.status]} — הכנסה: ${fmt(info.currentIncome)} / תקרה: ${fmt(info.limit)}`}
       style={{
         display: 'inline-block',
         width: 8,
