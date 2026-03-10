@@ -18,24 +18,24 @@ async function getLatestTcVersion(firestore: FirebaseFirestore.Firestore) {
   return { version: doc.id, text: doc.data().text as string }
 }
 
-// GET — return latest T&C text and acceptance status
+// PUBLIC ROUTE
+// GET — return latest T&C text (public) + acceptance status (if logged in)
 export async function GET(request: NextRequest) {
-  const guard = await requireAuth(request)
-  if (guard.error) return guard.error
-  const uid = guard.uid
-
   try {
     const firestore = getAdminFirestore()
-    const [userDoc, latestTc] = await Promise.all([
-      firestore.collection('users').doc(uid).get(),
-      getLatestTcVersion(firestore),
-    ])
-
-    const data = userDoc.data()
-    const tcAcceptedAt = data?.tcAcceptedAt as string | undefined
-    // Use Firestore version if available, fall back to config
+    const latestTc = await getLatestTcVersion(firestore)
     const requiredVersion = latestTc?.version ?? config.tcVersion
-    const accepted = tcAcceptedAt != null && tcAcceptedAt >= requiredVersion
+
+    // Try to get acceptance status if user is authenticated
+    let accepted: boolean | null = null
+    let tcAcceptedAt: string | undefined
+    const guard = await requireAuth(request)
+    if (!guard.error) {
+      const userDoc = await firestore.collection('users').doc(guard.uid).get()
+      const data = userDoc.data()
+      tcAcceptedAt = data?.tcAcceptedAt as string | undefined
+      accepted = tcAcceptedAt != null && tcAcceptedAt >= requiredVersion
+    }
 
     return NextResponse.json({
       success: true,

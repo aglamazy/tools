@@ -4,23 +4,27 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { subscribeToAuthState, getIdToken, type AuthUser } from '@/app/services/firebaseAuthService'
 import { userTierStore } from '@/app/stores/userTierStore'
-import { routes } from '@/app/config'
+import { config, routes } from '@/app/config'
+import { db } from '@/app/db/financeDB'
 
-const FALLBACK_TEXT = 'המערכת משמשת ככלי להבנה כללית של חישוב המיסים ואינה מוגדרת כמערכת מקצועית לחישוב או ראיית חשבון. המשתמש בה עושה זאת על אחריותו בלבד לצורך הבנה כללית של מצבו. עליו להיעזר ברואה חשבון/מנהל חשבונות כדי להבין את חובותיו ולהסדירן.'
 
 export default function TermsPage() {
   const router = useRouter()
   const [user, setUser] = useState<AuthUser | null>(null)
+  const [authReady, setAuthReady] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [tcText, setTcText] = useState<string | null>(null)
 
   useEffect(() => {
-    const unsub = subscribeToAuthState((u) => setUser(u))
+    const unsub = subscribeToAuthState((u) => {
+      setUser(u)
+      setAuthReady(true)
+    })
     return unsub
   }, [])
 
-  // If user already accepted, redirect to dashboard
+  // If logged-in user already accepted, redirect to dashboard
   useEffect(() => {
     const unsub = userTierStore.subscribeTc((state) => {
       if (!state.loading && state.accepted) {
@@ -30,38 +34,42 @@ export default function TermsPage() {
     return unsub
   }, [router])
 
-  // Fetch latest T&C text from server
+  // Fetch latest T&C text from server (public endpoint)
   useEffect(() => {
-    if (!user) return
-    const fetchTc = async () => {
-      try {
-        const token = await getIdToken()
-        const res = await fetch('/api/terms', {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        })
-        const data = await res.json()
-        if (data.success && data.text) {
-          setTcText(data.text)
-        }
-      } catch { /* use fallback */ }
-    }
-    fetchTc()
-  }, [user])
+    fetch('/api/terms')
+      .then(res => res.json())
+      .then(data => { if (data.success && data.text) setTcText(data.text) })
+      .catch(() => {})
+  }, [])
 
   const handleAccept = async () => {
     setError(null)
     setSubmitting(true)
     try {
-      const token = await getIdToken()
-      const res = await fetch('/api/terms', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-      })
-      if (!res.ok) {
-        setError('שגיאה באישור תנאי השימוש. נסה שוב.')
+      if (user) {
+        // Logged-in: POST to server
+        const token = await getIdToken()
+        const res = await fetch('/api/terms', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        })
+        if (!res.ok) {
+          setError('שגיאה באישור תנאי השימוש. נסה שוב.')
+          setSubmitting(false)
+          return
+        }
+      } else {
+        // Anonymous: save locally
+        await db.appSettings.put({
+          key: 'tcAcceptedAt',
+          value: config.tcVersion,
+          updatedAt: new Date().toISOString(),
+        })
+        window.dispatchEvent(new Event('local-tc-accepted'))
+        router.replace(routes.dashboard)
       }
     } catch {
       setError('שגיאה באישור תנאי השימוש. נסה שוב.')
@@ -69,13 +77,8 @@ export default function TermsPage() {
     setSubmitting(false)
   }
 
-  if (!user) {
-    return (
-      <div className="tool-page" dir="rtl">
-        <p>יש להתחבר כדי להמשיך.</p>
-      </div>
-    )
-  }
+  // Show loading while auth initializes
+  if (!authReady) return null
 
   return (
     <div className="tool-page" dir="rtl" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
@@ -84,10 +87,16 @@ export default function TermsPage() {
           תנאי שימוש
         </h1>
 
-        <div
-          style={textBoxStyle}
-          dangerouslySetInnerHTML={{ __html: tcText ?? `<p>${FALLBACK_TEXT}</p>` }}
-        />
+        {tcText ? (
+          <div
+            style={textBoxStyle}
+            dangerouslySetInnerHTML={{ __html: tcText }}
+          />
+        ) : (
+          <div style={{ ...textBoxStyle, textAlign: 'center', color: '#94a3b8' }}>
+            טוען תנאי שימוש...
+          </div>
+        )}
 
         {error && (
           <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '0.5rem', color: '#dc2626', fontSize: '0.9rem', textAlign: 'center' }}>
@@ -97,8 +106,8 @@ export default function TermsPage() {
 
         <button
           onClick={handleAccept}
-          disabled={submitting}
-          style={buttonStyle(submitting)}
+          disabled={submitting || !tcText}
+          style={buttonStyle(submitting || !tcText)}
         >
           {submitting ? 'שומר...' : 'קראתי ואני מאשר/ת'}
         </button>

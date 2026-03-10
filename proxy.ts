@@ -25,7 +25,7 @@ const TIER_RANK: Record<string, number> = { free: 1, home: 2, pro: 3, owner: 4 }
 const TC_VERSION_FALLBACK = '2026-03-09'
 
 export const config = {
-  matcher: ['/api/admin/:path*', '/api/household/:path*', '/api/profile-qa', '/api/terms'],
+  matcher: ['/api/admin/:path*', '/api/household/:path*', '/api/profile-qa'],
 }
 
 // ---------------------------------------------------------------------------
@@ -201,7 +201,5 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next()
   }
 
-  // --- /api/terms — auth only (T&C flow itself) ---
-  // Token already verified above, so just pass through
   return NextResponse.next()
 }
