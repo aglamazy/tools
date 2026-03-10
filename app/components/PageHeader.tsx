@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import NotificationCenter from './NotificationCenter'
 import AuthStatus from './AuthStatus'
+import PageSearch from './PageSearch'
 import { branding, routes } from '@/app/config'
 import { useToast } from './ToastContainer'
 
@@ -16,6 +17,7 @@ export default function PageHeader() {
           <NotificationCenter notifications={notifications} onClear={clearNotifications} />
           <AuthStatus />
         </div>
+        <PageSearch />
         <div className="page-header-title">
           <h1>{branding.name}</h1>
         </div>

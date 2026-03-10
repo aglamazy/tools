@@ -116,6 +116,9 @@ export default function CreditCardsPage() {
         </div>
       ) : (
         <div className="card">
+          <p style={{ margin: '0 0 1rem', color: '#64748b', fontSize: '0.85rem' }}>
+            להוספת כרטיס נוסף למערכת, יבא את קובץ העסקאות של הכרטיס
+          </p>
           <div className="table-wrapper">
             <table>
               <thead>
