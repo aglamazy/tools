@@ -25,6 +25,7 @@ export { hasGoogleAccess, requestGoogleAccess, clearGoogleAccess }
 const DRIVE_API = 'https://www.googleapis.com/drive/v3/files'
 const DRIVE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3/files'
 const ROOT_FOLDER_NAME = 'Aglamazo Tax Documents'
+const EXPENSE_FOLDER_NAME = 'Aglamazo Expense Documents'
 const FOLDER_MIME = 'application/vnd.google-apps.folder'
 
 // ---------------------------------------------------------------------------
@@ -143,6 +144,16 @@ export async function ensureFolder(): Promise<string> {
 }
 
 /**
+ * Ensure the expense documents folder exists:
+ *   My Drive / Aglamazo Expense Documents
+ *
+ * Returns the folder id.
+ */
+export async function ensureExpenseFolder(): Promise<string> {
+  return getOrCreateFolder(EXPENSE_FOLDER_NAME)
+}
+
+/**
  * Upload a tax document to Google Drive under the business folder.
  *
  * Uses multipart upload (metadata + file content in a single request).
@@ -216,9 +227,77 @@ export async function uploadTaxDocument(
 }
 
 /**
- * Delete a file from Google Drive by its file id.
- * Resolves silently if the file was already deleted (404).
+ * Upload an expense document (receipt/invoice) to Google Drive.
+ *
+ * Uses the same multipart upload pattern as uploadTaxDocument but targets
+ * the "Aglamazo Expense Documents" folder.
+ *
+ * @returns `{ fileId, webViewLink }` on success.
  */
+export async function uploadExpenseDocument(
+  file: File,
+): Promise<{ fileId: string; webViewLink: string }> {
+  const folderId = await ensureExpenseFolder()
+
+  const metadata = JSON.stringify({
+    name: file.name,
+    parents: [folderId],
+  })
+
+  const boundary = `----AglamazoBoundary${Date.now()}`
+  const CRLF = '\r\n'
+
+  const metadataPart =
+    `--${boundary}${CRLF}` +
+    `Content-Type: application/json; charset=UTF-8${CRLF}${CRLF}` +
+    `${metadata}${CRLF}`
+
+  const filePart =
+    `--${boundary}${CRLF}` +
+    `Content-Type: ${file.type || 'application/octet-stream'}${CRLF}${CRLF}`
+
+  const closing = `${CRLF}--${boundary}--`
+
+  const encoder = new TextEncoder()
+  const metaBytes = encoder.encode(metadataPart)
+  const filePartBytes = encoder.encode(filePart)
+  const closingBytes = encoder.encode(closing)
+  const fileBytes = new Uint8Array(await file.arrayBuffer())
+
+  const body = new Uint8Array(
+    metaBytes.length + filePartBytes.length + fileBytes.length + closingBytes.length,
+  )
+  let offset = 0
+  body.set(metaBytes, offset); offset += metaBytes.length
+  body.set(filePartBytes, offset); offset += filePartBytes.length
+  body.set(fileBytes, offset); offset += fileBytes.length
+  body.set(closingBytes, offset)
+
+  const params = new URLSearchParams({
+    uploadType: 'multipart',
+    fields: 'id,webViewLink',
+  })
+
+  const res = await driveFetch(`${DRIVE_UPLOAD_API}?${params.toString()}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': `multipart/related; boundary=${boundary}`,
+    },
+    body: body.buffer,
+  })
+
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(`Drive upload failed (${res.status}): ${err}`)
+  }
+
+  const data = await res.json()
+  return {
+    fileId: data.id as string,
+    webViewLink: data.webViewLink as string,
+  }
+}
+
 /**
  * Download a file's content from Google Drive as base64.
  * Returns `{ base64, mimeType }`.

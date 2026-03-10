@@ -17,10 +17,12 @@ import OpenDocumentsTab from './OpenDocumentsTab'
 import BizSettingsTab from './BizSettingsTab'
 import ExpenseTab from './ExpenseTab'
 import ExtensionLink from './ExtensionLink'
+import ExpenseDocumentsTab from './ExpenseDocumentsTab'
 
 const TABS: TabItem[] = [
   { id: 'income', label: 'הכנסות', icon: '💰' },
   { id: 'expenses', label: 'הוצאות', icon: '💸' },
+  { id: 'expense-docs', label: 'מסמכי הוצאות', icon: '🧾' },
   { id: 'timing', label: 'תיעוד זמן', icon: '⏱️' },
   { id: 'open-docs', label: 'מסמכים פתוחים', icon: '📄' },
   { id: 'projects', label: 'פרויקטים', icon: '📂' },
@@ -132,6 +134,7 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
             <>
               {activeTab === 'income' && <IncomeTab businessId={businessId} />}
               {activeTab === 'expenses' && <ExpenseTab businessId={businessId} />}
+              {activeTab === 'expense-docs' && <ExpenseDocumentsTab businessId={businessId} />}
               {activeTab === 'timing' && <TimingTab businessId={businessId} />}
               {activeTab === 'open-docs' && <OpenDocumentsTab businessId={businessId} />}
               {activeTab === 'projects' && <BusinessSettingsTab businessId={businessId} />}
