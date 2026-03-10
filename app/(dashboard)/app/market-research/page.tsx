@@ -1,211 +1,101 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
-import { useToast } from '@/app/components/ToastContainer'
-import { llmPrefsStore } from '@/app/stores/llmPrefsStore'
-import type { LLMProvider } from '@/app/services/llm/types'
+import { useState, useEffect } from 'react'
+import MarketResearchChat from '@/app/components/MarketResearchChat'
+import { db } from '@/app/db/financeDB'
+import type { SearchStrategyId } from '@/app/services/product-search/types'
 
-type Message = { role: 'user' | 'assistant'; content: string }
+type Tab = {
+  id: SearchStrategyId
+  label: string
+  subtitle: string
+  requiresUserKey: boolean
+}
 
-type Product = {
-  name: string
-  description: string
-  price: string
-  url: string
-  image?: string
+const TABS: Tab[] = [
+  {
+    id: 'gemini-web',
+    label: 'Gemini + Web Search',
+    subtitle: 'Gemini עם חיפוש אינטרנט',
+    requiresUserKey: false,
+  },
+  {
+    id: 'claude-web',
+    label: 'Claude + Web Search',
+    subtitle: 'Claude עם חיפוש אינטרנט',
+    requiresUserKey: true,
+  },
+]
+
+const tabBarStyle: React.CSSProperties = {
+  display: 'flex',
+  gap: '4px',
+  padding: '8px 12px',
+  background: '#f5f5f5',
+  borderBottom: '1px solid #e0e0e0',
+  flexShrink: 0,
+  width: '100%',
+}
+
+const tabBtnBase: React.CSSProperties = {
+  padding: '6px 16px',
+  border: 'none',
+  borderRadius: '6px',
+  cursor: 'pointer',
+  fontSize: '13px',
+  transition: 'all 0.15s ease',
 }
 
 export default function MarketResearchPage() {
-  const { showToast } = useToast()
-
-  // Chat state
-  const [messages, setMessages] = useState<Message[]>([])
-  const [chatInput, setChatInput] = useState('')
-  const [chatLoading, setChatLoading] = useState(false)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLTextAreaElement>(null)
-
-  // Products state
-  const [products, setProducts] = useState<Product[]>([])
-
-  // Provider state
-  const [provider] = useState<LLMProvider>(llmPrefsStore.getProvider)
-  const [anthropicKey] = useState(llmPrefsStore.getAnthropicKey)
+  const [activeTab, setActiveTab] = useState<SearchStrategyId>('gemini-web')
+  const [claudeKey, setClaudeKey] = useState('')
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
-
-  const sendMessage = async () => {
-    const text = chatInput.trim()
-    if (!text || chatLoading) return
-
-    const userMsg: Message = { role: 'user', content: text }
-    const newMessages = [...messages, userMsg]
-    setMessages(newMessages)
-    setChatInput('')
-    setChatLoading(true)
-
-    try {
-      const body: Record<string, unknown> = { messages: newMessages, provider }
-      if (provider === 'anthropic') body.apiKey = anthropicKey
-
-      const response = await fetch('/api/product-search/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-
-      const data = await response.json()
-      if (data.success) {
-        const assistantMsg: Message = { role: 'assistant', content: data.message }
-        setMessages([...newMessages, assistantMsg])
-
-        if (data.products?.length) {
-          setProducts(data.products)
-        }
-      } else {
-        showToast('error', data.error || 'Error communicating with AI')
-      }
-    } catch (err) {
-      console.error('[MarketResearch] Error:', err)
-      showToast('error', 'Failed to send message')
-    } finally {
-      setChatLoading(false)
-    }
-  }
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      sendMessage()
-    }
-  }
-
-  const handleImageError = (e: React.SyntheticEvent<HTMLImageElement>) => {
-    const img = e.currentTarget
-    img.style.display = 'none'
-    const fallback = img.nextElementSibling as HTMLElement | null
-    if (fallback) fallback.style.display = 'flex'
-  }
+    db.appSettings.where('key').equals('claudeApiKey').first().then(row => {
+      if (row?.value) setClaudeKey(row.value as string)
+    }).catch(() => {})
+  }, [])
 
   return (
-    <main className="mr-page" dir="rtl">
-      {/* Chat sidebar */}
-      <aside className="mr-chat">
-        <div className="mr-chat-header">
-          <h2>מחקר מוצרים</h2>
-          <p>תאר את המוצר שאתה מחפש</p>
-        </div>
-
-        <div className="mr-chat-messages">
-          {messages.length === 0 && (
-            <div className="mr-chat-empty">
-              <span style={{ fontSize: '2rem' }}>🔍</span>
-              <p>ספר לי מה אתה מחפש ואמצא לך את המוצרים הטובים ביותר</p>
-            </div>
-          )}
-
-          {messages.map((msg, i) => (
-            <div
-              key={i}
-              className={`mr-chat-bubble ${msg.role === 'user' ? 'mr-chat-user' : 'mr-chat-assistant'}`}
-            >
-              {msg.content}
-            </div>
-          ))}
-
-          {chatLoading && (
-            <div className="mr-chat-bubble mr-chat-assistant mr-chat-loading">
-              <span className="mr-dot-pulse" />
-            </div>
-          )}
-
-          <div ref={messagesEndRef} />
-        </div>
-
-        <div className="mr-chat-input-area">
-          <textarea
-            ref={inputRef}
-            value={chatInput}
-            onChange={(e) => setChatInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="תאר מוצר שאתה מחפש..."
-            rows={2}
-            disabled={chatLoading}
-            className="mr-chat-textarea"
-          />
+    <div dir="rtl" style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 80px)' }}>
+      {/* Tab bar */}
+      <div style={tabBarStyle}>
+        {TABS.map((tab) => (
           <button
-            onClick={sendMessage}
-            disabled={chatLoading || !chatInput.trim()}
-            className="mr-chat-send"
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            style={{
+              ...tabBtnBase,
+              fontWeight: activeTab === tab.id ? 600 : 400,
+              background: activeTab === tab.id ? '#4f46e5' : 'transparent',
+              color: activeTab === tab.id ? '#fff' : '#555',
+            }}
           >
-            שלח
+            {tab.label}
           </button>
-        </div>
-      </aside>
+        ))}
+      </div>
 
-      {/* Product results */}
-      <section className="mr-results">
-        {products.length === 0 ? (
-          <div className="mr-results-empty">
-            <span style={{ fontSize: '3rem' }}>🛒</span>
-            <h2>מחקר שוק</h2>
-            <p>תאר את המוצר שאתה מחפש בצ׳אט, ותוצאות החיפוש יופיעו כאן</p>
-          </div>
-        ) : (
-          <>
-            <div className="mr-results-header">
-              <h2>תוצאות ({products.length})</h2>
-              <button
-                className="mr-clear-btn"
-                onClick={() => setProducts([])}
-              >
-                נקה תוצאות
-              </button>
-            </div>
-            <div className="mr-products-grid">
-              {products.map((product, i) => (
-                <a
-                  key={i}
-                  href={product.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mr-product-card"
-                >
-                  <div className="mr-product-image-wrap">
-                    {product.image ? (
-                      <>
-                        <img
-                          src={product.image}
-                          alt={product.name}
-                          className="mr-product-image"
-                          onError={handleImageError}
-                        />
-                        <div className="mr-product-image-fallback" style={{ display: 'none' }}>
-                          🛍️
-                        </div>
-                      </>
-                    ) : (
-                      <div className="mr-product-image-fallback">
-                        🛍️
-                      </div>
-                    )}
-                  </div>
-                  <div className="mr-product-info">
-                    <h3 className="mr-product-name">{product.name}</h3>
-                    <p className="mr-product-desc">{product.description}</p>
-                    <div className="mr-product-price">{product.price}</div>
-                  </div>
-                  <div className="mr-product-cta">
-                    צפה בחנות ←
-                  </div>
-                </a>
-              ))}
-            </div>
-          </>
-        )}
-      </section>
-    </main>
+      {/* Active tab content — uses mr-page layout */}
+      {TABS.map((tab) => (
+        <main
+          key={tab.id}
+          className="mr-page"
+          style={{
+            display: activeTab === tab.id ? 'flex' : 'none',
+            flex: 1,
+            minHeight: 0,
+            height: 'auto',
+          }}
+        >
+          <MarketResearchChat
+            title={tab.label}
+            subtitle={tab.subtitle}
+            strategy={tab.id}
+            apiKey={tab.requiresUserKey ? claudeKey : undefined}
+          />
+        </main>
+      ))}
+    </div>
   )
 }

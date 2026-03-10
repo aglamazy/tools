@@ -1394,6 +1394,17 @@ tbody tr:last-child td {
   margin-top: 0.25rem;
 }
 
+.mr-product-unit-price {
+  font-size: 0.8rem;
+  color: #6b7280;
+  margin-top: 0.15rem;
+}
+
+.mr-product-quantity {
+  font-size: 0.75rem;
+  color: #9ca3af;
+}
+
 .mr-product-cta {
   padding: 0.625rem 1rem;
   background: #f8fafc;
