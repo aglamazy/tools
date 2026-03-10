@@ -114,11 +114,11 @@ export default function BusinessForm({ business, onChange, onSave, onCancel, isN
                     checked={business.isTaxFree === true}
                     onChange={() => onChange({ ...business, vatType: 'exempt', isTaxFree: true })}
                   />
-                  <span>פטור ממס</span>
+                  <span>השכרת דירה</span>
                 </label>
               </div>
               <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
-                {business.isTaxFree ? 'לדוגמא השכרת דירה עד לתקרה' : business.vatType === 'exempt' ? 'יופק: קבלה' : business.vatType === 'authorized' ? 'יופק: חשבונית מס קבלה' : ''}
+                {business.isTaxFree ? 'השכרת דירה למגורים — פטור ממס עד לתקרה' : business.vatType === 'exempt' ? 'יופק: קבלה' : business.vatType === 'authorized' ? 'יופק: חשבונית מס קבלה' : ''}
               </span>
             </div>
           )}

@@ -41,9 +41,9 @@ const SUB_TABS: { id: SubTab; label: string }[] = [
 ]
 
 const TAX_STATUS_STYLES: Record<TaxStatus, { bg: string; border: string; text: string; label: string }> = {
-  green: { bg: '#f0fdf4', border: '#86efac', text: '#16a34a', label: 'תקין — ההכנסה בטווח הפטור' },
-  yellow: { bg: '#fefce8', border: '#fde047', text: '#a16207', label: 'זהירות — מתקרב לתקרת הפטור' },
-  red: { bg: '#fef2f2', border: '#fca5a5', text: '#dc2626', label: 'חריגה — ההכנסה עברה את תקרת הפטור' },
+  green: { bg: '#f0fdf4', border: '#86efac', text: '#16a34a', label: 'תקין — הכנסה מהשכרה בטווח הפטור' },
+  yellow: { bg: '#fefce8', border: '#fde047', text: '#a16207', label: 'זהירות — מתקרב לתקרת השכרת דירה' },
+  red: { bg: '#fef2f2', border: '#fca5a5', text: '#dc2626', label: 'חריגה — הכנסה מהשכרה עברה את התקרה' },
 }
 
 function TaxExemptStatusBanner({ info }: { info: TaxStatusInfo }) {
@@ -69,7 +69,7 @@ function TaxExemptStatusBanner({ info }: { info: TaxStatusInfo }) {
           <strong>{fmt(info.currentIncome)}</strong>
         </div>
         <div>
-          <span style={{ color: '#64748b' }}>תקרת פטור: </span>
+          <span style={{ color: '#64748b' }}>תקרת השכרה:</span>
           <strong>{fmt(info.limit)}</strong>
         </div>
         <div>
@@ -404,7 +404,7 @@ function AnnualSummaryTable({ docs, businesses, transactions, bizCategoryMap, cu
             <th style={headerStyle}>ביטוח בריאות</th>
             <th style={headerStyle}>נטו</th>
             {hasTaxFreeBusinesses && (
-              <th style={{ ...headerStyle, background: '#ecfdf5', color: '#059669' }}>פטור ממס</th>
+              <th style={{ ...headerStyle, background: '#ecfdf5', color: '#059669' }}>השכרת דירה</th>
             )}
             {businesses.map(biz => (
               <th key={biz.id} style={{ ...headerStyle, background: '#faf5ff', color: '#7c3aed' }}>{biz.name}</th>

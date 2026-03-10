@@ -636,7 +636,7 @@ export default function AdminPage() {
 
               {activeTab === 'settings' && (
                 <div>
-                  <h2 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.75rem' }}>תקרת פטור ממס שנתית</h2>
+                  <h2 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.75rem' }}>תקרת השכרת דירה שנתית</h2>
                   <table style={{ width: '100%', borderCollapse: 'collapse', maxWidth: '500px' }}>
                     <thead>
                       <tr style={{ borderBottom: '2px solid #e5e7eb' }}>

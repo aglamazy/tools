@@ -38,9 +38,9 @@ export function useTaxExemptStatus(): TaxStatusInfo | null {
       const limit = await appSettingsStore.getAnnualTaxLimit(currentYear)
       if (!limit) return
 
-      // Sum income from vatType === 'exempt' businesses (פטור)
+      // Sum income from apartment rental (isTaxFree) businesses
       const businesses = await db.businesses.toArray()
-      const exemptBizIds = new Set(businesses.filter(b => b.vatType === 'exempt').map(b => b.id!))
+      const exemptBizIds = new Set(businesses.filter(b => b.isTaxFree).map(b => b.id!))
       if (exemptBizIds.size === 0) return
 
       // Build exempt business → income category names
@@ -100,7 +100,7 @@ export default function TaxExemptBadge() {
 
   return (
     <span
-      title={`${STATUS_LABELS[info.status]} — הכנסה: ${fmt(info.currentIncome)} / תקרה: ${fmt(info.limit)}`}
+      title={`השכרת דירה: ${STATUS_LABELS[info.status]} — הכנסה: ${fmt(info.currentIncome)} / תקרה: ${fmt(info.limit)}`}
       style={{
         display: 'inline-block',
         width: 8,
