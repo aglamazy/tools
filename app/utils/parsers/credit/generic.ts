@@ -59,6 +59,7 @@ export type CreditCardPayment = {
   amount: number
   currentStep: number
   totalSteps: number
+  totalAmount?: number
 }
 
 export type CreditCardStatement = {
@@ -246,6 +247,12 @@ export function parseCreditCardStatement(rows: SheetRow[]): CreditCardStatement 
         return
       }
 
+      // Calculate totalAmount: use סכום עסקה if available, otherwise totalSteps * amount
+      const domesticAmount = toNumber(normalizedRow.domesticAmount)
+      const totalAmount = totalSteps > 1
+        ? (domesticAmount && domesticAmount !== 0 ? domesticAmount : totalSteps * amount)
+        : undefined
+
       payments.push({
         id: `${cardNumber || 'unknown'}-${globalRowIndex}-${String(normalizedRow.transactionDate)}-${String(normalizedRow.merchant)}-${amount}-${currentStep}-${totalSteps}`,
         transactionDate: String(normalizedRow.transactionDate),
@@ -253,6 +260,7 @@ export function parseCreditCardStatement(rows: SheetRow[]): CreditCardStatement 
         amount,
         currentStep,
         totalSteps,
+        totalAmount,
       })
 
       globalRowIndex++

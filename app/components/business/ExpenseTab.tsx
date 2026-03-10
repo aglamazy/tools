@@ -87,9 +87,18 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
         .toArray()
     }
 
-    const expenseTransactions = filteredTransactions.filter(
-      t => t.category && categoryNames.includes(t.category) && t.amount < 0
-    )
+    const expenseTransactions = filteredTransactions
+      .filter(t => t.category && categoryNames.includes(t.category) && t.amount < 0)
+      // Skip later installments — only show first (currentStep === 1 or no installments)
+      .filter(t => !t.currentStep || t.currentStep === 1)
+      .map(t => {
+        // Use full purchase amount for installments
+        if (t.totalSteps && t.totalSteps > 1) {
+          const fullAmount = t.totalAmount || (t.totalSteps * Math.abs(t.amount))
+          return { ...t, amount: -fullAmount }
+        }
+        return t
+      })
 
     // Sort by date
     expenseTransactions.sort((a, b) => {
