@@ -15,6 +15,8 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [availableMonths, setAvailableMonths] = useState<string[]>([])
   const [selectedMonth, setSelectedMonth] = useState<string>('')
+  const [selectedYear, setSelectedYear] = useState<string>('')
+  const [filterMode, setFilterMode] = useState<'month' | 'year' | 'all'>('month')
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -22,10 +24,10 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
   }, [businessId])
 
   useEffect(() => {
-    if (selectedMonth && business) {
+    if (business && (selectedMonth || filterMode !== 'month')) {
       loadTransactions()
     }
-  }, [selectedMonth, business])
+  }, [selectedMonth, selectedYear, filterMode, business])
 
   const loadBusiness = async () => {
     const b = await businessStore.getById(businessId)
@@ -70,12 +72,22 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
     )
     const categoryNames = categories.map(c => c.name)
 
-    const monthTransactions = await db.transactions
-      .where('month')
-      .equals(selectedMonth)
-      .toArray()
+    let filteredTransactions: Transaction[]
 
-    const expenseTransactions = monthTransactions.filter(
+    if (filterMode === 'all') {
+      const allTransactions = await db.transactions.toArray()
+      filteredTransactions = allTransactions
+    } else if (filterMode === 'year') {
+      const allTransactions = await db.transactions.toArray()
+      filteredTransactions = allTransactions.filter(t => t.month.endsWith('/' + selectedYear))
+    } else {
+      filteredTransactions = await db.transactions
+        .where('month')
+        .equals(selectedMonth)
+        .toArray()
+    }
+
+    const expenseTransactions = filteredTransactions.filter(
       t => t.category && categoryNames.includes(t.category) && t.amount < 0
     )
 
@@ -118,12 +130,19 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-      {/* Month selector */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-        <label style={{ fontWeight: 600 }}>חודש:</label>
+      {/* Filter selector */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+        <label style={{ fontWeight: 600 }}>תקופה:</label>
         <select
-          value={selectedMonth}
-          onChange={(e) => setSelectedMonth(e.target.value)}
+          value={filterMode}
+          onChange={(e) => {
+            const mode = e.target.value as 'month' | 'year' | 'all'
+            setFilterMode(mode)
+            if (mode === 'year' && !selectedYear) {
+              const years = [...new Set(availableMonths.map(m => m.split('/')[1]))].sort((a, b) => Number(b) - Number(a))
+              if (years.length > 0) setSelectedYear(years[0])
+            }
+          }}
           style={{
             padding: '0.5rem 1rem',
             borderRadius: '0.375rem',
@@ -132,10 +151,44 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
             direction: 'rtl',
           }}
         >
-          {availableMonths.map(m => (
-            <option key={m} value={m}>{m}</option>
-          ))}
+          <option value="month">חודש</option>
+          <option value="year">שנה</option>
+          <option value="all">הכל</option>
         </select>
+        {filterMode === 'month' && (
+          <select
+            value={selectedMonth}
+            onChange={(e) => setSelectedMonth(e.target.value)}
+            style={{
+              padding: '0.5rem 1rem',
+              borderRadius: '0.375rem',
+              border: '1px solid #e2e8f0',
+              fontSize: '1rem',
+              direction: 'rtl',
+            }}
+          >
+            {availableMonths.map(m => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+        )}
+        {filterMode === 'year' && (
+          <select
+            value={selectedYear}
+            onChange={(e) => setSelectedYear(e.target.value)}
+            style={{
+              padding: '0.5rem 1rem',
+              borderRadius: '0.375rem',
+              border: '1px solid #e2e8f0',
+              fontSize: '1rem',
+              direction: 'rtl',
+            }}
+          >
+            {[...new Set(availableMonths.map(m => m.split('/')[1]))].sort((a, b) => Number(b) - Number(a)).map(y => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
+        )}
         {transactions.length > 0 && (
           <span style={{ color: '#64748b', fontSize: '0.9rem' }}>
             סה"כ: ₪{getMonthTotal().toLocaleString()}
@@ -146,7 +199,7 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
       {/* Transactions table */}
       {transactions.length === 0 ? (
         <p style={{ color: '#64748b', textAlign: 'center', padding: '2rem' }}>
-          אין הוצאות בחודש זה
+          אין הוצאות בתקופה זו
         </p>
       ) : (
         <div style={{ overflowX: 'auto' }}>

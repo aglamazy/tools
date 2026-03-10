@@ -4,6 +4,28 @@
 import { db, Transaction, ImportedFile } from '@/app/db/financeDB'
 import { addMonths } from '@/app/utils/formatters'
 
+/**
+ * Extract MM/YYYY month from a date string.
+ * Handles DD/MM/YYYY, DD.MM.YY, DD.MM.YYYY formats.
+ */
+function extractMonth(dateStr: string): string {
+  // Try DD/MM/YYYY first (standard format)
+  const slashMatch = dateStr.match(/^\d{2}\/(\d{2}\/\d{4})$/)
+  if (slashMatch) return slashMatch[1]
+
+  // Try DD.MM.YY or DD.MM.YYYY
+  const dotMatch = dateStr.match(/^\d{2}\.(\d{2})\.(\d{2,4})$/)
+  if (dotMatch) {
+    const mm = dotMatch[1]
+    const yy = dotMatch[2]
+    const yyyy = yy.length === 2 ? `20${yy}` : yy
+    return `${mm}/${yyyy}`
+  }
+
+  // Fallback: substring(3) for DD/MM/YYYY
+  return dateStr.substring(3)
+}
+
 export const transactionStore = {
   /**
    * Get all data or filtered data
@@ -74,7 +96,7 @@ export const transactionStore = {
       const txns = await db.transactions.toArray()
       const byFile = new Map<string, ImportedFile>()
       txns.forEach((t) => {
-        const inferredMonth = t.chargingDate ? t.chargingDate.substring(3) : t.month || ''
+        const inferredMonth = t.chargingDate ? extractMonth(t.chargingDate) : t.month || ''
         const key = t.fileId || `${t.type}-${inferredMonth || 'unknown'}-${t.cardNumber || t.accountNumber || 'n/a'}`
         const existing = byFile.get(key)
         if (existing) {
@@ -249,7 +271,7 @@ export const transactionStore = {
         accountNumber: accountNumber,
         balance: t.balance,
         isCreditCardCharge: t.isCreditCardCharge || false,
-        month: t.date.substring(3), // Extract MM/YYYY from DD/MM/YYYY
+        month: extractMonth(t.date),
         importedAt: new Date().toISOString(),
         fileId: fileId,
       }))
@@ -310,7 +332,7 @@ export const transactionStore = {
         currentStep: p.currentStep,
         totalSteps: p.totalSteps,
         totalAmount: p.totalAmount,
-        month: p.transactionDate.substring(3), // Extract MM/YYYY from DD/MM/YYYY
+        month: extractMonth(p.transactionDate),
         importedAt: new Date().toISOString(),
         fileId: fileId,
       }))
@@ -423,7 +445,7 @@ export const transactionStore = {
       // Filter credit transactions by chargingDate month (DD/MM/YYYY format)
       const creditTransactions = allCreditTransactions.filter((t) => {
         if (!t.chargingDate) return false
-        const chargingMonth = t.chargingDate.substring(3) // Extract MM/YYYY from DD/MM/YYYY
+        const chargingMonth = extractMonth(t.chargingDate)
         return chargingMonth === selectedMonth
       })
 

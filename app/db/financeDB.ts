@@ -571,6 +571,39 @@ class FinanceDB extends Dexie {
       }
     })
 
+    // Define schema version 19 - fix malformed month fields (MM.YY → MM/YYYY)
+    this.version(19).stores({
+      transactions: '++id, syncId, type, month, accountNumber, cardNumber, date, chargingDate, [type+month], [cardNumber+month], [accountNumber+month], fileId',
+      importedFiles: '++id, syncId, fileName, fileType, processingMonth, [fileType+processingMonth], [cardNumber+processingMonth]',
+      categories: '++id, syncId, name, type',
+      businessCategories: '++id, syncId, &business',
+      tasks: '++id, syncId, createdAt, priority, quadrant, deadline, delegatedTo',
+      appSettings: '++id, syncId, &key',
+      businesses: '++id, syncId, &name, type, userId',
+      projects: '++id, syncId, businessId, name, archived',
+      harvestTasks: '++id, syncId, projectId, name, archived',
+      timeEntries: '++id, syncId, taskId, date, startTime, endTime, [taskId+date]',
+      capitalEntries: '++id, syncId, date, institution, accountNumber, description, assetType, currency, employer, investmentTrack, agent, soldDate, [institution+accountNumber+description], fileId',
+      financialInstitutions: '++id, syncId, name, type',
+      ypayDocuments: '++id, syncId, &transactionId, docType',
+      students: '++id, syncId, businessId, name, archived',
+      profileQAs: '++id, syncId, businessId, [businessId+answerType]',
+      scoutResults: '++id, syncId, businessId, status, [businessId+status]',
+      scoutConfigs: '++id, syncId, &businessId',
+      taxDocuments: '++id, syncId, businessId, userId, month, year, [businessId+year]',
+    }).upgrade(async (trans) => {
+      const txns = await trans.table('transactions').toArray()
+      for (const t of txns) {
+        // Fix month: convert MM.YY to MM/YYYY
+        const dotMatch = t.month?.match(/^(\d{2})\.(\d{2})$/)
+        if (dotMatch) {
+          await trans.table('transactions').update(t.id, {
+            month: `${dotMatch[1]}/20${dotMatch[2]}`,
+          })
+        }
+      }
+    })
+
     // Auto-inject syncId and updatedAt on create/update
     this.on('ready', () => {
       this.tables.forEach(table => {
