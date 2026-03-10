@@ -1,14 +1,18 @@
 'use client'
 
 import React, { useEffect, useState } from 'react'
-import { db, type Transaction, type Business } from '@/app/db/financeDB'
+import { db, type Transaction, type Business, type ExpenseDocument } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { businessStore } from '@/app/stores/businessStore'
+import { hasGmailAccess, requestGmailAccess, searchMessages, fetchMessagesMetadata, fetchMessageBody } from '@/app/services/gmailService'
+import { hasGoogleAccess, requestGoogleAccess, uploadExpenseDocument } from '@/app/services/googleDriveService'
 import type { Category } from '@/app/types/category'
 
 type ExpenseTabProps = {
   businessId: number
 }
+
+type MatchStatus = 'idle' | 'searching' | 'matched' | 'no-match' | 'error'
 
 export default function ExpenseTab({ businessId }: ExpenseTabProps) {
   const [business, setBusiness] = useState<Business | null>(null)
@@ -18,9 +22,13 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
   const [selectedYear, setSelectedYear] = useState<string>('')
   const [filterMode, setFilterMode] = useState<'month' | 'year' | 'all'>('month')
   const [loading, setLoading] = useState(true)
+  const [matchStatus, setMatchStatus] = useState<Record<number, MatchStatus>>({})
+  const [matchedDocs, setMatchedDocs] = useState<Record<number, ExpenseDocument>>({})
+  const [claudeApiKey, setClaudeApiKey] = useState<string>('')
 
   useEffect(() => {
     loadBusiness()
+    loadClaudeKey()
   }, [businessId])
 
   useEffect(() => {
@@ -28,6 +36,11 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
       loadTransactions()
     }
   }, [selectedMonth, selectedYear, filterMode, business])
+
+  const loadClaudeKey = async () => {
+    const setting = await db.appSettings.where('key').equals('claudeApiKey').first()
+    if (setting?.value) setClaudeApiKey(setting.value)
+  }
 
   const loadBusiness = async () => {
     const b = await businessStore.getById(businessId)
@@ -108,10 +121,278 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
     })
 
     setTransactions(expenseTransactions)
+
+    // Load existing matched docs
+    const txIds = expenseTransactions.map(t => t.id).filter((id): id is number => id != null)
+    const docs = await db.expenseDocuments.where('transactionId').anyOf(txIds).toArray()
+    const docMap: Record<number, ExpenseDocument> = {}
+    const statusMap: Record<number, MatchStatus> = {}
+    for (const doc of docs) {
+      if (doc.transactionId) {
+        docMap[doc.transactionId] = doc
+        statusMap[doc.transactionId] = 'matched'
+      }
+    }
+    setMatchedDocs(docMap)
+    setMatchStatus(statusMap)
+  }
+
+  const buildDateRange = (dateStr: string) => {
+    const parts = dateStr.split(/[/.]/)
+    const day = parseInt(parts[0], 10)
+    const month = parseInt(parts[1], 10)
+    const year = parts[2].length === 2 ? 2000 + parseInt(parts[2], 10) : parseInt(parts[2], 10)
+    const txDate = new Date(year, month - 1, day)
+    const after = new Date(txDate)
+    after.setDate(after.getDate() - 3)
+    const before = new Date(txDate)
+    before.setDate(before.getDate() + 14)
+    const fmt = (d: Date) => `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
+    return `after:${fmt(after)} before:${fmt(before)}`
+  }
+
+  // Load merchant name cache: { "וואי-פיי": "YPAY", ... }
+  const getMerchantCache = async (): Promise<Record<string, string>> => {
+    const setting = await db.appSettings.where('key').equals('merchantNameCache').first()
+    return setting?.value ? JSON.parse(setting.value) : {}
+  }
+
+  const saveMerchantCache = async (cache: Record<string, string>) => {
+    const existing = await db.appSettings.where('key').equals('merchantNameCache').first()
+    if (existing) {
+      await db.appSettings.update(existing.id!, { value: JSON.stringify(cache) })
+    } else {
+      await db.appSettings.add({ key: 'merchantNameCache', value: JSON.stringify(cache), updatedAt: new Date().toISOString() })
+    }
+  }
+
+  const handleMatchReceipt = async (t: Transaction) => {
+    if (!t.id) return
+    setMatchStatus(s => ({ ...s, [t.id!]: 'searching' }))
+
+    if (!hasGmailAccess()) {
+      const result = await requestGmailAccess()
+      if (!result.success) {
+        setMatchStatus(s => ({ ...s, [t.id!]: 'error' }))
+        return
+      }
+    }
+
+    try {
+      const desc = (t.merchant || t.description || '').trim()
+      const dateRange = buildDateRange(t.date)
+      const cache = await getMerchantCache()
+
+      let matchedMessageId: string | undefined
+      let matchedFrom: string | undefined
+
+      // Check cache first: do we already know the email name for this merchant?
+      const cachedName = cache[desc]
+      if (cachedName) {
+        console.log('[ExpenseTab] Cache hit:', desc, '→', cachedName)
+        const query = `from:${cachedName} (חשבונית OR קבלה OR receipt OR invoice) ${dateRange}`
+        console.log('[ExpenseTab] Cached search query:', query)
+        const result = await searchMessages(query, { searchAllMail: true, maxResults: 5 })
+        if (result.messageIds.length > 0) {
+          matchedMessageId = result.messageIds[0]
+          matchedFrom = cachedName
+          console.log('[ExpenseTab] Found via cache:', matchedMessageId)
+        }
+      }
+
+      // No cache hit: broad date-range search → Gemini matches
+      if (!matchedMessageId) {
+        console.log('[ExpenseTab] No cache. Broad search with date range only')
+        const broadQuery = dateRange
+        console.log('[ExpenseTab] Broad query:', broadQuery)
+        const searchResult = await searchMessages(broadQuery, { searchAllMail: true, maxResults: 30 })
+        console.log('[ExpenseTab] Broad search result:', searchResult.messageIds.length, 'messages')
+
+        if (searchResult.error || searchResult.messageIds.length === 0) {
+          console.log('[ExpenseTab] No emails in date range')
+          setMatchStatus(s => ({ ...s, [t.id!]: 'no-match' }))
+          return
+        }
+
+        // Fetch metadata for candidates
+        const metaResult = await fetchMessagesMetadata(searchResult.messageIds.slice(0, 20))
+        console.log('[ExpenseTab] Metadata:', metaResult.messages.map(m => ({ from: m.from, subject: m.subject?.substring(0, 40) })))
+        if (metaResult.error || metaResult.messages.length === 0) {
+          setMatchStatus(s => ({ ...s, [t.id!]: 'no-match' }))
+          return
+        }
+
+        // Gemini picks the best match
+        console.log('[ExpenseTab] Sending to Gemini:', { desc, amount: t.amount, candidates: metaResult.messages.length })
+        const matchRes = await fetch('/api/match-receipt', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'match',
+            transaction: { date: t.date, description: desc, amount: t.amount, merchant: t.merchant },
+            candidates: metaResult.messages,
+          }),
+        })
+        const matchData = await matchRes.json()
+        console.log('[ExpenseTab] Gemini result:', matchData)
+
+        if (!matchData.messageId && matchData.senderHint) {
+          // Gemini identified the sender but couldn't find the receipt — search again narrowly
+          console.log('[ExpenseTab] Gemini hint: sender is', matchData.senderHint, '— searching narrowly')
+          const narrowQuery = `from:${matchData.senderHint} (חשבונית OR קבלה OR receipt OR invoice) ${dateRange}`
+          console.log('[ExpenseTab] Narrow query:', narrowQuery)
+          const narrowResult = await searchMessages(narrowQuery, { searchAllMail: true, maxResults: 5 })
+          console.log('[ExpenseTab] Narrow result:', narrowResult.messageIds.length, 'messages')
+          if (narrowResult.messageIds.length > 0) {
+            matchedMessageId = narrowResult.messageIds[0]
+            // Cache the sender for future use
+            const senderDomain = matchData.senderHint.includes('@') ? matchData.senderHint.split('@')[1] : matchData.senderHint
+            cache[desc] = senderDomain
+            await saveMerchantCache(cache)
+            console.log('[ExpenseTab] Cached from hint:', desc, '→', senderDomain)
+          }
+        } else if (matchData.messageId) {
+          matchedMessageId = matchData.messageId
+        }
+
+        if (!matchedMessageId) {
+          setMatchStatus(s => ({ ...s, [t.id!]: 'no-match' }))
+          return
+        }
+
+        // Cache the mapping: extract sender domain from the matched email
+        if (!cache[desc]) {
+          const matched = metaResult.messages.find(m => m.id === matchedMessageId)
+          if (matched?.from) {
+            const emailMatch = matched.from.match(/<([^>]+)>/)
+            const senderDomain = emailMatch ? emailMatch[1].split('@')[1] : matched.from
+            cache[desc] = senderDomain
+            await saveMerchantCache(cache)
+            console.log('[ExpenseTab] Cached:', desc, '→', senderDomain)
+          }
+        }
+      }
+
+      // Fetch email body
+      console.log('[ExpenseTab] Fetching email body for', matchedMessageId)
+      const bodyResult = await fetchMessageBody(matchedMessageId!)
+      console.log('[ExpenseTab] Body length:', bodyResult.body?.length, 'error:', bodyResult.error)
+      if (bodyResult.error || !bodyResult.body) {
+        setMatchStatus(s => ({ ...s, [t.id!]: 'no-match' }))
+        return
+      }
+
+      // Claude extracts receipt data (or save without extraction if no key)
+      console.log('[ExpenseTab] Claude API key present:', !!claudeApiKey)
+      if (!claudeApiKey) {
+        const doc: ExpenseDocument = {
+          transactionId: t.id,
+          fileName: 'gmail-match',
+          sourceType: 'gmail',
+          gmailMessageId: matchedMessageId,
+          uploadedAt: new Date().toISOString(),
+        }
+        await db.expenseDocuments.add(doc)
+        setMatchedDocs(d => ({ ...d, [t.id!]: doc }))
+        setMatchStatus(s => ({ ...s, [t.id!]: 'matched' }))
+        return
+      }
+
+      console.log('[ExpenseTab] Sending to Claude for extraction...')
+      const extractRes = await fetch('/api/match-receipt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'extract',
+          emailBody: bodyResult.body,
+          transaction: { date: t.date, description: desc, amount: t.amount },
+          claudeApiKey,
+        }),
+      })
+      const extracted = await extractRes.json()
+      console.log('[ExpenseTab] Claude extraction:', extracted)
+
+      // If there's a document URL, download the PDF and upload to Drive
+      let driveFileId: string | undefined
+      let driveWebViewLink: string | undefined
+      if (extracted.documentUrl) {
+        console.log('[ExpenseTab] Downloading PDF from:', extracted.documentUrl)
+        try {
+          const dlRes = await fetch('/api/match-receipt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'download-pdf', url: extracted.documentUrl }),
+          })
+          const dlData = await dlRes.json()
+          if (dlData.base64) {
+            // Ensure Google Drive access
+            if (!(await hasGoogleAccess())) {
+              await requestGoogleAccess()
+            }
+            if (await hasGoogleAccess()) {
+              // Convert base64 to File for upload
+              const binary = atob(dlData.base64)
+              const bytes = new Uint8Array(binary.length)
+              for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+              const blob = new Blob([bytes], { type: dlData.contentType || 'application/pdf' })
+              const fileName = dlData.fileName || `receipt-${extracted.vendor || 'unknown'}.pdf`
+              const file = new File([blob], fileName, { type: blob.type })
+              console.log('[ExpenseTab] Uploading to Drive:', fileName)
+              const uploaded = await uploadExpenseDocument(file)
+              driveFileId = uploaded.fileId
+              driveWebViewLink = uploaded.webViewLink
+              console.log('[ExpenseTab] Uploaded to Drive:', driveWebViewLink)
+            }
+          }
+        } catch (err) {
+          console.warn('[ExpenseTab] PDF download/upload failed:', err)
+          // Fall back to raw URL
+          driveWebViewLink = extracted.documentUrl
+        }
+      }
+
+      const doc: ExpenseDocument = {
+        transactionId: t.id,
+        fileName: driveFileId ? 'drive-upload' : 'gmail-match',
+        vendor: extracted.vendor,
+        amount: extracted.amount,
+        vatAmount: extracted.vatAmount,
+        date: extracted.date,
+        description: extracted.description,
+        driveFileId,
+        driveWebViewLink,
+        extractedData: extracted,
+        sourceType: 'gmail',
+        gmailMessageId: matchedMessageId,
+        uploadedAt: new Date().toISOString(),
+      }
+      await db.expenseDocuments.add(doc)
+      setMatchedDocs(d => ({ ...d, [t.id!]: doc }))
+      setMatchStatus(s => ({ ...s, [t.id!]: 'matched' }))
+    } catch (err) {
+      console.error('[ExpenseTab] Match error:', err)
+      setMatchStatus(s => ({ ...s, [t.id!]: 'error' }))
+    }
   }
 
   const getMonthTotal = () => {
     return transactions.reduce((sum, t) => sum + Math.abs(t.amount), 0)
+  }
+
+  const handleUnlink = async (txId: number) => {
+    const doc = matchedDocs[txId]
+    if (!doc?.id) return
+    await db.expenseDocuments.delete(doc.id)
+    setMatchedDocs(d => {
+      const next = { ...d }
+      delete next[txId]
+      return next
+    })
+    setMatchStatus(s => {
+      const next = { ...s }
+      delete next[txId]
+      return next
+    })
   }
 
   if (loading) {
@@ -219,19 +500,73 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>תיאור</th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>נושא</th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'left' }}>סכום</th>
+                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'center', width: '60px' }}>קבלה</th>
               </tr>
             </thead>
             <tbody>
-              {transactions.map((t) => (
-                <tr key={t.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                  <td style={{ padding: '0.6rem 0.5rem' }}>{t.date}</td>
-                  <td style={{ padding: '0.6rem 0.5rem' }}>{t.description}</td>
-                  <td style={{ padding: '0.6rem 0.5rem', color: '#64748b' }}>{t.category}</td>
-                  <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', fontWeight: 500, color: '#dc2626' }}>
-                    ₪{Math.abs(t.amount).toLocaleString()}
-                  </td>
-                </tr>
-              ))}
+              {transactions.map((t) => {
+                const txId = t.id!
+                const status = matchStatus[txId] || 'idle'
+                const doc = matchedDocs[txId]
+                return (
+                  <tr key={txId} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    <td style={{ padding: '0.6rem 0.5rem' }}>{t.date}</td>
+                    <td style={{ padding: '0.6rem 0.5rem' }}>
+                      {t.description}
+                      {doc?.vendor && doc.vendor !== t.description && (
+                        <span style={{ display: 'block', fontSize: '0.75rem', color: '#64748b' }}>{doc.vendor}</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '0.6rem 0.5rem', color: '#64748b' }}>{t.category}</td>
+                    <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', fontWeight: 500, color: '#dc2626' }}>
+                      ₪{Math.abs(t.amount).toLocaleString()}
+                      {doc?.vatAmount != null && (
+                        <span style={{ display: 'block', fontSize: '0.7rem', color: '#64748b' }}>
+                          מע״מ: ₪{doc.vatAmount.toLocaleString()}
+                        </span>
+                      )}
+                    </td>
+                    <td style={{ padding: '0.6rem 0.5rem', textAlign: 'center' }}>
+                      {status === 'matched' ? (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}>
+                          {doc?.driveWebViewLink ? (
+                            <a href={doc.driveWebViewLink} target="_blank" rel="noopener noreferrer" title={doc?.vendor || 'נמצאה קבלה'} style={{ color: '#10b981', textDecoration: 'none', fontWeight: 600 }}>✓</a>
+                          ) : (
+                            <span title={doc?.vendor || 'נמצאה קבלה'} style={{ color: '#10b981' }}>✓</span>
+                          )}
+                          <button
+                            onClick={() => handleUnlink(txId)}
+                            title="הסר קישור"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', fontSize: '0.7rem', padding: 0 }}
+                          >✕</button>
+                        </div>
+                      ) : status === 'searching' ? (
+                        <span style={{ color: '#64748b' }}>...</span>
+                      ) : status === 'no-match' ? (
+                        <span title="לא נמצאה קבלה" style={{ color: '#f59e0b' }}>-</span>
+                      ) : status === 'error' ? (
+                        <span title="שגיאה" style={{ color: '#dc2626' }}>!</span>
+                      ) : (
+                        <button
+                          onClick={() => handleMatchReceipt(t)}
+                          disabled={Object.values(matchStatus).includes('searching')}
+                          title="חפש קבלה ב-Gmail"
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            fontSize: '1rem',
+                            padding: '0.1rem 0.3rem',
+                            opacity: Object.values(matchStatus).includes('searching') ? 0.4 : 1,
+                          }}
+                        >
+                          🔍
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

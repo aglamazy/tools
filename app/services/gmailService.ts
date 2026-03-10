@@ -295,15 +295,19 @@ export async function fetchMessageBody(
 /**
  * Search inbox messages matching a query, return message IDs
  */
-export async function searchMessages(query: string): Promise<{ messageIds: string[]; error?: string }> {
+export async function searchMessages(
+  query: string,
+  options?: { searchAllMail?: boolean; maxResults?: number }
+): Promise<{ messageIds: string[]; error?: string }> {
   if (!gmailAccessToken) {
     return { messageIds: [], error: 'לא מחובר ל-Gmail' }
   }
 
   try {
+    const q = options?.searchAllMail ? query : `in:inbox ${query}`
     const params = new URLSearchParams({
-      q: `in:inbox ${query}`,
-      maxResults: '500',
+      q,
+      maxResults: String(options?.maxResults ?? 500),
     })
 
     const response = await fetch(
@@ -327,6 +331,44 @@ export async function searchMessages(query: string): Promise<{ messageIds: strin
   } catch (err: any) {
     console.error('[Gmail] Search error:', err)
     return { messageIds: [], error: 'שגיאת רשת בחיפוש הודעות' }
+  }
+}
+
+/**
+ * Fetch metadata (from, subject, date, snippet) for a list of message IDs
+ */
+export async function fetchMessagesMetadata(
+  messageIds: string[]
+): Promise<{ messages: Pick<GmailMessage, 'id' | 'from' | 'subject' | 'date' | 'snippet'>[]; error?: string }> {
+  if (!gmailAccessToken) {
+    return { messages: [], error: 'לא מחובר ל-Gmail' }
+  }
+
+  try {
+    const messages = await Promise.all(
+      messageIds.map(async (id) => {
+        const res = await fetch(
+          `${GMAIL_API_BASE}/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`,
+          { headers: { Authorization: `Bearer ${gmailAccessToken}` } }
+        )
+        if (!res.ok) return { id, from: '', subject: '', date: '', snippet: '' }
+        const data = await res.json()
+        const headers: { name: string; value: string }[] = data.payload?.headers || []
+        const getHeader = (name: string) =>
+          headers.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value || ''
+        return {
+          id,
+          from: getHeader('From'),
+          subject: getHeader('Subject'),
+          date: getHeader('Date'),
+          snippet: data.snippet || '',
+        }
+      })
+    )
+    return { messages }
+  } catch (err: any) {
+    console.error('[Gmail] Fetch metadata error:', err)
+    return { messages: [], error: 'שגיאת רשת בטעינת מטא-דאטה' }
   }
 }
 
