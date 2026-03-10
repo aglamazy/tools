@@ -44,6 +44,7 @@ const TAX_STATUS_STYLES: Record<TaxStatus, { bg: string; border: string; text: s
   green: { bg: '#f0fdf4', border: '#86efac', text: '#16a34a', label: 'תקין — ההכנסה בטווח הפטור' },
   yellow: { bg: '#fefce8', border: '#fde047', text: '#a16207', label: 'זהירות — מתקרב לתקרת הפטור' },
   red: { bg: '#fef2f2', border: '#fca5a5', text: '#dc2626', label: 'חריגה — ההכנסה עברה את תקרת הפטור' },
+  gray: { bg: '#f9fafb', border: '#d1d5db', text: '#9ca3af', label: 'טרם הוגדר' },
 }
 
 function TaxExemptStatusBanner({ info }: { info: TaxStatusInfo }) {

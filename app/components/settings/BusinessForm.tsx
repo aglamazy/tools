@@ -86,7 +86,7 @@ export default function BusinessForm({ business, onChange, onSave, onCancel, isN
           {business.type !== BusinessType.Personal && (
             <div>
               <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>
-                סוג עוסק (למע"מ)
+                סוג עוסק (למע"מ) <span style={{ color: '#dc2626' }}>*</span>
               </label>
               <div style={{ display: 'flex', gap: '1rem' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
@@ -126,7 +126,11 @@ export default function BusinessForm({ business, onChange, onSave, onCancel, isN
             <button onClick={onCancel} className="upload-another-btn">
               ביטול
             </button>
-            <button onClick={onSave} className="file-picker">
+            <button
+              onClick={onSave}
+              className="file-picker"
+              disabled={!business.name.trim() || (business.type !== BusinessType.Personal && !business.vatType)}
+            >
               שמור
             </button>
           </div>

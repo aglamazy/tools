@@ -6,7 +6,7 @@ import { appSettingsStore } from '@/app/stores/appSettingsStore'
 import { subjectStore } from '@/app/stores/subjectStore'
 import type { Category } from '@/app/types/category'
 
-export type TaxStatus = 'green' | 'yellow' | 'red'
+export type TaxStatus = 'green' | 'yellow' | 'red' | 'gray'
 
 export type TaxStatusInfo = {
   status: TaxStatus
@@ -15,8 +15,6 @@ export type TaxStatusInfo = {
   limit: number
 }
 
-const STATUS_RANK: Record<TaxStatus, number> = { green: 0, yellow: 1, red: 2 }
-
 function computeStatus(currentIncome: number, maxMonthlyIncome: number, limit: number): TaxStatus {
   if (currentIncome > limit) return 'red'
   if (currentIncome + maxMonthlyIncome > limit) return 'yellow'
@@ -24,37 +22,44 @@ function computeStatus(currentIncome: number, maxMonthlyIncome: number, limit: n
 }
 
 /**
- * Tax exemption status based on business transaction income (gross, before deductions).
- * This matches the per-business columns in the annual summary table.
- * When userId is provided, calculates for that user only.
- * When omitted (sidebar badge), picks the worst status across all users.
+ * Tax status for a single business.
+ * Exempt / tax-free: income vs annual limit.
+ * Authorized: null (not yet defined).
  */
-export function useTaxExemptStatus(): TaxStatusInfo | null {
+export function useBusinessTaxStatus(businessId?: number): TaxStatusInfo | null {
   const [info, setInfo] = useState<TaxStatusInfo | null>(null)
 
   useEffect(() => {
+    if (!businessId) return
+
     const load = async () => {
+      const business = await db.businesses.get(businessId)
+      if (!business) return
+
+      // Authorized businesses: gray placeholder (logic TBD)
+      if (business.vatType === 'authorized') {
+        setInfo({ status: 'gray' as TaxStatus, currentIncome: 0, maxMonthlyIncome: 0, limit: 0 })
+        return
+      }
+
+      // Only exempt or tax-free businesses get income-vs-limit status
+      if (business.vatType !== 'exempt' && !business.isTaxFree) return
+
       const currentYear = new Date().getFullYear()
       const limit = await appSettingsStore.getAnnualTaxLimit(currentYear)
       if (!limit) return
 
-      // Sum income from vatType === 'exempt' businesses (פטור)
-      const businesses = await db.businesses.toArray()
-      const exemptBizIds = new Set(businesses.filter(b => b.vatType === 'exempt').map(b => b.id!))
-      if (exemptBizIds.size === 0) return
-
-      // Build exempt business → income category names
+      // Build income category names for this business
       const categories = subjectStore.getAll() as Category[]
-      const exemptCatNames = new Set<string>()
+      const catNames = new Set<string>()
       for (const cat of categories) {
-        if (cat.businessId && exemptBizIds.has(cat.businessId) && cat.type === 'income') {
-          exemptCatNames.add(cat.name)
+        if (cat.businessId === businessId && cat.type === 'income') {
+          catNames.add(cat.name)
         }
       }
-      if (exemptCatNames.size === 0) return
 
-      const allTx = await db.transactions.toArray()
-      const yearTx = allTx.filter(t => t.category && exemptCatNames.has(t.category) && t.month?.endsWith(`/${currentYear}`))
+      const allTx = catNames.size > 0 ? await db.transactions.toArray() : []
+      const yearTx = allTx.filter(t => t.category && catNames.has(t.category) && t.month?.endsWith(`/${currentYear}`))
 
       const currentMonth = new Date().getMonth()
       const monthlyIncomes: number[] = []
@@ -73,7 +78,7 @@ export function useTaxExemptStatus(): TaxStatusInfo | null {
     }
 
     load()
-  }, [])
+  }, [businessId])
 
   return info
 }
@@ -82,16 +87,18 @@ const STATUS_COLORS: Record<TaxStatus, { bg: string; border: string; text: strin
   green: { bg: '#dcfce7', border: '#86efac', text: '#16a34a' },
   yellow: { bg: '#fef9c3', border: '#fde047', text: '#a16207' },
   red: { bg: '#fee2e2', border: '#fca5a5', text: '#dc2626' },
+  gray: { bg: '#f3f4f6', border: '#d1d5db', text: '#9ca3af' },
 }
 
 const STATUS_LABELS: Record<TaxStatus, string> = {
   green: 'תקין',
   yellow: 'מתקרב לתקרה',
   red: 'חריגה מהתקרה',
+  gray: 'טרם הוגדר',
 }
 
-export default function TaxExemptBadge() {
-  const info = useTaxExemptStatus()
+export function BusinessStatusBadge({ businessId }: { businessId: number }) {
+  const info = useBusinessTaxStatus(businessId)
 
   if (!info) return null
 
@@ -112,4 +119,9 @@ export default function TaxExemptBadge() {
       }}
     />
   )
+}
+
+/** @deprecated Use BusinessStatusBadge with businessId instead */
+export default function TaxExemptBadge() {
+  return null
 }
