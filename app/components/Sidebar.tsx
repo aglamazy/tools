@@ -64,6 +64,7 @@ const allModules: Module[] = [
     icon: '✓',
     items: [
       { id: 'todo', title: 'משימות', href: routes.todo, icon: '✓', available: true, requiredTier: UserTier.FREE },
+      { id: 'market-research', title: 'מחקר שוק', href: routes.marketResearch, icon: '🔍', available: true, requiredTier: UserTier.PRO },
       { id: 'gmail', title: 'Gmail', href: routes.gmail, icon: '📧', available: true, requiredTier: UserTier.PRO },
     ],
   },
