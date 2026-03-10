@@ -30,14 +30,6 @@ const TABS: TabItem[] = [
 
 const APARTMENT_TABS: TabItem[] = [
   { id: 'income', label: 'הכנסות', icon: '💰' },
-  { id: 'timing', label: 'תיעוד זמן', icon: '⏱️' },
-  { id: 'open-docs', label: 'מסמכים פתוחים', icon: '📄' },
-  { id: 'projects', label: 'פרויקטים', icon: '📂' },
-  { id: 'settings', label: 'הגדרות', icon: '⚙️' },
-]
-
-const APARTMENT_TABS: TabItem[] = [
-  { id: 'income', label: 'הכנסות', icon: '💰' },
 ]
 
 const TEACHER_TABS: TabItem[] = [
