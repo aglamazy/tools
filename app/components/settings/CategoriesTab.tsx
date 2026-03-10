@@ -528,7 +528,7 @@ export default function CategoriesTab() {
                   <label htmlFor="isExternal" style={{ fontWeight: 600, cursor: 'pointer' }}>חיצוני</label>
                   <span style={{ fontSize: '0.8rem', color: '#64748b' }}>(מתנות, ירושה, העברות חד-פעמיות - לא יספר כהכנסה שוטפת)</span>
                 </div>
-                {editingCategory.type === 'income' && businesses.length > 0 && (
+                {businesses.length > 0 && (
                   <div>
                     <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>עסק משויך</label>
                     <select
@@ -549,7 +549,9 @@ export default function CategoriesTab() {
                         <option key={b.id} value={b.id}>{b.name}</option>
                       ))}
                     </select>
-                    <span style={{ fontSize: '0.8rem', color: '#64748b' }}>שייך נושא הכנסה זה לעסק ליצירת קבלות</span>
+                    <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                      {editingCategory.type === 'income' ? 'שייך נושא הכנסה זה לעסק ליצירת קבלות' : 'שייך נושא הוצאה זה לעסק למעקב הוצאות'}
+                    </span>
                   </div>
                 )}
                 <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
