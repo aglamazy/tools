@@ -15,9 +15,20 @@ import ProfileTab from './ProfileTab'
 import AuditionsTab from './AuditionsTab'
 import OpenDocumentsTab from './OpenDocumentsTab'
 import BizSettingsTab from './BizSettingsTab'
+import ExpenseTab from './ExpenseTab'
 import ExtensionLink from './ExtensionLink'
 
 const TABS: TabItem[] = [
+  { id: 'income', label: 'הכנסות', icon: '💰' },
+  { id: 'expenses', label: 'הוצאות', icon: '💸' },
+  { id: 'timing', label: 'תיעוד זמן', icon: '⏱️' },
+  { id: 'open-docs', label: 'מסמכים פתוחים', icon: '📄' },
+  { id: 'projects', label: 'פרויקטים', icon: '📂' },
+  { id: 'settings', label: 'הגדרות', icon: '⚙️' },
+  { id: 'extension', label: 'תוסף', icon: '🧩' },
+]
+
+const APARTMENT_TABS: TabItem[] = [
   { id: 'income', label: 'הכנסות', icon: '💰' },
   { id: 'timing', label: 'תיעוד זמן', icon: '⏱️' },
   { id: 'open-docs', label: 'מסמכים פתוחים', icon: '📄' },
@@ -40,6 +51,7 @@ const ARTIST_TABS: TabItem[] = [
   { id: 'profile', label: 'פרופיל', icon: '📋' },
   { id: 'auditions', label: 'אודישנים', icon: '🔍' },
   { id: 'income', label: 'הכנסות', icon: '💰' },
+  { id: 'expenses', label: 'הוצאות', icon: '💸' },
   { id: 'projects', label: 'פרויקטים', icon: '📂' },
   { id: 'settings', label: 'הגדרות', icon: '⚙️' },
   { id: 'extension', label: 'תוסף', icon: '🧩' },
@@ -107,6 +119,7 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
               {activeTab === 'profile' && <ProfileTab businessId={businessId} />}
               {activeTab === 'auditions' && <AuditionsTab businessId={businessId} />}
               {activeTab === 'income' && <IncomeTab businessId={businessId} />}
+              {activeTab === 'expenses' && <ExpenseTab businessId={businessId} />}
               {activeTab === 'projects' && <BusinessSettingsTab businessId={businessId} />}
               {activeTab === 'settings' && <BizSettingsTab businessId={businessId} />}
               {activeTab === 'extension' && <ExtensionLink />}
@@ -122,10 +135,11 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
           )}
         </SettingsTabs>
       ) : (
-        <SettingsTabs tabs={TABS} defaultTab="income">
+        <SettingsTabs tabs={business.isTaxFree ? APARTMENT_TABS : TABS} defaultTab="income">
           {(activeTab) => (
             <>
               {activeTab === 'income' && <IncomeTab businessId={businessId} />}
+              {activeTab === 'expenses' && <ExpenseTab businessId={businessId} />}
               {activeTab === 'timing' && <TimingTab businessId={businessId} />}
               {activeTab === 'open-docs' && <OpenDocumentsTab businessId={businessId} />}
               {activeTab === 'projects' && <BusinessSettingsTab businessId={businessId} />}
