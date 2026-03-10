@@ -12,7 +12,6 @@ type Product = {
   description: string
   price: string
   url: string
-  image?: string
 }
 
 export default function MarketResearchPage() {
@@ -80,13 +79,6 @@ export default function MarketResearchPage() {
       e.preventDefault()
       sendMessage()
     }
-  }
-
-  const handleImageError = (e: React.SyntheticEvent<HTMLImageElement>) => {
-    const img = e.currentTarget
-    img.style.display = 'none'
-    const fallback = img.nextElementSibling as HTMLElement | null
-    if (fallback) fallback.style.display = 'flex'
   }
 
   return (
@@ -174,23 +166,9 @@ export default function MarketResearchPage() {
                   className="mr-product-card"
                 >
                   <div className="mr-product-image-wrap">
-                    {product.image ? (
-                      <>
-                        <img
-                          src={product.image}
-                          alt={product.name}
-                          className="mr-product-image"
-                          onError={handleImageError}
-                        />
-                        <div className="mr-product-image-fallback" style={{ display: 'none' }}>
-                          🛍️
-                        </div>
-                      </>
-                    ) : (
-                      <div className="mr-product-image-fallback">
-                        🛍️
-                      </div>
-                    )}
+                    <div className="mr-product-image-fallback">
+                      🛍️
+                    </div>
                   </div>
                   <div className="mr-product-info">
                     <h3 className="mr-product-name">{product.name}</h3>
