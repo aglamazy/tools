@@ -24,6 +24,8 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
   const [transactions, setTransactions] = useState<TransactionWithDoc[]>([])
   const [availableMonths, setAvailableMonths] = useState<string[]>([])
   const [selectedMonth, setSelectedMonth] = useState<string>('')
+  const [selectedYear, setSelectedYear] = useState<string>('')
+  const [filterMode, setFilterMode] = useState<'month' | 'year' | 'all'>('month')
   const [loading, setLoading] = useState(true)
   const [creatingDoc, setCreatingDoc] = useState<number | null>(null)
   const [selectingProject, setSelectingProject] = useState<number | null>(null)
@@ -44,10 +46,10 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
   }, [businessId])
 
   useEffect(() => {
-    if (selectedMonth && business) {
+    if (business && (selectedMonth || filterMode !== 'month')) {
       loadTransactions()
     }
-  }, [selectedMonth, business])
+  }, [selectedMonth, selectedYear, filterMode, business])
 
   const loadBusiness = async () => {
     const b = await businessStore.getById(businessId)
@@ -95,13 +97,25 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     )
     const categoryNames = categories.map(c => c.name)
 
-    // Get transactions for selected month matching categories
-    const monthTransactions = await db.transactions
-      .where('month')
-      .equals(selectedMonth)
-      .toArray()
+    let filteredTransactions: Transaction[]
 
-    const incomeTransactions = monthTransactions.filter(
+    if (filterMode === 'all') {
+      // All transactions across all months
+      const allTransactions = await db.transactions.toArray()
+      filteredTransactions = allTransactions
+    } else if (filterMode === 'year') {
+      // All transactions for the selected year
+      const allTransactions = await db.transactions.toArray()
+      filteredTransactions = allTransactions.filter(t => t.month.endsWith('/' + selectedYear))
+    } else {
+      // Single month
+      filteredTransactions = await db.transactions
+        .where('month')
+        .equals(selectedMonth)
+        .toArray()
+    }
+
+    const incomeTransactions = filteredTransactions.filter(
       t => t.category && categoryNames.includes(t.category) && t.amount > 0
     )
 
@@ -321,12 +335,19 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-      {/* Month selector */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-        <label style={{ fontWeight: 600 }}>חודש:</label>
+      {/* Filter selector */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+        <label style={{ fontWeight: 600 }}>תקופה:</label>
         <select
-          value={selectedMonth}
-          onChange={(e) => setSelectedMonth(e.target.value)}
+          value={filterMode}
+          onChange={(e) => {
+            const mode = e.target.value as 'month' | 'year' | 'all'
+            setFilterMode(mode)
+            if (mode === 'year' && !selectedYear) {
+              const years = [...new Set(availableMonths.map(m => m.split('/')[1]))].sort((a, b) => Number(b) - Number(a))
+              if (years.length > 0) setSelectedYear(years[0])
+            }
+          }}
           style={{
             padding: '0.5rem 1rem',
             borderRadius: '0.375rem',
@@ -335,10 +356,44 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
             direction: 'rtl',
           }}
         >
-          {availableMonths.map(m => (
-            <option key={m} value={m}>{m}</option>
-          ))}
+          <option value="month">חודש</option>
+          <option value="year">שנה</option>
+          <option value="all">הכל</option>
         </select>
+        {filterMode === 'month' && (
+          <select
+            value={selectedMonth}
+            onChange={(e) => setSelectedMonth(e.target.value)}
+            style={{
+              padding: '0.5rem 1rem',
+              borderRadius: '0.375rem',
+              border: '1px solid #e2e8f0',
+              fontSize: '1rem',
+              direction: 'rtl',
+            }}
+          >
+            {availableMonths.map(m => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+        )}
+        {filterMode === 'year' && (
+          <select
+            value={selectedYear}
+            onChange={(e) => setSelectedYear(e.target.value)}
+            style={{
+              padding: '0.5rem 1rem',
+              borderRadius: '0.375rem',
+              border: '1px solid #e2e8f0',
+              fontSize: '1rem',
+              direction: 'rtl',
+            }}
+          >
+            {[...new Set(availableMonths.map(m => m.split('/')[1]))].sort((a, b) => Number(b) - Number(a)).map(y => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
+        )}
         {transactions.length > 0 && (
           <span style={{ color: '#64748b', fontSize: '0.9rem' }}>
             סה"כ: ₪{getMonthTotal().toLocaleString()}

@@ -23,7 +23,10 @@ const TABS: TabItem[] = [
   { id: 'open-docs', label: 'מסמכים פתוחים', icon: '📄' },
   { id: 'projects', label: 'פרויקטים', icon: '📂' },
   { id: 'settings', label: 'הגדרות', icon: '⚙️' },
-  { id: 'extension', label: 'תוסף', icon: '🧩' },
+]
+
+const APARTMENT_TABS: TabItem[] = [
+  { id: 'income', label: 'הכנסות', icon: '💰' },
 ]
 
 const TEACHER_TABS: TabItem[] = [
@@ -31,7 +34,6 @@ const TEACHER_TABS: TabItem[] = [
   { id: 'accounting', label: 'חשבונאות חודשית', icon: '📊' },
   { id: 'projects', label: 'פרויקטים', icon: '📂' },
   { id: 'settings', label: 'הגדרות', icon: '⚙️' },
-  { id: 'extension', label: 'תוסף', icon: '🧩' },
 ]
 
 const ARTIST_TABS: TabItem[] = [
@@ -95,7 +97,6 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
               {activeTab === 'accounting' && <AccountingTab businessId={businessId} />}
               {activeTab === 'projects' && <BusinessSettingsTab businessId={businessId} />}
               {activeTab === 'settings' && <BizSettingsTab businessId={businessId} />}
-              {activeTab === 'extension' && <ExtensionLink />}
             </>
           )}
         </SettingsTabs>
@@ -112,6 +113,14 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
             </>
           )}
         </SettingsTabs>
+      ) : business.isTaxFree ? (
+        <SettingsTabs tabs={APARTMENT_TABS} defaultTab="income">
+          {(activeTab) => (
+            <>
+              {activeTab === 'income' && <IncomeTab businessId={businessId} />}
+            </>
+          )}
+        </SettingsTabs>
       ) : (
         <SettingsTabs tabs={TABS} defaultTab="income">
           {(activeTab) => (
@@ -121,7 +130,6 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
               {activeTab === 'open-docs' && <OpenDocumentsTab businessId={businessId} />}
               {activeTab === 'projects' && <BusinessSettingsTab businessId={businessId} />}
               {activeTab === 'settings' && <BizSettingsTab businessId={businessId} />}
-              {activeTab === 'extension' && <ExtensionLink />}
             </>
           )}
         </SettingsTabs>
