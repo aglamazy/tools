@@ -122,6 +122,31 @@ export default function BusinessForm({ business, onChange, onSave, onCancel, isN
               </span>
             </div>
           )}
+          {business.type !== BusinessType.Personal && !business.isTaxFree && (
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>
+                מקדמות ביטוח לאומי (חודשי)
+              </label>
+              <input
+                type="number"
+                value={business.btlAdvancePayment || ''}
+                onChange={(e) => onChange({ ...business, btlAdvancePayment: e.target.value ? Number(e.target.value) : undefined })}
+                style={{
+                  width: '100%',
+                  padding: '0.75rem',
+                  borderRadius: '0.5rem',
+                  border: '1px solid #e2e8f0',
+                  fontSize: '1rem',
+                  direction: 'ltr',
+                }}
+                placeholder="סכום מקדמה חודשית..."
+                min={0}
+              />
+              <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                הסכום שביטוח לאומי קבע כמקדמה חודשית
+              </span>
+            </div>
+          )}
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
             <button onClick={onCancel} className="upload-another-btn">
               ביטול

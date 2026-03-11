@@ -10,6 +10,10 @@ import { type TaxStatus, type TaxStatusInfo } from '@/app/components/TaxExemptBa
 import { getIdToken } from '@/app/services/firebaseAuthService'
 import FilesSubTab from './TaxFilesSubTab'
 import RentalSummaryTable from './TaxRentalSummary'
+import Modal from '@/app/components/Modal'
+import BusinessForm from '@/app/components/settings/BusinessForm'
+import type { BusinessUI } from '@/app/types/business'
+import { businessStore } from '@/app/stores/businessStore'
 
 type BTLRates = {
   reduced: { nationalInsurance: number; healthInsurance: number }
@@ -430,6 +434,7 @@ function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBu
               businesses={nonRentalBusinesses}
               transactions={transactions}
               bizCategoryMap={bizCategoryMap}
+              expCategoryMap={expCategoryMap}
               currentYear={currentYear}
               currentMonth={currentMonth}
               rates={btlRates}
@@ -593,6 +598,16 @@ function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, ex
   }
 
   const [drillDown, setDrillDown] = useState<{ monthIdx: number; bizId: number } | null>(null)
+  const [editingBiz, setEditingBiz] = useState<BusinessUI | null>(null)
+
+  const handleBizSave = async () => {
+    if (!editingBiz) return
+    await businessStore.update(editingBiz.id, {
+      name: editingBiz.name, type: editingBiz.type, vatType: editingBiz.vatType,
+      isTaxFree: editingBiz.isTaxFree, btlAdvancePayment: editingBiz.btlAdvancePayment,
+    })
+    setEditingBiz(null)
+  }
 
   const getDrillDownTransactions = () => {
     if (!drillDown) return []
@@ -621,7 +636,14 @@ function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, ex
           <tr>
             <th style={{ ...tHeaderStyle, textAlign: 'right', direction: 'rtl' }}>חודש</th>
             {businesses.map(biz => (
-              <th key={biz.id} style={{ ...tHeaderStyle, background: '#faf5ff', color: '#7c3aed' }}>{biz.name}</th>
+              <th key={biz.id} style={{ ...tHeaderStyle, background: '#faf5ff', color: '#7c3aed' }}>
+                {biz.name}
+                <button
+                  onClick={() => setEditingBiz({ id: biz.id!, name: biz.name, type: biz.type, vatType: biz.vatType, isTaxFree: biz.isTaxFree, btlAdvancePayment: biz.btlAdvancePayment, pinnedToSidebar: biz.pinnedToSidebar })}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', marginRight: '0.25rem' }}
+                  title="הגדרות עסק"
+                >⚙️</button>
+              </th>
             ))}
           </tr>
         </thead>
@@ -724,6 +746,11 @@ function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, ex
           </div>
         )
       })()}
+      <Modal isOpen={!!editingBiz} onClose={() => setEditingBiz(null)} maxWidth="400px">
+        {editingBiz && (
+          <BusinessForm business={editingBiz} onChange={setEditingBiz} onSave={handleBizSave} onCancel={() => setEditingBiz(null)} isNew={false} />
+        )}
+      </Modal>
     </div>
   )
 }
@@ -744,27 +771,47 @@ function computeMonthlyBTL(monthlyIncome: number, rates: BTLRates) {
   return { nationalInsurance, healthInsurance, total: nationalInsurance + healthInsurance }
 }
 
-function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMap, currentYear, currentMonth, rates }: {
+function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, rates }: {
   businesses: Business[]; transactions: Transaction[]; bizCategoryMap: Map<number, string[]>
-  currentYear: number; currentMonth: number; rates: BTLRates
+  expCategoryMap: Map<number, string[]>; currentYear: number; currentMonth: number; rates: BTLRates
 }) {
-  const seBiz = businesses.filter(b => (b.vatType === 'authorized' || !b.vatType) && !b.isTaxFree)
+  const seBiz = businesses.filter(b => !b.isTaxFree)
   if (seBiz.length === 0) return null
 
   const seCatNames = new Set<string>()
-  for (const biz of seBiz) (bizCategoryMap.get(biz.id!) || []).forEach(n => seCatNames.add(n))
+  const seExpCatNames = new Set<string>()
+  for (const biz of seBiz) {
+    (bizCategoryMap.get(biz.id!) || []).forEach(n => seCatNames.add(n))
+    ;(expCategoryMap.get(biz.id!) || []).forEach(n => seExpCatNames.add(n))
+  }
+
+  const monthlyAdvance = seBiz.reduce((s, b) => s + (b.btlAdvancePayment || 0), 0)
+  const hasAdvance = monthlyAdvance > 0
 
   const monthlyRows = Array.from({ length: currentMonth + 1 }, (_, i) => {
     const monthStr = `${String(i + 1).padStart(2, '0')}/${currentYear}`
     const income = transactions.filter(t => t.month === monthStr && t.category && seCatNames.has(t.category)).reduce((s, t) => s + (t.amount || 0), 0)
-    return { month: i, label: HEBREW_MONTHS[i], income, ...computeMonthlyBTL(income, rates) }
+    const expenses = transactions.filter(t => t.month === monthStr && t.category && seExpCatNames.has(t.category)).reduce((s, t) => s + Math.abs(t.amount || 0), 0)
+    const netIncome = Math.max(0, income - expenses)
+    const btl = computeMonthlyBTL(netIncome, rates)
+    // Payment for month i is due on 1st of month i+1
+    const today = new Date()
+    const paymentDue = new Date(currentYear, i + 1, 1)
+    const paid = today >= paymentDue
+    const advance = paid ? monthlyAdvance : 0
+    const diff = paid && hasAdvance ? monthlyAdvance - btl.total : 0
+    return { month: i, label: HEBREW_MONTHS[i], income, expenses, netIncome, ...btl, advance, diff, paid }
   })
 
   const totals = {
     income: monthlyRows.reduce((s, r) => s + r.income, 0),
+    expenses: monthlyRows.reduce((s, r) => s + r.expenses, 0),
+    netIncome: monthlyRows.reduce((s, r) => s + r.netIncome, 0),
     nationalInsurance: monthlyRows.reduce((s, r) => s + r.nationalInsurance, 0),
     healthInsurance: monthlyRows.reduce((s, r) => s + r.healthInsurance, 0),
     total: monthlyRows.reduce((s, r) => s + r.total, 0),
+    advance: monthlyRows.reduce((s, r) => s + r.advance, 0),
+    diff: monthlyRows.reduce((s, r) => s + r.diff, 0),
   }
 
   const hStyle: React.CSSProperties = { ...cellStyle, fontWeight: 600, background: '#faf5ff', color: '#6b21a8', borderBottom: '2px solid #e2e8f0' }
@@ -773,7 +820,7 @@ function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMap, curr
     <div style={{ marginTop: '2rem', overflowX: 'auto' }}>
       <h3 style={{ fontSize: '1rem', marginBottom: '0.5rem' }}>ביטוח לאומי ובריאות — עצמאי — {currentYear}</h3>
       <p style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.75rem' }}>
-        חישוב מבוסס על הכנסה חודשית מעסקים: {seBiz.map(b => b.name).join(', ')}
+        חישוב מבוסס על הכנסה נטו (הכנסה פחות הוצאות) מעסקים: {seBiz.map(b => b.name).join(', ')}
       </p>
       <div style={{ marginBottom: '1rem', padding: '0.75rem 1rem', background: '#faf5ff', border: '1px solid #e9d5ff', borderRadius: '0.5rem', fontSize: '0.8rem', color: '#6b21a8', display: 'flex', gap: '1.5rem', flexWrap: 'wrap' }}>
         <span>ביטוח לאומי: {rates.reduced.nationalInsurance}%/{rates.regular.nationalInsurance}% (סף: {fmt(rates.threshold)})</span>
@@ -785,9 +832,13 @@ function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMap, curr
           <tr>
             <th style={{ ...hStyle, textAlign: 'right', direction: 'rtl' }}>חודש</th>
             <th style={hStyle}>הכנסה</th>
+            <th style={hStyle}>הוצאות</th>
+            <th style={hStyle}>הכנסה נטו</th>
             <th style={hStyle}>ביטוח לאומי</th>
             <th style={hStyle}>ביטוח בריאות</th>
             <th style={{ ...hStyle, background: '#f3e8ff' }}>סה&quot;כ</th>
+            {hasAdvance && <th style={hStyle}>מקדמות</th>}
+            {hasAdvance && <th style={hStyle}>הפרש</th>}
           </tr>
         </thead>
         <tbody>
@@ -795,9 +846,13 @@ function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMap, curr
             <tr key={row.month} style={{ borderBottom: '1px solid #f1f5f9' }}>
               <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 500 }}>{row.label}</td>
               <td style={cellStyle}>{row.income ? fmt(row.income) : '—'}</td>
+              <td style={{ ...cellStyle, color: '#dc2626' }}>{row.expenses ? fmt(row.expenses) : '—'}</td>
+              <td style={{ ...cellStyle, fontWeight: 500 }}>{row.netIncome ? fmt(row.netIncome) : '—'}</td>
               <td style={cellStyle}>{row.nationalInsurance ? fmt(row.nationalInsurance) : '—'}</td>
               <td style={cellStyle}>{row.healthInsurance ? fmt(row.healthInsurance) : '—'}</td>
               <td style={{ ...cellStyle, background: '#faf5ff', fontWeight: 500 }}>{row.total ? fmt(row.total) : '—'}</td>
+              {hasAdvance && <td style={cellStyle}>{row.paid ? fmt(row.advance) : '—'}</td>}
+              {hasAdvance && <td style={{ ...cellStyle, fontWeight: 500, color: row.diff > 0 ? '#b45309' : row.diff < 0 ? '#dc2626' : undefined }}>{row.paid ? fmt(row.diff) : '—'}</td>}
             </tr>
           ))}
         </tbody>
@@ -805,9 +860,13 @@ function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMap, curr
           <tr style={{ borderTop: '2px solid #e2e8f0', background: '#faf5ff' }}>
             <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 700 }}>סה&quot;כ</td>
             <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.income)}</td>
+            <td style={{ ...cellStyle, fontWeight: 700, color: '#dc2626' }}>{fmt(totals.expenses)}</td>
+            <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.netIncome)}</td>
             <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.nationalInsurance)}</td>
             <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.healthInsurance)}</td>
             <td style={{ ...cellStyle, fontWeight: 700, background: '#f3e8ff', color: '#6b21a8' }}>{fmt(totals.total)}</td>
+            {hasAdvance && <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.advance)}</td>}
+            {hasAdvance && <td style={{ ...cellStyle, fontWeight: 700, color: totals.diff > 0 ? '#b45309' : totals.diff < 0 ? '#dc2626' : '#16a34a' }}>{fmt(totals.diff)}</td>}
           </tr>
         </tfoot>
       </table>

@@ -111,6 +111,7 @@ export interface Business {
   isTaxFree?: boolean
   ypayClientId?: string
   ypayClientSecret?: string
+  btlAdvancePayment?: number // מקדמות ביטוח לאומי — monthly advance set by BTL
   pinnedToSidebar?: boolean
   userId?: string // Firebase UID of the owning user
   createdAt: string
