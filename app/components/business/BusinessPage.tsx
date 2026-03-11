@@ -17,6 +17,7 @@ import OpenDocumentsTab from './OpenDocumentsTab'
 import BizSettingsTab from './BizSettingsTab'
 import ExpenseTab from './ExpenseTab'
 import ExtensionLink from './ExtensionLink'
+import BusinessTasksTab from './BusinessTasksTab'
 import FilesSubTab from './TaxFilesSubTab'
 import { getUser } from '@/app/stores/authStore'
 import { getHouseholdInfo } from '@/app/services/householdService'
@@ -45,6 +46,7 @@ const TABS: TabItem[] = [
   { id: 'expenses', label: 'הוצאות', icon: '💸' },
   { id: 'timing', label: 'תיעוד זמן', icon: '⏱️' },
   { id: 'open-docs', label: 'מסמכים פתוחים', icon: '📄' },
+  { id: 'tasks', label: 'משימות', icon: '✅' },
   { id: 'projects', label: 'פרויקטים', icon: '📂' },
   { id: 'settings', label: 'הגדרות', icon: '⚙️' },
   { id: 'extension', label: 'תוסף', icon: '🧩' },
@@ -57,12 +59,14 @@ const APARTMENT_TABS: TabItem[] = [
 const TEACHER_TABS: TabItem[] = [
   { id: 'students', label: 'תלמידים', icon: '👨‍🎓' },
   { id: 'accounting', label: 'חשבונאות חודשית', icon: '📊' },
+  { id: 'tasks', label: 'משימות', icon: '✅' },
   { id: 'projects', label: 'פרויקטים', icon: '📂' },
   { id: 'settings', label: 'הגדרות', icon: '⚙️' },
 ]
 
 const EMPLOYEE_TABS: TabItem[] = [
   { id: 'payslips', label: 'תלושים', icon: '📄' },
+  { id: 'tasks', label: 'משימות', icon: '✅' },
   { id: 'settings', label: 'הגדרות', icon: '⚙️' },
 ]
 
@@ -71,6 +75,7 @@ const ARTIST_TABS: TabItem[] = [
   { id: 'auditions', label: 'אודישנים', icon: '🔍' },
   { id: 'income', label: 'הכנסות', icon: '💰' },
   { id: 'expenses', label: 'הוצאות', icon: '💸' },
+  { id: 'tasks', label: 'משימות', icon: '✅' },
   { id: 'projects', label: 'פרויקטים', icon: '📂' },
   { id: 'settings', label: 'הגדרות', icon: '⚙️' },
   { id: 'extension', label: 'תוסף', icon: '🧩' },
@@ -125,6 +130,7 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
           {(activeTab) => (
             <>
               {activeTab === 'payslips' && <FilesSubTab loadHouseholdMembers={loadHouseholdMembers} businessId={businessId} />}
+              {activeTab === 'tasks' && <BusinessTasksTab businessId={businessId} />}
               {activeTab === 'settings' && <BizSettingsTab businessId={businessId} />}
             </>
           )}
@@ -135,6 +141,7 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
             <>
               {activeTab === 'students' && <StudentsTab businessId={businessId} />}
               {activeTab === 'accounting' && <AccountingTab businessId={businessId} />}
+              {activeTab === 'tasks' && <BusinessTasksTab businessId={businessId} />}
               {activeTab === 'projects' && <BusinessSettingsTab businessId={businessId} />}
               {activeTab === 'settings' && <BizSettingsTab businessId={businessId} />}
             </>
@@ -148,6 +155,7 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
               {activeTab === 'auditions' && <AuditionsTab businessId={businessId} />}
               {activeTab === 'income' && <IncomeTab businessId={businessId} />}
               {activeTab === 'expenses' && <ExpenseTab businessId={businessId} />}
+              {activeTab === 'tasks' && <BusinessTasksTab businessId={businessId} />}
               {activeTab === 'projects' && <BusinessSettingsTab businessId={businessId} />}
               {activeTab === 'settings' && <BizSettingsTab businessId={businessId} />}
               {activeTab === 'extension' && <ExtensionLink />}
@@ -170,6 +178,7 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
               {activeTab === 'expenses' && <ExpenseTab businessId={businessId} />}
               {activeTab === 'timing' && <TimingTab businessId={businessId} />}
               {activeTab === 'open-docs' && <OpenDocumentsTab businessId={businessId} />}
+              {activeTab === 'tasks' && <BusinessTasksTab businessId={businessId} />}
               {activeTab === 'projects' && <BusinessSettingsTab businessId={businessId} />}
               {activeTab === 'settings' && <BizSettingsTab businessId={businessId} />}
             </>

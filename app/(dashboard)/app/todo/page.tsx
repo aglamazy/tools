@@ -209,6 +209,7 @@ export default function TodoPage() {
       case 'missing-file': return '📄'
       case 'uncategorized': return '🏷️'
       case 'expected-payment': return '💳'
+      case 'recurring': return '🔁'
       case 'other': return '⚠️'
     }
   }

@@ -1,4 +1,4 @@
-import { db, Task, EisenhowerQuadrant } from '@/app/db/financeDB'
+import { db, Task, EisenhowerQuadrant, type BusinessTask } from '@/app/db/financeDB'
 import { transactionStore } from './transactionStore'
 import { getUser } from './authStore'
 import { appSettingsStore, AccountOwners } from './appSettingsStore'
@@ -24,7 +24,7 @@ export type AutoTask = {
   id: string
   title: string
   description: string
-  type: 'missing-file' | 'uncategorized' | 'expected-payment' | 'other'
+  type: 'missing-file' | 'uncategorized' | 'expected-payment' | 'recurring' | 'other'
   priority: Priority
   quadrant: EisenhowerQuadrant
   deadline: string
@@ -164,6 +164,10 @@ export const todoStore = {
       const uncategorizedTasks = await checkUncategorizedTransactions(month, owners, currentUid)
       autoTasks.push(...uncategorizedTasks)
     }
+
+    // Check recurring business tasks
+    const recurringTasks = await checkRecurringBusinessTasks()
+    autoTasks.push(...recurringTasks)
 
     return autoTasks
   },
@@ -391,6 +395,88 @@ async function checkUncategorizedTransactions(currentMonth: string, owners: Acco
       deadline: deadline.toISOString(),
       link: `${routes.budget}?filter=unclassified&month=${encodeURIComponent(currentMonth)}`,
       createdAt: new Date().toISOString(),
+      month: currentMonth,
+    })
+  }
+
+  return tasks
+}
+
+function getNextDueDate(task: BusinessTask): Date | null {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = now.getMonth()
+
+  switch (task.recurrence) {
+    case 'monthly': {
+      const day = task.dueDay || 1
+      let due = new Date(y, m, day)
+      if (due < now) due = new Date(y, m + 1, day)
+      return due
+    }
+    case 'weekly': {
+      const targetDay = task.dueDay ?? 0
+      const currentDay = now.getDay()
+      let daysUntil = targetDay - currentDay
+      if (daysUntil <= 0) daysUntil += 7
+      const due = new Date(now)
+      due.setDate(due.getDate() + daysUntil)
+      due.setHours(0, 0, 0, 0)
+      return due
+    }
+    case 'yearly': {
+      const day = task.dueDay || 1
+      const month = (task.dueMonth || 1) - 1
+      let due = new Date(y, month, day)
+      if (due < now) due = new Date(y + 1, month, day)
+      return due
+    }
+    case 'once': {
+      if (task.completed) return null
+      const day = task.dueDay || now.getDate()
+      const month = (task.dueMonth || (m + 1)) - 1
+      return new Date(y, month, day)
+    }
+  }
+}
+
+async function checkRecurringBusinessTasks(): Promise<AutoTask[]> {
+  const tasks: AutoTask[] = []
+  const now = new Date()
+  const currentMonth = getCurrentMonth()
+
+  const allBizTasks = await db.businessTasks.toArray()
+  const businesses = await db.businesses.toArray()
+  const bizMap = new Map(businesses.map(b => [b.id, b.name]))
+
+  for (const bt of allBizTasks) {
+    if (bt.archived) continue
+    if (bt.recurrence === 'once' && bt.completed) continue
+
+    const dueDate = getNextDueDate(bt)
+    if (!dueDate) continue
+
+    const reminderDays = bt.reminderDaysBefore ?? 3
+    const reminderDate = new Date(dueDate)
+    reminderDate.setDate(reminderDate.getDate() - reminderDays)
+
+    // Only show if we're within the reminder window
+    if (now < reminderDate) continue
+
+    const bizName = bizMap.get(bt.businessId) || ''
+    const priority: Priority = bt.priority || 'medium'
+    const quadrant = computeAutoTaskQuadrant(dueDate)
+
+    tasks.push({
+      id: `recurring-${bt.id}-${dueDate.toISOString().slice(0, 10)}`,
+      title: `${bizName ? `[${bizName}] ` : ''}${bt.title}`,
+      description: bt.description || '',
+      type: 'recurring',
+      priority,
+      quadrant,
+      deadline: dueDate.toISOString(),
+      link: `${routes.business(bt.businessId)}?tab=tasks`,
+      createdAt: bt.createdAt,
       month: currentMonth,
     })
   }

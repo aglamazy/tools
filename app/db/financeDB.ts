@@ -195,6 +195,28 @@ export interface TaxDocument {
   updatedAt?: string
 }
 
+export type RecurrenceType = 'monthly' | 'weekly' | 'yearly' | 'once'
+
+export interface BusinessTask {
+  id?: number
+  syncId?: string
+  businessId: number
+  title: string
+  description?: string
+  recurrence: RecurrenceType
+  dueDay?: number          // Day of month (1-31) for monthly, day of week (0-6) for weekly, day of year (1-365) for yearly
+  dueMonth?: number        // Month (1-12) for yearly recurrence
+  reminderDaysBefore?: number // Days before due date to show in todo
+  priority: 'low' | 'medium' | 'high'
+  attachmentDriveFileId?: string
+  attachmentDriveWebViewLink?: string
+  attachmentFileName?: string
+  completed?: boolean      // For one-time tasks
+  archived?: boolean
+  createdAt: string
+  updatedAt?: string
+}
+
 export interface ExpenseDocument {
   id?: number
   syncId?: string
@@ -237,6 +259,7 @@ class FinanceDB extends Dexie {
   scoutConfigs!: Table<ScoutConfig, number>
   taxDocuments!: Table<TaxDocument, number>
   expenseDocuments!: Table<ExpenseDocument, number>
+  businessTasks!: Table<BusinessTask, number>
 
   constructor() {
     super('FinanceDB')
@@ -650,6 +673,29 @@ class FinanceDB extends Dexie {
       scoutConfigs: '++id, syncId, &businessId',
       taxDocuments: '++id, syncId, businessId, userId, month, year, [businessId+year]',
       expenseDocuments: '++id, syncId, transactionId, date, vendor, category, sourceType',
+    })
+
+    this.version(21).stores({
+      transactions: '++id, syncId, type, month, accountNumber, cardNumber, date, chargingDate, [type+month], [cardNumber+month], [accountNumber+month], fileId',
+      importedFiles: '++id, syncId, fileName, fileType, processingMonth, [fileType+processingMonth], [cardNumber+processingMonth]',
+      categories: '++id, syncId, name, type',
+      businessCategories: '++id, syncId, &business',
+      tasks: '++id, syncId, createdAt, priority, quadrant, deadline, delegatedTo',
+      appSettings: '++id, syncId, &key',
+      businesses: '++id, syncId, &name, type, userId',
+      projects: '++id, syncId, businessId, name, archived',
+      harvestTasks: '++id, syncId, projectId, name, archived',
+      timeEntries: '++id, syncId, taskId, date, startTime, endTime, [taskId+date]',
+      capitalEntries: '++id, syncId, date, institution, accountNumber, description, assetType, currency, employer, investmentTrack, agent, soldDate, [institution+accountNumber+description], fileId',
+      financialInstitutions: '++id, syncId, name, type',
+      ypayDocuments: '++id, syncId, &transactionId, docType',
+      students: '++id, syncId, businessId, name, archived',
+      profileQAs: '++id, syncId, businessId, [businessId+answerType]',
+      scoutResults: '++id, syncId, businessId, status, [businessId+status]',
+      scoutConfigs: '++id, syncId, &businessId',
+      taxDocuments: '++id, syncId, businessId, userId, month, year, [businessId+year]',
+      expenseDocuments: '++id, syncId, transactionId, date, vendor, category, sourceType',
+      businessTasks: '++id, syncId, businessId, recurrence, archived',
     })
 
     // Auto-inject syncId and updatedAt on create/update
