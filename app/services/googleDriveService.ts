@@ -229,15 +229,20 @@ export async function uploadTaxDocument(
 /**
  * Upload an expense document (receipt/invoice) to Google Drive.
  *
- * Uses the same multipart upload pattern as uploadTaxDocument but targets
- * the "Aglamazo Expense Documents" folder.
+ * Folder structure: Aglamazo Expense Documents / <year> / <month>
+ * If no date provided, uploads to the root expense folder.
  *
  * @returns `{ fileId, webViewLink }` on success.
  */
 export async function uploadExpenseDocument(
   file: File,
+  date?: { year: string; month: string },
 ): Promise<{ fileId: string; webViewLink: string }> {
-  const folderId = await ensureExpenseFolder()
+  let folderId = await ensureExpenseFolder()
+  if (date) {
+    folderId = await getOrCreateFolder(date.year, folderId)
+    folderId = await getOrCreateFolder(date.month, folderId)
+  }
 
   const metadata = JSON.stringify({
     name: file.name,

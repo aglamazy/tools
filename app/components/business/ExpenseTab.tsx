@@ -5,8 +5,10 @@ import JSZip from 'jszip'
 import { db, type Transaction, type Business, type ExpenseDocument } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { businessStore } from '@/app/stores/businessStore'
-import { hasGmailAccess, requestGmailAccess, searchMessages, fetchMessagesMetadata, fetchMessageBody } from '@/app/services/gmailService'
+import { appSettingsStore } from '@/app/stores/appSettingsStore'
+import { hasGmailAccess, requestGmailAccess } from '@/app/services/gmailService'
 import { hasGoogleAccess, requestGoogleAccess, uploadExpenseDocument, downloadDriveFile } from '@/app/services/googleDriveService'
+import { matchReceiptForTransaction, parseDateFolder } from '@/app/services/receiptMatchService'
 import type { Category } from '@/app/types/category'
 
 type ExpenseTabProps = {
@@ -14,6 +16,39 @@ type ExpenseTabProps = {
 }
 
 type MatchStatus = 'idle' | 'searching' | 'matched' | 'no-match' | 'error'
+
+type ExtractedData = {
+  vendor?: string; documentTitle?: string; description?: string
+  date?: string; amount?: number; vatAmount?: number
+  [key: string]: unknown
+}
+
+async function extractFromFile(file: File, transaction: { date: string; description: string; amount: number }, claudeApiKey: string): Promise<ExtractedData> {
+  if (!claudeApiKey) return {}
+  const buffer = await file.arrayBuffer()
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+  const base64 = btoa(binary)
+
+  const isPdf = file.type === 'application/pdf'
+  const isImage = file.type.startsWith('image/')
+  if (!isPdf && !isImage) return {}
+
+  console.log(`[ExpenseTab] Extracting from ${isPdf ? 'PDF' : 'image'}:`, file.name)
+  const extractRes = await fetch('/api/match-receipt', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(isPdf ? {
+      action: 'extract-pdf', pdfBase64: base64, transaction, claudeApiKey,
+    } : {
+      action: 'extract-image', imageBase64: base64, mediaType: file.type, transaction, claudeApiKey,
+    }),
+  })
+  const extracted = await extractRes.json()
+  console.log('[ExpenseTab] Extraction result:', extracted)
+  return extracted.error ? {} : extracted
+}
 
 export default function ExpenseTab({ businessId }: ExpenseTabProps) {
   const [business, setBusiness] = useState<Business | null>(null)
@@ -24,7 +59,7 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
   const [filterMode, setFilterMode] = useState<'month' | 'year' | 'all'>('month')
   const [loading, setLoading] = useState(true)
   const [matchStatus, setMatchStatus] = useState<Record<number, MatchStatus>>({})
-  const [matchedDocs, setMatchedDocs] = useState<Record<number, ExpenseDocument>>({})
+  const [matchedDocs, setMatchedDocs] = useState<Record<number, ExpenseDocument[]>>({})
   const [claudeApiKey, setClaudeApiKey] = useState<string>('')
 
   useEffect(() => {
@@ -126,45 +161,17 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
     // Load existing matched docs
     const txIds = expenseTransactions.map(t => t.id).filter((id): id is number => id != null)
     const docs = await db.expenseDocuments.where('transactionId').anyOf(txIds).toArray()
-    const docMap: Record<number, ExpenseDocument> = {}
+    const docMap: Record<number, ExpenseDocument[]> = {}
     const statusMap: Record<number, MatchStatus> = {}
     for (const doc of docs) {
       if (doc.transactionId) {
-        docMap[doc.transactionId] = doc
+        if (!docMap[doc.transactionId]) docMap[doc.transactionId] = []
+        docMap[doc.transactionId].push(doc)
         statusMap[doc.transactionId] = 'matched'
       }
     }
     setMatchedDocs(docMap)
     setMatchStatus(statusMap)
-  }
-
-  const buildDateRange = (dateStr: string) => {
-    const parts = dateStr.split(/[/.]/)
-    const day = parseInt(parts[0], 10)
-    const month = parseInt(parts[1], 10)
-    const year = parts[2].length === 2 ? 2000 + parseInt(parts[2], 10) : parseInt(parts[2], 10)
-    const txDate = new Date(year, month - 1, day)
-    const after = new Date(txDate)
-    after.setDate(after.getDate() - 3)
-    const before = new Date(txDate)
-    before.setDate(before.getDate() + 14)
-    const fmt = (d: Date) => `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
-    return `after:${fmt(after)} before:${fmt(before)}`
-  }
-
-  // Load merchant name cache: { "וואי-פיי": "YPAY", ... }
-  const getMerchantCache = async (): Promise<Record<string, string>> => {
-    const setting = await db.appSettings.where('key').equals('merchantNameCache').first()
-    return setting?.value ? JSON.parse(setting.value) : {}
-  }
-
-  const saveMerchantCache = async (cache: Record<string, string>) => {
-    const existing = await db.appSettings.where('key').equals('merchantNameCache').first()
-    if (existing) {
-      await db.appSettings.update(existing.id!, { value: JSON.stringify(cache) })
-    } else {
-      await db.appSettings.add({ key: 'merchantNameCache', value: JSON.stringify(cache), updatedAt: new Date().toISOString() })
-    }
   }
 
   const handleMatchReceipt = async (t: Transaction) => {
@@ -180,219 +187,128 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
     }
 
     try {
+      const result = await matchReceiptForTransaction(
+        { id: t.id, date: t.date, description: t.description, merchant: t.merchant, amount: t.amount },
+        claudeApiKey,
+      )
+      if (result.status === 'matched') {
+        await db.expenseDocuments.add(result.doc)
+        setMatchedDocs(d => ({ ...d, [t.id!]: [...(d[t.id!] || []), result.doc] }))
+      }
+      setMatchStatus(s => ({ ...s, [t.id!]: result.status }))
+    } catch {
+      setMatchStatus(s => ({ ...s, [t.id!]: 'error' }))
+    }
+  }
+
+  const handleUploadReceipt = async (t: Transaction, files: FileList) => {
+    if (!t.id || files.length === 0) return
+    setMatchStatus(s => ({ ...s, [t.id!]: 'searching' }))
+
+    try {
       const desc = (t.merchant || t.description || '').trim()
-      const dateRange = buildDateRange(t.date)
-      const cache = await getMerchantCache()
+      const newDocs: ExpenseDocument[] = []
 
-      let matchedMessageId: string | undefined
-      let matchedFrom: string | undefined
+      for (const file of Array.from(files)) {
+        const uploaded = await uploadExpenseDocument(file, parseDateFolder(t.date))
+        const finalExtracted = await extractFromFile(file, { date: t.date, description: desc, amount: t.amount }, claudeApiKey)
 
-      // Check cache first: do we already know the email sender for this merchant?
-      const cachedName = cache[desc]
-      if (cachedName) {
-        console.log('[ExpenseTab] Cache hit:', desc, '→', cachedName)
-        const query = `from:${cachedName} (חשבונית OR קבלה OR receipt OR invoice)`
-        console.log('[ExpenseTab] Cached search query:', query)
-        const result = await searchMessages(query, { searchAllMail: true, maxResults: 5 })
-        if (result.messageIds.length > 0) {
-          matchedMessageId = result.messageIds[0]
-          matchedFrom = cachedName
-          console.log('[ExpenseTab] Found via cache:', matchedMessageId)
-        }
-      }
-
-      // No cache hit (or cached search failed): broad date-range search → Gemini matches
-      if (!matchedMessageId) {
-        console.log('[ExpenseTab] Broad search with date range')
-        const broadQuery = dateRange
-        console.log('[ExpenseTab] Broad query:', broadQuery)
-        const searchResult = await searchMessages(broadQuery, { searchAllMail: true, maxResults: 30 })
-        console.log('[ExpenseTab] Broad search result:', searchResult.messageIds.length, 'messages')
-
-        if (searchResult.error) {
-          console.error('[ExpenseTab] Search error:', searchResult.error)
-          setMatchStatus(s => ({ ...s, [t.id!]: 'error' }))
-          return
-        }
-        if (searchResult.messageIds.length === 0) {
-          console.log('[ExpenseTab] No emails in date range')
-          setMatchStatus(s => ({ ...s, [t.id!]: 'no-match' }))
-          return
-        }
-
-        // Fetch metadata for candidates
-        const metaResult = await fetchMessagesMetadata(searchResult.messageIds.slice(0, 20))
-        console.log('[ExpenseTab] Metadata:', metaResult.messages.map(m => ({ from: m.from, subject: m.subject?.substring(0, 40) })))
-        if (metaResult.error || metaResult.messages.length === 0) {
-          setMatchStatus(s => ({ ...s, [t.id!]: 'no-match' }))
-          return
-        }
-
-        // Gemini picks the best match
-        console.log('[ExpenseTab] Sending to Gemini:', { desc, amount: t.amount, candidates: metaResult.messages.length })
-        const matchRes = await fetch('/api/match-receipt', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'match',
-            transaction: { date: t.date, description: desc, amount: t.amount, merchant: t.merchant },
-            candidates: metaResult.messages,
-          }),
-        })
-        const matchData = await matchRes.json()
-        console.log('[ExpenseTab] Gemini result:', matchData)
-
-        if (!matchData.messageId && matchData.senderHint) {
-          // Gemini identified the sender but couldn't find the receipt — search again narrowly
-          console.log('[ExpenseTab] Gemini hint: sender is', matchData.senderHint, '— searching narrowly')
-          const narrowQuery = `from:${matchData.senderHint} (חשבונית OR קבלה OR receipt OR invoice) ${dateRange}`
-          console.log('[ExpenseTab] Narrow query:', narrowQuery)
-          const narrowResult = await searchMessages(narrowQuery, { searchAllMail: true, maxResults: 5 })
-          console.log('[ExpenseTab] Narrow result:', narrowResult.messageIds.length, 'messages')
-          if (narrowResult.messageIds.length > 0) {
-            matchedMessageId = narrowResult.messageIds[0]
-            // Cache the sender for future use
-            const senderDomain = matchData.senderHint.includes('@') ? matchData.senderHint.split('@')[1] : matchData.senderHint
-            cache[desc] = senderDomain
-            await saveMerchantCache(cache)
-            console.log('[ExpenseTab] Cached from hint:', desc, '→', senderDomain)
-          }
-        } else if (matchData.messageId) {
-          matchedMessageId = matchData.messageId
-        }
-
-        if (!matchedMessageId) {
-          setMatchStatus(s => ({ ...s, [t.id!]: 'no-match' }))
-          return
-        }
-
-        // Cache the mapping: extract sender domain from the matched email
-        if (!cache[desc]) {
-          const matched = metaResult.messages.find(m => m.id === matchedMessageId)
-          if (matched?.from) {
-            const emailMatch = matched.from.match(/<([^>]+)>/)
-            const senderDomain = emailMatch ? emailMatch[1].split('@')[1] : matched.from
-            cache[desc] = senderDomain
-            await saveMerchantCache(cache)
-            console.log('[ExpenseTab] Cached:', desc, '→', senderDomain)
-          }
-        }
-      }
-
-      // Fetch email body
-      console.log('[ExpenseTab] Fetching email body for', matchedMessageId)
-      const bodyResult = await fetchMessageBody(matchedMessageId!)
-      console.log('[ExpenseTab] Body length:', bodyResult.body?.length, 'error:', bodyResult.error)
-      if (bodyResult.error || !bodyResult.body) {
-        setMatchStatus(s => ({ ...s, [t.id!]: 'no-match' }))
-        return
-      }
-
-      // Claude extracts receipt data (or save without extraction if no key)
-      console.log('[ExpenseTab] Claude API key present:', !!claudeApiKey)
-      if (!claudeApiKey) {
         const doc: ExpenseDocument = {
           transactionId: t.id,
-          fileName: 'gmail-match',
-          sourceType: 'gmail',
-          gmailMessageId: matchedMessageId,
+          fileName: file.name,
+          vendor: finalExtracted.vendor || desc,
+          amount: finalExtracted.amount,
+          vatAmount: finalExtracted.vatAmount,
+          date: finalExtracted.date,
+          description: finalExtracted.documentTitle || finalExtracted.description,
+          driveFileId: uploaded.fileId,
+          driveWebViewLink: uploaded.webViewLink,
+          extractedData: finalExtracted,
+          sourceType: 'upload',
           uploadedAt: new Date().toISOString(),
         }
         await db.expenseDocuments.add(doc)
-        setMatchedDocs(d => ({ ...d, [t.id!]: doc }))
-        setMatchStatus(s => ({ ...s, [t.id!]: 'matched' }))
-        return
+        newDocs.push(doc)
       }
 
-      console.log('[ExpenseTab] Sending to Claude for extraction...')
-      const extractRes = await fetch('/api/match-receipt', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'extract',
-          emailBody: bodyResult.body,
-          transaction: { date: t.date, description: desc, amount: t.amount },
-          claudeApiKey,
-        }),
-      })
-      const extracted = await extractRes.json()
-      console.log('[ExpenseTab] Claude extraction:', extracted)
-
-      // If there's a document URL, download the PDF, extract from it, and upload to Drive
-      let driveFileId: string | undefined
-      let driveWebViewLink: string | undefined
-      let finalExtracted = extracted
-      if (extracted.documentUrl) {
-        console.log('[ExpenseTab] Downloading PDF from:', extracted.documentUrl)
-        try {
-          const dlRes = await fetch('/api/match-receipt', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'download-pdf', url: extracted.documentUrl }),
-          })
-          const dlData = await dlRes.json()
-          if (dlData.base64) {
-            // Extract data from the PDF itself
-            if (claudeApiKey) {
-              console.log('[ExpenseTab] Extracting data from PDF...')
-              const pdfExtractRes = await fetch('/api/match-receipt', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  action: 'extract-pdf',
-                  pdfBase64: dlData.base64,
-                  transaction: { date: t.date, description: desc, amount: t.amount },
-                  claudeApiKey,
-                }),
-              })
-              const pdfExtracted = await pdfExtractRes.json()
-              console.log('[ExpenseTab] PDF extraction:', pdfExtracted)
-              if (!pdfExtracted.error) {
-                finalExtracted = { ...extracted, ...pdfExtracted, documentUrl: extracted.documentUrl }
-              }
-            }
-
-            // Upload to Drive
-            const binary = atob(dlData.base64)
-            const bytes = new Uint8Array(binary.length)
-            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-            const blob = new Blob([bytes], { type: dlData.contentType || 'application/pdf' })
-            const fileName = dlData.fileName || `receipt-${finalExtracted.vendor || 'unknown'}.pdf`
-            const file = new File([blob], fileName, { type: blob.type })
-            console.log('[ExpenseTab] Uploading to Drive:', fileName)
-            const uploaded = await uploadExpenseDocument(file)
-            driveFileId = uploaded.fileId
-            driveWebViewLink = uploaded.webViewLink
-            console.log('[ExpenseTab] Uploaded to Drive:', driveWebViewLink)
-          }
-        } catch (err) {
-          console.warn('[ExpenseTab] PDF download/upload failed:', err)
-          driveWebViewLink = extracted.documentUrl
-        }
+      if (newDocs.length > 0) {
+        setMatchedDocs(d => ({ ...d, [t.id!]: [...(d[t.id!] || []), ...newDocs] }))
       }
-
-      const doc: ExpenseDocument = {
-        transactionId: t.id,
-        fileName: driveFileId ? 'drive-upload' : 'gmail-match',
-        vendor: finalExtracted.vendor,
-        amount: finalExtracted.amount,
-        vatAmount: finalExtracted.vatAmount,
-        date: finalExtracted.date,
-        description: finalExtracted.description,
-        driveFileId,
-        driveWebViewLink,
-        extractedData: finalExtracted,
-        sourceType: 'gmail',
-        gmailMessageId: matchedMessageId,
-        uploadedAt: new Date().toISOString(),
-      }
-      await db.expenseDocuments.add(doc)
-      setMatchedDocs(d => ({ ...d, [t.id!]: doc }))
       setMatchStatus(s => ({ ...s, [t.id!]: 'matched' }))
     } catch (err) {
-      console.error('[ExpenseTab] Match error:', err)
+      console.error('[ExpenseTab] Upload error:', err)
       setMatchStatus(s => ({ ...s, [t.id!]: 'error' }))
     }
+  }
+
+  const [showCashForm, setShowCashForm] = useState(false)
+  const [cashCategory, setCashCategory] = useState('')
+  const [cashFile, setCashFile] = useState<File | null>(null)
+  const [cashSaving, setCashSaving] = useState(false)
+
+  const handleAddCash = async () => {
+    if (!cashFile) return
+    setCashSaving(true)
+    try {
+      // Extract data from document first
+      const today = new Date()
+      const todayStr = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`
+      const extracted = await extractFromFile(cashFile, { date: todayStr, description: 'הוצאה במזומן', amount: 0 }, claudeApiKey)
+
+      // Use extracted date or today, normalize to DD/MM/YYYY
+      let date = extracted.date || todayStr
+      const dateParts = date.split('/')
+      const day = dateParts[0].padStart(2, '0')
+      const monthNum = dateParts[1].padStart(2, '0')
+      const year = dateParts[2].length === 2 ? `20${dateParts[2]}` : dateParts[2]
+      date = `${day}/${monthNum}/${year}`
+      const month = `${monthNum}/${year}`
+      const amount = extracted.amount ? -Math.abs(extracted.amount) : 0
+
+      // Create transaction
+      const txId = await db.transactions.add({
+        type: 'cash',
+        date,
+        amount,
+        description: extracted.vendor || extracted.description || 'הוצאה במזומן',
+        category: cashCategory || categories[0]?.name,
+        isFixed: false,
+        month,
+        importedAt: new Date().toISOString(),
+        fileId: 'cash',
+      })
+
+      // Upload file to Drive
+      const dateFolder = { year, month: monthNum }
+      const uploaded = await uploadExpenseDocument(cashFile, dateFolder)
+
+      // Save expense document
+      await db.expenseDocuments.add({
+        transactionId: txId as number,
+        fileName: cashFile.name,
+        vendor: extracted.vendor,
+        amount: extracted.amount,
+        vatAmount: extracted.vatAmount,
+        date,
+        description: extracted.documentTitle || extracted.description,
+        driveFileId: uploaded.fileId,
+        driveWebViewLink: uploaded.webViewLink,
+        extractedData: extracted,
+        sourceType: 'upload',
+        uploadedAt: new Date().toISOString(),
+      })
+
+      // Reset form, switch to the new month (useEffect will reload transactions)
+      setCashCategory('')
+      setCashFile(null)
+      setShowCashForm(false)
+      await loadAvailableMonths()
+      setFilterMode('month')
+      setSelectedMonth(month)
+    } catch (err) {
+      console.error('[ExpenseTab] Cash expense error:', err)
+    }
+    setCashSaving(false)
   }
 
   const getMonthTotal = () => {
@@ -401,15 +317,18 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
 
   const getVatTotal = () => {
     return transactions.reduce((sum, t) => {
-      const doc = matchedDocs[t.id!]
-      return sum + (doc?.vatAmount || 0)
+      const docs = matchedDocs[t.id!]
+      if (!docs) return sum
+      return sum + docs.reduce((s, d) => s + (d.vatAmount || 0), 0)
     }, 0)
   }
 
   const handleUnlink = async (txId: number) => {
-    const doc = matchedDocs[txId]
-    if (!doc?.id) return
-    await db.expenseDocuments.delete(doc.id)
+    const docs = matchedDocs[txId]
+    if (!docs?.length) return
+    for (const doc of docs) {
+      if (doc.id) await db.expenseDocuments.delete(doc.id)
+    }
     setMatchedDocs(d => {
       const next = { ...d }
       delete next[txId]
@@ -422,15 +341,57 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
     })
   }
 
+  const [editingTxId, setEditingTxId] = useState<number | null>(null)
+  const [editValues, setEditValues] = useState<{ description: string; category: string; amount?: string }>({ description: '', category: '' })
+  const [editingIsCash, setEditingIsCash] = useState(false)
+
+  const startEdit = (t: Transaction) => {
+    setEditingTxId(t.id!)
+    setEditingIsCash(t.type === 'cash')
+    setEditValues({ description: t.description, category: t.category || '', amount: String(Math.abs(t.amount)) })
+  }
+
+  const saveEdit = async () => {
+    if (editingTxId == null) return
+    const updates: Partial<Transaction> = {
+      description: editValues.description,
+      category: editValues.category,
+    }
+    if (editingIsCash && editValues.amount) {
+      updates.amount = -Math.abs(parseFloat(editValues.amount))
+    }
+    await db.transactions.update(editingTxId, updates)
+    setEditingTxId(null)
+    await loadTransactions()
+  }
+
+  const cancelEdit = () => setEditingTxId(null)
+
+  const handleDeleteCash = async (t: Transaction) => {
+    if (!t.id || t.type !== 'cash') return
+    // Record deletions for sync, then hard-delete locally
+    const docs = matchedDocs[t.id]
+    if (docs?.length) {
+      for (const doc of docs) {
+        if (doc.syncId) await appSettingsStore.recordDeletion('expenseDocuments', doc.syncId)
+        if (doc.id) await db.expenseDocuments.delete(doc.id)
+      }
+    }
+    if (t.syncId) await appSettingsStore.recordDeletion('transactions', t.syncId)
+    await db.transactions.delete(t.id)
+    await loadAvailableMonths()
+    await loadTransactions()
+  }
+
   const [downloading, setDownloading] = useState(false)
 
   const handleDownloadAll = async () => {
-    const docsWithFiles = Object.values(matchedDocs).filter(d => d.driveFileId)
-    if (docsWithFiles.length === 0) return
+    const allDocs = Object.values(matchedDocs).flat().filter(d => d.driveFileId)
+    if (allDocs.length === 0) return
     setDownloading(true)
     try {
       const zip = new JSZip()
-      for (const doc of docsWithFiles) {
+      for (const doc of allDocs) {
         const { base64, mimeType } = await downloadDriveFile(doc.driveFileId!)
         const ext = mimeType.includes('pdf') ? 'pdf' : 'bin'
         const name = `${doc.vendor || 'receipt'}-${doc.date || 'unknown'}.${ext}`
@@ -539,7 +500,7 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
             {getVatTotal() > 0 && ` (מע״מ: ₪${getVatTotal().toLocaleString()})`}
           </span>
         )}
-        {Object.values(matchedDocs).some(d => d.driveFileId) && (
+        {Object.values(matchedDocs).flat().some(d => d.driveFileId) && (
           <button
             onClick={handleDownloadAll}
             disabled={downloading}
@@ -555,7 +516,56 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
             {downloading ? '...מוריד' : '📥 הורד הכל (ZIP)'}
           </button>
         )}
+        <button
+          onClick={() => setShowCashForm(f => !f)}
+          style={{
+            padding: '0.4rem 0.8rem',
+            borderRadius: '0.375rem',
+            border: '1px solid #e2e8f0',
+            background: showCashForm ? '#f1f5f9' : '#fff',
+            cursor: 'pointer',
+            fontSize: '0.85rem',
+          }}
+        >
+          + מזומן
+        </button>
       </div>
+
+      {showCashForm && (
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end', flexWrap: 'wrap', padding: '0.75rem', background: '#f8fafc', borderRadius: '0.5rem', border: '1px solid #e2e8f0' }}>
+          <div>
+            <label style={{ fontSize: '0.75rem', color: '#64748b', display: 'block' }}>נושא</label>
+            <select value={cashCategory} onChange={e => setCashCategory(e.target.value)}
+              style={{ padding: '0.5rem 1rem', borderRadius: '0.375rem', border: '1px solid #e2e8f0', fontSize: '0.85rem', direction: 'rtl', background: '#fff' }}>
+              <option value="">בחר</option>
+              {categories.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{ fontSize: '0.75rem', color: '#64748b', display: 'block' }}>קובץ</label>
+            <label className="file-picker" style={{ padding: '0.45rem 1rem', fontSize: '0.85rem', borderRadius: '0.375rem' }}>
+              <span>{cashFile ? cashFile.name : 'בחר קובץ'}</span>
+              <input type="file" accept=".pdf,.jpg,.jpeg,.png,.gif,.webp" onChange={e => setCashFile(e.target.files?.[0] || null)} />
+            </label>
+          </div>
+          <button
+            onClick={handleAddCash}
+            disabled={cashSaving || !cashFile}
+            style={{
+              padding: '0.5rem 1.25rem',
+              borderRadius: '0.375rem',
+              border: 'none',
+              background: cashSaving || !cashFile ? '#93c5fd' : '#3b82f6',
+              color: '#fff',
+              cursor: cashSaving ? 'wait' : 'pointer',
+              fontSize: '0.85rem',
+              fontWeight: 500,
+            }}
+          >
+            {cashSaving ? 'מחלץ נתונים...' : 'הוסף'}
+          </button>
+        </div>
+      )}
 
       {/* Transactions table */}
       {transactions.length === 0 ? (
@@ -573,37 +583,75 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'left' }}>סכום</th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'left' }}>מע״מ</th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'center', width: '80px' }}>קבלה</th>
+                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'center', width: '60px' }}></th>
               </tr>
             </thead>
             <tbody>
               {transactions.map((t) => {
                 const txId = t.id!
                 const status = matchStatus[txId] || 'idle'
-                const doc = matchedDocs[txId]
+                const docs = matchedDocs[txId]
+                const firstDoc = docs?.[0]
+                const vatTotal = docs?.reduce((s, d) => s + (d.vatAmount || 0), 0)
+                const isEditing = editingTxId === txId
                 return (
                   <tr key={txId} style={{ borderBottom: '1px solid #f1f5f9' }}>
                     <td style={{ padding: '0.6rem 0.5rem' }}>{t.date}</td>
                     <td style={{ padding: '0.6rem 0.5rem' }}>
-                      {doc?.description || doc?.vendor || t.merchant || t.description}
-                      <span style={{ display: 'block', fontSize: '0.75rem', color: '#94a3b8' }}>
-                        {t.description}
-                      </span>
+                      {isEditing ? (
+                        <input
+                          type="text"
+                          value={editValues.description}
+                          onChange={e => setEditValues(v => ({ ...v, description: e.target.value }))}
+                          style={{ padding: '0.3rem 0.5rem', borderRadius: '0.25rem', border: '1px solid #e2e8f0', fontSize: '0.85rem', width: '100%', direction: 'rtl', boxSizing: 'border-box' }}
+                          autoFocus
+                        />
+                      ) : (
+                        <>
+                          {firstDoc?.description || firstDoc?.vendor || t.merchant || t.description}
+                          <span style={{ display: 'block', fontSize: '0.75rem', color: '#94a3b8' }}>
+                            {t.description}
+                          </span>
+                        </>
+                      )}
                     </td>
-                    <td style={{ padding: '0.6rem 0.5rem', color: '#64748b' }}>{t.category}</td>
+                    <td style={{ padding: '0.6rem 0.5rem', color: '#64748b' }}>
+                      {isEditing ? (
+                        <select
+                          value={editValues.category}
+                          onChange={e => setEditValues(v => ({ ...v, category: e.target.value }))}
+                          style={{ padding: '0.3rem 0.5rem', borderRadius: '0.25rem', border: '1px solid #e2e8f0', fontSize: '0.85rem', direction: 'rtl' }}
+                        >
+                          <option value="">—</option>
+                          {categories.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                        </select>
+                      ) : t.category}
+                    </td>
                     <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', fontWeight: 500, color: '#dc2626' }}>
-                      ₪{Math.abs(t.amount).toLocaleString()}
+                      {isEditing && editingIsCash ? (
+                        <input
+                          type="number"
+                          value={editValues.amount || ''}
+                          onChange={e => setEditValues(v => ({ ...v, amount: e.target.value }))}
+                          style={{ padding: '0.3rem 0.5rem', borderRadius: '0.25rem', border: '1px solid #e2e8f0', fontSize: '0.85rem', width: '90px', textAlign: 'left' }}
+                        />
+                      ) : (
+                        <>₪{Math.abs(t.amount).toLocaleString()}</>
+                      )}
                     </td>
                     <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', color: '#64748b', fontSize: '0.85rem' }}>
-                      {doc?.vatAmount != null ? `₪${doc.vatAmount.toLocaleString()}` : ''}
+                      {vatTotal ? `₪${vatTotal.toLocaleString()}` : ''}
                     </td>
                     <td style={{ padding: '0.6rem 0.5rem', textAlign: 'center' }}>
                       {status === 'matched' ? (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}>
-                          {doc?.driveWebViewLink ? (
-                            <a href={doc.driveWebViewLink} target="_blank" rel="noopener noreferrer" title={doc?.vendor || 'פתח קבלה'} style={{ color: '#10b981', textDecoration: 'none', fontSize: '0.9rem' }}>📄</a>
-                          ) : (
-                            <span title={doc?.vendor || 'נמצאה קבלה'} style={{ color: '#10b981' }}>✓</span>
-                          )}
+                          {docs?.map((doc, i) => (
+                            doc.driveWebViewLink ? (
+                              <a key={i} href={doc.driveWebViewLink} target="_blank" rel="noopener noreferrer" title={doc.vendor || doc.fileName || 'פתח קבלה'} style={{ color: '#10b981', textDecoration: 'none', fontSize: '0.9rem' }}>📄</a>
+                            ) : (
+                              <span key={i} title={doc.vendor || 'נמצאה קבלה'} style={{ color: '#10b981' }}>✓</span>
+                            )
+                          ))}
                           <button
                             onClick={() => handleUnlink(txId)}
                             title="הסר קישור"
@@ -627,6 +675,7 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
                           style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: '0.85rem', padding: '0.1rem 0.3rem' }}
                         >שגיאה</button>
                       ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.2rem' }}>
                         <button
                           onClick={() => handleMatchReceipt(t)}
                           disabled={Object.values(matchStatus).includes('searching')}
@@ -642,6 +691,44 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
                         >
                           🔍
                         </button>
+                        <label
+                          title="העלה קבלה"
+                          style={{
+                            cursor: 'pointer',
+                            fontSize: '0.9rem',
+                            padding: '0.1rem 0.3rem',
+                            opacity: Object.values(matchStatus).includes('searching') ? 0.4 : 1,
+                          }}
+                        >
+                          📎
+                          <input
+                            type="file"
+                            accept=".pdf,.jpg,.jpeg,.png,.gif,.webp"
+                            multiple
+                            style={{ display: 'none' }}
+                            onChange={(e) => {
+                              const files = e.target.files
+                              if (files && files.length > 0) handleUploadReceipt(t, files)
+                              e.target.value = ''
+                            }}
+                          />
+                        </label>
+                        </div>
+                      )}
+                    </td>
+                    <td style={{ padding: '0.6rem 0.25rem', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                      {isEditing ? (
+                        <div style={{ display: 'flex', gap: '0.2rem', justifyContent: 'center' }}>
+                          <button onClick={saveEdit} title="שמור" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', color: '#10b981', padding: '0.1rem 0.25rem' }}>✓</button>
+                          <button onClick={cancelEdit} title="בטל" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', color: '#94a3b8', padding: '0.1rem 0.25rem' }}>✕</button>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', gap: '0.2rem', justifyContent: 'center' }}>
+                          <button onClick={() => startEdit(t)} title="ערוך" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', padding: '0.1rem 0.25rem', color: '#64748b' }}>✎</button>
+                          {t.type === 'cash' && (
+                            <button onClick={() => handleDeleteCash(t)} title="מחק" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', padding: '0.1rem 0.25rem', color: '#dc2626' }}>✕</button>
+                          )}
+                        </div>
                       )}
                     </td>
                   </tr>
