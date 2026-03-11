@@ -112,6 +112,7 @@ export interface Business {
   ypayClientId?: string
   ypayClientSecret?: string
   btlAdvancePayment?: number // מקדמות ביטוח לאומי — monthly advance set by BTL
+  taxOrder?: number // סדר לחישוב מס — 1=ראשון (מדרגות נמוכות), 2=שני, וכו׳
   pinnedToSidebar?: boolean
   userId?: string // Firebase UID of the owning user
   createdAt: string

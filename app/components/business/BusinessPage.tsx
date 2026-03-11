@@ -17,6 +17,29 @@ import OpenDocumentsTab from './OpenDocumentsTab'
 import BizSettingsTab from './BizSettingsTab'
 import ExpenseTab from './ExpenseTab'
 import ExtensionLink from './ExtensionLink'
+import FilesSubTab from './TaxFilesSubTab'
+import { getUser } from '@/app/stores/authStore'
+import { getHouseholdInfo } from '@/app/services/householdService'
+
+async function loadHouseholdMembers() {
+  const currentUser = getUser()
+  const members: { uid: string; label: string }[] = []
+  try {
+    const info = await getHouseholdInfo()
+    if (info.household) {
+      const names = (info.household as any).memberNames || {}
+      const emails = (info.household as any).memberEmails || {}
+      for (const uid of info.household.members) {
+        members.push({ uid, label: names[uid] || emails[uid] || uid })
+      }
+      return members
+    }
+  } catch { /* no household */ }
+  if (currentUser) {
+    members.push({ uid: currentUser.uid, label: currentUser.displayName || currentUser.email || currentUser.uid })
+  }
+  return members
+}
 const TABS: TabItem[] = [
   { id: 'income', label: 'הכנסות', icon: '💰' },
   { id: 'expenses', label: 'הוצאות', icon: '💸' },
@@ -35,6 +58,11 @@ const TEACHER_TABS: TabItem[] = [
   { id: 'students', label: 'תלמידים', icon: '👨‍🎓' },
   { id: 'accounting', label: 'חשבונאות חודשית', icon: '📊' },
   { id: 'projects', label: 'פרויקטים', icon: '📂' },
+  { id: 'settings', label: 'הגדרות', icon: '⚙️' },
+]
+
+const EMPLOYEE_TABS: TabItem[] = [
+  { id: 'payslips', label: 'תלושים', icon: '📄' },
   { id: 'settings', label: 'הגדרות', icon: '⚙️' },
 ]
 
@@ -92,7 +120,16 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
         </h1>
       </header>
 
-      {business.type === BusinessType.Teacher ? (
+      {business.type === BusinessType.Employee ? (
+        <SettingsTabs tabs={EMPLOYEE_TABS} defaultTab="payslips">
+          {(activeTab) => (
+            <>
+              {activeTab === 'payslips' && <FilesSubTab loadHouseholdMembers={loadHouseholdMembers} businessId={businessId} />}
+              {activeTab === 'settings' && <BizSettingsTab businessId={businessId} />}
+            </>
+          )}
+        </SettingsTabs>
+      ) : business.type === BusinessType.Teacher ? (
         <SettingsTabs tabs={TEACHER_TABS} defaultTab="students">
           {(activeTab) => (
             <>

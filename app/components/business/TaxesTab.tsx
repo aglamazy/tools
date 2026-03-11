@@ -7,18 +7,12 @@ import type { Category } from '@/app/types/category'
 import { getUser } from '@/app/stores/authStore'
 import { getHouseholdInfo } from '@/app/services/householdService'
 import { type TaxStatus, type TaxStatusInfo } from '@/app/components/TaxExemptBadge'
-import FilesSubTab from './TaxFilesSubTab'
 import RentalSummaryTable from './TaxRentalSummary'
+import { SelfEmployedBTLSection, SelfEmployedIncomeTaxSection, type BTLRates, type IncomeTaxStep } from './TaxSelfEmployedSections'
 import Modal from '@/app/components/Modal'
 import BusinessForm from '@/app/components/settings/BusinessForm'
 import type { BusinessUI } from '@/app/types/business'
 import { businessStore } from '@/app/stores/businessStore'
-
-type BTLRates = {
-  reduced: { nationalInsurance: number; healthInsurance: number }
-  regular: { nationalInsurance: number; healthInsurance: number }
-  threshold: number; maxIncome: number; minIncome: number
-}
 
 type HouseholdMember = { uid: string; label: string }
 
@@ -42,13 +36,6 @@ async function loadHouseholdMembers(): Promise<HouseholdMember[]> {
   }
   return members
 }
-
-type SubTab = 'files' | 'summary'
-
-const SUB_TABS: { id: SubTab; label: string }[] = [
-  { id: 'summary', label: 'סיכום שנתי' },
-  { id: 'files', label: 'קבצים' },
-]
 
 const TAX_STATUS_STYLES: Record<TaxStatus, { bg: string; border: string; text: string; label: string }> = {
   green: { bg: '#f0fdf4', border: '#86efac', text: '#16a34a', label: 'תקין — הכנסה מהשכרה בטווח הפטור' },
@@ -113,41 +100,9 @@ function TaxExemptStatusBanner({ info }: { info: TaxStatusInfo }) {
 }
 
 export default function TaxesTab() {
-  const [subTab, setSubTab] = useState<SubTab>('summary')
-
   return (
     <div>
-      {/* Sub-tab bar */}
-      <div style={{
-        display: 'flex',
-        gap: '0.5rem',
-        marginBottom: '1rem',
-        borderBottom: '1px solid #e2e8f0',
-        paddingBottom: '0.5rem',
-      }}>
-        {SUB_TABS.map(t => (
-          <button
-            key={t.id}
-            onClick={() => setSubTab(t.id)}
-            style={{
-              padding: '0.4rem 1rem',
-              fontSize: '0.85rem',
-              fontWeight: subTab === t.id ? 600 : 400,
-              background: subTab === t.id ? '#eff6ff' : 'transparent',
-              border: 'none',
-              borderBottom: subTab === t.id ? '2px solid #3b82f6' : '2px solid transparent',
-              cursor: 'pointer',
-              color: subTab === t.id ? '#1e40af' : '#64748b',
-              borderRadius: '0.25rem 0.25rem 0 0',
-            }}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {subTab === 'files' && <FilesSubTab loadHouseholdMembers={loadHouseholdMembers} />}
-      {subTab === 'summary' && <AnnualSummarySubTab />}
+      <AnnualSummarySubTab />
     </div>
   )
 }
@@ -172,6 +127,7 @@ function AnnualSummarySubTab() {
   const [loading, setLoading] = useState(true)
   const [taxExemptInfo, setTaxExemptInfo] = useState<TaxStatusInfo | null>(null)
   const [btlRates, setBtlRates] = useState<BTLRates | null>(null)
+  const [incomeTaxBrackets, setIncomeTaxBrackets] = useState<IncomeTaxStep[] | null>(null)
   const currentYear = new Date().getFullYear()
   const currentMonth = new Date().getMonth() // 0-based
 
@@ -241,6 +197,9 @@ function AnnualSummarySubTab() {
       if (!data) return
       const rates = (data.taxRates || {}) as Record<string, BTLRates>
       setBtlRates(rates[String(currentYear)] ?? null)
+      const brackets = (data.incomeTaxBrackets || {}) as Record<string, IncomeTaxStep[]>
+      const bracketYear = Object.keys(brackets).map(Number).filter(y => y <= currentYear).sort((a, b) => b - a)[0]
+      setIncomeTaxBrackets(bracketYear ? brackets[String(bracketYear)] : null)
       const tl = data.taxLimits as { amount: number; sinceYear: number } | null
       if (tl && currentYear >= tl.sinceYear) {
         setTaxExemptInfo(prev => prev ? { ...prev, limit: tl.amount } : prev)
@@ -353,6 +312,7 @@ function AnnualSummarySubTab() {
             currentMonth={currentMonth}
             taxExemptInfo={taxExemptInfo}
             btlRates={btlRates}
+            incomeTaxBrackets={incomeTaxBrackets}
           />
         )
       })()}
@@ -372,9 +332,10 @@ type SummarySectionsProps = {
   currentMonth: number
   taxExemptInfo: TaxStatusInfo | null
   btlRates: BTLRates | null
+  incomeTaxBrackets: IncomeTaxStep[] | null
 }
 
-function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBusinesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, taxExemptInfo, btlRates }: SummarySectionsProps) {
+function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBusinesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, taxExemptInfo, btlRates, incomeTaxBrackets }: SummarySectionsProps) {
   const [activeSection, setActiveSection] = useState(sections[0].id)
 
   return (
@@ -426,6 +387,19 @@ function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBu
               currentYear={currentYear}
               currentMonth={currentMonth}
               rates={btlRates}
+            />
+          )}
+          {incomeTaxBrackets && incomeTaxBrackets.length > 0 && (
+            <SelfEmployedIncomeTaxSection
+              businesses={nonRentalBusinesses}
+              transactions={transactions}
+              bizCategoryMap={bizCategoryMap}
+              expCategoryMap={expCategoryMap}
+              currentYear={currentYear}
+              currentMonth={currentMonth}
+              btlRates={btlRates}
+              brackets={incomeTaxBrackets}
+              salaryDocs={filteredDocs}
             />
           )}
         </>
@@ -593,6 +567,7 @@ function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, ex
     await businessStore.update(editingBiz.id, {
       name: editingBiz.name, type: editingBiz.type, vatType: editingBiz.vatType,
       isTaxFree: editingBiz.isTaxFree, btlAdvancePayment: editingBiz.btlAdvancePayment,
+      taxOrder: editingBiz.taxOrder,
     })
     setEditingBiz(null)
   }
@@ -627,7 +602,7 @@ function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, ex
               <th key={biz.id} style={{ ...tHeaderStyle, background: '#faf5ff', color: '#7c3aed' }}>
                 {biz.name}
                 <button
-                  onClick={() => setEditingBiz({ id: biz.id!, name: biz.name, type: biz.type, vatType: biz.vatType, isTaxFree: biz.isTaxFree, btlAdvancePayment: biz.btlAdvancePayment, pinnedToSidebar: biz.pinnedToSidebar })}
+                  onClick={() => setEditingBiz({ id: biz.id!, name: biz.name, type: biz.type, vatType: biz.vatType, isTaxFree: biz.isTaxFree, btlAdvancePayment: biz.btlAdvancePayment, taxOrder: biz.taxOrder, pinnedToSidebar: biz.pinnedToSidebar })}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', marginRight: '0.25rem' }}
                   title="הגדרות עסק"
                 >⚙️</button>
@@ -734,7 +709,7 @@ function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, ex
           </div>
         )
       })()}
-      <Modal isOpen={!!editingBiz} onClose={() => setEditingBiz(null)} maxWidth="400px">
+      <Modal isOpen={!!editingBiz} onClose={() => setEditingBiz(null)} maxWidth="500px">
         {editingBiz && (
           <BusinessForm business={editingBiz} onChange={setEditingBiz} onSave={handleBizSave} onCancel={() => setEditingBiz(null)} isNew={false} />
         )}
@@ -743,122 +718,4 @@ function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, ex
   )
 }
 
-// ---------------------------------------------------------------------------
-// Rental (השכרת דירה) Summary Table
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Self-Employed BTL Calculation Section (ביטוח לאומי + בריאות)
-// ---------------------------------------------------------------------------
-
-function computeMonthlyBTL(monthlyIncome: number, rates: BTLRates) {
-  const below = Math.min(monthlyIncome, rates.threshold)
-  const above = Math.max(0, Math.min(monthlyIncome, rates.maxIncome) - rates.threshold)
-  const nationalInsurance = below * (rates.reduced.nationalInsurance / 100) + above * (rates.regular.nationalInsurance / 100)
-  const healthInsurance = below * (rates.reduced.healthInsurance / 100) + above * (rates.regular.healthInsurance / 100)
-  return { nationalInsurance, healthInsurance, total: nationalInsurance + healthInsurance }
-}
-
-function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, rates }: {
-  businesses: Business[]; transactions: Transaction[]; bizCategoryMap: Map<number, string[]>
-  expCategoryMap: Map<number, string[]>; currentYear: number; currentMonth: number; rates: BTLRates
-}) {
-  const seBiz = businesses.filter(b => !b.isTaxFree)
-  if (seBiz.length === 0) return null
-
-  const seCatNames = new Set<string>()
-  const seExpCatNames = new Set<string>()
-  for (const biz of seBiz) {
-    (bizCategoryMap.get(biz.id!) || []).forEach(n => seCatNames.add(n))
-    ;(expCategoryMap.get(biz.id!) || []).forEach(n => seExpCatNames.add(n))
-  }
-
-  const monthlyAdvance = seBiz.reduce((s, b) => s + (b.btlAdvancePayment || 0), 0)
-  const hasAdvance = monthlyAdvance > 0
-
-  const monthlyRows = Array.from({ length: currentMonth + 1 }, (_, i) => {
-    const monthStr = `${String(i + 1).padStart(2, '0')}/${currentYear}`
-    const income = transactions.filter(t => t.month === monthStr && t.category && seCatNames.has(t.category)).reduce((s, t) => s + (t.amount || 0), 0)
-    const expenses = transactions.filter(t => t.month === monthStr && t.category && seExpCatNames.has(t.category)).reduce((s, t) => s + Math.abs(t.amount || 0), 0)
-    const netIncome = Math.max(0, income - expenses)
-    const btl = computeMonthlyBTL(netIncome, rates)
-    // Payment for month i is due on 1st of month i+1
-    const today = new Date()
-    const paymentDue = new Date(currentYear, i + 1, 1)
-    const paid = today >= paymentDue
-    const advance = paid ? monthlyAdvance : 0
-    const diff = paid && hasAdvance ? monthlyAdvance - btl.total : 0
-    return { month: i, label: HEBREW_MONTHS[i], income, expenses, netIncome, ...btl, advance, diff, paid }
-  })
-
-  const totals = {
-    income: monthlyRows.reduce((s, r) => s + r.income, 0),
-    expenses: monthlyRows.reduce((s, r) => s + r.expenses, 0),
-    netIncome: monthlyRows.reduce((s, r) => s + r.netIncome, 0),
-    nationalInsurance: monthlyRows.reduce((s, r) => s + r.nationalInsurance, 0),
-    healthInsurance: monthlyRows.reduce((s, r) => s + r.healthInsurance, 0),
-    total: monthlyRows.reduce((s, r) => s + r.total, 0),
-    advance: monthlyRows.reduce((s, r) => s + r.advance, 0),
-    diff: monthlyRows.reduce((s, r) => s + r.diff, 0),
-  }
-
-  const hStyle: React.CSSProperties = { ...cellStyle, fontWeight: 600, background: '#faf5ff', color: '#6b21a8', borderBottom: '2px solid #e2e8f0' }
-
-  return (
-    <div style={{ marginTop: '2rem', overflowX: 'auto' }}>
-      <h3 style={{ fontSize: '1rem', marginBottom: '0.5rem' }}>ביטוח לאומי ובריאות — עצמאי — {currentYear}</h3>
-      <p style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.75rem' }}>
-        חישוב מבוסס על הכנסה נטו (הכנסה פחות הוצאות) מעסקים: {seBiz.map(b => b.name).join(', ')}
-      </p>
-      <div style={{ marginBottom: '1rem', padding: '0.75rem 1rem', background: '#faf5ff', border: '1px solid #e9d5ff', borderRadius: '0.5rem', fontSize: '0.8rem', color: '#6b21a8', display: 'flex', gap: '1.5rem', flexWrap: 'wrap' }}>
-        <span>ביטוח לאומי: {rates.reduced.nationalInsurance}%/{rates.regular.nationalInsurance}% (סף: {fmt(rates.threshold)})</span>
-        <span>ביטוח בריאות: {rates.reduced.healthInsurance}%/{rates.regular.healthInsurance}% (סף: {fmt(rates.threshold)})</span>
-        <span>תקרה: {fmt(rates.maxIncome)}</span>
-      </div>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-        <thead>
-          <tr>
-            <th style={{ ...hStyle, textAlign: 'right', direction: 'rtl' }}>חודש</th>
-            <th style={hStyle}>הכנסה</th>
-            <th style={hStyle}>הוצאות</th>
-            <th style={hStyle}>הכנסה נטו</th>
-            <th style={hStyle}>ביטוח לאומי</th>
-            <th style={hStyle}>ביטוח בריאות</th>
-            <th style={{ ...hStyle, background: '#f3e8ff' }}>סה&quot;כ</th>
-            {hasAdvance && <th style={hStyle}>מקדמות</th>}
-            {hasAdvance && <th style={hStyle}>הפרש</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {monthlyRows.map(row => (
-            <tr key={row.month} style={{ borderBottom: '1px solid #f1f5f9' }}>
-              <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 500 }}>{row.label}</td>
-              <td style={cellStyle}>{row.income ? fmt(row.income) : '—'}</td>
-              <td style={{ ...cellStyle, color: '#dc2626' }}>{row.expenses ? fmt(row.expenses) : '—'}</td>
-              <td style={{ ...cellStyle, fontWeight: 500 }}>{row.netIncome ? fmt(row.netIncome) : '—'}</td>
-              <td style={cellStyle}>{row.nationalInsurance ? fmt(row.nationalInsurance) : '—'}</td>
-              <td style={cellStyle}>{row.healthInsurance ? fmt(row.healthInsurance) : '—'}</td>
-              <td style={{ ...cellStyle, background: '#faf5ff', fontWeight: 500 }}>{row.total ? fmt(row.total) : '—'}</td>
-              {hasAdvance && <td style={cellStyle}>{row.paid ? fmt(row.advance) : '—'}</td>}
-              {hasAdvance && <td style={{ ...cellStyle, fontWeight: 500, color: row.diff > 0 ? '#b45309' : row.diff < 0 ? '#dc2626' : undefined }}>{row.paid ? fmt(row.diff) : '—'}</td>}
-            </tr>
-          ))}
-        </tbody>
-        <tfoot>
-          <tr style={{ borderTop: '2px solid #e2e8f0', background: '#faf5ff' }}>
-            <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 700 }}>סה&quot;כ</td>
-            <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.income)}</td>
-            <td style={{ ...cellStyle, fontWeight: 700, color: '#dc2626' }}>{fmt(totals.expenses)}</td>
-            <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.netIncome)}</td>
-            <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.nationalInsurance)}</td>
-            <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.healthInsurance)}</td>
-            <td style={{ ...cellStyle, fontWeight: 700, background: '#f3e8ff', color: '#6b21a8' }}>{fmt(totals.total)}</td>
-            {hasAdvance && <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.advance)}</td>}
-            {hasAdvance && <td style={{ ...cellStyle, fontWeight: 700, color: totals.diff > 0 ? '#b45309' : totals.diff < 0 ? '#dc2626' : '#16a34a' }}>{fmt(totals.diff)}</td>}
-          </tr>
-        </tfoot>
-      </table>
-    </div>
-  )
-}
 

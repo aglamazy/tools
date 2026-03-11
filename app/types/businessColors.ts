@@ -24,6 +24,12 @@ export const BUSINESS_TYPE_CONFIG: Record<BusinessType, BusinessTypeConfig> = {
     badgeBackground: '#dcfce7', // green-100
     badgeColor: '#166534',      // green-800
   },
+  [BusinessType.Employee]: {
+    label: 'שכיר',
+    icon: '💼',
+    badgeBackground: '#e0e7ff', // indigo-100
+    badgeColor: '#3730a3',      // indigo-800
+  },
   [BusinessType.Teacher]: {
     label: 'מורה',
     icon: '👩‍🏫',

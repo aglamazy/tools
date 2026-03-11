@@ -83,6 +83,8 @@ export default function BusinessesTab() {
           type: trimmed.type,
           vatType: trimmed.vatType,
           isTaxFree: trimmed.isTaxFree,
+          btlAdvancePayment: trimmed.btlAdvancePayment,
+          taxOrder: trimmed.taxOrder,
           pinnedToSidebar: true,
         })
         if (id == null) {
@@ -96,6 +98,8 @@ export default function BusinessesTab() {
           type: trimmed.type,
           vatType: trimmed.vatType,
           isTaxFree: trimmed.isTaxFree,
+          btlAdvancePayment: trimmed.btlAdvancePayment,
+          taxOrder: trimmed.taxOrder,
         })
         if (!updated) {
           setAlertMessage('עדכון העסק נכשל')
@@ -196,7 +200,7 @@ export default function BusinessesTab() {
       <Modal
         isOpen={!!editingBusiness}
         onClose={() => setEditingBusiness(null)}
-        maxWidth="400px"
+        maxWidth="550px"
       >
         {editingBusiness && (
           <BusinessForm

@@ -1,6 +1,7 @@
 export enum BusinessType {
   Personal = 'personal',
   Business = 'business',
+  Employee = 'employee',
   Teacher = 'teacher',
   Artist = 'artist',
 }
@@ -15,6 +16,7 @@ export type Business = {
   vatType?: VatType
   isTaxFree?: boolean
   btlAdvancePayment?: number
+  taxOrder?: number // סדר לחישוב מס — 1=ראשון (מדרגות נמוכות), 2=שני, וכו׳
   userId?: string
   pinnedToSidebar?: boolean
   createdAt: string

@@ -67,6 +67,15 @@ export default function BusinessForm({ business, onChange, onSave, onCancel, isN
                 <input
                   type="radio"
                   name="businessType"
+                  checked={business.type === BusinessType.Employee}
+                  onChange={() => onChange({ ...business, type: BusinessType.Employee, vatType: undefined, isTaxFree: false })}
+                />
+                <span>💼 שכיר</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="businessType"
                   checked={business.type === BusinessType.Teacher}
                   onChange={() => onChange({ ...business, type: BusinessType.Teacher })}
                 />
@@ -83,7 +92,7 @@ export default function BusinessForm({ business, onChange, onSave, onCancel, isN
               </label>
             </div>
           </div>
-          {business.type !== BusinessType.Personal && (
+          {business.type !== BusinessType.Personal && business.type !== BusinessType.Employee && (
             <div>
               <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>
                 סוג עוסק (למע"מ) <span style={{ color: '#dc2626' }}>*</span>
@@ -122,7 +131,7 @@ export default function BusinessForm({ business, onChange, onSave, onCancel, isN
               </span>
             </div>
           )}
-          {business.type !== BusinessType.Personal && !business.isTaxFree && (
+          {business.type !== BusinessType.Personal && !business.isTaxFree && business.type !== BusinessType.Employee && (
             <div>
               <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>
                 מקדמות ביטוח לאומי (חודשי)
@@ -147,6 +156,33 @@ export default function BusinessForm({ business, onChange, onSave, onCancel, isN
               </span>
             </div>
           )}
+          {business.type !== BusinessType.Personal && !business.isTaxFree && (
+            <>
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>
+                  סדר לחישוב מס
+                </label>
+                <input
+                  type="number"
+                  value={business.taxOrder ?? ''}
+                  onChange={(e) => onChange({ ...business, taxOrder: e.target.value ? Number(e.target.value) : undefined })}
+                  style={{
+                    width: '100%',
+                    padding: '0.75rem',
+                    borderRadius: '0.5rem',
+                    border: '1px solid #e2e8f0',
+                    fontSize: '1rem',
+                    direction: 'ltr',
+                  }}
+                  placeholder="1, 2, 3..."
+                  min={1}
+                />
+                <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                  1 = ראשון (מדרגות נמוכות), 2 = שני (ממשיך מהראשון), וכו׳
+                </span>
+              </div>
+            </>
+          )}
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
             <button onClick={onCancel} className="upload-another-btn">
               ביטול
@@ -154,7 +190,7 @@ export default function BusinessForm({ business, onChange, onSave, onCancel, isN
             <button
               onClick={onSave}
               className="file-picker"
-              disabled={!business.name.trim() || (business.type !== BusinessType.Personal && !business.vatType)}
+              disabled={!business.name.trim() || (business.type !== BusinessType.Personal && business.type !== BusinessType.Employee && !business.vatType)}
             >
               שמור
             </button>
