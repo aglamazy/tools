@@ -26,6 +26,8 @@ export async function POST(req: NextRequest) {
       return handleMatch(body.transaction, body.candidates)
     } else if (action === 'extract') {
       return handleExtract(body.emailBody, body.transaction, body.claudeApiKey)
+    } else if (action === 'extract-pdf') {
+      return handleExtractPdf(body.pdfBase64, body.transaction, body.claudeApiKey)
     } else if (action === 'download-pdf') {
       return handleDownloadPdf(body.url)
     }
@@ -199,4 +201,74 @@ async function handleDownloadPdf(url: string) {
   }
 
   return NextResponse.json({ base64, contentType, fileName })
+}
+
+async function handleExtractPdf(pdfBase64: string, transaction: TransactionInfo, claudeApiKey?: string) {
+  if (!pdfBase64) {
+    return NextResponse.json({ error: 'Missing pdfBase64' }, { status: 400 })
+  }
+  if (!claudeApiKey) {
+    return NextResponse.json({ error: 'Missing Claude API key' }, { status: 400 })
+  }
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': claudeApiKey,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1024,
+      system: `אתה מומחה לחילוץ נתונים מקבלות וחשבוניות ישראליות.
+חלץ את השדות הבאים והחזר JSON בלבד, ללא markdown, ללא הסברים.
+
+השדות:
+- vendor: שם העסק / ספק
+- date: תאריך בפורמט DD/MM/YYYY
+- amount: סכום כולל (מספר)
+- vatAmount: סכום מע״מ אם מופיע (מספר או null)
+- description: תיאור קצר של הפריטים / השירות
+- invoiceNumber: מספר חשבונית / קבלה (מחרוזת או null)
+
+העסקה הבנקאית לעיון: ${transaction.description}, ₪${Math.abs(transaction.amount)}, ${transaction.date}
+
+החזר אך ורק JSON תקין.`,
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'document',
+            source: {
+              type: 'base64',
+              media_type: 'application/pdf',
+              data: pdfBase64,
+            },
+          },
+          {
+            type: 'text',
+            text: 'חלץ נתוני קבלה מהמסמך המצורף.',
+          },
+        ],
+      }],
+    }),
+  })
+
+  if (!response.ok) {
+    const errorBody = await response.text()
+    console.error('[match-receipt] Claude PDF extraction error:', response.status, errorBody)
+    return NextResponse.json({ error: `Claude API error: ${response.status}` }, { status: response.status })
+  }
+
+  const data = await response.json()
+  const text = data.content?.[0]?.text ?? ''
+
+  try {
+    const cleaned = text.replace(/```json?\s*/g, '').replace(/```/g, '').trim()
+    const parsed = JSON.parse(cleaned)
+    return NextResponse.json(parsed)
+  } catch {
+    return NextResponse.json({ error: 'Failed to parse extraction response', raw: text }, { status: 502 })
+  }
 }

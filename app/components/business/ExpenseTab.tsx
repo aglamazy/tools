@@ -318,9 +318,10 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
       const extracted = await extractRes.json()
       console.log('[ExpenseTab] Claude extraction:', extracted)
 
-      // If there's a document URL, download the PDF and upload to Drive
+      // If there's a document URL, download the PDF, extract from it, and upload to Drive
       let driveFileId: string | undefined
       let driveWebViewLink: string | undefined
+      let finalExtracted = extracted
       if (extracted.documentUrl) {
         console.log('[ExpenseTab] Downloading PDF from:', extracted.documentUrl)
         try {
@@ -331,28 +332,41 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
           })
           const dlData = await dlRes.json()
           if (dlData.base64) {
-            // Ensure Google Drive access
-            if (!(await hasGoogleAccess())) {
-              await requestGoogleAccess()
+            // Extract data from the PDF itself
+            if (claudeApiKey) {
+              console.log('[ExpenseTab] Extracting data from PDF...')
+              const pdfExtractRes = await fetch('/api/match-receipt', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'extract-pdf',
+                  pdfBase64: dlData.base64,
+                  transaction: { date: t.date, description: desc, amount: t.amount },
+                  claudeApiKey,
+                }),
+              })
+              const pdfExtracted = await pdfExtractRes.json()
+              console.log('[ExpenseTab] PDF extraction:', pdfExtracted)
+              if (!pdfExtracted.error) {
+                finalExtracted = { ...extracted, ...pdfExtracted, documentUrl: extracted.documentUrl }
+              }
             }
-            if (await hasGoogleAccess()) {
-              // Convert base64 to File for upload
-              const binary = atob(dlData.base64)
-              const bytes = new Uint8Array(binary.length)
-              for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-              const blob = new Blob([bytes], { type: dlData.contentType || 'application/pdf' })
-              const fileName = dlData.fileName || `receipt-${extracted.vendor || 'unknown'}.pdf`
-              const file = new File([blob], fileName, { type: blob.type })
-              console.log('[ExpenseTab] Uploading to Drive:', fileName)
-              const uploaded = await uploadExpenseDocument(file)
-              driveFileId = uploaded.fileId
-              driveWebViewLink = uploaded.webViewLink
-              console.log('[ExpenseTab] Uploaded to Drive:', driveWebViewLink)
-            }
+
+            // Upload to Drive
+            const binary = atob(dlData.base64)
+            const bytes = new Uint8Array(binary.length)
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+            const blob = new Blob([bytes], { type: dlData.contentType || 'application/pdf' })
+            const fileName = dlData.fileName || `receipt-${finalExtracted.vendor || 'unknown'}.pdf`
+            const file = new File([blob], fileName, { type: blob.type })
+            console.log('[ExpenseTab] Uploading to Drive:', fileName)
+            const uploaded = await uploadExpenseDocument(file)
+            driveFileId = uploaded.fileId
+            driveWebViewLink = uploaded.webViewLink
+            console.log('[ExpenseTab] Uploaded to Drive:', driveWebViewLink)
           }
         } catch (err) {
           console.warn('[ExpenseTab] PDF download/upload failed:', err)
-          // Fall back to raw URL
           driveWebViewLink = extracted.documentUrl
         }
       }
@@ -360,14 +374,14 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
       const doc: ExpenseDocument = {
         transactionId: t.id,
         fileName: driveFileId ? 'drive-upload' : 'gmail-match',
-        vendor: extracted.vendor,
-        amount: extracted.amount,
-        vatAmount: extracted.vatAmount,
-        date: extracted.date,
-        description: extracted.description,
+        vendor: finalExtracted.vendor,
+        amount: finalExtracted.amount,
+        vatAmount: finalExtracted.vatAmount,
+        date: finalExtracted.date,
+        description: finalExtracted.description,
         driveFileId,
         driveWebViewLink,
-        extractedData: extracted,
+        extractedData: finalExtracted,
         sourceType: 'gmail',
         gmailMessageId: matchedMessageId,
         uploadedAt: new Date().toISOString(),
