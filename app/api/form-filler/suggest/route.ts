@@ -31,6 +31,7 @@ interface FieldSuggestion {
   value: string
   source: 'profile' | 'ai' | 'none'
   siteSpecific?: boolean
+  translatedLabel?: string
 }
 
 const SYSTEM_PROMPT = `You are a form-filling assistant for musicians and artists.
@@ -69,11 +70,17 @@ Site-specific fields:
 - For site-specific fields, if matching profile data exists with matching site tags, use it. Otherwise return source "none".
 - The page URL/hostname will be provided so you know which site the form belongs to.
 
+Label translation:
+- For EVERY field, add a "translatedLabel" key with the label translated to English.
+- If the label is already in English, copy it as-is.
+- Keep it short and natural (e.g. "Vorname" → "First name", "תאריך לידה" → "Date of birth").
+- This helps the user understand foreign-language forms.
+
 Updated response format:
 {
-  "field_id_1": { "value": "suggested answer", "source": "profile" },
-  "field_id_2": { "value": "", "source": "none", "siteSpecific": true },
-  "field_id_3": { "value": "", "source": "none" }
+  "field_id_1": { "value": "suggested answer", "source": "profile", "translatedLabel": "First name" },
+  "field_id_2": { "value": "", "source": "none", "siteSpecific": true, "translatedLabel": "Account ID" },
+  "field_id_3": { "value": "", "source": "none", "translatedLabel": "Phone number" }
 }`
 
 export async function POST(request: NextRequest) {

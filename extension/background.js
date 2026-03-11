@@ -74,17 +74,28 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   // Sidebar requests field extraction → inject if needed, then forward to content script
   if (message.type === 'EXTRACT_FIELDS') {
     chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+      console.log('[BG] EXTRACT_FIELDS — active tab:', tabs[0]?.id, tabs[0]?.url?.substring(0, 60));
       if (!tabs[0]?.id) {
+        console.warn('[BG] No active tab');
         sendResponse({ fields: [] });
         return;
       }
       const tabId = tabs[0].id;
-      await injectContentScript(tabId);
+      try {
+        await injectContentScript(tabId);
+        console.log('[BG] Content script injected/confirmed for tab', tabId);
+      } catch (e) {
+        console.error('[BG] Injection failed:', e);
+        sendResponse({ fields: [] });
+        return;
+      }
       chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_FIELDS' }, (response) => {
         if (chrome.runtime.lastError) {
+          console.error('[BG] sendMessage error:', chrome.runtime.lastError.message);
           sendResponse({ fields: [] });
           return;
         }
+        console.log('[BG] Content script responded:', response?.fields?.length, 'fields');
         sendResponse(response || { fields: [] });
       });
     });

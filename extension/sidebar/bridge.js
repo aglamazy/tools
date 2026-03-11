@@ -9,7 +9,12 @@ window.addEventListener('message', (event) => {
   const msg = event.data;
   if (!msg || !msg.type) return;
 
+  console.log('[Bridge] → background:', msg.type);
   chrome.runtime.sendMessage(msg, (response) => {
+    if (chrome.runtime.lastError) {
+      console.error('[Bridge] runtime error:', chrome.runtime.lastError.message);
+    }
+    console.log('[Bridge] ← background:', msg.type, response ? `${response.fields?.length ?? '?'} fields` : 'no response');
     if (msg.type === 'EXTRACT_FIELDS') {
       iframe.contentWindow.postMessage({ type: 'FIELDS_RESULT', fields: response?.fields || [] }, '*');
     }

@@ -26,6 +26,7 @@ interface FormField {
 interface FieldSuggestion {
   value: string
   source: 'profile' | 'ai' | 'none'
+  translatedLabel?: string
 }
 
 export default function ExtensionSidebarPage() {
@@ -180,7 +181,7 @@ export default function ExtensionSidebarPage() {
           if (matchedOpt) answerToSave = matchedOpt.text
         }
         newFacts.push({
-          question: field.label || field.name || field.id,
+          question: suggestions[field.id]?.translatedLabel || field.label || field.name || field.id,
           answer: answerToSave,
           answerType: field.type === 'textarea' ? 'paragraph' : field.type === 'date' ? 'date' : 'word',
         })
@@ -345,7 +346,7 @@ export default function ExtensionSidebarPage() {
         </div>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.3rem', position: 'absolute', left: '50%', transform: 'translateX(-50%)' }}>
           <h2 style={{ fontSize: '1.25rem', color: '#3b82f6', margin: 0 }}>{branding.name}</h2>
-          <span style={{ fontSize: '0.55rem', color: '#94a3b8' }}>v1.0.6</span>
+          <span style={{ fontSize: '0.55rem', color: '#94a3b8' }}>v1.0.7</span>
         </div>
         <div style={{ width: '32px' }} />
       </header>
@@ -420,10 +421,17 @@ export default function ExtensionSidebarPage() {
             {fields.map((field, i) => (
               <div key={field.id + i} style={field.type === 'file' ? fileCardStyle : cardStyle}>
                 <div style={cardHeaderStyle}>
-                  <span style={{ fontSize: '0.8rem', fontWeight: 500, color: '#475569' }}>
-                    {field.label || field.name || field.id}
-                    {field.required && <span style={{ color: '#dc2626' }}> *</span>}
-                  </span>
+                  <div style={{ minWidth: 0 }}>
+                    <span style={{ fontSize: '0.8rem', fontWeight: 500, color: '#475569', direction: 'ltr', unicodeBidi: 'isolate' }}>
+                      {suggestions[field.id]?.translatedLabel || field.label || field.name || field.id}
+                      {field.required && <span style={{ color: '#dc2626' }}> *</span>}
+                    </span>
+                    {suggestions[field.id]?.translatedLabel && (field.label || field.name) && (
+                      <div style={{ fontSize: '0.65rem', color: '#94a3b8', marginTop: '0.1rem' }}>
+                        {field.label || field.name}
+                      </div>
+                    )}
+                  </div>
                   <span style={{ fontSize: '0.9rem', flexShrink: 0 }}>{statusEmoji(field.id)}</span>
                 </div>
 
