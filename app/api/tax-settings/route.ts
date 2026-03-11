@@ -20,6 +20,7 @@ export async function GET() {
     return NextResponse.json({
       taxLimits: data.taxLimits || null,
       taxRates: data.taxRates || {},
+      incomeTaxBrackets: data.incomeTaxBrackets || {},
     })
   } catch (error) {
     console.error('[TaxSettings] GET failed:', error)

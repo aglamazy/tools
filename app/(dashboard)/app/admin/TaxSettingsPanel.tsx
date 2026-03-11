@@ -8,7 +8,10 @@ type TaxRateYear = { reduced: TaxRateTier; regular: TaxRateTier; threshold: numb
 type TaxRateTierDraft = { nationalInsurance: string; healthInsurance: string }
 type TaxRateYearDraft = { reduced: TaxRateTierDraft; regular: TaxRateTierDraft; threshold: string; maxIncome: string; minIncome: string }
 
-export { type TaxRateYear, type TaxRateYearDraft }
+type IncomeTaxStep = { upTo: number; rate: number }
+type IncomeTaxStepDraft = { upTo: string; rate: string }
+
+export { type TaxRateYear, type TaxRateYearDraft, type IncomeTaxStep }
 
 const emptyRateYear: TaxRateYear = { reduced: { nationalInsurance: 0, healthInsurance: 0 }, regular: { nationalInsurance: 0, healthInsurance: 0 }, threshold: 0, maxIncome: 0, minIncome: 0 }
 const emptyRateYearDraft: TaxRateYearDraft = { reduced: { nationalInsurance: '', healthInsurance: '' }, regular: { nationalInsurance: '', healthInsurance: '' }, threshold: '', maxIncome: '', minIncome: '' }
@@ -36,6 +39,7 @@ function draftToRateYear(d: TaxRateYearDraft): TaxRateYear {
 const TAX_SUB_TABS = [
   { id: 'rental', label: 'השכרת דירה' },
   { id: 'selfEmployed', label: 'ביטוח לאומי עצמאי' },
+  { id: 'incomeTax', label: 'מס הכנסה' },
 ] as const
 
 type TaxSubTab = typeof TAX_SUB_TABS[number]['id']
@@ -48,6 +52,10 @@ export default function TaxSettingsPanel({
   taxRateDrafts, setTaxRateDrafts,
   taxRateSaved, setTaxRateSaved,
   newRateYear, setNewRateYear,
+  incomeTaxBrackets, setIncomeTaxBrackets,
+  incomeTaxDrafts, setIncomeTaxDrafts,
+  incomeTaxSaved, setIncomeTaxSaved,
+  newIncomeTaxYear, setNewIncomeTaxYear,
 }: {
   taxLimit: { amount: number; sinceYear: number } | null; setTaxLimit: React.Dispatch<React.SetStateAction<{ amount: number; sinceYear: number } | null>>
   taxLimitDraft: { amount: string; sinceYear: string }; setTaxLimitDraft: React.Dispatch<React.SetStateAction<{ amount: string; sinceYear: string }>>
@@ -56,6 +64,10 @@ export default function TaxSettingsPanel({
   taxRateDrafts: Record<string, TaxRateYearDraft>; setTaxRateDrafts: React.Dispatch<React.SetStateAction<Record<string, TaxRateYearDraft>>>
   taxRateSaved: string | null; setTaxRateSaved: React.Dispatch<React.SetStateAction<string | null>>
   newRateYear: string; setNewRateYear: React.Dispatch<React.SetStateAction<string>>
+  incomeTaxBrackets: Record<string, IncomeTaxStep[]>; setIncomeTaxBrackets: React.Dispatch<React.SetStateAction<Record<string, IncomeTaxStep[]>>>
+  incomeTaxDrafts: Record<string, IncomeTaxStepDraft[]>; setIncomeTaxDrafts: React.Dispatch<React.SetStateAction<Record<string, IncomeTaxStepDraft[]>>>
+  incomeTaxSaved: string | null; setIncomeTaxSaved: React.Dispatch<React.SetStateAction<string | null>>
+  newIncomeTaxYear: string; setNewIncomeTaxYear: React.Dispatch<React.SetStateAction<string>>
 }) {
   const [subTab, setSubTab] = useState<TaxSubTab>('rental')
 
@@ -97,6 +109,15 @@ export default function TaxSettingsPanel({
           taxRateDrafts={taxRateDrafts} setTaxRateDrafts={setTaxRateDrafts}
           taxRateSaved={taxRateSaved} setTaxRateSaved={setTaxRateSaved}
           newRateYear={newRateYear} setNewRateYear={setNewRateYear}
+        />
+      )}
+
+      {subTab === 'incomeTax' && (
+        <IncomeTaxSection
+          incomeTaxBrackets={incomeTaxBrackets} setIncomeTaxBrackets={setIncomeTaxBrackets}
+          incomeTaxDrafts={incomeTaxDrafts} setIncomeTaxDrafts={setIncomeTaxDrafts}
+          incomeTaxSaved={incomeTaxSaved} setIncomeTaxSaved={setIncomeTaxSaved}
+          newIncomeTaxYear={newIncomeTaxYear} setNewIncomeTaxYear={setNewIncomeTaxYear}
         />
       )}
     </div>
@@ -298,6 +319,175 @@ function SelfEmployedSection({
             }}
             disabled={!newRateYear || !/^\d{4}$/.test(newRateYear) || !!taxRates[newRateYear]}
             style={{ padding: '0.3rem 0.75rem', background: '#f0fdf4', color: '#16a34a', border: '1px solid #86efac', borderRadius: '0.375rem', fontSize: '0.85rem', cursor: 'pointer' }}
+          >
+            + הוסף שנה
+          </button>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Income Tax Section (מס הכנסה)
+// ---------------------------------------------------------------------------
+
+export function incomeTaxStepsToDraft(steps: IncomeTaxStep[]): IncomeTaxStepDraft[] {
+  return steps.map(s => ({ upTo: String(s.upTo), rate: String(s.rate) }))
+}
+
+function draftToIncomeTaxSteps(drafts: IncomeTaxStepDraft[]): IncomeTaxStep[] {
+  return drafts.map(d => ({ upTo: Number(d.upTo) || 0, rate: Number(d.rate) || 0 }))
+}
+
+const emptyIncomeTaxSteps: IncomeTaxStep[] = [
+  { upTo: 0, rate: 0 },
+]
+
+const emptyIncomeTaxStepsDraft: IncomeTaxStepDraft[] = [
+  { upTo: '', rate: '' },
+]
+
+function IncomeTaxSection({
+  incomeTaxBrackets, setIncomeTaxBrackets, incomeTaxDrafts, setIncomeTaxDrafts, incomeTaxSaved, setIncomeTaxSaved, newIncomeTaxYear, setNewIncomeTaxYear,
+}: {
+  incomeTaxBrackets: Record<string, IncomeTaxStep[]>; setIncomeTaxBrackets: React.Dispatch<React.SetStateAction<Record<string, IncomeTaxStep[]>>>
+  incomeTaxDrafts: Record<string, IncomeTaxStepDraft[]>; setIncomeTaxDrafts: React.Dispatch<React.SetStateAction<Record<string, IncomeTaxStepDraft[]>>>
+  incomeTaxSaved: string | null; setIncomeTaxSaved: React.Dispatch<React.SetStateAction<string | null>>
+  newIncomeTaxYear: string; setNewIncomeTaxYear: React.Dispatch<React.SetStateAction<string>>
+}) {
+  const inp = (value: string, onChange: (v: string) => void, width = '90px') => (
+    <input type="number" step="0.01" dir="ltr" value={value} onChange={(e) => onChange(e.target.value)}
+      style={{ width, padding: '0.25rem 0.4rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.85rem', textAlign: 'center' as const }} />
+  )
+
+  const thStyle: React.CSSProperties = { padding: '0.5rem 0.6rem', fontSize: '0.8rem', color: '#1e5a8a', fontWeight: 600, background: '#e0f0ff', border: '1px solid #c4dff0', textAlign: 'center' }
+  const tdStyle: React.CSSProperties = { padding: '0.4rem 0.5rem', border: '1px solid #e2e8f0', textAlign: 'center' }
+
+  return (
+    <section>
+      <h2 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.25rem', color: '#b45309' }}>מדרגות מס הכנסה — שנתי</h2>
+      <a href="https://www.gov.il/BlobFolder/generalpage/income-tax-annual-deductions-booklet/he/generalInformation_income-tax-yearly-deductions-booklet_yearly-deductions-booklet-2025.pdf" target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8rem', color: '#6b7280', display: 'inline-block' }}>חוברת ניכויים שנתית — לפרטים מלאים</a>
+      <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.75rem' }}>סכומים שנתיים בש&quot;ח. המדרגה האחרונה תחול על כל הכנסה מעל הסכום שצוין.</p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+        {Object.keys(incomeTaxBrackets).sort().reverse().map((year) => {
+          const drafts = incomeTaxDrafts[year]
+          if (!drafts) return null
+          const orig = incomeTaxBrackets[year]
+          const unchanged = orig && JSON.stringify(draftToIncomeTaxSteps(drafts)) === JSON.stringify(orig)
+
+          return (
+            <div key={year} style={{ padding: '0.75rem', border: '1px solid #e2e8f0', borderRadius: '0.5rem', background: '#fafafa' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                <span style={{ fontSize: '0.95rem', fontWeight: 600 }}>{year}</span>
+                <button
+                  onClick={async () => {
+                    const steps = draftToIncomeTaxSteps(drafts)
+                    const token = await getIdToken()
+                    if (!token) return
+                    const updated = { ...incomeTaxBrackets, [year]: steps }
+                    const res = await fetch('/api/admin/tax-settings', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                      body: JSON.stringify({ incomeTaxBrackets: updated }),
+                    })
+                    if (res.ok) {
+                      setIncomeTaxBrackets(updated)
+                      setIncomeTaxSaved(year)
+                      setTimeout(() => setIncomeTaxSaved(null), 2000)
+                    }
+                  }}
+                  disabled={!!unchanged}
+                  style={{
+                    padding: '0.25rem 0.75rem',
+                    background: incomeTaxSaved === year ? '#10b981' : unchanged ? '#e5e7eb' : '#2563eb',
+                    color: unchanged ? '#9ca3af' : '#fff',
+                    border: 'none', borderRadius: '0.375rem', fontSize: '0.8rem', cursor: 'pointer',
+                  }}
+                >
+                  {incomeTaxSaved === year ? '✓' : 'שמור'}
+                </button>
+              </div>
+
+              <div style={{ overflowX: 'auto' }}>
+                <table dir="rtl" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                  <thead>
+                    <tr>
+                      <th style={thStyle}>מדרגה</th>
+                      <th style={thStyle}>הכנסה שנתית עד (₪)</th>
+                      <th style={thStyle}>שיעור מס (%)</th>
+                      <th style={{ ...thStyle, width: '50px' }}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {drafts.map((step, idx) => (
+                      <tr key={idx}>
+                        <td style={tdStyle}>{idx + 1}</td>
+                        <td style={tdStyle}>
+                          {idx === drafts.length - 1
+                            ? <span style={{ fontSize: '0.8rem', color: '#64748b' }}>ומעלה</span>
+                            : inp(step.upTo, v => setIncomeTaxDrafts(prev => {
+                                const arr = [...(prev[year] || [])]
+                                arr[idx] = { ...arr[idx], upTo: v }
+                                return { ...prev, [year]: arr }
+                              }), '120px')
+                          }
+                        </td>
+                        <td style={tdStyle}>
+                          {inp(step.rate, v => setIncomeTaxDrafts(prev => {
+                            const arr = [...(prev[year] || [])]
+                            arr[idx] = { ...arr[idx], rate: v }
+                            return { ...prev, [year]: arr }
+                          }), '80px')}%
+                        </td>
+                        <td style={tdStyle}>
+                          {drafts.length > 1 && (
+                            <button
+                              onClick={() => setIncomeTaxDrafts(prev => {
+                                const arr = [...(prev[year] || [])]
+                                arr.splice(idx, 1)
+                                return { ...prev, [year]: arr }
+                              })}
+                              style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: '0.9rem' }}
+                              title="הסר מדרגה"
+                            >✕</button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <button
+                onClick={() => setIncomeTaxDrafts(prev => {
+                  const arr = [...(prev[year] || [])]
+                  arr.push({ upTo: '', rate: '' })
+                  return { ...prev, [year]: arr }
+                })}
+                style={{ marginTop: '0.5rem', padding: '0.2rem 0.6rem', background: '#fff7ed', color: '#b45309', border: '1px solid #fed7aa', borderRadius: '0.375rem', fontSize: '0.8rem', cursor: 'pointer' }}
+              >
+                + הוסף מדרגה
+              </button>
+            </div>
+          )
+        })}
+
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <input type="number" dir="ltr" placeholder="שנה" value={newIncomeTaxYear}
+            onChange={(e) => setNewIncomeTaxYear(e.target.value)}
+            style={{ width: '100px', padding: '0.3rem 0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.9rem' }}
+          />
+          <button
+            onClick={() => {
+              const y = newIncomeTaxYear.trim()
+              if (y && /^\d{4}$/.test(y) && !incomeTaxBrackets[y]) {
+                setIncomeTaxBrackets(prev => ({ ...prev, [y]: emptyIncomeTaxSteps }))
+                setIncomeTaxDrafts(prev => ({ ...prev, [y]: emptyIncomeTaxStepsDraft }))
+                setNewIncomeTaxYear('')
+              }
+            }}
+            disabled={!newIncomeTaxYear || !/^\d{4}$/.test(newIncomeTaxYear) || !!incomeTaxBrackets[newIncomeTaxYear]}
+            style={{ padding: '0.3rem 0.75rem', background: '#fff7ed', color: '#b45309', border: '1px solid #fed7aa', borderRadius: '0.375rem', fontSize: '0.85rem', cursor: 'pointer' }}
           >
             + הוסף שנה
           </button>

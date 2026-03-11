@@ -24,6 +24,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       taxLimits: data.taxLimits || null,
       taxRates: data.taxRates || {},
+      incomeTaxBrackets: data.incomeTaxBrackets || {},
     })
   } catch (error) {
     console.error('[Admin TaxSettings] GET failed:', error)
@@ -38,18 +39,20 @@ export async function POST(request: NextRequest) {
   try {
     const firestore = getAdminFirestore()
     const body = await request.json()
-    const { taxLimits, taxRates } = body as {
+    const { taxLimits, taxRates, incomeTaxBrackets } = body as {
       taxLimits?: { amount: number; sinceYear: number }
       taxRates?: Record<string, { reduced: { nationalInsurance: number; healthInsurance: number }; regular: { nationalInsurance: number; healthInsurance: number }; threshold: number; maxIncome: number; minIncome: number }>
+      incomeTaxBrackets?: Record<string, { upTo: number; rate: number }[]>
     }
 
-    if (!taxLimits && !taxRates) {
+    if (!taxLimits && !taxRates && !incomeTaxBrackets) {
       return NextResponse.json({ success: false, error: 'חסרים נתונים' }, { status: 400 })
     }
 
     const update: Record<string, unknown> = { updatedAt: new Date().toISOString() }
     if (taxLimits) update.taxLimits = taxLimits
     if (taxRates) update.taxRates = taxRates
+    if (incomeTaxBrackets) update.incomeTaxBrackets = incomeTaxBrackets
 
     await firestore.collection('platformSettings').doc('taxConfig').set(update, { merge: true })
 

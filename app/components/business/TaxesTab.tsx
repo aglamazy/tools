@@ -20,6 +20,8 @@ type BTLRates = {
   threshold: number; maxIncome: number; minIncome: number
 }
 
+type IncomeTaxStep = { upTo: number; rate: number }
+
 type HouseholdMember = { uid: string; label: string }
 
 async function loadHouseholdMembers(): Promise<HouseholdMember[]> {
@@ -172,6 +174,7 @@ function AnnualSummarySubTab() {
   const [loading, setLoading] = useState(true)
   const [taxExemptInfo, setTaxExemptInfo] = useState<TaxStatusInfo | null>(null)
   const [btlRates, setBtlRates] = useState<BTLRates | null>(null)
+  const [incomeTaxBrackets, setIncomeTaxBrackets] = useState<IncomeTaxStep[] | null>(null)
   const currentYear = new Date().getFullYear()
   const currentMonth = new Date().getMonth() // 0-based
 
@@ -241,6 +244,8 @@ function AnnualSummarySubTab() {
       if (!data) return
       const rates = (data.taxRates || {}) as Record<string, BTLRates>
       setBtlRates(rates[String(currentYear)] ?? null)
+      const brackets = (data.incomeTaxBrackets || {}) as Record<string, IncomeTaxStep[]>
+      setIncomeTaxBrackets(brackets[String(currentYear)] ?? null)
       const tl = data.taxLimits as { amount: number; sinceYear: number } | null
       if (tl && currentYear >= tl.sinceYear) {
         setTaxExemptInfo(prev => prev ? { ...prev, limit: tl.amount } : prev)
@@ -353,6 +358,7 @@ function AnnualSummarySubTab() {
             currentMonth={currentMonth}
             taxExemptInfo={taxExemptInfo}
             btlRates={btlRates}
+            incomeTaxBrackets={incomeTaxBrackets}
           />
         )
       })()}
@@ -372,9 +378,10 @@ type SummarySectionsProps = {
   currentMonth: number
   taxExemptInfo: TaxStatusInfo | null
   btlRates: BTLRates | null
+  incomeTaxBrackets: IncomeTaxStep[] | null
 }
 
-function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBusinesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, taxExemptInfo, btlRates }: SummarySectionsProps) {
+function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBusinesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, taxExemptInfo, btlRates, incomeTaxBrackets }: SummarySectionsProps) {
   const [activeSection, setActiveSection] = useState(sections[0].id)
 
   return (
@@ -426,6 +433,18 @@ function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBu
               currentYear={currentYear}
               currentMonth={currentMonth}
               rates={btlRates}
+            />
+          )}
+          {incomeTaxBrackets && incomeTaxBrackets.length > 0 && (
+            <SelfEmployedIncomeTaxSection
+              businesses={nonRentalBusinesses}
+              transactions={transactions}
+              bizCategoryMap={bizCategoryMap}
+              expCategoryMap={expCategoryMap}
+              currentYear={currentYear}
+              currentMonth={currentMonth}
+              btlRates={btlRates}
+              brackets={incomeTaxBrackets}
             />
           )}
         </>
@@ -593,6 +612,7 @@ function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, ex
     await businessStore.update(editingBiz.id, {
       name: editingBiz.name, type: editingBiz.type, vatType: editingBiz.vatType,
       isTaxFree: editingBiz.isTaxFree, btlAdvancePayment: editingBiz.btlAdvancePayment,
+      marginalTaxRate: editingBiz.marginalTaxRate,
     })
     setEditingBiz(null)
   }
@@ -627,7 +647,7 @@ function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, ex
               <th key={biz.id} style={{ ...tHeaderStyle, background: '#faf5ff', color: '#7c3aed' }}>
                 {biz.name}
                 <button
-                  onClick={() => setEditingBiz({ id: biz.id!, name: biz.name, type: biz.type, vatType: biz.vatType, isTaxFree: biz.isTaxFree, btlAdvancePayment: biz.btlAdvancePayment, pinnedToSidebar: biz.pinnedToSidebar })}
+                  onClick={() => setEditingBiz({ id: biz.id!, name: biz.name, type: biz.type, vatType: biz.vatType, isTaxFree: biz.isTaxFree, btlAdvancePayment: biz.btlAdvancePayment, marginalTaxRate: biz.marginalTaxRate, pinnedToSidebar: biz.pinnedToSidebar })}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', marginRight: '0.25rem' }}
                   title="הגדרות עסק"
                 >⚙️</button>
@@ -855,6 +875,172 @@ function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMap, expC
             <td style={{ ...cellStyle, fontWeight: 700, background: '#f3e8ff', color: '#6b21a8' }}>{fmt(totals.total)}</td>
             {hasAdvance && <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.advance)}</td>}
             {hasAdvance && <td style={{ ...cellStyle, fontWeight: 700, color: totals.diff > 0 ? '#b45309' : totals.diff < 0 ? '#dc2626' : '#16a34a' }}>{fmt(totals.diff)}</td>}
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Self-Employed Income Tax Calculation Section (מס הכנסה — עצמאי)
+// ---------------------------------------------------------------------------
+
+/**
+ * Calculate income tax using progressive brackets.
+ * `startRate` — if set, skip brackets below this rate (for marginal tax, e.g. שכיר+עצמאי).
+ * Returns the annual tax amount.
+ */
+function computeAnnualIncomeTax(annualTaxableIncome: number, brackets: IncomeTaxStep[], startRate?: number): number {
+  if (annualTaxableIncome <= 0 || brackets.length === 0) return 0
+
+  // Sort brackets by upTo ascending
+  const sorted = [...brackets].sort((a, b) => a.upTo - b.upTo)
+  let tax = 0
+  let prev = 0
+  let started = !startRate // if no startRate, start from beginning
+
+  for (let i = 0; i < sorted.length; i++) {
+    const step = sorted[i]
+    const isLast = i === sorted.length - 1
+    const upper = isLast ? Infinity : step.upTo
+
+    if (!started) {
+      if (step.rate >= startRate!) {
+        started = true
+      } else {
+        prev = step.upTo
+        continue
+      }
+    }
+
+    const bracketIncome = Math.min(annualTaxableIncome, upper) - prev
+    if (bracketIncome > 0) {
+      tax += bracketIncome * (step.rate / 100)
+    }
+
+    if (annualTaxableIncome <= upper) break
+    prev = isLast ? prev : step.upTo
+  }
+
+  return tax
+}
+
+function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, btlRates, brackets }: {
+  businesses: Business[]; transactions: Transaction[]; bizCategoryMap: Map<number, string[]>
+  expCategoryMap: Map<number, string[]>; currentYear: number; currentMonth: number; btlRates: BTLRates | null; brackets: IncomeTaxStep[]
+}) {
+  const seBiz = businesses.filter(b => !b.isTaxFree)
+  if (seBiz.length === 0) return null
+
+  const seCatNames = new Set<string>()
+  const seExpCatNames = new Set<string>()
+  for (const biz of seBiz) {
+    (bizCategoryMap.get(biz.id!) || []).forEach(n => seCatNames.add(n))
+    ;(expCategoryMap.get(biz.id!) || []).forEach(n => seExpCatNames.add(n))
+  }
+
+  // Gather marginal tax rate from any business that has it set
+  const marginalRate = seBiz.find(b => b.marginalTaxRate)?.marginalTaxRate
+
+  const BTL_DEDUCTION_RATE = 0.52 // 52% of BTL paid is deductible
+
+  const monthlyRows = Array.from({ length: currentMonth + 1 }, (_, i) => {
+    const monthStr = `${String(i + 1).padStart(2, '0')}/${currentYear}`
+    const income = transactions.filter(t => t.month === monthStr && t.category && seCatNames.has(t.category)).reduce((s, t) => s + (t.amount || 0), 0)
+    const expenses = transactions.filter(t => t.month === monthStr && t.category && seExpCatNames.has(t.category)).reduce((s, t) => s + Math.abs(t.amount || 0), 0)
+    const netIncome = income - expenses
+
+    // BTL paid (use advance or calculated)
+    let btlPaid = 0
+    if (btlRates) {
+      const monthlyNetForBtl = Math.max(0, netIncome)
+      const btl = computeMonthlyBTL(monthlyNetForBtl, btlRates)
+      btlPaid = btl.total
+    }
+    const monthlyAdvance = seBiz.reduce((s, b) => s + (b.btlAdvancePayment || 0), 0)
+    if (monthlyAdvance > 0) btlPaid = monthlyAdvance
+
+    const btlDeduction = btlPaid * BTL_DEDUCTION_RATE
+    const taxBase = Math.max(0, netIncome - btlDeduction)
+
+    return { month: i, label: HEBREW_MONTHS[i], income, expenses, netIncome, btlPaid, btlDeduction, taxBase }
+  })
+
+  // Annual totals for tax calculation
+  const annualTotals = {
+    income: monthlyRows.reduce((s, r) => s + r.income, 0),
+    expenses: monthlyRows.reduce((s, r) => s + r.expenses, 0),
+    netIncome: monthlyRows.reduce((s, r) => s + r.netIncome, 0),
+    btlPaid: monthlyRows.reduce((s, r) => s + r.btlPaid, 0),
+    btlDeduction: monthlyRows.reduce((s, r) => s + r.btlDeduction, 0),
+    taxBase: monthlyRows.reduce((s, r) => s + r.taxBase, 0),
+  }
+
+  // Annualize tax base for bracket computation, then get monthly share
+  const annualTax = computeAnnualIncomeTax(annualTotals.taxBase, brackets, marginalRate)
+  const monthsElapsed = currentMonth + 1
+  const monthlyTaxEstimate = monthsElapsed > 0 ? annualTax / monthsElapsed : 0
+
+  const hStyle: React.CSSProperties = { ...cellStyle, fontWeight: 600, background: '#fff7ed', color: '#92400e', borderBottom: '2px solid #e2e8f0' }
+
+  return (
+    <div style={{ marginTop: '2rem', overflowX: 'auto' }}>
+      <h3 style={{ fontSize: '1rem', marginBottom: '0.5rem' }}>מס הכנסה — עצמאי — {currentYear}</h3>
+      <p style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.75rem' }}>
+        חישוב מבוסס על הכנסה נטו פחות 52% מביטוח לאומי ששולם. עסקים: {seBiz.map(b => b.name).join(', ')}
+        {marginalRate ? ` | מס שולי: ${marginalRate}% (מדרגת התחלה)` : ''}
+      </p>
+
+      {/* Brackets info */}
+      <div style={{ marginBottom: '1rem', padding: '0.75rem 1rem', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: '0.5rem', fontSize: '0.8rem', color: '#92400e' }}>
+        <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>מדרגות מס {currentYear}:</div>
+        <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+          {[...brackets].sort((a, b) => a.upTo - b.upTo).map((step, idx, arr) => (
+            <span key={idx}>
+              {idx === arr.length - 1
+                ? `מעל ${(arr[idx - 1]?.upTo || 0).toLocaleString('he-IL')}₪`
+                : `עד ${step.upTo.toLocaleString('he-IL')}₪`
+              }: {step.rate}%
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+        <thead>
+          <tr>
+            <th style={{ ...hStyle, textAlign: 'right', direction: 'rtl' }}>חודש</th>
+            <th style={hStyle}>הכנסה נטו</th>
+            <th style={hStyle}>בל&quot;ל ששולם</th>
+            <th style={hStyle}>ניכוי 52%</th>
+            <th style={{ ...hStyle, background: '#fef3c7' }}>בסיס לתשלום</th>
+            <th style={{ ...hStyle, background: '#fef3c7' }}>מס הכנסה (הערכה)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {monthlyRows.map(row => {
+            const monthlyTax = row.taxBase > 0 ? monthlyTaxEstimate : 0
+            return (
+              <tr key={row.month} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 500 }}>{row.label}</td>
+                <td style={cellStyle}>{row.netIncome ? fmt(row.netIncome) : '—'}</td>
+                <td style={cellStyle}>{row.btlPaid ? fmt(row.btlPaid) : '—'}</td>
+                <td style={{ ...cellStyle, color: '#16a34a' }}>{row.btlDeduction ? fmt(row.btlDeduction) : '—'}</td>
+                <td style={{ ...cellStyle, background: '#fffbeb', fontWeight: 500 }}>{row.taxBase ? fmt(row.taxBase) : '—'}</td>
+                <td style={{ ...cellStyle, background: '#fffbeb', fontWeight: 500, color: '#b45309' }}>{monthlyTax ? fmt(monthlyTax) : '—'}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+        <tfoot>
+          <tr style={{ borderTop: '2px solid #e2e8f0', background: '#fff7ed' }}>
+            <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 700 }}>סה&quot;כ</td>
+            <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(annualTotals.netIncome)}</td>
+            <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(annualTotals.btlPaid)}</td>
+            <td style={{ ...cellStyle, fontWeight: 700, color: '#16a34a' }}>{fmt(annualTotals.btlDeduction)}</td>
+            <td style={{ ...cellStyle, fontWeight: 700, background: '#fef3c7' }}>{fmt(annualTotals.taxBase)}</td>
+            <td style={{ ...cellStyle, fontWeight: 700, background: '#fef3c7', color: '#b45309' }}>{fmt(annualTax)}</td>
           </tr>
         </tfoot>
       </table>

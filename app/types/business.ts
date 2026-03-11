@@ -15,6 +15,7 @@ export type Business = {
   vatType?: VatType
   isTaxFree?: boolean
   btlAdvancePayment?: number
+  marginalTaxRate?: number // מס שולי — starting tax bracket % for people with additional income
   userId?: string
   pinnedToSidebar?: boolean
   createdAt: string

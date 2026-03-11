@@ -112,6 +112,7 @@ export interface Business {
   ypayClientId?: string
   ypayClientSecret?: string
   btlAdvancePayment?: number // מקדמות ביטוח לאומי — monthly advance set by BTL
+  marginalTaxRate?: number // מס שולי — starting tax bracket % for people with additional income
   pinnedToSidebar?: boolean
   userId?: string // Firebase UID of the owning user
   createdAt: string

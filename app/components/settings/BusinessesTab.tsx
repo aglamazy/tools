@@ -83,6 +83,8 @@ export default function BusinessesTab() {
           type: trimmed.type,
           vatType: trimmed.vatType,
           isTaxFree: trimmed.isTaxFree,
+          btlAdvancePayment: trimmed.btlAdvancePayment,
+          marginalTaxRate: trimmed.marginalTaxRate,
           pinnedToSidebar: true,
         })
         if (id == null) {
@@ -96,6 +98,8 @@ export default function BusinessesTab() {
           type: trimmed.type,
           vatType: trimmed.vatType,
           isTaxFree: trimmed.isTaxFree,
+          btlAdvancePayment: trimmed.btlAdvancePayment,
+          marginalTaxRate: trimmed.marginalTaxRate,
         })
         if (!updated) {
           setAlertMessage('עדכון העסק נכשל')

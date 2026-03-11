@@ -7,7 +7,7 @@ import { getIdToken } from '@/app/services/firebaseAuthService'
 import { subscribeToAuth } from '@/app/stores/authStore'
 import SettingsTabs from '@/app/components/settings/SettingsTabs'
 import RichEditor from '@/app/components/ui/RichEditor'
-import TaxSettingsPanel, { type TaxRateYear, type TaxRateYearDraft, rateYearToDraft } from './TaxSettingsPanel'
+import TaxSettingsPanel, { type TaxRateYear, type TaxRateYearDraft, type IncomeTaxStep, rateYearToDraft, incomeTaxStepsToDraft } from './TaxSettingsPanel'
 
 type Member = {
   uid: string
@@ -74,6 +74,11 @@ export default function AdminPage() {
   const [taxRateDrafts, setTaxRateDrafts] = useState<Record<string, TaxRateYearDraft>>({})
   const [taxRateSaved, setTaxRateSaved] = useState<string | null>(null)
   const [newRateYear, setNewRateYear] = useState('')
+
+  const [incomeTaxBrackets, setIncomeTaxBrackets] = useState<Record<string, IncomeTaxStep[]>>({})
+  const [incomeTaxDrafts, setIncomeTaxDrafts] = useState<Record<string, { upTo: string; rate: string }[]>>({})
+  const [incomeTaxSaved, setIncomeTaxSaved] = useState<string | null>(null)
+  const [newIncomeTaxYear, setNewIncomeTaxYear] = useState('')
 
   const [tcVersions, setTcVersions] = useState<{ version: string; text: string }[]>([])
   const [tcDraft, setTcDraft] = useState('')
@@ -178,6 +183,14 @@ export default function AdminPage() {
             rateDrafts[y] = rateYearToDraft(v)
           }
           setTaxRateDrafts(rateDrafts)
+
+          const itBrackets = (data.incomeTaxBrackets || {}) as Record<string, IncomeTaxStep[]>
+          setIncomeTaxBrackets(itBrackets)
+          const itDrafts: Record<string, { upTo: string; rate: string }[]> = {}
+          for (const [y, v] of Object.entries(itBrackets)) {
+            itDrafts[y] = incomeTaxStepsToDraft(v)
+          }
+          setIncomeTaxDrafts(itDrafts)
         } catch (err) {
           console.error('Failed to load tax settings:', err)
         }
@@ -666,6 +679,10 @@ export default function AdminPage() {
                   taxRateDrafts={taxRateDrafts} setTaxRateDrafts={setTaxRateDrafts}
                   taxRateSaved={taxRateSaved} setTaxRateSaved={setTaxRateSaved}
                   newRateYear={newRateYear} setNewRateYear={setNewRateYear}
+                  incomeTaxBrackets={incomeTaxBrackets} setIncomeTaxBrackets={setIncomeTaxBrackets}
+                  incomeTaxDrafts={incomeTaxDrafts} setIncomeTaxDrafts={setIncomeTaxDrafts}
+                  incomeTaxSaved={incomeTaxSaved} setIncomeTaxSaved={setIncomeTaxSaved}
+                  newIncomeTaxYear={newIncomeTaxYear} setNewIncomeTaxYear={setNewIncomeTaxYear}
                 />
               )}
             </>
