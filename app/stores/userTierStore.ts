@@ -61,7 +61,7 @@ export const userTierStore = {
 
   subscribe(listener: Listener): () => void {
     listeners.add(listener)
-    // Return unsubscribe function
+    listener(currentTier)
     return () => {
       listeners.delete(listener)
     }
