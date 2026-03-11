@@ -1,16 +1,13 @@
 /**
  * Public Tax Settings API
- * GET — any authenticated user can read platform tax config from Firestore
+ * GET — anyone can read platform tax config (general public info)
  */
 
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
-import { requireAuth } from '@/app/lib/apiGuard'
 
-export async function GET(request: NextRequest) {
-  const guard = await requireAuth(request)
-  if (guard.error) return guard.error
-
+// PUBLIC ROUTE
+export async function GET() {
   try {
     const firestore = getAdminFirestore()
     const doc = await firestore.collection('platformSettings').doc('taxConfig').get()

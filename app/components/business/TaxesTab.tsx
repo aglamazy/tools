@@ -7,7 +7,6 @@ import type { Category } from '@/app/types/category'
 import { getUser } from '@/app/stores/authStore'
 import { getHouseholdInfo } from '@/app/services/householdService'
 import { type TaxStatus, type TaxStatusInfo } from '@/app/components/TaxExemptBadge'
-import { getIdToken } from '@/app/services/firebaseAuthService'
 import FilesSubTab from './TaxFilesSubTab'
 import RentalSummaryTable from './TaxRentalSummary'
 import Modal from '@/app/components/Modal'
@@ -236,23 +235,17 @@ function AnnualSummarySubTab() {
         || b.userId === selectedUser
       ))
 
-  // Compute tax exempt status from relevant exempt businesses only
-  // Load platform tax settings (BTL rates + tax limits) once
+  // Load platform tax settings (BTL rates + tax limits) — public endpoint, no auth needed
   useEffect(() => {
-    getIdToken().then(async (token) => {
-      if (!token) return
-      try {
-        const res = await fetch('/api/tax-settings', { headers: { Authorization: `Bearer ${token}` } })
-        if (!res.ok) return
-        const data = await res.json()
-        const rates = (data.taxRates || {}) as Record<string, BTLRates>
-        setBtlRates(rates[String(currentYear)] ?? null)
-        const tl = data.taxLimits as { amount: number; sinceYear: number } | null
-        if (tl && currentYear >= tl.sinceYear) {
-          setTaxExemptInfo(prev => prev ? { ...prev, limit: tl.amount } : prev)
-        }
-      } catch { /* ignore */ }
-    })
+    fetch('/api/tax-settings').then(res => res.ok ? res.json() : null).then(data => {
+      if (!data) return
+      const rates = (data.taxRates || {}) as Record<string, BTLRates>
+      setBtlRates(rates[String(currentYear)] ?? null)
+      const tl = data.taxLimits as { amount: number; sinceYear: number } | null
+      if (tl && currentYear >= tl.sinceYear) {
+        setTaxExemptInfo(prev => prev ? { ...prev, limit: tl.amount } : prev)
+      }
+    }).catch(() => {})
   }, [currentYear])
 
   // Compute tax exempt status from relevant exempt businesses
@@ -278,20 +271,15 @@ function AnnualSummarySubTab() {
     }
     const maxMonthlyIncome = monthlyIncomes.length > 0 ? Math.max(...monthlyIncomes) : 0
 
-    getIdToken().then(async (token) => {
-      if (!token) { setTaxExemptInfo(null); return }
-      try {
-        const res = await fetch('/api/tax-settings', { headers: { Authorization: `Bearer ${token}` } })
-        if (!res.ok) { setTaxExemptInfo(null); return }
-        const data = await res.json()
-        const tl = data.taxLimits as { amount: number; sinceYear: number } | null
-        if (tl && currentYear >= tl.sinceYear) {
-          const limit = tl.amount
-          const status: TaxStatus = maxMonthlyIncome > limit ? 'red' : maxMonthlyIncome > limit * 0.8 ? 'yellow' : 'green'
-          setTaxExemptInfo({ status, currentIncome, maxMonthlyIncome, limit })
-        } else { setTaxExemptInfo(null) }
-      } catch { setTaxExemptInfo(null) }
-    })
+    fetch('/api/tax-settings').then(res => res.ok ? res.json() : null).then(data => {
+      if (!data) { setTaxExemptInfo(null); return }
+      const tl = data.taxLimits as { amount: number; sinceYear: number } | null
+      if (tl && currentYear >= tl.sinceYear) {
+        const limit = tl.amount
+        const status: TaxStatus = maxMonthlyIncome > limit ? 'red' : maxMonthlyIncome > limit * 0.8 ? 'yellow' : 'green'
+        setTaxExemptInfo({ status, currentIncome, maxMonthlyIncome, limit })
+      } else { setTaxExemptInfo(null) }
+    }).catch(() => setTaxExemptInfo(null))
   }, [selectedUser, relevantBusinesses.length, transactions.length])
 
   if (loading) return <p style={{ textAlign: 'center', color: '#94a3b8' }}>טוען...</p>
