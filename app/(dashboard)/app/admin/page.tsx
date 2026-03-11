@@ -5,9 +5,9 @@ import { useRouter } from 'next/navigation'
 import { userTierStore, UserTier } from '@/app/stores/userTierStore'
 import { getIdToken } from '@/app/services/firebaseAuthService'
 import { subscribeToAuth } from '@/app/stores/authStore'
-import { appSettingsStore } from '@/app/stores/appSettingsStore'
 import SettingsTabs from '@/app/components/settings/SettingsTabs'
 import RichEditor from '@/app/components/ui/RichEditor'
+import TaxSettingsPanel, { type TaxRateYear, type TaxRateYearDraft, rateYearToDraft } from './TaxSettingsPanel'
 
 type Member = {
   uid: string
@@ -66,10 +66,14 @@ export default function AdminPage() {
   const [provisionError, setProvisionError] = useState<string | null>(null)
   const [provisionSuccess, setProvisionSuccess] = useState(false)
 
-  const [taxLimits, setTaxLimits] = useState<Record<string, number>>({})
-  const [taxLimitDrafts, setTaxLimitDrafts] = useState<Record<string, string>>({})
-  const [taxLimitSaved, setTaxLimitSaved] = useState<string | null>(null)
-  const [newTaxYear, setNewTaxYear] = useState('')
+  const [taxLimit, setTaxLimit] = useState<{ amount: number; sinceYear: number } | null>(null)
+  const [taxLimitDraft, setTaxLimitDraft] = useState({ amount: '', sinceYear: '' })
+  const [taxLimitSaved, setTaxLimitSaved] = useState(false)
+
+  const [taxRates, setTaxRates] = useState<Record<string, TaxRateYear>>({})
+  const [taxRateDrafts, setTaxRateDrafts] = useState<Record<string, TaxRateYearDraft>>({})
+  const [taxRateSaved, setTaxRateSaved] = useState<string | null>(null)
+  const [newRateYear, setNewRateYear] = useState('')
 
   const [tcVersions, setTcVersions] = useState<{ version: string; text: string }[]>([])
   const [tcDraft, setTcDraft] = useState('')
@@ -153,11 +157,30 @@ export default function AdminPage() {
       fetchAccounts()
       fetchProvisions()
       fetchTcVersions()
-      appSettingsStore.getAllTaxLimits().then(limits => {
-        setTaxLimits(limits)
-        const drafts: Record<string, string> = {}
-        for (const [y, v] of Object.entries(limits)) drafts[y] = String(v)
-        setTaxLimitDrafts(drafts)
+      getIdToken().then(async (token) => {
+        if (!token) return
+        try {
+          const res = await fetch('/api/admin/tax-settings', {
+            headers: { Authorization: `Bearer ${token}` },
+          })
+          if (!res.ok) return
+          const data = await res.json()
+          const limits = data.taxLimits || null
+          setTaxLimit(limits)
+          if (limits) {
+            setTaxLimitDraft({ amount: String(limits.amount), sinceYear: String(limits.sinceYear) })
+          }
+
+          const rates = (data.taxRates || {}) as Record<string, TaxRateYear>
+          setTaxRates(rates)
+          const rateDrafts: Record<string, TaxRateYearDraft> = {}
+          for (const [y, v] of Object.entries(rates)) {
+            rateDrafts[y] = rateYearToDraft(v)
+          }
+          setTaxRateDrafts(rateDrafts)
+        } catch (err) {
+          console.error('Failed to load tax settings:', err)
+        }
       })
     })
     return () => { unsubAuth(); unsubTier() }
@@ -291,7 +314,7 @@ export default function AdminPage() {
     { id: 'accounts', label: 'חשבונות', icon: '👥' },
     { id: 'provisions', label: 'הזמנות', icon: '📨' },
     { id: 'tc', label: 'תנאי שימוש', icon: '📜' },
-    { id: 'settings', label: 'הגדרות', icon: '⚙️' },
+    { id: 'taxes', label: 'מיסים', icon: '🧾' },
   ]
 
   return (
@@ -634,106 +657,16 @@ export default function AdminPage() {
                 </div>
               )}
 
-              {activeTab === 'settings' && (
-                <div>
-                  <h2 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.75rem' }}>תקרת השכרת דירה שנתית</h2>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', maxWidth: '500px' }}>
-                    <thead>
-                      <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
-                        <th style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.85rem', color: '#6b7280' }}>שנה</th>
-                        <th style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.85rem', color: '#6b7280' }}>תקרה (₪)</th>
-                        <th style={{ padding: '0.5rem', width: '80px' }}></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {Object.keys(taxLimits).sort().reverse().map((year) => (
-                        <tr key={year} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                          <td style={{ padding: '0.5rem', fontWeight: 500 }}>{year}</td>
-                          <td style={{ padding: '0.5rem' }}>
-                            <input
-                              type="number"
-                              dir="ltr"
-                              value={taxLimitDrafts[year] ?? ''}
-                              onChange={(e) => {
-                                setTaxLimitDrafts(prev => ({ ...prev, [year]: e.target.value }))
-                                setTaxLimitSaved(null)
-                              }}
-                              style={{
-                                width: '140px',
-                                padding: '0.3rem 0.5rem',
-                                border: '1px solid #d1d5db',
-                                borderRadius: '0.375rem',
-                                fontSize: '0.9rem',
-                              }}
-                            />
-                          </td>
-                          <td style={{ padding: '0.5rem' }}>
-                            <button
-                              onClick={async () => {
-                                const val = Number(taxLimitDrafts[year])
-                                if (!isNaN(val) && val > 0) {
-                                  await appSettingsStore.setAnnualTaxLimit(val, Number(year))
-                                  setTaxLimits(prev => ({ ...prev, [year]: val }))
-                                  setTaxLimitSaved(year)
-                                }
-                              }}
-                              disabled={String(taxLimits[year]) === taxLimitDrafts[year]}
-                              style={{
-                                padding: '0.25rem 0.75rem',
-                                background: String(taxLimits[year]) === taxLimitDrafts[year] ? '#e5e7eb' : '#2563eb',
-                                color: String(taxLimits[year]) === taxLimitDrafts[year] ? '#9ca3af' : '#fff',
-                                border: 'none',
-                                borderRadius: '0.375rem',
-                                fontSize: '0.8rem',
-                                cursor: String(taxLimits[year]) === taxLimitDrafts[year] ? 'default' : 'pointer',
-                              }}
-                            >
-                              {taxLimitSaved === year ? '✓' : 'שמור'}
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '1rem' }}>
-                    <input
-                      type="number"
-                      dir="ltr"
-                      placeholder="שנה"
-                      value={newTaxYear}
-                      onChange={(e) => setNewTaxYear(e.target.value)}
-                      style={{
-                        width: '100px',
-                        padding: '0.3rem 0.5rem',
-                        border: '1px solid #d1d5db',
-                        borderRadius: '0.375rem',
-                        fontSize: '0.9rem',
-                      }}
-                    />
-                    <button
-                      onClick={() => {
-                        const y = newTaxYear.trim()
-                        if (y && /^\d{4}$/.test(y) && !taxLimits[y]) {
-                          setTaxLimits(prev => ({ ...prev, [y]: 0 }))
-                          setTaxLimitDrafts(prev => ({ ...prev, [y]: '' }))
-                          setNewTaxYear('')
-                        }
-                      }}
-                      disabled={!newTaxYear || !/^\d{4}$/.test(newTaxYear) || !!taxLimits[newTaxYear]}
-                      style={{
-                        padding: '0.3rem 0.75rem',
-                        background: '#f0fdf4',
-                        color: '#16a34a',
-                        border: '1px solid #86efac',
-                        borderRadius: '0.375rem',
-                        fontSize: '0.85rem',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      + הוסף שנה
-                    </button>
-                  </div>
-                </div>
+              {activeTab === 'taxes' && (
+                <TaxSettingsPanel
+                  taxLimit={taxLimit} setTaxLimit={setTaxLimit}
+                  taxLimitDraft={taxLimitDraft} setTaxLimitDraft={setTaxLimitDraft}
+                  taxLimitSaved={taxLimitSaved} setTaxLimitSaved={setTaxLimitSaved}
+                  taxRates={taxRates} setTaxRates={setTaxRates}
+                  taxRateDrafts={taxRateDrafts} setTaxRateDrafts={setTaxRateDrafts}
+                  taxRateSaved={taxRateSaved} setTaxRateSaved={setTaxRateSaved}
+                  newRateYear={newRateYear} setNewRateYear={setNewRateYear}
+                />
               )}
             </>
           )}

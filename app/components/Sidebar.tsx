@@ -75,7 +75,6 @@ const allModules: Module[] = [
     items: [
       { id: 'profile', title: 'פרופיל', href: routes.profile, icon: '👤', available: true, requiredTier: UserTier.FREE },
       { id: 'settings', title: 'הגדרות', href: routes.settings, icon: '⚙️', available: true, requiredTier: UserTier.FREE },
-      { id: 'admin', title: 'ניהול', href: routes.admin, icon: '👑', available: true, requiredTier: UserTier.OWNER },
       { id: 'dev-db', title: 'Dev DB', href: routes.devDb, icon: '🛠️', available: true, requiredTier: UserTier.PRO },
     ],
   },
@@ -86,6 +85,14 @@ const allModules: Module[] = [
     items: [
       { id: 'guide', title: 'מדריך שימוש', href: routes.guide, icon: '📖', available: true, requiredTier: UserTier.FREE },
       { id: 'about', title: 'אודות', href: routes.about, icon: 'ℹ️', available: true, requiredTier: UserTier.FREE },
+    ],
+  },
+  {
+    id: 'admin-section',
+    label: 'ניהול',
+    icon: '👑',
+    items: [
+      { id: 'admin', title: 'ניהול פלטפורמה', href: routes.admin, icon: '👑', available: true, requiredTier: UserTier.OWNER },
     ],
   },
 ]

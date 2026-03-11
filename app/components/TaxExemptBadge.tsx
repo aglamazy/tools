@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import { db } from '@/app/db/financeDB'
-import { appSettingsStore } from '@/app/stores/appSettingsStore'
 import { subjectStore } from '@/app/stores/subjectStore'
 import type { Category } from '@/app/types/category'
+import { getIdToken } from '@/app/services/firebaseAuthService'
 
 export type TaxStatus = 'green' | 'yellow' | 'red' | 'gray'
 
@@ -15,9 +15,9 @@ export type TaxStatusInfo = {
   limit: number
 }
 
-function computeStatus(currentIncome: number, maxMonthlyIncome: number, limit: number): TaxStatus {
-  if (currentIncome > limit) return 'red'
-  if (currentIncome + maxMonthlyIncome > limit) return 'yellow'
+function computeStatus(maxMonthlyIncome: number, limit: number): TaxStatus {
+  if (maxMonthlyIncome > limit) return 'red'
+  if (maxMonthlyIncome > limit * 0.8) return 'yellow'
   return 'green'
 }
 
@@ -46,7 +46,18 @@ export function useBusinessTaxStatus(businessId?: number): TaxStatusInfo | null 
       if (business.vatType !== 'exempt' && !business.isTaxFree) return
 
       const currentYear = new Date().getFullYear()
-      const limit = await appSettingsStore.getAnnualTaxLimit(currentYear)
+      const token = await getIdToken()
+      if (!token) return
+      let limit: number | null = null
+      try {
+        const res = await fetch('/api/tax-settings', { headers: { Authorization: `Bearer ${token}` } })
+        if (res.ok) {
+          const data = await res.json()
+          const tl = data.taxLimits as { amount: number; sinceYear: number } | null
+          limit = tl && currentYear >= tl.sinceYear ? tl.amount : null
+        }
+      } catch { /* ignore */ }
+      console.log(`[TaxBadge] biz=${businessId} "${business.name}" limit=${limit} (from API)`)
       if (!limit) return
 
       // Build income category names for this business
@@ -72,8 +83,9 @@ export function useBusinessTaxStatus(businessId?: number): TaxStatusInfo | null 
 
       const currentIncome = yearTx.reduce((s, t) => s + (t.amount || 0), 0)
       const maxMonthlyIncome = monthlyIncomes.length > 0 ? Math.max(...monthlyIncomes) : 0
-      const status = computeStatus(currentIncome, maxMonthlyIncome, limit)
+      const status = computeStatus(maxMonthlyIncome, limit)
 
+      console.log(`[TaxBadge] biz=${businessId} "${business.name}" vatType=${business.vatType} isTaxFree=${business.isTaxFree} income=${currentIncome} maxMonthly=${maxMonthlyIncome} limit=${limit} → ${status}`)
       setInfo({ status, currentIncome, maxMonthlyIncome, limit })
     }
 

@@ -7,7 +7,7 @@ import type { Category } from '@/app/types/category'
 import { getUser } from '@/app/stores/authStore'
 import { getHouseholdInfo } from '@/app/services/householdService'
 import { type TaxStatus, type TaxStatusInfo } from '@/app/components/TaxExemptBadge'
-import { appSettingsStore } from '@/app/stores/appSettingsStore'
+import { getIdToken } from '@/app/services/firebaseAuthService'
 import FilesSubTab from './TaxFilesSubTab'
 
 type HouseholdMember = { uid: string; label: string }
@@ -36,8 +36,8 @@ async function loadHouseholdMembers(): Promise<HouseholdMember[]> {
 type SubTab = 'files' | 'summary'
 
 const SUB_TABS: { id: SubTab; label: string }[] = [
-  { id: 'files', label: 'קבצים' },
   { id: 'summary', label: 'סיכום שנתי' },
+  { id: 'files', label: 'קבצים' },
 ]
 
 const TAX_STATUS_STYLES: Record<TaxStatus, { bg: string; border: string; text: string; label: string }> = {
@@ -103,7 +103,7 @@ function TaxExemptStatusBanner({ info }: { info: TaxStatusInfo }) {
 }
 
 export default function TaxesTab() {
-  const [subTab, setSubTab] = useState<SubTab>('files')
+  const [subTab, setSubTab] = useState<SubTab>('summary')
 
   return (
     <div>
@@ -156,6 +156,7 @@ function AnnualSummarySubTab() {
   const [businesses, setBusinesses] = useState<Business[]>([])
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [bizCategoryMap, setBizCategoryMap] = useState<Map<number, string[]>>(new Map())
+  const [expCategoryMap, setExpCategoryMap] = useState<Map<number, string[]>>(new Map())
   const [members, setMembers] = useState<HouseholdMember[]>([])
   const [selectedUser, setSelectedUser] = useState<string>('all')
   const [loading, setLoading] = useState(true)
@@ -171,20 +172,27 @@ function AnnualSummarySubTab() {
         loadHouseholdMembers(),
       ])
 
-      // Build business → category names map from subjectStore
+      // Build business → category names map from subjectStore (income + expense)
       const categories = subjectStore.getAll() as Category[]
       const catMap = new Map<number, string[]>()
+      const expCatMap = new Map<number, string[]>()
       for (const cat of categories) {
         if (cat.businessId && cat.type === 'income') {
           const existing = catMap.get(cat.businessId) || []
           existing.push(cat.name)
           catMap.set(cat.businessId, existing)
         }
+        if (cat.businessId && cat.type === 'expense') {
+          const existing = expCatMap.get(cat.businessId) || []
+          existing.push(cat.name)
+          expCatMap.set(cat.businessId, existing)
+        }
       }
 
-      // Load transactions for the current year that match any business category
+      // Load transactions for the current year that match any business category (income or expense)
       const allCatNames = new Set<string>()
       catMap.forEach(names => names.forEach(n => allCatNames.add(n)))
+      expCatMap.forEach(names => names.forEach(n => allCatNames.add(n)))
 
       let bizTransactions: Transaction[] = []
       if (allCatNames.size > 0) {
@@ -199,6 +207,7 @@ function AnnualSummarySubTab() {
       setBusinesses(biz)
       setTransactions(bizTransactions)
       setBizCategoryMap(catMap)
+      setExpCategoryMap(expCatMap)
       setMembers(m)
       setLoading(false)
     }
@@ -238,10 +247,18 @@ function AnnualSummarySubTab() {
     }
     const maxMonthlyIncome = monthlyIncomes.length > 0 ? Math.max(...monthlyIncomes) : 0
 
-    appSettingsStore.getAnnualTaxLimit(currentYear).then(limit => {
-      if (!limit) { setTaxExemptInfo(null); return }
-      const status: TaxStatus = currentIncome > limit ? 'red' : currentIncome + maxMonthlyIncome > limit ? 'yellow' : 'green'
-      setTaxExemptInfo({ status, currentIncome, maxMonthlyIncome, limit })
+    getIdToken().then(async (token) => {
+      if (!token) { setTaxExemptInfo(null); return }
+      try {
+        const res = await fetch('/api/tax-settings', { headers: { Authorization: `Bearer ${token}` } })
+        if (!res.ok) { setTaxExemptInfo(null); return }
+        const data = await res.json()
+        const tl = data.taxLimits as { amount: number; sinceYear: number } | null
+        if (!tl || currentYear < tl.sinceYear) { setTaxExemptInfo(null); return }
+        const limit = tl.amount
+        const status: TaxStatus = maxMonthlyIncome > limit ? 'red' : maxMonthlyIncome > limit * 0.8 ? 'yellow' : 'green'
+        setTaxExemptInfo({ status, currentIncome, maxMonthlyIncome, limit })
+      } catch { setTaxExemptInfo(null) }
     })
   }, [selectedUser, relevantBusinesses.length, transactions.length])  
 
@@ -292,50 +309,138 @@ function AnnualSummarySubTab() {
         </div>
       )}
 
-      {relevantBusinesses.some(b => b.vatType === 'exempt') && taxExemptInfo && <TaxExemptStatusBanner info={taxExemptInfo} />}
+      {/* Conditional section tabs: שכיר / עצמאי */}
+      {(() => {
+        const hasDocs = filteredDocs.length > 0
+        const nonRentalBiz = relevantBusinesses.filter(b => !b.isTaxFree)
+        const rentalBiz = relevantBusinesses.filter(b => b.isTaxFree)
+        const sections: { id: string; label: string }[] = []
+        if (hasDocs) sections.push({ id: 'employee', label: 'שכיר' })
+        if (nonRentalBiz.length > 0) sections.push({ id: 'selfEmployed', label: 'עצמאי' })
+        if (rentalBiz.length > 0) sections.push({ id: 'rental', label: 'השכרת דירה' })
+        if (sections.length === 0) return <p style={{ color: '#94a3b8', textAlign: 'center' }}>אין נתונים לשנה זו</p>
 
-      <AnnualSummaryTable
-        docs={filteredDocs}
-        businesses={relevantBusinesses}
-        transactions={transactions}
-        bizCategoryMap={bizCategoryMap}
-        currentYear={currentYear}
-        currentMonth={currentMonth}
-      />
+        return (
+          <SummarySections
+            sections={sections}
+            filteredDocs={filteredDocs}
+            nonRentalBusinesses={nonRentalBiz}
+            rentalBusinesses={rentalBiz}
+            transactions={transactions}
+            bizCategoryMap={bizCategoryMap}
+            expCategoryMap={expCategoryMap}
+            currentYear={currentYear}
+            currentMonth={currentMonth}
+            taxExemptInfo={taxExemptInfo}
+          />
+        )
+      })()}
     </div>
   )
 }
 
-type SummaryTableProps = {
-  docs: TaxDocument[]
-  businesses: Business[]
+type SummarySectionsProps = {
+  sections: { id: string; label: string }[]
+  filteredDocs: TaxDocument[]
+  nonRentalBusinesses: Business[]
+  rentalBusinesses: Business[]
   transactions: Transaction[]
   bizCategoryMap: Map<number, string[]>
+  expCategoryMap: Map<number, string[]>
   currentYear: number
   currentMonth: number
+  taxExemptInfo: TaxStatusInfo | null
 }
 
-function AnnualSummaryTable({ docs, businesses, transactions, bizCategoryMap, currentYear, currentMonth }: SummaryTableProps) {
+function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBusinesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, taxExemptInfo }: SummarySectionsProps) {
+  const [activeSection, setActiveSection] = useState(sections[0].id)
+
+  return (
+    <div>
+      {sections.length > 1 && (
+        <div style={{ display: 'flex', gap: '0', marginBottom: '1rem', borderBottom: '2px solid #e2e8f0' }}>
+          {sections.map(s => (
+            <button
+              key={s.id}
+              onClick={() => setActiveSection(s.id)}
+              style={{
+                padding: '0.5rem 1.25rem',
+                fontSize: '0.9rem',
+                fontWeight: activeSection === s.id ? 600 : 400,
+                background: 'none',
+                border: 'none',
+                borderBottom: activeSection === s.id ? '2px solid #3b82f6' : '2px solid transparent',
+                marginBottom: '-2px',
+                cursor: 'pointer',
+                color: activeSection === s.id ? '#1e40af' : '#94a3b8',
+              }}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {activeSection === 'employee' && (
+        <EmployeeSummaryTable docs={filteredDocs} currentYear={currentYear} currentMonth={currentMonth} />
+      )}
+
+      {activeSection === 'selfEmployed' && (
+        <SelfEmployedSummaryTable
+          businesses={nonRentalBusinesses}
+          transactions={transactions}
+          bizCategoryMap={bizCategoryMap}
+          expCategoryMap={expCategoryMap}
+          currentYear={currentYear}
+          currentMonth={currentMonth}
+        />
+      )}
+
+      {activeSection === 'rental' && (
+        <>
+          {taxExemptInfo && <TaxExemptStatusBanner info={taxExemptInfo} />}
+          <RentalSummaryTable
+            businesses={rentalBusinesses}
+            transactions={transactions}
+            bizCategoryMap={bizCategoryMap}
+            currentYear={currentYear}
+            currentMonth={currentMonth}
+          />
+        </>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Shared styles
+// ---------------------------------------------------------------------------
+
+const cellStyle: React.CSSProperties = {
+  padding: '0.5rem 0.75rem',
+  fontSize: '0.85rem',
+  textAlign: 'left' as const,
+  direction: 'ltr',
+}
+
+const tHeaderStyle: React.CSSProperties = {
+  ...cellStyle,
+  fontWeight: 600,
+  background: '#f8fafc',
+  color: '#475569',
+  borderBottom: '2px solid #e2e8f0',
+}
+
+const fmt = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
+
+// ---------------------------------------------------------------------------
+// Employee (שכיר) Summary Table
+// ---------------------------------------------------------------------------
+
+function EmployeeSummaryTable({ docs, currentYear, currentMonth }: { docs: TaxDocument[]; currentYear: number; currentMonth: number }) {
   const monthlyData = Array.from({ length: currentMonth + 1 }, (_, i) => {
     const monthStr = `${String(i + 1).padStart(2, '0')}/${currentYear}`
     const monthDocs = docs.filter(d => d.month === monthStr)
-
-    // Per-business income from transactions (עצמאי)
-    const bizIncome: Record<number, number> = {}
-    for (const biz of businesses) {
-      const catNames = bizCategoryMap.get(biz.id!) || []
-      const bizTx = transactions.filter(t => t.month === monthStr && t.category && catNames.includes(t.category))
-      bizIncome[biz.id!] = bizTx.reduce((s, t) => s + (t.amount || 0), 0)
-    }
-
-    // Tax-free income: sum income from businesses marked isTaxFree
-    let taxFreeIncome = 0
-    for (const biz of businesses) {
-      if (biz.isTaxFree) {
-        taxFreeIncome += bizIncome[biz.id!] || 0
-      }
-    }
-
     return {
       month: i,
       label: HEBREW_MONTHS[i],
@@ -344,12 +449,8 @@ function AnnualSummaryTable({ docs, businesses, transactions, bizCategoryMap, cu
       nationalInsurance: monthDocs.reduce((s, d) => s + (d.nationalInsurance || 0), 0),
       healthInsurance: monthDocs.reduce((s, d) => s + (d.healthInsurance || 0), 0),
       netIncome: monthDocs.reduce((s, d) => s + (d.netIncome || 0), 0),
-      bizIncome,
-      taxFreeIncome,
     }
   })
-
-  const hasTaxFreeBusinesses = businesses.some(b => b.isTaxFree)
 
   const totals = {
     grossIncome: monthlyData.reduce((s, m) => s + m.grossIncome, 0),
@@ -357,59 +458,20 @@ function AnnualSummaryTable({ docs, businesses, transactions, bizCategoryMap, cu
     nationalInsurance: monthlyData.reduce((s, m) => s + m.nationalInsurance, 0),
     healthInsurance: monthlyData.reduce((s, m) => s + m.healthInsurance, 0),
     netIncome: monthlyData.reduce((s, m) => s + m.netIncome, 0),
-    taxFreeIncome: monthlyData.reduce((s, m) => s + m.taxFreeIncome, 0),
-    bizIncome: Object.fromEntries(businesses.map(biz => [
-      biz.id!,
-      monthlyData.reduce((s, m) => s + (m.bizIncome[biz.id!] || 0), 0),
-    ])),
-  }
-
-  const [drillDown, setDrillDown] = useState<{ monthIdx: number; bizId: number } | null>(null)
-
-  const fmt = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
-
-  const getDrillDownTransactions = () => {
-    if (!drillDown) return []
-    const monthStr = `${String(drillDown.monthIdx + 1).padStart(2, '0')}/${currentYear}`
-    const catNames = bizCategoryMap.get(drillDown.bizId) || []
-    return transactions
-      .filter(t => t.month === monthStr && t.category && catNames.includes(t.category))
-      .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
-  }
-
-  const cellStyle: React.CSSProperties = {
-    padding: '0.5rem 0.75rem',
-    fontSize: '0.85rem',
-    textAlign: 'left' as const,
-    direction: 'ltr',
-  }
-
-  const headerStyle: React.CSSProperties = {
-    ...cellStyle,
-    fontWeight: 600,
-    background: '#f8fafc',
-    color: '#475569',
-    borderBottom: '2px solid #e2e8f0',
   }
 
   return (
     <div style={{ overflowX: 'auto' }}>
-      <h3 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>סיכום שנתי {currentYear}</h3>
+      <h3 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>שכיר — סיכום שנתי {currentYear}</h3>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
         <thead>
           <tr>
-            <th style={{ ...headerStyle, textAlign: 'right', direction: 'rtl' }}>חודש</th>
-            <th style={headerStyle}>ברוטו</th>
-            <th style={headerStyle}>מס הכנסה</th>
-            <th style={headerStyle}>ביטוח לאומי</th>
-            <th style={headerStyle}>ביטוח בריאות</th>
-            <th style={headerStyle}>נטו</th>
-            {hasTaxFreeBusinesses && (
-              <th style={{ ...headerStyle, background: '#ecfdf5', color: '#059669' }}>השכרת דירה</th>
-            )}
-            {businesses.map(biz => (
-              <th key={biz.id} style={{ ...headerStyle, background: '#faf5ff', color: '#7c3aed' }}>{biz.name}</th>
-            ))}
+            <th style={{ ...tHeaderStyle, textAlign: 'right', direction: 'rtl' }}>חודש</th>
+            <th style={tHeaderStyle}>ברוטו</th>
+            <th style={tHeaderStyle}>מס הכנסה</th>
+            <th style={tHeaderStyle}>ביטוח לאומי</th>
+            <th style={tHeaderStyle}>ביטוח בריאות</th>
+            <th style={tHeaderStyle}>נטו</th>
           </tr>
         </thead>
         <tbody>
@@ -421,26 +483,6 @@ function AnnualSummaryTable({ docs, businesses, transactions, bizCategoryMap, cu
               <td style={cellStyle}>{row.nationalInsurance ? fmt(row.nationalInsurance) : '—'}</td>
               <td style={cellStyle}>{row.healthInsurance ? fmt(row.healthInsurance) : '—'}</td>
               <td style={cellStyle}>{row.netIncome ? fmt(row.netIncome) : '—'}</td>
-              {hasTaxFreeBusinesses && (
-                <td style={{ ...cellStyle, background: '#f0fdf4' }}>
-                  {row.taxFreeIncome ? fmt(row.taxFreeIncome) : '—'}
-                </td>
-              )}
-              {businesses.map(biz => (
-                <td
-                  key={biz.id}
-                  onClick={() => row.bizIncome[biz.id!] ? setDrillDown(
-                    drillDown?.monthIdx === row.month && drillDown?.bizId === biz.id! ? null : { monthIdx: row.month, bizId: biz.id! }
-                  ) : undefined}
-                  style={{
-                    ...cellStyle,
-                    background: drillDown?.monthIdx === row.month && drillDown?.bizId === biz.id! ? '#fef3c7' : '#fefce8',
-                    cursor: row.bizIncome[biz.id!] ? 'pointer' : 'default',
-                  }}
-                >
-                  {row.bizIncome[biz.id!] ? fmt(row.bizIncome[biz.id!]) : '—'}
-                </td>
-              ))}
             </tr>
           ))}
         </tbody>
@@ -452,14 +494,129 @@ function AnnualSummaryTable({ docs, businesses, transactions, bizCategoryMap, cu
             <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.nationalInsurance)}</td>
             <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.healthInsurance)}</td>
             <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.netIncome)}</td>
-            {hasTaxFreeBusinesses && (
-              <td style={{ ...cellStyle, fontWeight: 700, background: '#f0fdf4', color: '#059669' }}>
-                {fmt(totals.taxFreeIncome)}
-              </td>
-            )}
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Self-Employed (עצמאי) Summary Table
+// ---------------------------------------------------------------------------
+
+type SelfEmployedTableProps = {
+  businesses: Business[]
+  transactions: Transaction[]
+  bizCategoryMap: Map<number, string[]>
+  expCategoryMap: Map<number, string[]>
+  currentYear: number
+  currentMonth: number
+}
+
+function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth }: SelfEmployedTableProps) {
+  const monthlyData = Array.from({ length: currentMonth + 1 }, (_, i) => {
+    const monthStr = `${String(i + 1).padStart(2, '0')}/${currentYear}`
+
+    const bizIncome: Record<number, number> = {}
+    const bizExpense: Record<number, number> = {}
+    for (const biz of businesses) {
+      const catNames = bizCategoryMap.get(biz.id!) || []
+      const bizTx = transactions.filter(t => t.month === monthStr && t.category && catNames.includes(t.category))
+      bizIncome[biz.id!] = bizTx.reduce((s, t) => s + (t.amount || 0), 0)
+
+      const expCatNames = expCategoryMap.get(biz.id!) || []
+      const expTx = transactions.filter(t => t.month === monthStr && t.category && expCatNames.includes(t.category) && t.amount < 0)
+        .filter(t => !t.currentStep || t.currentStep === 1)
+        .map(t => {
+          if (t.totalSteps && t.totalSteps > 1) {
+            const fullAmount = t.totalAmount || (t.totalSteps * Math.abs(t.amount))
+            return { ...t, amount: -fullAmount }
+          }
+          return t
+        })
+      bizExpense[biz.id!] = expTx.reduce((s, t) => s + Math.abs(t.amount), 0)
+    }
+
+    return { month: i, label: HEBREW_MONTHS[i], bizIncome, bizExpense }
+  })
+
+  const totals = {
+    bizIncome: Object.fromEntries(businesses.map(biz => [
+      biz.id!, monthlyData.reduce((s, m) => s + (m.bizIncome[biz.id!] || 0), 0),
+    ])),
+    bizExpense: Object.fromEntries(businesses.map(biz => [
+      biz.id!, monthlyData.reduce((s, m) => s + (m.bizExpense[biz.id!] || 0), 0),
+    ])),
+  }
+
+  const [drillDown, setDrillDown] = useState<{ monthIdx: number; bizId: number } | null>(null)
+
+  const getDrillDownTransactions = () => {
+    if (!drillDown) return []
+    const monthStr = `${String(drillDown.monthIdx + 1).padStart(2, '0')}/${currentYear}`
+    const incomeCatNames = bizCategoryMap.get(drillDown.bizId) || []
+    const expenseCatNames = expCategoryMap.get(drillDown.bizId) || []
+    const allCatNames = [...incomeCatNames, ...expenseCatNames]
+    return transactions
+      .filter(t => t.month === monthStr && t.category && allCatNames.includes(t.category))
+      .filter(t => t.amount >= 0 || !t.currentStep || t.currentStep === 1)
+      .map(t => {
+        if (t.amount < 0 && t.totalSteps && t.totalSteps > 1) {
+          const fullAmount = t.totalAmount || (t.totalSteps * Math.abs(t.amount))
+          return { ...t, amount: -fullAmount }
+        }
+        return t
+      })
+      .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+  }
+
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <h3 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>עצמאי — סיכום שנתי {currentYear}</h3>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+        <thead>
+          <tr>
+            <th style={{ ...tHeaderStyle, textAlign: 'right', direction: 'rtl' }}>חודש</th>
+            {businesses.map(biz => (
+              <th key={biz.id} style={{ ...tHeaderStyle, background: '#faf5ff', color: '#7c3aed' }}>{biz.name}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {monthlyData.map(row => (
+            <tr key={row.month} style={{ borderBottom: '1px solid #f1f5f9' }}>
+              <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 500 }}>{row.label}</td>
+              {businesses.map(biz => {
+                const income = row.bizIncome[biz.id!] || 0
+                const expense = row.bizExpense[biz.id!] || 0
+                const net = income - expense
+                const hasData = income > 0 || expense > 0
+                return (
+                  <td
+                    key={biz.id}
+                    onClick={() => hasData ? setDrillDown(
+                      drillDown?.monthIdx === row.month && drillDown?.bizId === biz.id! ? null : { monthIdx: row.month, bizId: biz.id! }
+                    ) : undefined}
+                    style={{
+                      ...cellStyle,
+                      background: drillDown?.monthIdx === row.month && drillDown?.bizId === biz.id! ? '#fef3c7' : '#fefce8',
+                      cursor: hasData ? 'pointer' : 'default',
+                    }}
+                  >
+                    {hasData ? fmt(net) : '—'}
+                  </td>
+                )
+              })}
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr style={{ borderTop: '2px solid #e2e8f0', background: '#f0fdf4' }}>
+            <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 700 }}>סה&quot;כ</td>
             {businesses.map(biz => (
               <td key={biz.id} style={{ ...cellStyle, fontWeight: 700, background: '#fefce8' }}>
-                {fmt(totals.bizIncome[biz.id!] || 0)}
+                {fmt((totals.bizIncome[biz.id!] || 0) - (totals.bizExpense[biz.id!] || 0))}
               </td>
             ))}
           </tr>
@@ -496,10 +653,10 @@ function AnnualSummaryTable({ docs, businesses, transactions, bizCategoryMap, cu
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                 <thead>
                   <tr>
-                    <th style={{ ...headerStyle, textAlign: 'right', direction: 'rtl' }}>תאריך</th>
-                    <th style={{ ...headerStyle, textAlign: 'right', direction: 'rtl' }}>תיאור</th>
-                    <th style={{ ...headerStyle, textAlign: 'right', direction: 'rtl' }}>קטגוריה</th>
-                    <th style={headerStyle}>סכום</th>
+                    <th style={{ ...tHeaderStyle, textAlign: 'right', direction: 'rtl' }}>תאריך</th>
+                    <th style={{ ...tHeaderStyle, textAlign: 'right', direction: 'rtl' }}>תיאור</th>
+                    <th style={{ ...tHeaderStyle, textAlign: 'right', direction: 'rtl' }}>קטגוריה</th>
+                    <th style={tHeaderStyle}>סכום</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -518,6 +675,179 @@ function AnnualSummaryTable({ docs, businesses, transactions, bizCategoryMap, cu
                   <tr style={{ borderTop: '2px solid #e2e8f0' }}>
                     <td colSpan={3} style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 700 }}>סה&quot;כ</td>
                     <td style={{ ...cellStyle, fontWeight: 700, color: total >= 0 ? '#16a34a' : '#dc2626' }}>{fmt(total)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            )}
+          </div>
+        )
+      })()}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Rental (השכרת דירה) Summary Table
+// ---------------------------------------------------------------------------
+
+function RentalSummaryTable({ businesses, transactions, bizCategoryMap, currentYear, currentMonth }: {
+  businesses: Business[]
+  transactions: Transaction[]
+  bizCategoryMap: Map<number, string[]>
+  currentYear: number
+  currentMonth: number
+}) {
+  const monthlyData = Array.from({ length: currentMonth + 1 }, (_, i) => {
+    const monthStr = `${String(i + 1).padStart(2, '0')}/${currentYear}`
+    let total = 0
+    const perBiz: Record<number, number> = {}
+    for (const biz of businesses) {
+      const catNames = bizCategoryMap.get(biz.id!) || []
+      const income = transactions
+        .filter(t => t.month === monthStr && t.category && catNames.includes(t.category))
+        .reduce((s, t) => s + (t.amount || 0), 0)
+      perBiz[biz.id!] = income
+      total += income
+    }
+    return { month: i, label: HEBREW_MONTHS[i], perBiz, total }
+  })
+
+  const totals = {
+    total: monthlyData.reduce((s, m) => s + m.total, 0),
+    perBiz: Object.fromEntries(businesses.map(biz => [
+      biz.id!, monthlyData.reduce((s, m) => s + (m.perBiz[biz.id!] || 0), 0),
+    ])),
+  }
+
+  const showPerBiz = businesses.length > 1
+
+  const [drillDown, setDrillDown] = useState<{ monthIdx: number; bizId: number } | null>(null)
+
+  const getDrillDownTransactions = () => {
+    if (!drillDown) return []
+    const monthStr = `${String(drillDown.monthIdx + 1).padStart(2, '0')}/${currentYear}`
+    const catNames = bizCategoryMap.get(drillDown.bizId) || []
+    return transactions
+      .filter(t => t.month === monthStr && t.category && catNames.includes(t.category))
+      .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+  }
+
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <h3 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>השכרת דירה — סיכום שנתי {currentYear}</h3>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+        <thead>
+          <tr>
+            <th style={{ ...tHeaderStyle, textAlign: 'right', direction: 'rtl' }}>חודש</th>
+            {showPerBiz && businesses.map(biz => (
+              <th key={biz.id} style={{ ...tHeaderStyle, background: '#ecfdf5', color: '#059669' }}>{biz.name}</th>
+            ))}
+            <th style={{ ...tHeaderStyle, background: '#ecfdf5', color: '#059669' }}>סה&quot;כ</th>
+          </tr>
+        </thead>
+        <tbody>
+          {monthlyData.map(row => (
+            <tr key={row.month} style={{ borderBottom: '1px solid #f1f5f9' }}>
+              <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 500 }}>{row.label}</td>
+              {showPerBiz && businesses.map(biz => {
+                const val = row.perBiz[biz.id!] || 0
+                return (
+                  <td
+                    key={biz.id}
+                    onClick={() => val ? setDrillDown(
+                      drillDown?.monthIdx === row.month && drillDown?.bizId === biz.id! ? null : { monthIdx: row.month, bizId: biz.id! }
+                    ) : undefined}
+                    style={{
+                      ...cellStyle,
+                      background: drillDown?.monthIdx === row.month && drillDown?.bizId === biz.id! ? '#d1fae5' : '#f0fdf4',
+                      cursor: val ? 'pointer' : 'default',
+                    }}
+                  >
+                    {val ? fmt(val) : '—'}
+                  </td>
+                )
+              })}
+              <td
+                style={{
+                  ...cellStyle,
+                  background: !showPerBiz && drillDown?.monthIdx === row.month ? '#d1fae5' : '#f0fdf4',
+                  fontWeight: 500,
+                  cursor: !showPerBiz && row.total ? 'pointer' : 'default',
+                }}
+                onClick={() => {
+                  if (!showPerBiz && row.total && businesses[0]) {
+                    setDrillDown(drillDown?.monthIdx === row.month ? null : { monthIdx: row.month, bizId: businesses[0].id! })
+                  }
+                }}
+              >
+                {row.total ? fmt(row.total) : '—'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr style={{ borderTop: '2px solid #e2e8f0', background: '#ecfdf5' }}>
+            <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 700 }}>סה&quot;כ</td>
+            {showPerBiz && businesses.map(biz => (
+              <td key={biz.id} style={{ ...cellStyle, fontWeight: 700, color: '#059669' }}>
+                {fmt(totals.perBiz[biz.id!] || 0)}
+              </td>
+            ))}
+            <td style={{ ...cellStyle, fontWeight: 700, color: '#059669' }}>{fmt(totals.total)}</td>
+          </tr>
+        </tfoot>
+      </table>
+
+      {/* Drill-down panel */}
+      {drillDown && (() => {
+        const biz = businesses.find(b => b.id === drillDown.bizId)
+        const txList = getDrillDownTransactions()
+        const total = txList.reduce((s, t) => s + (t.amount || 0), 0)
+        return (
+          <div style={{
+            marginTop: '1rem',
+            padding: '1rem',
+            border: '1px solid #bbf7d0',
+            borderRadius: '0.5rem',
+            background: '#f0fdf4',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+              <h4 style={{ margin: 0, fontSize: '0.95rem' }}>
+                {biz?.name} — {HEBREW_MONTHS[drillDown.monthIdx]} {currentYear}
+              </h4>
+              <button
+                onClick={() => setDrillDown(null)}
+                style={{ background: 'none', border: 'none', fontSize: '1.1rem', cursor: 'pointer', color: '#64748b' }}
+              >
+                ✕
+              </button>
+            </div>
+            {txList.length === 0 ? (
+              <p style={{ color: '#94a3b8', fontSize: '0.85rem' }}>אין תנועות</p>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                <thead>
+                  <tr>
+                    <th style={{ ...tHeaderStyle, textAlign: 'right', direction: 'rtl' }}>תאריך</th>
+                    <th style={{ ...tHeaderStyle, textAlign: 'right', direction: 'rtl' }}>תיאור</th>
+                    <th style={{ ...tHeaderStyle, textAlign: 'right', direction: 'rtl' }}>קטגוריה</th>
+                    <th style={tHeaderStyle}>סכום</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {txList.map(tx => (
+                    <tr key={tx.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl' }}>{tx.date}</td>
+                      <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl' }}>{tx.description}</td>
+                      <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl' }}>{tx.category}</td>
+                      <td style={{ ...cellStyle, color: '#16a34a' }}>{fmt(tx.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr style={{ borderTop: '2px solid #e2e8f0' }}>
+                    <td colSpan={3} style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 700 }}>סה&quot;כ</td>
+                    <td style={{ ...cellStyle, fontWeight: 700, color: '#16a34a' }}>{fmt(total)}</td>
                   </tr>
                 </tfoot>
               </table>
