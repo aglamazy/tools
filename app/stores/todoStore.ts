@@ -116,6 +116,10 @@ export const todoStore = {
     await db.tasks.update(id, { quadrant })
   },
 
+  async updateTaskPriority(id: number, priority: Priority): Promise<void> {
+    await db.tasks.update(id, { priority })
+  },
+
   async delegateTask(id: number, toUid: string): Promise<void> {
     const currentUid = getUser()?.uid
     await db.tasks.update(id, {
