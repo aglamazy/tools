@@ -9,6 +9,30 @@ export interface CardTypeIndicatorsSettings {
 
 export type AccountOwners = Record<string, string> // key = "card:1234" or "bank:5678", value = Firebase UID
 
+// Self-employed (עצמאי) Below-The-Line deduction limits per year
+export interface SelfEmployedBTLLimits {
+  // ביטוח לאומי – reduced rate (%) below threshold
+  nationalInsuranceReducedRate: number
+  // ביטוח לאומי – full rate (%) above threshold
+  nationalInsuranceFullRate: number
+  // סף הכנסה לביטוח לאומי (חודשי)
+  nationalInsuranceThreshold: number
+  // ביטוח בריאות – reduced rate (%) below threshold
+  healthInsuranceReducedRate: number
+  // ביטוח בריאות – full rate (%) above threshold
+  healthInsuranceFullRate: number
+  // סף הכנסה לביטוח בריאות (חודשי) – usually same as national insurance
+  healthInsuranceThreshold: number
+  // הפרשה לפנסיה – אחוז מוכר כהוצאה
+  pensionRate: number
+  // תקרת הכנסה חודשית לפנסיה
+  pensionCeiling: number
+  // הפרשה לקרן השתלמות – אחוז מוכר
+  educationFundRate: number
+  // תקרת הכנסה חודשית לקרן השתלמות
+  educationFundCeiling: number
+}
+
 export interface DriveSyncSettings {
   frequencyMinutes: number
   lastSyncAt?: string
@@ -277,6 +301,65 @@ export const appSettingsStore = {
       }
     } catch (error) {
       console.error('Error setting annualTaxLimit:', error)
+      throw error
+    }
+  },
+
+  /**
+   * Get self-employed BTL limits for a specific year
+   */
+  getSelfEmployedBTLLimits: async (year?: number): Promise<SelfEmployedBTLLimits | null> => {
+    try {
+      const setting = await db.appSettings.where('key').equals('selfEmployedBTL').first()
+      if (!setting) return null
+      const value = setting.value as Record<string, SelfEmployedBTLLimits>
+      const y = String(year ?? new Date().getFullYear())
+      return value[y] ?? null
+    } catch (error) {
+      console.error('Error getting selfEmployedBTL:', error)
+      return null
+    }
+  },
+
+  /**
+   * Get all per-year self-employed BTL limits
+   */
+  getAllSelfEmployedBTLLimits: async (): Promise<Record<string, SelfEmployedBTLLimits>> => {
+    try {
+      const setting = await db.appSettings.where('key').equals('selfEmployedBTL').first()
+      if (!setting) return {}
+      return (setting.value as Record<string, SelfEmployedBTLLimits>) || {}
+    } catch (error) {
+      console.error('Error getting selfEmployedBTL:', error)
+      return {}
+    }
+  },
+
+  /**
+   * Set self-employed BTL limits for a specific year
+   */
+  setSelfEmployedBTLLimits: async (limits: SelfEmployedBTLLimits, year?: number): Promise<void> => {
+    try {
+      const y = String(year ?? new Date().getFullYear())
+      const existing = await db.appSettings.where('key').equals('selfEmployedBTL').first()
+      let allLimits: Record<string, SelfEmployedBTLLimits> = {}
+      if (existing) {
+        allLimits = { ...(existing.value as Record<string, SelfEmployedBTLLimits>) }
+        allLimits[y] = limits
+        await db.appSettings.update(existing.id!, {
+          value: allLimits,
+          updatedAt: new Date().toISOString(),
+        })
+      } else {
+        allLimits[y] = limits
+        await db.appSettings.add({
+          key: 'selfEmployedBTL',
+          value: allLimits,
+          updatedAt: new Date().toISOString(),
+        })
+      }
+    } catch (error) {
+      console.error('Error setting selfEmployedBTL:', error)
       throw error
     }
   },

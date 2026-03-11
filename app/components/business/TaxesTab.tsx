@@ -7,7 +7,7 @@ import type { Category } from '@/app/types/category'
 import { getUser } from '@/app/stores/authStore'
 import { getHouseholdInfo } from '@/app/services/householdService'
 import { type TaxStatus, type TaxStatusInfo } from '@/app/components/TaxExemptBadge'
-import { appSettingsStore } from '@/app/stores/appSettingsStore'
+import { appSettingsStore, type SelfEmployedBTLLimits } from '@/app/stores/appSettingsStore'
 import FilesSubTab from './TaxFilesSubTab'
 
 type HouseholdMember = { uid: string; label: string }
@@ -160,6 +160,7 @@ function AnnualSummarySubTab() {
   const [selectedUser, setSelectedUser] = useState<string>('all')
   const [loading, setLoading] = useState(true)
   const [taxExemptInfo, setTaxExemptInfo] = useState<TaxStatusInfo | null>(null)
+  const [btlLimits, setBtlLimits] = useState<SelfEmployedBTLLimits | null>(null)
   const currentYear = new Date().getFullYear()
   const currentMonth = new Date().getMonth() // 0-based
 
@@ -195,11 +196,14 @@ function AnnualSummarySubTab() {
         )
       }
 
+      const btl = await appSettingsStore.getSelfEmployedBTLLimits(currentYear)
+
       setDocs(allDocs)
       setBusinesses(biz)
       setTransactions(bizTransactions)
       setBizCategoryMap(catMap)
       setMembers(m)
+      setBtlLimits(btl)
       setLoading(false)
     }
     load()
@@ -302,9 +306,176 @@ function AnnualSummarySubTab() {
         currentYear={currentYear}
         currentMonth={currentMonth}
       />
+
+      {btlLimits && relevantBusinesses.some(b => b.vatType === 'authorized' || (!b.vatType && !b.isTaxFree)) && (
+        <SelfEmployedBTLSection
+          businesses={relevantBusinesses}
+          transactions={transactions}
+          bizCategoryMap={bizCategoryMap}
+          currentYear={currentYear}
+          currentMonth={currentMonth}
+          limits={btlLimits}
+        />
+      )}
     </div>
   )
 }
+
+// ---------------------------------------------------------------------------
+// Self-Employed BTL Calculation Section
+// ---------------------------------------------------------------------------
+
+type BTLSectionProps = {
+  businesses: Business[]
+  transactions: Transaction[]
+  bizCategoryMap: Map<number, string[]>
+  currentYear: number
+  currentMonth: number
+  limits: SelfEmployedBTLLimits
+}
+
+function computeMonthlyBTL(monthlyIncome: number, limits: SelfEmployedBTLLimits) {
+  // ביטוח לאומי
+  const niBelow = Math.min(monthlyIncome, limits.nationalInsuranceThreshold)
+  const niAbove = Math.max(0, monthlyIncome - limits.nationalInsuranceThreshold)
+  const nationalInsurance = niBelow * (limits.nationalInsuranceReducedRate / 100) + niAbove * (limits.nationalInsuranceFullRate / 100)
+
+  // ביטוח בריאות
+  const hiBelow = Math.min(monthlyIncome, limits.healthInsuranceThreshold)
+  const hiAbove = Math.max(0, monthlyIncome - limits.healthInsuranceThreshold)
+  const healthInsurance = hiBelow * (limits.healthInsuranceReducedRate / 100) + hiAbove * (limits.healthInsuranceFullRate / 100)
+
+  // פנסיה
+  const pensionBase = Math.min(monthlyIncome, limits.pensionCeiling)
+  const pension = pensionBase * (limits.pensionRate / 100)
+
+  // קרן השתלמות
+  const eduBase = Math.min(monthlyIncome, limits.educationFundCeiling)
+  const educationFund = eduBase * (limits.educationFundRate / 100)
+
+  return { nationalInsurance, healthInsurance, pension, educationFund, total: nationalInsurance + healthInsurance + pension + educationFund }
+}
+
+function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMap, currentYear, currentMonth, limits }: BTLSectionProps) {
+  const fmt = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
+  const fmtPct = (n: number) => `${n}%`
+
+  // Filter to self-employed businesses (authorized or no vatType, not tax-free)
+  const seBiz = businesses.filter(b => (b.vatType === 'authorized' || !b.vatType) && !b.isTaxFree)
+  if (seBiz.length === 0) return null
+
+  // Collect all category names for SE businesses
+  const seCatNames = new Set<string>()
+  for (const biz of seBiz) {
+    const catNames = bizCategoryMap.get(biz.id!) || []
+    catNames.forEach(n => seCatNames.add(n))
+  }
+
+  // Compute monthly incomes
+  const monthlyRows = Array.from({ length: currentMonth + 1 }, (_, i) => {
+    const monthStr = `${String(i + 1).padStart(2, '0')}/${currentYear}`
+    const monthTx = transactions.filter(t => t.month === monthStr && t.category && seCatNames.has(t.category))
+    const income = monthTx.reduce((s, t) => s + (t.amount || 0), 0)
+    const btl = computeMonthlyBTL(income, limits)
+    return { month: i, label: HEBREW_MONTHS[i], income, ...btl }
+  })
+
+  const totals = {
+    income: monthlyRows.reduce((s, r) => s + r.income, 0),
+    nationalInsurance: monthlyRows.reduce((s, r) => s + r.nationalInsurance, 0),
+    healthInsurance: monthlyRows.reduce((s, r) => s + r.healthInsurance, 0),
+    pension: monthlyRows.reduce((s, r) => s + r.pension, 0),
+    educationFund: monthlyRows.reduce((s, r) => s + r.educationFund, 0),
+    total: monthlyRows.reduce((s, r) => s + r.total, 0),
+  }
+
+  const cellStyle: React.CSSProperties = {
+    padding: '0.5rem 0.75rem',
+    fontSize: '0.85rem',
+    textAlign: 'left' as const,
+    direction: 'ltr',
+  }
+
+  const headerStyle: React.CSSProperties = {
+    ...cellStyle,
+    fontWeight: 600,
+    background: '#faf5ff',
+    color: '#6b21a8',
+    borderBottom: '2px solid #e2e8f0',
+  }
+
+  return (
+    <div style={{ marginTop: '2rem', overflowX: 'auto' }}>
+      <h3 style={{ fontSize: '1rem', marginBottom: '0.5rem' }}>ניכויי מס לעצמאי (BTL) — {currentYear}</h3>
+      <p style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.75rem' }}>
+        חישוב מבוסס על הכנסה חודשית מעסקים: {seBiz.map(b => b.name).join(', ')}
+      </p>
+
+      {/* Current limits summary */}
+      <div style={{
+        marginBottom: '1rem',
+        padding: '0.75rem 1rem',
+        background: '#faf5ff',
+        border: '1px solid #e9d5ff',
+        borderRadius: '0.5rem',
+        fontSize: '0.8rem',
+        color: '#6b21a8',
+        display: 'flex',
+        gap: '1.5rem',
+        flexWrap: 'wrap',
+      }}>
+        <span>ביטוח לאומי: {fmtPct(limits.nationalInsuranceReducedRate)}/{fmtPct(limits.nationalInsuranceFullRate)} (סף: {fmt(limits.nationalInsuranceThreshold)})</span>
+        <span>ביטוח בריאות: {fmtPct(limits.healthInsuranceReducedRate)}/{fmtPct(limits.healthInsuranceFullRate)} (סף: {fmt(limits.healthInsuranceThreshold)})</span>
+        <span>פנסיה: {fmtPct(limits.pensionRate)} (תקרה: {fmt(limits.pensionCeiling)})</span>
+        <span>קרן השתלמות: {fmtPct(limits.educationFundRate)} (תקרה: {fmt(limits.educationFundCeiling)})</span>
+      </div>
+
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+        <thead>
+          <tr>
+            <th style={{ ...headerStyle, textAlign: 'right', direction: 'rtl' }}>חודש</th>
+            <th style={headerStyle}>הכנסה</th>
+            <th style={headerStyle}>ביטוח לאומי</th>
+            <th style={headerStyle}>ביטוח בריאות</th>
+            <th style={headerStyle}>פנסיה</th>
+            <th style={headerStyle}>קרן השתלמות</th>
+            <th style={{ ...headerStyle, background: '#f3e8ff' }}>סה&quot;כ ניכויים</th>
+          </tr>
+        </thead>
+        <tbody>
+          {monthlyRows.map(row => (
+            <tr key={row.month} style={{ borderBottom: '1px solid #f1f5f9' }}>
+              <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 500 }}>{row.label}</td>
+              <td style={cellStyle}>{row.income ? fmt(row.income) : '—'}</td>
+              <td style={cellStyle}>{row.nationalInsurance ? fmt(row.nationalInsurance) : '—'}</td>
+              <td style={cellStyle}>{row.healthInsurance ? fmt(row.healthInsurance) : '—'}</td>
+              <td style={cellStyle}>{row.pension ? fmt(row.pension) : '—'}</td>
+              <td style={cellStyle}>{row.educationFund ? fmt(row.educationFund) : '—'}</td>
+              <td style={{ ...cellStyle, background: '#faf5ff', fontWeight: 500 }}>
+                {row.total ? fmt(row.total) : '—'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr style={{ borderTop: '2px solid #e2e8f0', background: '#faf5ff' }}>
+            <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 700 }}>סה&quot;כ</td>
+            <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.income)}</td>
+            <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.nationalInsurance)}</td>
+            <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.healthInsurance)}</td>
+            <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.pension)}</td>
+            <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.educationFund)}</td>
+            <td style={{ ...cellStyle, fontWeight: 700, background: '#f3e8ff', color: '#6b21a8' }}>{fmt(totals.total)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Annual Summary Table
+// ---------------------------------------------------------------------------
 
 type SummaryTableProps = {
   docs: TaxDocument[]

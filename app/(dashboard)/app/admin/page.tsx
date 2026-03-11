@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { userTierStore, UserTier } from '@/app/stores/userTierStore'
 import { getIdToken } from '@/app/services/firebaseAuthService'
 import { subscribeToAuth } from '@/app/stores/authStore'
-import { appSettingsStore } from '@/app/stores/appSettingsStore'
+import { appSettingsStore, type SelfEmployedBTLLimits } from '@/app/stores/appSettingsStore'
 import SettingsTabs from '@/app/components/settings/SettingsTabs'
 import RichEditor from '@/app/components/ui/RichEditor'
 
@@ -70,6 +70,11 @@ export default function AdminPage() {
   const [taxLimitDrafts, setTaxLimitDrafts] = useState<Record<string, string>>({})
   const [taxLimitSaved, setTaxLimitSaved] = useState<string | null>(null)
   const [newTaxYear, setNewTaxYear] = useState('')
+
+  const [btlLimits, setBtlLimits] = useState<Record<string, SelfEmployedBTLLimits>>({})
+  const [btlDrafts, setBtlDrafts] = useState<Record<string, Record<string, string>>>({})
+  const [btlSaved, setBtlSaved] = useState<string | null>(null)
+  const [newBtlYear, setNewBtlYear] = useState('')
 
   const [tcVersions, setTcVersions] = useState<{ version: string; text: string }[]>([])
   const [tcDraft, setTcDraft] = useState('')
@@ -158,6 +163,15 @@ export default function AdminPage() {
         const drafts: Record<string, string> = {}
         for (const [y, v] of Object.entries(limits)) drafts[y] = String(v)
         setTaxLimitDrafts(drafts)
+      })
+      appSettingsStore.getAllSelfEmployedBTLLimits().then(limits => {
+        setBtlLimits(limits)
+        const drafts: Record<string, Record<string, string>> = {}
+        for (const [y, v] of Object.entries(limits)) {
+          drafts[y] = {}
+          for (const [k, val] of Object.entries(v)) drafts[y][k] = String(val)
+        }
+        setBtlDrafts(drafts)
       })
     })
     return () => { unsubAuth(); unsubTier() }
@@ -720,6 +734,143 @@ export default function AdminPage() {
                         }
                       }}
                       disabled={!newTaxYear || !/^\d{4}$/.test(newTaxYear) || !!taxLimits[newTaxYear]}
+                      style={{
+                        padding: '0.3rem 0.75rem',
+                        background: '#f0fdf4',
+                        color: '#16a34a',
+                        border: '1px solid #86efac',
+                        borderRadius: '0.375rem',
+                        fontSize: '0.85rem',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      + הוסף שנה
+                    </button>
+                  </div>
+
+                  {/* Self-employed BTL limits */}
+                  <h2 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.75rem', marginTop: '2rem' }}>ניכויי מס לעצמאי (BTL)</h2>
+                  <p style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.75rem' }}>
+                    הגדרת אחוזים ותקרות לניכויים מתחת לקו עבור עצמאי, לפי שנה.
+                  </p>
+                  {Object.keys(btlLimits).sort().reverse().map((year) => {
+                    const draft = btlDrafts[year] || {}
+                    const current = btlLimits[year]
+                    const hasChanges = current && Object.keys(current).some(k => String((current as any)[k]) !== draft[k])
+                    const fields: { key: keyof SelfEmployedBTLLimits; label: string; suffix: string }[] = [
+                      { key: 'nationalInsuranceReducedRate', label: 'ביטוח לאומי – שיעור מופחת', suffix: '%' },
+                      { key: 'nationalInsuranceFullRate', label: 'ביטוח לאומי – שיעור מלא', suffix: '%' },
+                      { key: 'nationalInsuranceThreshold', label: 'סף הכנסה חודשי לביטוח לאומי', suffix: '₪' },
+                      { key: 'healthInsuranceReducedRate', label: 'ביטוח בריאות – שיעור מופחת', suffix: '%' },
+                      { key: 'healthInsuranceFullRate', label: 'ביטוח בריאות – שיעור מלא', suffix: '%' },
+                      { key: 'healthInsuranceThreshold', label: 'סף הכנסה חודשי לביטוח בריאות', suffix: '₪' },
+                      { key: 'pensionRate', label: 'פנסיה – אחוז מוכר כהוצאה', suffix: '%' },
+                      { key: 'pensionCeiling', label: 'תקרת הכנסה חודשית לפנסיה', suffix: '₪' },
+                      { key: 'educationFundRate', label: 'קרן השתלמות – אחוז מוכר', suffix: '%' },
+                      { key: 'educationFundCeiling', label: 'תקרת הכנסה חודשית לקרן השתלמות', suffix: '₪' },
+                    ]
+                    return (
+                      <div key={year} style={{ marginBottom: '1.5rem', padding: '1rem', border: '1px solid #e5e7eb', borderRadius: '0.5rem', background: '#f8fafc' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                          <h3 style={{ fontSize: '0.95rem', fontWeight: 600, margin: 0 }}>{year}</h3>
+                          <button
+                            onClick={async () => {
+                              const limits: any = {}
+                              for (const f of fields) {
+                                const val = Number(draft[f.key])
+                                if (isNaN(val) || val < 0) return
+                                limits[f.key] = val
+                              }
+                              await appSettingsStore.setSelfEmployedBTLLimits(limits as SelfEmployedBTLLimits, Number(year))
+                              setBtlLimits(prev => ({ ...prev, [year]: limits }))
+                              setBtlSaved(year)
+                            }}
+                            disabled={!hasChanges}
+                            style={{
+                              padding: '0.25rem 0.75rem',
+                              background: !hasChanges ? '#e5e7eb' : '#2563eb',
+                              color: !hasChanges ? '#9ca3af' : '#fff',
+                              border: 'none',
+                              borderRadius: '0.375rem',
+                              fontSize: '0.8rem',
+                              cursor: !hasChanges ? 'default' : 'pointer',
+                            }}
+                          >
+                            {btlSaved === year ? '✓' : 'שמור'}
+                          </button>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                          {fields.map(f => (
+                            <div key={f.key} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                              <label style={{ fontSize: '0.8rem', color: '#475569', minWidth: '180px', textAlign: 'right' }}>{f.label}</label>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                <input
+                                  type="number"
+                                  dir="ltr"
+                                  step="0.01"
+                                  value={draft[f.key] ?? ''}
+                                  onChange={(e) => {
+                                    setBtlDrafts(prev => ({
+                                      ...prev,
+                                      [year]: { ...prev[year], [f.key]: e.target.value },
+                                    }))
+                                    setBtlSaved(null)
+                                  }}
+                                  style={{
+                                    width: '100px',
+                                    padding: '0.25rem 0.4rem',
+                                    border: '1px solid #d1d5db',
+                                    borderRadius: '0.375rem',
+                                    fontSize: '0.85rem',
+                                  }}
+                                />
+                                <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>{f.suffix}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })}
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.5rem' }}>
+                    <input
+                      type="number"
+                      dir="ltr"
+                      placeholder="שנה"
+                      value={newBtlYear}
+                      onChange={(e) => setNewBtlYear(e.target.value)}
+                      style={{
+                        width: '100px',
+                        padding: '0.3rem 0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                        fontSize: '0.9rem',
+                      }}
+                    />
+                    <button
+                      onClick={() => {
+                        const y = newBtlYear.trim()
+                        if (y && /^\d{4}$/.test(y) && !btlLimits[y]) {
+                          const empty: SelfEmployedBTLLimits = {
+                            nationalInsuranceReducedRate: 0,
+                            nationalInsuranceFullRate: 0,
+                            nationalInsuranceThreshold: 0,
+                            healthInsuranceReducedRate: 0,
+                            healthInsuranceFullRate: 0,
+                            healthInsuranceThreshold: 0,
+                            pensionRate: 0,
+                            pensionCeiling: 0,
+                            educationFundRate: 0,
+                            educationFundCeiling: 0,
+                          }
+                          setBtlLimits(prev => ({ ...prev, [y]: empty }))
+                          const emptyDraft: Record<string, string> = {}
+                          for (const k of Object.keys(empty)) emptyDraft[k] = ''
+                          setBtlDrafts(prev => ({ ...prev, [y]: emptyDraft }))
+                          setNewBtlYear('')
+                        }
+                      }}
+                      disabled={!newBtlYear || !/^\d{4}$/.test(newBtlYear) || !!btlLimits[newBtlYear]}
                       style={{
                         padding: '0.3rem 0.75rem',
                         background: '#f0fdf4',
