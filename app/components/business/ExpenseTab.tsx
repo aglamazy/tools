@@ -1,11 +1,12 @@
 'use client'
 
 import React, { useEffect, useState } from 'react'
+import JSZip from 'jszip'
 import { db, type Transaction, type Business, type ExpenseDocument } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { businessStore } from '@/app/stores/businessStore'
 import { hasGmailAccess, requestGmailAccess, searchMessages, fetchMessagesMetadata, fetchMessageBody } from '@/app/services/gmailService'
-import { hasGoogleAccess, requestGoogleAccess, uploadExpenseDocument } from '@/app/services/googleDriveService'
+import { hasGoogleAccess, requestGoogleAccess, uploadExpenseDocument, downloadDriveFile } from '@/app/services/googleDriveService'
 import type { Category } from '@/app/types/category'
 
 type ExpenseTabProps = {
@@ -186,11 +187,11 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
       let matchedMessageId: string | undefined
       let matchedFrom: string | undefined
 
-      // Check cache first: do we already know the email name for this merchant?
+      // Check cache first: do we already know the email sender for this merchant?
       const cachedName = cache[desc]
       if (cachedName) {
         console.log('[ExpenseTab] Cache hit:', desc, '→', cachedName)
-        const query = `from:${cachedName} (חשבונית OR קבלה OR receipt OR invoice) ${dateRange}`
+        const query = `from:${cachedName} (חשבונית OR קבלה OR receipt OR invoice)`
         console.log('[ExpenseTab] Cached search query:', query)
         const result = await searchMessages(query, { searchAllMail: true, maxResults: 5 })
         if (result.messageIds.length > 0) {
@@ -200,15 +201,20 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
         }
       }
 
-      // No cache hit: broad date-range search → Gemini matches
+      // No cache hit (or cached search failed): broad date-range search → Gemini matches
       if (!matchedMessageId) {
-        console.log('[ExpenseTab] No cache. Broad search with date range only')
+        console.log('[ExpenseTab] Broad search with date range')
         const broadQuery = dateRange
         console.log('[ExpenseTab] Broad query:', broadQuery)
         const searchResult = await searchMessages(broadQuery, { searchAllMail: true, maxResults: 30 })
         console.log('[ExpenseTab] Broad search result:', searchResult.messageIds.length, 'messages')
 
-        if (searchResult.error || searchResult.messageIds.length === 0) {
+        if (searchResult.error) {
+          console.error('[ExpenseTab] Search error:', searchResult.error)
+          setMatchStatus(s => ({ ...s, [t.id!]: 'error' }))
+          return
+        }
+        if (searchResult.messageIds.length === 0) {
           console.log('[ExpenseTab] No emails in date range')
           setMatchStatus(s => ({ ...s, [t.id!]: 'no-match' }))
           return
@@ -379,6 +385,13 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
     return transactions.reduce((sum, t) => sum + Math.abs(t.amount), 0)
   }
 
+  const getVatTotal = () => {
+    return transactions.reduce((sum, t) => {
+      const doc = matchedDocs[t.id!]
+      return sum + (doc?.vatAmount || 0)
+    }, 0)
+  }
+
   const handleUnlink = async (txId: number) => {
     const doc = matchedDocs[txId]
     if (!doc?.id) return
@@ -393,6 +406,33 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
       delete next[txId]
       return next
     })
+  }
+
+  const [downloading, setDownloading] = useState(false)
+
+  const handleDownloadAll = async () => {
+    const docsWithFiles = Object.values(matchedDocs).filter(d => d.driveFileId)
+    if (docsWithFiles.length === 0) return
+    setDownloading(true)
+    try {
+      const zip = new JSZip()
+      for (const doc of docsWithFiles) {
+        const { base64, mimeType } = await downloadDriveFile(doc.driveFileId!)
+        const ext = mimeType.includes('pdf') ? 'pdf' : 'bin'
+        const name = `${doc.vendor || 'receipt'}-${doc.date || 'unknown'}.${ext}`
+        zip.file(name, base64, { base64: true })
+      }
+      const blob = await zip.generateAsync({ type: 'blob' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `expenses-${filterMode === 'month' ? selectedMonth.replace('/', '-') : filterMode === 'year' ? selectedYear : 'all'}.zip`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('Zip download failed:', err)
+    }
+    setDownloading(false)
   }
 
   if (loading) {
@@ -482,7 +522,24 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
         {transactions.length > 0 && (
           <span style={{ color: '#64748b', fontSize: '0.9rem' }}>
             סה"כ: ₪{getMonthTotal().toLocaleString()}
+            {getVatTotal() > 0 && ` (מע״מ: ₪${getVatTotal().toLocaleString()})`}
           </span>
+        )}
+        {Object.values(matchedDocs).some(d => d.driveFileId) && (
+          <button
+            onClick={handleDownloadAll}
+            disabled={downloading}
+            style={{
+              padding: '0.4rem 0.8rem',
+              borderRadius: '0.375rem',
+              border: '1px solid #e2e8f0',
+              background: downloading ? '#f1f5f9' : '#fff',
+              cursor: downloading ? 'wait' : 'pointer',
+              fontSize: '0.85rem',
+            }}
+          >
+            {downloading ? '...מוריד' : '📥 הורד הכל (ZIP)'}
+          </button>
         )}
       </div>
 
@@ -500,7 +557,8 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>תיאור</th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>נושא</th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'left' }}>סכום</th>
-                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'center', width: '60px' }}>קבלה</th>
+                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'left' }}>מע״מ</th>
+                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'center', width: '80px' }}>קבלה</th>
               </tr>
             </thead>
             <tbody>
@@ -512,25 +570,23 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
                   <tr key={txId} style={{ borderBottom: '1px solid #f1f5f9' }}>
                     <td style={{ padding: '0.6rem 0.5rem' }}>{t.date}</td>
                     <td style={{ padding: '0.6rem 0.5rem' }}>
-                      {t.description}
-                      {doc?.vendor && doc.vendor !== t.description && (
-                        <span style={{ display: 'block', fontSize: '0.75rem', color: '#64748b' }}>{doc.vendor}</span>
-                      )}
+                      {doc?.description || doc?.vendor || t.merchant || t.description}
+                      <span style={{ display: 'block', fontSize: '0.75rem', color: '#94a3b8' }}>
+                        {t.description}
+                      </span>
                     </td>
                     <td style={{ padding: '0.6rem 0.5rem', color: '#64748b' }}>{t.category}</td>
                     <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', fontWeight: 500, color: '#dc2626' }}>
                       ₪{Math.abs(t.amount).toLocaleString()}
-                      {doc?.vatAmount != null && (
-                        <span style={{ display: 'block', fontSize: '0.7rem', color: '#64748b' }}>
-                          מע״מ: ₪{doc.vatAmount.toLocaleString()}
-                        </span>
-                      )}
+                    </td>
+                    <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', color: '#64748b', fontSize: '0.85rem' }}>
+                      {doc?.vatAmount != null ? `₪${doc.vatAmount.toLocaleString()}` : ''}
                     </td>
                     <td style={{ padding: '0.6rem 0.5rem', textAlign: 'center' }}>
                       {status === 'matched' ? (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}>
                           {doc?.driveWebViewLink ? (
-                            <a href={doc.driveWebViewLink} target="_blank" rel="noopener noreferrer" title={doc?.vendor || 'נמצאה קבלה'} style={{ color: '#10b981', textDecoration: 'none', fontWeight: 600 }}>✓</a>
+                            <a href={doc.driveWebViewLink} target="_blank" rel="noopener noreferrer" title={doc?.vendor || 'פתח קבלה'} style={{ color: '#10b981', textDecoration: 'none', fontSize: '0.9rem' }}>📄</a>
                           ) : (
                             <span title={doc?.vendor || 'נמצאה קבלה'} style={{ color: '#10b981' }}>✓</span>
                           )}
@@ -543,9 +599,19 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
                       ) : status === 'searching' ? (
                         <span style={{ color: '#64748b' }}>...</span>
                       ) : status === 'no-match' ? (
-                        <span title="לא נמצאה קבלה" style={{ color: '#f59e0b' }}>-</span>
+                        <button
+                          onClick={() => handleMatchReceipt(t)}
+                          disabled={Object.values(matchStatus).includes('searching')}
+                          title="לא נמצאה קבלה — לחץ לחיפוש נוסף"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#f59e0b', fontSize: '0.85rem', padding: '0.1rem 0.3rem' }}
+                        >לא נמצא</button>
                       ) : status === 'error' ? (
-                        <span title="שגיאה" style={{ color: '#dc2626' }}>!</span>
+                        <button
+                          onClick={() => handleMatchReceipt(t)}
+                          disabled={Object.values(matchStatus).includes('searching')}
+                          title="שגיאה — לחץ לניסיון נוסף"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: '0.85rem', padding: '0.1rem 0.3rem' }}
+                        >שגיאה</button>
                       ) : (
                         <button
                           onClick={() => handleMatchReceipt(t)}

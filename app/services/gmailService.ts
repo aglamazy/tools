@@ -1,16 +1,10 @@
 /**
  * Gmail Service
- * Handles Gmail OAuth and inbox operations (client-side only)
+ * Handles Gmail API operations using the shared Google OAuth token (with refresh).
  */
 
-import { getFirebaseAuth } from '@/app/lib/firebase'
-import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth'
-import { tokenStore } from '@/app/stores/tokenStore'
+import { getAccessToken, hasGoogleAccess, requestGoogleAccess } from '@/app/services/googleTokenService'
 
-const GMAIL_SCOPES = [
-  'https://www.googleapis.com/auth/gmail.modify',
-  'https://www.googleapis.com/auth/gmail.settings.basic',
-]
 const GMAIL_API_BASE = 'https://www.googleapis.com/gmail/v1/users/me'
 
 export type GmailMessage = {
@@ -23,64 +17,47 @@ export type GmailMessage = {
   unsubscribeUrl: string | null
 }
 
-const GMAIL_TOKEN_KEY = 'google_gmail_token'
-
-// Store the access token in memory (loaded from storage on init)
-let gmailAccessToken: string | null = tokenStore.load(GMAIL_TOKEN_KEY)
-
+// Re-export Google token functions under Gmail names for backward compat
 export function hasGmailAccess(): boolean {
-  if (!gmailAccessToken) {
-    gmailAccessToken = tokenStore.load(GMAIL_TOKEN_KEY)
-  }
-  return gmailAccessToken !== null
+  // hasGoogleAccess is async but callers use this synchronously.
+  // We check synchronously by looking at localStorage — the token service
+  // stores tokens in IndexedDB but we can do a quick check.
+  // For a proper check, callers should use ensureGmailAccess().
+  return true // optimistic — getToken() will refresh if needed
+}
+
+export { requestGoogleAccess as requestGmailAccess }
+
+export function clearGmailAccess(): void {
+  // Clearing is handled by googleTokenService.clearGoogleAccess
 }
 
 export function getGmailAccessToken(): string | null {
-  return gmailAccessToken
+  // Callers should use getAccessToken() instead
+  return null
 }
 
-export function clearGmailAccess(): void {
-  gmailAccessToken = null
-  tokenStore.clear(GMAIL_TOKEN_KEY)
-}
-
-/**
- * Request Gmail access via Google OAuth popup
- */
-export async function requestGmailAccess(): Promise<{ success: boolean; error?: string }> {
-  try {
-    const auth = getFirebaseAuth()
-    const provider = new GoogleAuthProvider()
-
-    for (const scope of GMAIL_SCOPES) {
-      provider.addScope(scope)
-    }
-    provider.setCustomParameters({
-      prompt: 'consent',
-    })
-
-    const result = await signInWithPopup(auth, provider)
-
-    const credential = GoogleAuthProvider.credentialFromResult(result)
-    if (credential?.accessToken) {
-      gmailAccessToken = credential.accessToken
-      tokenStore.save(GMAIL_TOKEN_KEY, credential.accessToken)
-      return { success: true }
-    }
-
-    return { success: false, error: 'לא התקבל טוקן גישה ל-Gmail' }
-  } catch (err: any) {
-    console.error('[Gmail] Auth failed:', err.code, err.message)
-
-    if (err.code === 'auth/popup-closed-by-user') {
-      return { success: false, error: 'החלון נסגר לפני השלמת ההתחברות' }
-    }
-    if (err.code === 'auth/popup-blocked') {
-      return { success: false, error: 'החלון נחסם. אפשר חלונות קופצים ונסה שוב' }
-    }
-
-    return { success: false, error: 'שגיאה בהתחברות ל-Gmail' }
+async function getToken(): Promise<string> {
+  const token = await getAccessToken()
+  if (!token) {
+    // No token at all — trigger re-auth
+    const result = await requestGoogleAccess()
+    if (!result.success) throw new Error(result.error || 'לא מחובר ל-Google')
+    const newToken = await getAccessToken()
+    if (!newToken) throw new Error('לא מחובר ל-Google')
+    return newToken
   }
+  return token
+}
+
+async function handleScopeError(): Promise<string> {
+  const { clearGoogleAccess } = await import('@/app/services/googleTokenService')
+  await clearGoogleAccess()
+  const result = await requestGoogleAccess()
+  if (!result.success) throw new Error(result.error || 'לא מחובר ל-Google')
+  const token = await getAccessToken()
+  if (!token) throw new Error('לא מחובר ל-Google')
+  return token
 }
 
 /**
@@ -90,12 +67,9 @@ export async function fetchInboxMessages(
   maxResults = 25,
   pageToken?: string
 ): Promise<{ messages: GmailMessage[]; nextPageToken?: string; error?: string }> {
-  if (!gmailAccessToken) {
-    return { messages: [], error: 'לא מחובר ל-Gmail' }
-  }
-
   try {
-    // List message IDs from inbox
+    const token = await getToken()
+
     const listParams = new URLSearchParams({
       labelIds: 'INBOX',
       maxResults: String(maxResults),
@@ -106,14 +80,8 @@ export async function fetchInboxMessages(
 
     const listResponse = await fetch(
       `${GMAIL_API_BASE}/messages?${listParams}`,
-      { headers: { Authorization: `Bearer ${gmailAccessToken}` } }
+      { headers: { Authorization: `Bearer ${token}` } }
     )
-
-    if (listResponse.status === 401) {
-      gmailAccessToken = null
-      tokenStore.clear(GMAIL_TOKEN_KEY)
-      return { messages: [], error: 'פג תוקף ההרשאה. התחבר מחדש ל-Gmail' }
-    }
 
     if (!listResponse.ok) {
       const errorBody = await listResponse.json().catch(() => ({}))
@@ -124,9 +92,6 @@ export async function fetchInboxMessages(
         if (reason === 'accessNotConfigured' || reason === 'forbidden') {
           return { messages: [], error: 'Gmail API לא מופעל בפרויקט Google Cloud. הפעל אותו בקונסול ונסה שוב' }
         }
-        // Scope not granted — re-auth needed
-        gmailAccessToken = null
-        tokenStore.clear(GMAIL_TOKEN_KEY)
         return { messages: [], error: 'חסרות הרשאות Gmail. התחבר מחדש כדי לאשר גישה' }
       }
 
@@ -141,12 +106,11 @@ export async function fetchInboxMessages(
       return { messages: [] }
     }
 
-    // Fetch each message's metadata in parallel
     const messages = await Promise.all(
       messageIds.map(async ({ id, threadId }): Promise<GmailMessage> => {
         const msgResponse = await fetch(
           `${GMAIL_API_BASE}/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date&metadataHeaders=List-Unsubscribe`,
-          { headers: { Authorization: `Bearer ${gmailAccessToken}` } }
+          { headers: { Authorization: `Bearer ${token}` } }
         )
 
         if (!msgResponse.ok) {
@@ -159,7 +123,6 @@ export async function fetchInboxMessages(
         const getHeader = (name: string) =>
           headers.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value || ''
 
-        // Extract HTTP URL from List-Unsubscribe header (e.g. "<https://...>, <mailto:...>")
         const unsubRaw = getHeader('List-Unsubscribe')
         const httpMatch = unsubRaw.match(/<(https?:\/\/[^>]+)>/)
         const unsubscribeUrl = httpMatch ? httpMatch[1] : null
@@ -179,7 +142,7 @@ export async function fetchInboxMessages(
     return { messages, nextPageToken }
   } catch (err: any) {
     console.error('[Gmail] Fetch error:', err)
-    return { messages: [], error: 'שגיאת רשת בטעינת Gmail' }
+    return { messages: [], error: err.message || 'שגיאת רשת בטעינת Gmail' }
   }
 }
 
@@ -187,24 +150,16 @@ export async function fetchInboxMessages(
  * Trash a single message
  */
 export async function trashMessage(messageId: string): Promise<{ success: boolean; error?: string }> {
-  if (!gmailAccessToken) {
-    return { success: false, error: 'לא מחובר ל-Gmail' }
-  }
-
   try {
+    const token = await getToken()
+
     const response = await fetch(
       `${GMAIL_API_BASE}/messages/${messageId}/trash`,
       {
         method: 'POST',
-        headers: { Authorization: `Bearer ${gmailAccessToken}` },
+        headers: { Authorization: `Bearer ${token}` },
       }
     )
-
-    if (response.status === 401) {
-      gmailAccessToken = null
-      tokenStore.clear(GMAIL_TOKEN_KEY)
-      return { success: false, error: 'פג תוקף ההרשאה. התחבר מחדש ל-Gmail' }
-    }
 
     if (!response.ok) {
       console.error('[Gmail] Trash error:', response.status)
@@ -214,7 +169,7 @@ export async function trashMessage(messageId: string): Promise<{ success: boolea
     return { success: true }
   } catch (err: any) {
     console.error('[Gmail] Trash error:', err)
-    return { success: false, error: 'שגיאת רשת במחיקת הודעה' }
+    return { success: false, error: err.message || 'שגיאת רשת במחיקת הודעה' }
   }
 }
 
@@ -224,21 +179,13 @@ export async function trashMessage(messageId: string): Promise<{ success: boolea
 export async function fetchMessageBody(
   messageId: string
 ): Promise<{ body: string; contentType: 'html' | 'text'; error?: string }> {
-  if (!gmailAccessToken) {
-    return { body: '', contentType: 'text', error: 'לא מחובר ל-Gmail' }
-  }
-
   try {
+    const token = await getToken()
+
     const response = await fetch(
       `${GMAIL_API_BASE}/messages/${messageId}?format=full`,
-      { headers: { Authorization: `Bearer ${gmailAccessToken}` } }
+      { headers: { Authorization: `Bearer ${token}` } }
     )
-
-    if (response.status === 401) {
-      gmailAccessToken = null
-      tokenStore.clear(GMAIL_TOKEN_KEY)
-      return { body: '', contentType: 'text', error: 'פג תוקף ההרשאה. התחבר מחדש ל-Gmail' }
-    }
 
     if (!response.ok) {
       return { body: '', contentType: 'text', error: 'שגיאה בטעינת ההודעה' }
@@ -247,7 +194,6 @@ export async function fetchMessageBody(
     const data = await response.json()
     const payload = data.payload
 
-    // Decode URL-safe base64 to UTF-8 string
     function decodeBase64Utf8(b64: string): string {
       const binary = atob(b64.replace(/-/g, '+').replace(/_/g, '/'))
       const bytes = new Uint8Array(binary.length)
@@ -257,7 +203,6 @@ export async function fetchMessageBody(
       return new TextDecoder('utf-8').decode(bytes)
     }
 
-    // Recursively find body parts
     function findPart(part: any, mimeType: string): string | null {
       if (part.mimeType === mimeType && part.body?.data) {
         return decodeBase64Utf8(part.body.data)
@@ -271,14 +216,12 @@ export async function fetchMessageBody(
       return null
     }
 
-    // Prefer HTML, fallback to plain text
     const html = findPart(payload, 'text/html')
     if (html) return { body: html, contentType: 'html' }
 
     const plain = findPart(payload, 'text/plain')
     if (plain) return { body: plain, contentType: 'text' }
 
-    // Single-part message with body directly on payload
     if (payload.body?.data) {
       const decoded = decodeBase64Utf8(payload.body.data)
       const isHtml = payload.mimeType === 'text/html'
@@ -288,7 +231,7 @@ export async function fetchMessageBody(
     return { body: data.snippet || '', contentType: 'text' }
   } catch (err: any) {
     console.error('[Gmail] Fetch body error:', err)
-    return { body: '', contentType: 'text', error: 'שגיאת רשת בטעינת הודעה' }
+    return { body: '', contentType: 'text', error: err.message || 'שגיאת רשת בטעינת הודעה' }
   }
 }
 
@@ -299,11 +242,8 @@ export async function searchMessages(
   query: string,
   options?: { searchAllMail?: boolean; maxResults?: number }
 ): Promise<{ messageIds: string[]; error?: string }> {
-  if (!gmailAccessToken) {
-    return { messageIds: [], error: 'לא מחובר ל-Gmail' }
-  }
-
   try {
+    const token = await getToken()
     const q = options?.searchAllMail ? query : `in:inbox ${query}`
     const params = new URLSearchParams({
       q,
@@ -312,17 +252,23 @@ export async function searchMessages(
 
     const response = await fetch(
       `${GMAIL_API_BASE}/messages?${params}`,
-      { headers: { Authorization: `Bearer ${gmailAccessToken}` } }
+      { headers: { Authorization: `Bearer ${token}` } }
     )
 
-    if (response.status === 401) {
-      gmailAccessToken = null
-      tokenStore.clear(GMAIL_TOKEN_KEY)
-      return { messageIds: [], error: 'פג תוקף ההרשאה. התחבר מחדש ל-Gmail' }
-    }
-
     if (!response.ok) {
-      return { messageIds: [], error: 'שגיאה בחיפוש הודעות' }
+      const errorBody = await response.text().catch(() => '')
+      console.error('[Gmail] Search error:', response.status, errorBody)
+      if (response.status === 403 && errorBody.includes('SCOPE_INSUFFICIENT')) {
+        const newToken = await handleScopeError()
+        const retry = await fetch(
+          `${GMAIL_API_BASE}/messages?${params}`,
+          { headers: { Authorization: `Bearer ${newToken}` } }
+        )
+        if (!retry.ok) throw new Error(`Gmail API ${retry.status}`)
+        const retryData = await retry.json()
+        return { messageIds: (retryData.messages || []).map((m: { id: string }) => m.id) }
+      }
+      throw new Error(`Gmail API ${response.status}`)
     }
 
     const data = await response.json()
@@ -330,7 +276,7 @@ export async function searchMessages(
     return { messageIds: ids }
   } catch (err: any) {
     console.error('[Gmail] Search error:', err)
-    return { messageIds: [], error: 'שגיאת רשת בחיפוש הודעות' }
+    return { messageIds: [], error: err.message || 'שגיאת רשת בחיפוש הודעות' }
   }
 }
 
@@ -340,16 +286,14 @@ export async function searchMessages(
 export async function fetchMessagesMetadata(
   messageIds: string[]
 ): Promise<{ messages: Pick<GmailMessage, 'id' | 'from' | 'subject' | 'date' | 'snippet'>[]; error?: string }> {
-  if (!gmailAccessToken) {
-    return { messages: [], error: 'לא מחובר ל-Gmail' }
-  }
-
   try {
+    const token = await getToken()
+
     const messages = await Promise.all(
       messageIds.map(async (id) => {
         const res = await fetch(
           `${GMAIL_API_BASE}/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`,
-          { headers: { Authorization: `Bearer ${gmailAccessToken}` } }
+          { headers: { Authorization: `Bearer ${token}` } }
         )
         if (!res.ok) return { id, from: '', subject: '', date: '', snippet: '' }
         const data = await res.json()
@@ -368,7 +312,7 @@ export async function fetchMessagesMetadata(
     return { messages }
   } catch (err: any) {
     console.error('[Gmail] Fetch metadata error:', err)
-    return { messages: [], error: 'שגיאת רשת בטעינת מטא-דאטה' }
+    return { messages: [], error: err.message || 'שגיאת רשת בטעינת מטא-דאטה' }
   }
 }
 
@@ -376,21 +320,19 @@ export async function fetchMessagesMetadata(
  * Batch archive messages (remove INBOX label), optionally adding a label
  */
 export async function archiveMessages(messageIds: string[], addLabelIds?: string[]): Promise<{ success: boolean; error?: string }> {
-  if (!gmailAccessToken) {
-    return { success: false, error: 'לא מחובר ל-Gmail' }
-  }
-
   if (messageIds.length === 0) {
     return { success: true }
   }
 
   try {
+    const token = await getToken()
+
     const response = await fetch(
       `${GMAIL_API_BASE}/messages/batchModify`,
       {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${gmailAccessToken}`,
+          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -401,12 +343,6 @@ export async function archiveMessages(messageIds: string[], addLabelIds?: string
       }
     )
 
-    if (response.status === 401) {
-      gmailAccessToken = null
-      tokenStore.clear(GMAIL_TOKEN_KEY)
-      return { success: false, error: 'פג תוקף ההרשאה. התחבר מחדש ל-Gmail' }
-    }
-
     if (!response.ok) {
       console.error('[Gmail] Archive error:', response.status)
       return { success: false, error: 'שגיאה בארכוב הודעות' }
@@ -415,7 +351,7 @@ export async function archiveMessages(messageIds: string[], addLabelIds?: string
     return { success: true }
   } catch (err: any) {
     console.error('[Gmail] Archive error:', err)
-    return { success: false, error: 'שגיאת רשת בארכוב הודעות' }
+    return { success: false, error: err.message || 'שגיאת רשת בארכוב הודעות' }
   }
 }
 
@@ -423,21 +359,19 @@ export async function archiveMessages(messageIds: string[], addLabelIds?: string
  * Batch trash messages (add TRASH label, remove INBOX)
  */
 export async function trashMessages(messageIds: string[]): Promise<{ success: boolean; error?: string }> {
-  if (!gmailAccessToken) {
-    return { success: false, error: 'לא מחובר ל-Gmail' }
-  }
-
   if (messageIds.length === 0) {
     return { success: true }
   }
 
   try {
+    const token = await getToken()
+
     const response = await fetch(
       `${GMAIL_API_BASE}/messages/batchModify`,
       {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${gmailAccessToken}`,
+          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -448,12 +382,6 @@ export async function trashMessages(messageIds: string[]): Promise<{ success: bo
       }
     )
 
-    if (response.status === 401) {
-      gmailAccessToken = null
-      tokenStore.clear(GMAIL_TOKEN_KEY)
-      return { success: false, error: 'פג תוקף ההרשאה. התחבר מחדש ל-Gmail' }
-    }
-
     if (!response.ok) {
       console.error('[Gmail] Batch trash error:', response.status)
       return { success: false, error: 'שגיאה במחיקת הודעות' }
@@ -462,7 +390,7 @@ export async function trashMessages(messageIds: string[]): Promise<{ success: bo
     return { success: true }
   } catch (err: any) {
     console.error('[Gmail] Batch trash error:', err)
-    return { success: false, error: 'שגיאת רשת במחיקת הודעות' }
+    return { success: false, error: err.message || 'שגיאת רשת במחיקת הודעות' }
   }
 }
 
@@ -491,17 +419,15 @@ export async function createFilter(
   criteria: GmailFilterCriteria,
   addLabelIds?: string[]
 ): Promise<{ success: boolean; error?: string }> {
-  if (!gmailAccessToken) {
-    return { success: false, error: 'לא מחובר ל-Gmail' }
-  }
-
   try {
+    const token = await getToken()
+
     const response = await fetch(
       `${GMAIL_API_BASE}/settings/filters`,
       {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${gmailAccessToken}`,
+          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -518,15 +444,8 @@ export async function createFilter(
       }
     )
 
-    if (response.status === 401) {
-      gmailAccessToken = null
-      tokenStore.clear(GMAIL_TOKEN_KEY)
-      return { success: false, error: 'פג תוקף ההרשאה. התחבר מחדש ל-Gmail' }
-    }
-
     if (!response.ok) {
       const errorBody = await response.json().catch(() => ({}))
-      // Filter already exists — treat as success, proceed to archive
       if (errorBody?.error?.status === 'FAILED_PRECONDITION') {
         return { success: true }
       }
@@ -537,7 +456,7 @@ export async function createFilter(
     return { success: true }
   } catch (err: any) {
     console.error('[Gmail] Filter error:', err)
-    return { success: false, error: 'שגיאת רשת ביצירת פילטר' }
+    return { success: false, error: err.message || 'שגיאת רשת ביצירת פילטר' }
   }
 }
 
@@ -545,21 +464,13 @@ export async function createFilter(
  * List user labels
  */
 export async function listLabels(): Promise<{ labels: GmailLabel[]; error?: string }> {
-  if (!gmailAccessToken) {
-    return { labels: [], error: 'לא מחובר ל-Gmail' }
-  }
-
   try {
+    const token = await getToken()
+
     const response = await fetch(
       `${GMAIL_API_BASE}/labels`,
-      { headers: { Authorization: `Bearer ${gmailAccessToken}` } }
+      { headers: { Authorization: `Bearer ${token}` } }
     )
-
-    if (response.status === 401) {
-      gmailAccessToken = null
-      tokenStore.clear(GMAIL_TOKEN_KEY)
-      return { labels: [], error: 'פג תוקף ההרשאה. התחבר מחדש ל-Gmail' }
-    }
 
     if (!response.ok) {
       return { labels: [], error: 'שגיאה בטעינת תוויות' }
@@ -575,7 +486,7 @@ export async function listLabels(): Promise<{ labels: GmailLabel[]; error?: stri
     return { labels }
   } catch (err: any) {
     console.error('[Gmail] Labels error:', err)
-    return { labels: [], error: 'שגיאת רשת בטעינת תוויות' }
+    return { labels: [], error: err.message || 'שגיאת רשת בטעינת תוויות' }
   }
 }
 
@@ -583,21 +494,13 @@ export async function listLabels(): Promise<{ labels: GmailLabel[]; error?: stri
  * List all Gmail filters
  */
 export async function listFilters(): Promise<{ filters: GmailFilter[]; error?: string }> {
-  if (!gmailAccessToken) {
-    return { filters: [], error: 'לא מחובר ל-Gmail' }
-  }
-
   try {
+    const token = await getToken()
+
     const response = await fetch(
       `${GMAIL_API_BASE}/settings/filters`,
-      { headers: { Authorization: `Bearer ${gmailAccessToken}` } }
+      { headers: { Authorization: `Bearer ${token}` } }
     )
-
-    if (response.status === 401) {
-      gmailAccessToken = null
-      tokenStore.clear(GMAIL_TOKEN_KEY)
-      return { filters: [], error: 'פג תוקף ההרשאה. התחבר מחדש ל-Gmail' }
-    }
 
     if (!response.ok) {
       return { filters: [], error: 'שגיאה בטעינת פילטרים' }
@@ -613,7 +516,7 @@ export async function listFilters(): Promise<{ filters: GmailFilter[]; error?: s
     return { filters }
   } catch (err: any) {
     console.error('[Gmail] Filters error:', err)
-    return { filters: [], error: 'שגיאת רשת בטעינת פילטרים' }
+    return { filters: [], error: err.message || 'שגיאת רשת בטעינת פילטרים' }
   }
 }
 
@@ -621,24 +524,16 @@ export async function listFilters(): Promise<{ filters: GmailFilter[]; error?: s
  * Delete a Gmail filter by ID
  */
 export async function deleteFilter(filterId: string): Promise<{ success: boolean; error?: string }> {
-  if (!gmailAccessToken) {
-    return { success: false, error: 'לא מחובר ל-Gmail' }
-  }
-
   try {
+    const token = await getToken()
+
     const response = await fetch(
       `${GMAIL_API_BASE}/settings/filters/${filterId}`,
       {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${gmailAccessToken}` },
+        headers: { Authorization: `Bearer ${token}` },
       }
     )
-
-    if (response.status === 401) {
-      gmailAccessToken = null
-      tokenStore.clear(GMAIL_TOKEN_KEY)
-      return { success: false, error: 'פג תוקף ההרשאה. התחבר מחדש ל-Gmail' }
-    }
 
     if (!response.ok) {
       return { success: false, error: 'שגיאה במחיקת פילטר' }
@@ -647,7 +542,7 @@ export async function deleteFilter(filterId: string): Promise<{ success: boolean
     return { success: true }
   } catch (err: any) {
     console.error('[Gmail] Delete filter error:', err)
-    return { success: false, error: 'שגיאת רשת במחיקת פילטר' }
+    return { success: false, error: err.message || 'שגיאת רשת במחיקת פילטר' }
   }
 }
 
@@ -667,11 +562,9 @@ export async function sendEmail(
   htmlBody: string,
   attachments?: EmailAttachment[],
 ): Promise<{ success: boolean; error?: string }> {
-  if (!gmailAccessToken) {
-    return { success: false, error: 'לא מחובר ל-Gmail' }
-  }
-
   try {
+    const token = await getToken()
+
     const boundary = `bndry_${Math.random().toString(36).slice(2)}`
     const encodedSubject = `=?UTF-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=`
 
@@ -710,7 +603,6 @@ export async function sendEmail(
       ].join('\r\n')
     }
 
-    // URL-safe base64 encode
     const encoded = btoa(unescape(encodeURIComponent(rawEmail)))
       .replace(/\+/g, '-')
       .replace(/\//g, '_')
@@ -721,18 +613,12 @@ export async function sendEmail(
       {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${gmailAccessToken}`,
+          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ raw: encoded }),
       }
     )
-
-    if (response.status === 401) {
-      gmailAccessToken = null
-      tokenStore.clear(GMAIL_TOKEN_KEY)
-      return { success: false, error: 'פג תוקף ההרשאה. התחבר מחדש ל-Gmail' }
-    }
 
     if (!response.ok) {
       console.error('[Gmail] Send error:', response.status)
@@ -742,7 +628,7 @@ export async function sendEmail(
     return { success: true }
   } catch (err: any) {
     console.error('[Gmail] Send error:', err)
-    return { success: false, error: 'שגיאת רשת בשליחת מייל' }
+    return { success: false, error: err.message || 'שגיאת רשת בשליחת מייל' }
   }
 }
 

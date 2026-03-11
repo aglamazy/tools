@@ -10,7 +10,7 @@
 
 import { db } from '@/app/db/financeDB'
 
-const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/drive.file'
+const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic'
 
 // Keys used in appSettings
 const KEY_ACCESS_TOKEN = 'google_access_token'
