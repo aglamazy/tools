@@ -52,6 +52,7 @@ export default function TodoPage() {
   const [showCompleted, setShowCompleted] = useState(false)
   const [draggedTask, setDraggedTask] = useState<CombinedTask | null>(null)
   const [dragOverQuadrant, setDragOverQuadrant] = useState<EisenhowerQuadrant | null>(null)
+  const [dragOverTaskId, setDragOverTaskId] = useState<string | number | null>(null)
 
   // Household / partner delegation state
   const [partnerUid, setPartnerUid] = useState<string | null>(null)
@@ -121,6 +122,15 @@ export default function TodoPage() {
     // Auto tasks can't be permanently moved (they're computed)
   }
 
+  const changeTaskPriority = async (task: CombinedTask, newPriority: Priority) => {
+    if (task.taskType === 'user' && task.priority !== newPriority) {
+      await todoStore.updateTaskPriority(task.id as number, newPriority)
+      setUserTasks(userTasks.map(t => t.id === task.id ? { ...t, priority: newPriority } : t))
+      const labels: Record<Priority, string> = { high: 'גבוהה', medium: 'בינונית', low: 'נמוכה' }
+      showToast('success', `עדיפות שונתה ל${labels[newPriority]}`, '↕️')
+    }
+  }
+
   const delegateTask = async (taskId: number) => {
     if (!partnerUid) return
     await todoStore.delegateTask(taskId, partnerUid)
@@ -153,9 +163,40 @@ export default function TodoPage() {
     setDragOverQuadrant(null)
   }
 
+  const handleTaskDragOver = (e: React.DragEvent, taskId: string | number) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragOverTaskId(taskId)
+  }
+
+  const handleTaskDragLeave = (e: React.DragEvent) => {
+    e.stopPropagation()
+    setDragOverTaskId(null)
+  }
+
+  const handleTaskDrop = async (e: React.DragEvent, targetTask: CombinedTask) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragOverQuadrant(null)
+    setDragOverTaskId(null)
+
+    if (!draggedTask) return
+
+    if (draggedTask.quadrant === targetTask.quadrant) {
+      // Same quadrant: change priority to match the target task
+      await changeTaskPriority(draggedTask, targetTask.priority)
+    } else {
+      // Different quadrant: move to new quadrant and adopt target's priority
+      await moveTaskToQuadrant(draggedTask, targetTask.quadrant)
+      await changeTaskPriority(draggedTask, targetTask.priority)
+    }
+    setDraggedTask(null)
+  }
+
   const handleDrop = async (e: React.DragEvent, quadrant: EisenhowerQuadrant) => {
     e.preventDefault()
     setDragOverQuadrant(null)
+    setDragOverTaskId(null)
     if (draggedTask && draggedTask.quadrant !== quadrant) {
       await moveTaskToQuadrant(draggedTask, quadrant)
     }
@@ -165,6 +206,7 @@ export default function TodoPage() {
   const handleDragEnd = () => {
     setDraggedTask(null)
     setDragOverQuadrant(null)
+    setDragOverTaskId(null)
   }
 
   // Combine and group tasks by quadrant
@@ -239,24 +281,40 @@ export default function TodoPage() {
 
   const activeTaskCount = userTasks.filter(t => !t.completed).length + autoTasks.length
 
-  const renderTask = (task: CombinedTask, quadrant: QuadrantConfig) => (
+  const getPriorityIndicator = (priority: Priority): { color: string; label: string } => {
+    switch (priority) {
+      case 'high': return { color: '#dc2626', label: 'גבוהה' }
+      case 'medium': return { color: '#f59e0b', label: 'בינונית' }
+      case 'low': return { color: '#6b7280', label: 'נמוכה' }
+    }
+  }
+
+  const renderTask = (task: CombinedTask, quadrant: QuadrantConfig) => {
+    const isDropTarget = dragOverTaskId === task.id && draggedTask && draggedTask.id !== task.id
+    const priorityInfo = getPriorityIndicator(task.priority)
+
+    return (
     <div
       key={task.id}
       draggable={task.taskType === 'user'}
       onDragStart={() => handleDragStart(task)}
       onDragEnd={handleDragEnd}
+      onDragOver={(e) => handleTaskDragOver(e, task.id)}
+      onDragLeave={handleTaskDragLeave}
+      onDrop={(e) => handleTaskDrop(e, task)}
       style={{
         display: 'flex',
         alignItems: 'center',
         gap: '0.5rem',
         padding: '0.5rem 0.75rem',
-        background: task.completed ? '#f8fafc' : '#fff',
+        background: isDropTarget ? '#e0f2fe' : task.completed ? '#f8fafc' : '#fff',
         borderRadius: '0.375rem',
-        border: `1px solid ${task.completed ? '#e2e8f0' : quadrant.borderColor}`,
+        border: `1px solid ${isDropTarget ? '#38bdf8' : task.completed ? '#e2e8f0' : quadrant.borderColor}`,
         opacity: task.completed ? 0.6 : draggedTask?.id === task.id ? 0.4 : 1,
         cursor: task.taskType === 'user' ? 'grab' : 'default',
-        transition: 'opacity 0.15s, box-shadow 0.15s',
+        transition: 'opacity 0.15s, box-shadow 0.15s, background 0.15s, border-color 0.15s',
         fontSize: '0.875rem',
+        boxShadow: isDropTarget ? '0 0 0 2px #38bdf8' : 'none',
       }}
     >
       {/* Checkbox / Icon */}
@@ -270,6 +328,18 @@ export default function TodoPage() {
       ) : (
         <span style={{ fontSize: '1rem', flexShrink: 0 }}>{getAutoTaskIcon(task.autoType!)}</span>
       )}
+
+      {/* Priority indicator */}
+      <span
+        title={`עדיפות: ${priorityInfo.label}`}
+        style={{
+          width: '0.5rem',
+          height: '0.5rem',
+          borderRadius: '50%',
+          background: priorityInfo.color,
+          flexShrink: 0,
+        }}
+      />
 
       {/* Task content */}
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -361,7 +431,8 @@ export default function TodoPage() {
         )}
       </div>
     </div>
-  )
+    )
+  }
 
   return (
     <main className="app" dir="rtl">
@@ -524,7 +595,30 @@ export default function TodoPage() {
                         {draggedTask ? 'שחרר כאן' : 'אין משימות'}
                       </div>
                     ) : (
-                      tasks.map(task => renderTask(task, q))
+                      tasks.map((task, idx) => {
+                        const prevTask = idx > 0 ? tasks[idx - 1] : null
+                        const showSeparator = prevTask && prevTask.priority !== task.priority
+                        const priorityLabels: Record<Priority, string> = { high: 'גבוהה', medium: 'בינונית', low: 'נמוכה' }
+                        return (
+                          <div key={task.id}>
+                            {showSeparator && (
+                              <div style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.5rem',
+                                padding: '0.125rem 0.5rem',
+                                fontSize: '0.65rem',
+                                color: '#9ca3af',
+                              }}>
+                                <div style={{ flex: 1, height: '1px', background: '#e5e7eb' }} />
+                                <span>{priorityLabels[task.priority]}</span>
+                                <div style={{ flex: 1, height: '1px', background: '#e5e7eb' }} />
+                              </div>
+                            )}
+                            {renderTask(task, q)}
+                          </div>
+                        )
+                      })
                     )}
                   </div>
                 </div>
