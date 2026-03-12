@@ -2,6 +2,13 @@
 
 import { db, Business } from '@/app/db/financeDB'
 import { appSettingsStore } from './appSettingsStore'
+import type { BusinessUI } from '@/app/types/business'
+
+/** Extract saveable fields from BusinessUI (strips id, createdAt, updatedAt) */
+function toSavePayload(biz: BusinessUI): Omit<Business, 'id' | 'createdAt' | 'updatedAt'> {
+  const { id: _id, ...rest } = biz
+  return rest
+}
 
 export const businessStore = {
   /**
@@ -71,6 +78,17 @@ export const businessStore = {
     } catch (error) {
       console.error('Error updating business:', error)
       return false
+    }
+  },
+
+  /** Save a BusinessUI — add if new, update if existing */
+  saveUI: async (biz: BusinessUI, isNew: boolean): Promise<number | null> => {
+    const payload = toSavePayload(biz)
+    if (isNew) {
+      return businessStore.add({ ...payload, pinnedToSidebar: true })
+    } else {
+      const ok = await businessStore.update(biz.id, payload)
+      return ok ? biz.id : null
     }
   },
 

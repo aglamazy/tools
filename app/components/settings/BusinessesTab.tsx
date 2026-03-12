@@ -77,34 +77,14 @@ export default function BusinessesTab() {
     }
 
     try {
+      const id = await businessStore.saveUI(trimmed, isAddingNew)
+      if (id == null) {
+        setAlertMessage(isAddingNew ? 'שמירת העסק נכשלה' : 'עדכון העסק נכשל')
+        return
+      }
       if (isAddingNew) {
-        const id = await businessStore.add({
-          name: trimmed.name,
-          type: trimmed.type,
-          vatType: trimmed.vatType,
-          isTaxFree: trimmed.isTaxFree,
-          btlAdvancePayment: trimmed.btlAdvancePayment,
-          taxOrder: trimmed.taxOrder,
-          pinnedToSidebar: true,
-        })
-        if (id == null) {
-          setAlertMessage('שמירת העסק נכשלה')
-          return
-        }
         setBusinesses(sortBusinesses([...businesses, { ...trimmed, id }]))
       } else {
-        const updated = await businessStore.update(trimmed.id, {
-          name: trimmed.name,
-          type: trimmed.type,
-          vatType: trimmed.vatType,
-          isTaxFree: trimmed.isTaxFree,
-          btlAdvancePayment: trimmed.btlAdvancePayment,
-          taxOrder: trimmed.taxOrder,
-        })
-        if (!updated) {
-          setAlertMessage('עדכון העסק נכשל')
-          return
-        }
         setBusinesses(sortBusinesses(businesses.map((b) => (b.id === trimmed.id ? trimmed : b))))
       }
       setEditingBusiness(null)
