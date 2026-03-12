@@ -564,11 +564,7 @@ function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, ex
 
   const handleBizSave = async () => {
     if (!editingBiz) return
-    await businessStore.update(editingBiz.id, {
-      name: editingBiz.name, type: editingBiz.type, vatType: editingBiz.vatType,
-      isTaxFree: editingBiz.isTaxFree, btlAdvancePayment: editingBiz.btlAdvancePayment,
-      taxOrder: editingBiz.taxOrder,
-    })
+    await businessStore.saveUI(editingBiz, false)
     setEditingBiz(null)
   }
 
@@ -602,7 +598,7 @@ function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, ex
               <th key={biz.id} style={{ ...tHeaderStyle, background: '#faf5ff', color: '#7c3aed' }}>
                 {biz.name}
                 <button
-                  onClick={() => setEditingBiz({ id: biz.id!, name: biz.name, type: biz.type, vatType: biz.vatType, isTaxFree: biz.isTaxFree, btlAdvancePayment: biz.btlAdvancePayment, taxOrder: biz.taxOrder, pinnedToSidebar: biz.pinnedToSidebar })}
+                  onClick={() => { const { createdAt: _, updatedAt: __, ...ui } = biz; setEditingBiz({ ...ui, id: biz.id! }) }}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', marginRight: '0.25rem' }}
                   title="הגדרות עסק"
                 >⚙️</button>
