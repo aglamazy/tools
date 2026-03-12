@@ -14,6 +14,9 @@ const COLUMN_MAPPINGS = {
   originalAmount: ['סכום מקורי'],
   originalCurrency: ['מטבע מקורי', 'מטבע'],
   billingCurrency: ['מטבע חיוב'],
+  transactionCurrency: ['מטבע עסקה'],
+  voucherNumber: ['מס\' שובר'],
+  billingDate: ['תאריך חיוב'],
 }
 
 /**
@@ -129,9 +132,6 @@ const findBillingDate = (rows: SheetRow[]): Date | null => {
         if (month && year && year > 1900 && year < 2100) {
           const parsed = new Date(year, month - 1, 1)
           if (!Number.isNaN(parsed.getTime())) {
-            if (config.developerMode) {
-              console.log(`✅ Found billing month from header: ${cell} -> ${parsed.toISOString()}`)
-            }
             return parsed
           }
         }

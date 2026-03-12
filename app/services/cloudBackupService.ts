@@ -68,7 +68,6 @@ async function getBackupPath(uid: string, fileName: string): Promise<string> {
   const householdId = await getHouseholdIdFromToken()
 
   if (householdId) {
-    console.log('[CloudBackup] Using household path:', householdId)
     return `backups/households/${householdId}/${fileName}`
   }
 
@@ -116,10 +115,8 @@ export async function migrateToHouseholdStorage(): Promise<CloudBackupResult> {
       await uploadString(householdRef, content)
       migrated++
 
-      console.log(`[CloudBackup] Migrated ${fileName} to household path`)
     } catch (err: any) {
       if (err.code === 'storage/object-not-found') {
-        console.log(`[CloudBackup] No personal ${fileName} to migrate`)
       } else {
         console.error(`[CloudBackup] Failed to migrate ${fileName}:`, err)
         return { success: false, error: 'שגיאה בהעברת הגיבוי למשק הבית', errorCode: 'unknown' }
@@ -131,7 +128,6 @@ export async function migrateToHouseholdStorage(): Promise<CloudBackupResult> {
     return { success: true } // Nothing to migrate, not an error
   }
 
-  console.log(`[CloudBackup] Migration complete: ${migrated} files moved to household`)
   return { success: true }
 }
 
@@ -260,7 +256,6 @@ export async function uploadBackup(password: string): Promise<CloudBackupResult>
     const backupRef = ref(storage, backupPath)
     await uploadString(backupRef, encryptedBackup)
 
-    console.log('[CloudBackup] Backup uploaded successfully to:', backupPath)
     return { success: true }
   } catch (err: any) {
     console.error('[CloudBackup] Upload failed:', err)
@@ -299,7 +294,6 @@ export async function downloadBackup(password: string): Promise<CloudBackupResul
     }
 
     const backup = JSON.parse(backupJson) as BackupData
-    console.log('[CloudBackup] Backup downloaded successfully')
 
     return { success: true, data: backup }
   } catch (err: any) {
@@ -322,7 +316,6 @@ export async function restoreFromCloud(password: string): Promise<CloudBackupRes
 
   try {
     await importAllStores(result.data)
-    console.log('[CloudBackup] Backup restored successfully')
     return { success: true }
   } catch (err: any) {
     console.error('[CloudBackup] Restore failed:', err)
@@ -512,13 +505,11 @@ export async function syncMerge(password: string): Promise<CloudBackupResult> {
       const uploadResult = await uploadBackupWithGeneration(finalBackup, password, generation)
       if (!uploadResult.success) {
         if ((uploadResult.errorCode as string) === 'generation-mismatch') {
-          console.log(`[CloudSync] Generation mismatch, retrying (attempt ${attempt + 1}/${MAX_RETRIES})`)
           continue
         }
         return uploadResult
       }
 
-      console.log('[CloudSync] Sync-merge completed successfully')
       return { success: true }
     } catch (err: any) {
       console.error(`[CloudSync] Sync-merge attempt ${attempt + 1} failed:`, err)

@@ -33,7 +33,7 @@ const FK_RELATIONS: Record<string, { fkField: string; parentTable: string; annot
 // Used to detect records with same content but different syncIds (e.g. imported on two devices).
 // Excludes id, syncId, fileId (all device-local auto-increment values).
 const CONTENT_KEY_FNS: Record<string, (r: any) => string> = {
-  transactions: (r) => `${r.type}|${r.date}|${r.amount}|${r.description}|${r.accountNumber ?? ''}|${r.cardNumber ?? ''}|${r.month}`,
+  transactions: (r) => `${r.type}|${r.date}|${r.amount}|${r.description}|${r.accountNumber ?? ''}|${r.cardNumber ?? ''}|${r.month}|${r.chargingDate ?? ''}|${r.balance ?? ''}`,
   importedFiles: (r) => `${r.fileName}|${r.fileType}|${r.processingMonth}|${r.accountNumber ?? ''}|${r.cardNumber ?? ''}`,
   capitalEntries: (r) => `${r.date}|${r.institution}|${r.accountNumber}|${r.description}|${r.assetType}`,
   categories: (r) => `${r.name}|${r.type}`,
@@ -136,13 +136,15 @@ function combineDeletionLedgers(
 /**
  * Content-based dedup pass: removes records with same content but different syncIds.
  * Prefers records that have a local id (not undefined).
+ * Returns { records, aliases } where aliases maps droppedSyncId → keptSyncId.
  */
-function deduplicateByContent(tableName: string, records: any[]): any[] {
+function deduplicateByContent(tableName: string, records: any[]): { records: any[]; aliases: Map<string, string> } {
   const keyFn = CONTENT_KEY_FNS[tableName]
-  if (!keyFn) return records // No content key defined for this table
+  if (!keyFn) return { records, aliases: new Map() }
 
   const seen = new Map<string, number>() // contentKey → index in result
   const result: any[] = []
+  const aliases = new Map<string, string>() // droppedSyncId → keptSyncId
 
   for (const rec of records) {
     const contentKey = keyFn(rec)
@@ -155,22 +157,24 @@ function deduplicateByContent(tableName: string, records: any[]): any[] {
       // Duplicate content — keep the one with a local id
       const existing = result[existingIdx]
       if (existing.id === undefined && rec.id !== undefined) {
+        // Swap: keep rec (has local id), drop existing
+        if (existing.syncId && rec.syncId) aliases.set(existing.syncId, rec.syncId)
         result[existingIdx] = rec
+      } else {
+        // Keep existing, drop rec
+        if (rec.syncId && existing.syncId) aliases.set(rec.syncId, existing.syncId)
       }
-      // Otherwise keep the existing one (first seen / has local id)
     }
   }
 
-  if (result.length < records.length) {
-    console.log(`[Merge] Content dedup for ${tableName}: ${records.length} → ${result.length}`)
-  }
 
-  return result
+  return { records: result, aliases }
 }
 
 /**
  * Merge a single table's records from local and cloud.
- * Returns merged records with cloud-only children annotated for FK resolution.
+ * Returns { records, aliases } where aliases maps droppedSyncId → keptSyncId
+ * from both unique-key matching and content dedup.
  */
 function mergeTable(
   tableName: string,
@@ -178,7 +182,7 @@ function mergeTable(
   cloudRecords: any[],
   deletedSyncIds: Set<string>,
   cloudParentIdToSyncId?: Map<number, string>,
-): any[] {
+): { records: any[]; aliases: Map<string, string> } {
   const localBySyncId = buildSyncIdMap(localRecords)
   const cloudBySyncId = buildSyncIdMap(cloudRecords)
 
@@ -190,17 +194,25 @@ function mergeTable(
   const merged: any[] = []
   const processedCloudSyncIds = new Set<string>()
   const processedCloudUniqueKeys = new Set<string>()
+  const uniqueKeyAliases = new Map<string, string>() // cloud syncId → local syncId
+
+  let noSyncIdCount = 0
+  let deletedByLedgerCount = 0
 
   // Process all local records
   for (const local of localRecords) {
     if (!local.syncId) {
+      noSyncIdCount++
       // Old record without syncId — keep as-is
       merged.push(local)
       continue
     }
 
     // Skip records that were explicitly deleted
-    if (deletedSyncIds.has(local.syncId)) continue
+    if (deletedSyncIds.has(local.syncId)) {
+      deletedByLedgerCount++
+      continue
+    }
 
     const cloud = cloudBySyncId.get(local.syncId)
     if (cloud) {
@@ -229,6 +241,10 @@ function mergeTable(
         if (localMatch) {
           // Matched by unique key — merge as same record (local id wins)
           processedCloudUniqueKeys.add(String(cloudKeyValue))
+          // Track alias: cloud syncId → local syncId
+          if (cloud.syncId && localMatch.syncId) {
+            uniqueKeyAliases.set(cloud.syncId, localMatch.syncId)
+          }
           // Already included via local processing; pick winner
           const idx = merged.findIndex(m => m.id === localMatch.id)
           if (idx >= 0) {
@@ -253,8 +269,31 @@ function mergeTable(
     merged.push(newRecord)
   }
 
+
   // Content-based dedup: catch records with same data but different syncIds
-  return deduplicateByContent(tableName, merged)
+  const deduped = deduplicateByContent(tableName, merged)
+
+  // Combine aliases from unique-key matching and content dedup
+  const combinedAliases = new Map<string, string>(uniqueKeyAliases)
+  for (const [dropped, kept] of deduped.aliases) {
+    combinedAliases.set(dropped, kept)
+  }
+
+  return { records: deduped.records, aliases: combinedAliases }
+}
+
+/**
+ * Resolve a syncId through alias chains (from content dedup).
+ * E.g. if A was deduped to B and B was deduped to C, resolveAlias(A) → C.
+ */
+function resolveAlias(syncId: string, aliases: Map<string, string>): string {
+  let resolved = syncId
+  const visited = new Set<string>()
+  while (aliases.has(resolved) && !visited.has(resolved)) {
+    visited.add(resolved)
+    resolved = aliases.get(resolved)!
+  }
+  return resolved
 }
 
 /**
@@ -287,18 +326,39 @@ export function mergeBackups(local: BackupData, cloud: BackupData): BackupData {
     timeEntries: cloudHarvestTaskIdToSyncId,
   }
 
-  // Merge each DB table
+  // Merge each DB table, collecting syncId aliases from content dedup
+  const allAliases = new Map<string, string>()
+
   for (const tableName of TABLE_ORDER) {
     const localRecords = (local.stores as any)[tableName] || []
     const cloudRecords = (cloud.stores as any)[tableName] || []
     const deletedSyncIds = allDeletions[tableName] || new Set<string>()
-    ;(merged.stores as any)[tableName] = mergeTable(
+    const { records: mergedRecords, aliases } = mergeTable(
       tableName,
       localRecords,
       cloudRecords,
       deletedSyncIds,
       parentMaps[tableName],
     )
+    ;(merged.stores as any)[tableName] = mergedRecords
+
+    // Accumulate aliases for FK annotation fixup
+    for (const [dropped, kept] of aliases) {
+      allAliases.set(dropped, kept)
+    }
+  }
+
+  // Fix up _parentSyncId annotations that reference deduped (dropped) syncIds
+  if (allAliases.size > 0) {
+    for (const [childTable, fkInfo] of Object.entries(FK_RELATIONS)) {
+      const records: any[] = (merged.stores as any)[childTable] || []
+      for (const rec of records) {
+        const annotatedSyncId = rec[fkInfo.annotationField]
+        if (annotatedSyncId && allAliases.has(annotatedSyncId)) {
+          rec[fkInfo.annotationField] = resolveAlias(annotatedSyncId, allAliases)
+        }
+      }
+    }
   }
 
   // Inject the combined deletion ledger into merged appSettings

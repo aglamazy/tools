@@ -102,5 +102,4 @@ export async function applyMergedBackup(merged: BackupData): Promise<void> {
   timerStore.import(merged.stores.timerStore ?? null)
 
   await initializeAppSettings()
-  console.log('[ApplyMerged] Merged backup applied successfully')
 }

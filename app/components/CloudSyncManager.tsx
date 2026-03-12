@@ -105,7 +105,6 @@ export default function CloudSyncManager() {
       ])
 
       if (backupInfo.exists && localEmpty) {
-        console.log('[CloudSync] Local empty, restoring from cloud')
         const result = await restoreFromCloud(password)
         if (result.success) {
           window.location.reload()
@@ -179,19 +178,17 @@ export default function CloudSyncManager() {
       // Verify password is still valid
       const isValid = await verifyEncryptionPassword(password)
       if (!isValid) {
-        console.log('[CloudSync] Stored password invalid, clearing')
         clearSyncPassword()
         return
       }
 
       isSyncingRef.current = true
       try {
-        console.log('[CloudSync] Starting auto-sync (merge)...')
         const result = await syncMerge(password)
         if (result.success) {
-          console.log('[CloudSync] Auto-sync completed')
+          console.log('[CloudSync] Sync completed')
         } else {
-          console.warn('[CloudSync] Auto-sync failed:', result.error)
+          console.warn('[CloudSync] Sync failed:', result.error)
         }
       } finally {
         isSyncingRef.current = false
