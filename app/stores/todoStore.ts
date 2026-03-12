@@ -15,6 +15,7 @@ export type UserTask = {
   priority: Priority
   quadrant: EisenhowerQuadrant
   deadline?: string
+  snoozedUntil?: string
   delegatedTo?: string
   delegatedBy?: string
   createdAt: string
@@ -83,7 +84,7 @@ export const todoStore = {
   },
 
   async getAllTasks(): Promise<UserTask[]> {
-    const tasks = await db.tasks.toArray()
+    const tasks = await db.tasks.filter(t => !t.autoTaskId).toArray()
     return tasks.map(t => ({
       id: t.id!,
       title: t.title,
@@ -91,6 +92,7 @@ export const todoStore = {
       priority: t.priority,
       quadrant: t.quadrant || 'do',
       deadline: t.deadline,
+      snoozedUntil: t.snoozedUntil,
       delegatedTo: t.delegatedTo,
       delegatedBy: t.delegatedBy,
       createdAt: t.createdAt,
@@ -118,6 +120,68 @@ export const todoStore = {
 
   async updateTaskPriority(id: number, priority: Priority): Promise<void> {
     await db.tasks.update(id, { priority })
+  },
+
+  async snoozeTask(id: number, until: string): Promise<void> {
+    await db.tasks.update(id, { snoozedUntil: until })
+  },
+
+  async unsnoozeTask(id: number): Promise<void> {
+    await db.tasks.update(id, { snoozedUntil: undefined })
+  },
+
+  async snoozeAutoTask(autoTaskId: string, until: string): Promise<void> {
+    // Upsert a Task record with autoTaskId
+    const existing = await db.tasks.where('autoTaskId').equals(autoTaskId).first()
+    if (existing) {
+      await db.tasks.update(existing.id!, { snoozedUntil: until })
+    } else {
+      await db.tasks.add({
+        title: `[auto] ${autoTaskId}`,
+        completed: false,
+        priority: 'low',
+        quadrant: 'schedule',
+        autoTaskId,
+        snoozedUntil: until,
+        createdAt: new Date().toISOString(),
+      })
+    }
+  },
+
+  async unsnoozeAutoTask(autoTaskId: string): Promise<void> {
+    const existing = await db.tasks.where('autoTaskId').equals(autoTaskId).first()
+    if (existing) {
+      await db.tasks.update(existing.id!, { snoozedUntil: undefined })
+    }
+  },
+
+  /** Mark a recurring/completable auto-task as done (snoozed until its deadline + 1 day so it hides until next cycle) */
+  async completeAutoTask(autoTaskId: string, deadline?: string): Promise<void> {
+    // Hide until after the deadline — the next recurrence will generate a new auto-task
+    let hideUntil: Date
+    if (deadline) {
+      hideUntil = new Date(deadline)
+      hideUntil.setDate(hideUntil.getDate() + 1)
+    } else {
+      hideUntil = new Date()
+      hideUntil.setDate(hideUntil.getDate() + 30)
+    }
+    hideUntil.setHours(0, 0, 0, 0)
+
+    const existing = await db.tasks.where('autoTaskId').equals(autoTaskId).first()
+    if (existing) {
+      await db.tasks.update(existing.id!, { completed: true, snoozedUntil: hideUntil.toISOString() })
+    } else {
+      await db.tasks.add({
+        title: `[auto] ${autoTaskId}`,
+        completed: true,
+        priority: 'low',
+        quadrant: 'schedule',
+        autoTaskId,
+        snoozedUntil: hideUntil.toISOString(),
+        createdAt: new Date().toISOString(),
+      })
+    }
   },
 
   async delegateTask(id: number, toUid: string): Promise<void> {
@@ -173,7 +237,16 @@ export const todoStore = {
     const recurringTasks = await checkRecurringBusinessTasks()
     autoTasks.push(...recurringTasks)
 
-    return autoTasks
+    // Filter out auto-tasks that are currently snoozed (via Task records with autoTaskId)
+    const now = new Date().toISOString()
+    const autoTaskRecords = await db.tasks.where('autoTaskId').above('').toArray()
+    const snoozedIds = new Set(
+      autoTaskRecords
+        .filter(t => t.snoozedUntil && t.snoozedUntil > now)
+        .map(t => t.autoTaskId!)
+    )
+
+    return autoTasks.filter(t => !snoozedIds.has(t.id))
   },
 }
 

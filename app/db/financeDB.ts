@@ -88,6 +88,8 @@ export interface Task {
   priority: 'low' | 'medium' | 'high'
   quadrant: EisenhowerQuadrant
   deadline?: string // ISO date string (default: 10th of current month)
+  snoozedUntil?: string // ISO date — task hidden until this date
+  autoTaskId?: string // For auto-task snooze records (e.g. "missing-bank-123-01/2026")
   delegatedTo?: string // Firebase UID of partner
   delegatedBy?: string // Firebase UID of delegator
   createdAt: string
@@ -681,6 +683,30 @@ class FinanceDB extends Dexie {
       categories: '++id, syncId, name, type',
       businessCategories: '++id, syncId, &business',
       tasks: '++id, syncId, createdAt, priority, quadrant, deadline, delegatedTo',
+      appSettings: '++id, syncId, &key',
+      businesses: '++id, syncId, &name, type, userId',
+      projects: '++id, syncId, businessId, name, archived',
+      harvestTasks: '++id, syncId, projectId, name, archived',
+      timeEntries: '++id, syncId, taskId, date, startTime, endTime, [taskId+date]',
+      capitalEntries: '++id, syncId, date, institution, accountNumber, description, assetType, currency, employer, investmentTrack, agent, soldDate, [institution+accountNumber+description], fileId',
+      financialInstitutions: '++id, syncId, name, type',
+      ypayDocuments: '++id, syncId, &transactionId, docType',
+      students: '++id, syncId, businessId, name, archived',
+      profileQAs: '++id, syncId, businessId, [businessId+answerType]',
+      scoutResults: '++id, syncId, businessId, status, [businessId+status]',
+      scoutConfigs: '++id, syncId, &businessId',
+      taxDocuments: '++id, syncId, businessId, userId, month, year, [businessId+year]',
+      expenseDocuments: '++id, syncId, transactionId, date, vendor, category, sourceType',
+      businessTasks: '++id, syncId, businessId, recurrence, archived',
+    })
+
+    // Define schema version 22 - add autoTaskId index to tasks
+    this.version(22).stores({
+      transactions: '++id, syncId, type, month, accountNumber, cardNumber, date, chargingDate, [type+month], [cardNumber+month], [accountNumber+month], fileId',
+      importedFiles: '++id, syncId, fileName, fileType, processingMonth, [fileType+processingMonth], [cardNumber+processingMonth]',
+      categories: '++id, syncId, name, type',
+      businessCategories: '++id, syncId, &business',
+      tasks: '++id, syncId, createdAt, priority, quadrant, deadline, delegatedTo, autoTaskId',
       appSettings: '++id, syncId, &key',
       businesses: '++id, syncId, &name, type, userId',
       projects: '++id, syncId, businessId, name, archived',

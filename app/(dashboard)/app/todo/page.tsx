@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useToast } from '@/app/components/ToastContainer'
 import { todoStore, type UserTask, type AutoTask, type EisenhowerQuadrant } from '@/app/stores/todoStore'
 import { getUser } from '@/app/stores/authStore'
@@ -32,6 +32,7 @@ type CombinedTask = {
   priority: Priority
   quadrant: EisenhowerQuadrant
   deadline?: string
+  snoozedUntil?: string
   delegatedTo?: string
   delegatedBy?: string
   createdAt: string
@@ -53,11 +54,26 @@ export default function TodoPage() {
   const [draggedTask, setDraggedTask] = useState<CombinedTask | null>(null)
   const [dragOverQuadrant, setDragOverQuadrant] = useState<EisenhowerQuadrant | null>(null)
   const [dragOverTaskId, setDragOverTaskId] = useState<string | number | null>(null)
+  const [snoozeMenuTaskId, setSnoozeMenuTaskId] = useState<string | number | null>(null)
+  const [showSnoozed, setShowSnoozed] = useState(false)
+  const snoozeMenuRef = useRef<HTMLDivElement>(null)
 
   // Household / partner delegation state
   const [partnerUid, setPartnerUid] = useState<string | null>(null)
   const [partnerEmail, setPartnerEmail] = useState<string | null>(null)
   const [currentUid, setCurrentUid] = useState<string | null>(null)
+
+  // Close snooze menu on outside click
+  useEffect(() => {
+    if (!snoozeMenuTaskId) return
+    const handler = (e: MouseEvent) => {
+      if (snoozeMenuRef.current && !snoozeMenuRef.current.contains(e.target as Node)) {
+        setSnoozeMenuTaskId(null)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [snoozeMenuTaskId])
 
   // Load tasks and household info on mount
   useEffect(() => {
@@ -148,6 +164,49 @@ export default function TodoPage() {
     showToast('success', 'האצלה בוטלה', '↩️')
   }
 
+  const snoozeTask = async (task: CombinedTask, days: number) => {
+    const until = new Date()
+    until.setDate(until.getDate() + days)
+    until.setHours(0, 0, 0, 0)
+    const untilISO = until.toISOString()
+
+    if (task.taskType === 'user') {
+      await todoStore.snoozeTask(task.id as number, untilISO)
+      setUserTasks(userTasks.map(t => t.id === task.id ? { ...t, snoozedUntil: untilISO } : t))
+    } else {
+      await todoStore.snoozeAutoTask(task.id as string, untilISO)
+      setAutoTasks(autoTasks.filter(t => t.id !== task.id))
+    }
+    setSnoozeMenuTaskId(null)
+    const labels: Record<number, string> = { 1: 'מחר', 3: '3 ימים', 7: 'שבוע' }
+    showToast('success', `משימה מוסתרת עד ${labels[days] || `${days} ימים`}`, '😴')
+  }
+
+  const unsnoozeTask = async (task: CombinedTask) => {
+    if (task.taskType === 'user') {
+      await todoStore.unsnoozeTask(task.id as number)
+      setUserTasks(userTasks.map(t => t.id === task.id ? { ...t, snoozedUntil: undefined } : t))
+    } else {
+      await todoStore.unsnoozeAutoTask(task.id as string)
+      // Reload auto-tasks so the unsnoozed task reappears
+      const autoTasksData = await todoStore.getAutoTasks()
+      setAutoTasks(autoTasksData)
+    }
+    showToast('success', 'משימה חזרה לפעילה', '☀️')
+  }
+
+  const markAutoTaskDone = async (task: CombinedTask) => {
+    if (task.taskType !== 'auto') return
+    await todoStore.completeAutoTask(task.id as string, task.deadline)
+    setAutoTasks(autoTasks.filter(t => t.id !== task.id))
+    showToast('success', 'משימה בוצעה', '✅')
+  }
+
+  const isTaskSnoozed = useCallback((task: CombinedTask): boolean => {
+    if (task.taskType !== 'user') return false // Auto-tasks are pre-filtered by the store
+    return !!task.snoozedUntil && task.snoozedUntil > new Date().toISOString()
+  }, [])
+
   // Drag and drop handlers
   const handleDragStart = (task: CombinedTask) => {
     if (task.taskType === 'auto') return // Can't drag auto tasks
@@ -210,7 +269,7 @@ export default function TodoPage() {
   }
 
   // Combine and group tasks by quadrant
-  const getAllCombinedTasks = (): CombinedTask[] => {
+  const getAllCombinedTasks = (includeSnoozed = false): CombinedTask[] => {
     const combined: CombinedTask[] = [
       ...userTasks.map(t => ({ ...t, id: t.id, taskType: 'user' as const })),
       ...autoTasks.map(t => ({
@@ -227,14 +286,20 @@ export default function TodoPage() {
         month: t.month,
       })),
     ]
+    let filtered = combined
     if (!showCompleted) {
-      return combined.filter(t => t.taskType === 'auto' || !t.completed)
+      filtered = filtered.filter(t => t.taskType === 'auto' || !t.completed)
     }
-    return combined
+    if (!includeSnoozed) {
+      filtered = filtered.filter(t => !isTaskSnoozed(t))
+    }
+    return filtered
   }
 
+  const snoozedCount = getAllCombinedTasks(true).filter(t => isTaskSnoozed(t)).length
+
   const getTasksForQuadrant = (quadrant: EisenhowerQuadrant): CombinedTask[] => {
-    return getAllCombinedTasks()
+    return getAllCombinedTasks(showSnoozed)
       .filter(t => t.quadrant === quadrant)
       .sort((a, b) => {
         // Sort by priority (high first), then by deadline
@@ -317,7 +382,7 @@ export default function TodoPage() {
         boxShadow: isDropTarget ? '0 0 0 2px #38bdf8' : 'none',
       }}
     >
-      {/* Checkbox / Icon */}
+      {/* Checkbox — user tasks + recurring auto-tasks are completable */}
       {task.taskType === 'user' ? (
         <input
           type="checkbox"
@@ -325,8 +390,16 @@ export default function TodoPage() {
           onChange={() => toggleUserTask(task.id as number)}
           style={{ width: '1rem', height: '1rem', cursor: 'pointer', flexShrink: 0 }}
         />
+      ) : task.autoType === 'recurring' ? (
+        <input
+          type="checkbox"
+          checked={false}
+          onChange={() => markAutoTaskDone(task)}
+          title="סמן כבוצע"
+          style={{ width: '1rem', height: '1rem', cursor: 'pointer', flexShrink: 0 }}
+        />
       ) : (
-        <span style={{ fontSize: '1rem', flexShrink: 0 }}>{getAutoTaskIcon(task.autoType!)}</span>
+        <span style={{ width: '1rem', flexShrink: 0 }} />
       )}
 
       {/* Priority indicator */}
@@ -350,6 +423,7 @@ export default function TodoPage() {
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
         }}>
+          {task.taskType === 'auto' && <span style={{ marginLeft: '0.25rem' }}>{getAutoTaskIcon(task.autoType!)}</span>}
           {task.taskType === 'auto' && task.link ? (
             <a href={task.link} style={{ color: '#3b82f6', textDecoration: 'underline' }}>{task.title}</a>
           ) : task.title}
@@ -362,6 +436,11 @@ export default function TodoPage() {
               {formatDeadline(task.deadline)}
             </span>
           )}
+          {isTaskSnoozed(task) && (
+            <span style={{ fontSize: '0.7rem', color: '#7c3aed', fontWeight: 500 }}>
+              😴 מוסתר
+            </span>
+          )}
           {task.delegatedTo && (
             <span style={{ fontSize: '0.7rem', color: '#d97706', fontWeight: 500 }}>
               👥 {task.delegatedTo === currentUid ? 'הואצל אליי' : `הואצל ל${partnerEmail || 'שותף/ה'}`}
@@ -371,7 +450,97 @@ export default function TodoPage() {
       </div>
 
       {/* Actions */}
-      <div style={{ display: 'flex', gap: '0.25rem', flexShrink: 0 }}>
+      <div style={{ display: 'flex', gap: '0.25rem', flexShrink: 0, position: 'relative' }}>
+        {/* Snooze button */}
+        {!task.completed && (
+          isTaskSnoozed(task) ? (
+            <button
+              onClick={() => unsnoozeTask(task)}
+              title="בטל הסתרה"
+              style={{
+                padding: '0.15rem 0.35rem',
+                fontSize: '0.75rem',
+                border: '1px solid #c4b5fd',
+                borderRadius: '0.25rem',
+                background: '#ede9fe',
+                cursor: 'pointer',
+                color: '#7c3aed',
+                lineHeight: 1,
+              }}
+            >
+              ☀️
+            </button>
+          ) : (
+            <div style={{ position: 'relative' }}>
+              <button
+                onClick={() => setSnoozeMenuTaskId(snoozeMenuTaskId === task.id ? null : task.id)}
+                title="הסתר משימה"
+                style={{
+                  padding: '0.15rem 0.35rem',
+                  fontSize: '0.75rem',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '0.25rem',
+                  background: '#f9fafb',
+                  cursor: 'pointer',
+                  color: '#6b7280',
+                  lineHeight: 1,
+                }}
+              >
+                😴
+              </button>
+              {snoozeMenuTaskId === task.id && (
+                <div
+                  ref={snoozeMenuRef}
+                  style={{
+                    position: 'absolute',
+                    bottom: '100%',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    marginBottom: '0.25rem',
+                    background: '#fff',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '0.5rem',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+                    zIndex: 50,
+                    minWidth: '140px',
+                    overflow: 'hidden',
+                  }}
+                >
+                  <div style={{ padding: '0.375rem 0.75rem', fontSize: '0.7rem', color: '#9ca3af', fontWeight: 600, borderBottom: '1px solid #f3f4f6' }}>
+                    😴 הסתר ל...
+                  </div>
+                  {[
+                    { days: 1, label: '☀️ מחר' },
+                    { days: 3, label: '📅 3 ימים' },
+                    { days: 7, label: '🗓️ שבוע' },
+                  ].map(opt => (
+                    <button
+                      key={opt.days}
+                      onClick={() => snoozeTask(task, opt.days)}
+                      style={{
+                        display: 'block',
+                        width: '100%',
+                        padding: '0.5rem 0.75rem',
+                        fontSize: '0.85rem',
+                        background: 'none',
+                        border: 'none',
+                        borderBottom: '1px solid #f9fafb',
+                        cursor: 'pointer',
+                        textAlign: 'right',
+                        color: '#374151',
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
+                      onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        )}
+
         {/* Delegate button - only for user tasks when partner exists */}
         {task.taskType === 'user' && partnerUid && !task.completed && (
           task.delegatedTo ? (
@@ -492,6 +661,25 @@ export default function TodoPage() {
             />
             הצג הושלמו
           </label>
+          {snoozedCount > 0 && (
+            <button
+              onClick={() => setShowSnoozed(!showSnoozed)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.375rem',
+                fontSize: '0.8rem',
+                color: showSnoozed ? '#7c3aed' : '#9ca3af',
+                background: showSnoozed ? '#ede9fe' : '#f9fafb',
+                border: `1px solid ${showSnoozed ? '#c4b5fd' : '#e5e7eb'}`,
+                padding: '0.25rem 0.5rem',
+                borderRadius: '0.25rem',
+                cursor: 'pointer',
+              }}
+            >
+              😴 {snoozedCount} מוסתרות
+            </button>
+          )}
           {partnerUid && (
             <span style={{ fontSize: '0.8rem', color: '#059669', background: '#ecfdf5', padding: '0.25rem 0.5rem', borderRadius: '0.25rem' }}>
               👥 שותף/ה: {partnerEmail}
