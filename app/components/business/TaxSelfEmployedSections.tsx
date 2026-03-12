@@ -183,6 +183,10 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
 
   const BTL_DEDUCTION_RATE = 0.52 // 52% of BTL paid is deductible
 
+  // Income tax advance payment — % of income paid each month as מקדמה
+  const advancePercent = seBiz.reduce((max, b) => Math.max(max, b.incomeTaxAdvancePercent || 0), 0)
+  const hasAdvance = advancePercent > 0
+
   // Calculate monthly salary from שכיר docs (grossIncome per month)
   const monthlySalary: number[] = Array.from({ length: currentMonth + 1 }, (_, i) => {
     const monthStr = `${String(i + 1).padStart(2, '0')}/${currentYear}`
@@ -214,7 +218,10 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
     const taxSalaryOnly = computeIncomeTax(salary, brackets)
     const tax = taxTotal - taxSalaryOnly
 
-    return { month: i, label: HEBREW_MONTHS[i], income, expenses, netIncome, btlPaid, btlDeduction, taxBase, salary, tax }
+    // Advance payment paid = % of gross income for that month
+    const advancePaid = hasAdvance ? income * (advancePercent / 100) : 0
+
+    return { month: i, label: HEBREW_MONTHS[i], income, expenses, netIncome, btlPaid, btlDeduction, taxBase, salary, tax, advancePaid }
   })
 
   const annualTotals = {
@@ -226,6 +233,7 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
     taxBase: monthlyRows.reduce((s, r) => s + r.taxBase, 0),
     salary: monthlyRows.reduce((s, r) => s + r.salary, 0),
     tax: monthlyRows.reduce((s, r) => s + r.tax, 0),
+    advancePaid: monthlyRows.reduce((s, r) => s + r.advancePaid, 0),
   }
 
   const hStyle: React.CSSProperties = { ...cellStyle, fontWeight: 600, background: '#fff7ed', color: '#92400e', borderBottom: '2px solid #e2e8f0' }
@@ -263,6 +271,7 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
             <th style={{ ...hStyle, background: '#fef3c7' }}>בסיס לתשלום</th>
             {annualTotals.salary > 0 && <th style={hStyle}>הכנסה חייבת (שכיר)</th>}
             <th style={{ ...hStyle, background: '#fef3c7' }}>מס הכנסה</th>
+            {hasAdvance && <th style={hStyle}>מקדמה שולמה</th>}
           </tr>
         </thead>
         <tbody>
@@ -275,6 +284,7 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
               <td style={{ ...cellStyle, background: '#fffbeb', fontWeight: 500 }}>{row.taxBase ? fmt(row.taxBase) : '—'}</td>
               {annualTotals.salary > 0 && <td style={cellStyle}>{row.salary ? fmt(row.salary) : '—'}</td>}
               <td style={{ ...cellStyle, background: '#fffbeb', fontWeight: 500, color: '#b45309' }}>{row.tax ? fmt(row.tax) : '—'}</td>
+              {hasAdvance && <td style={cellStyle}>{row.advancePaid ? fmt(row.advancePaid) : '—'}</td>}
             </tr>
           ))}
         </tbody>
@@ -287,7 +297,21 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
             <td style={{ ...cellStyle, fontWeight: 700, background: '#fef3c7' }}>{fmt(annualTotals.taxBase)}</td>
             {annualTotals.salary > 0 && <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(annualTotals.salary)}</td>}
             <td style={{ ...cellStyle, fontWeight: 700, background: '#fef3c7', color: '#b45309' }}>{fmt(annualTotals.tax)}</td>
+            {hasAdvance && <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(annualTotals.advancePaid)}</td>}
           </tr>
+          {hasAdvance && (
+            <tr style={{ background: '#fef3c7' }}>
+              <td colSpan={annualTotals.salary > 0 ? 6 : 5} style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 700 }}>
+                הפרש (מקדמות ששולמו − מס שחושב)
+              </td>
+              <td colSpan={2} style={{ ...cellStyle, fontWeight: 700, fontSize: '0.95rem', color: annualTotals.advancePaid - annualTotals.tax > 0 ? '#16a34a' : '#dc2626' }}>
+                {fmt(annualTotals.advancePaid - annualTotals.tax)}
+                <span style={{ fontSize: '0.75rem', fontWeight: 400, marginRight: '0.5rem' }}>
+                  {annualTotals.advancePaid - annualTotals.tax > 0 ? '(שולם ביתר — יוחזר)' : annualTotals.advancePaid - annualTotals.tax < 0 ? '(שולם בחסר — לתשלום)' : ''}
+                </span>
+              </td>
+            </tr>
+          )}
         </tfoot>
       </table>
     </div>
