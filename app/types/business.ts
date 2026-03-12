@@ -16,6 +16,7 @@ export type Business = {
   vatType?: VatType
   isTaxFree?: boolean
   btlAdvancePayment?: number
+  incomeTaxAdvancePercent?: number // מקדמות מס הכנסה — % מההכנסה החודשית
   taxOrder?: number // סדר לחישוב מס — 1=ראשון (מדרגות נמוכות), 2=שני, וכו׳
   userId?: string
   pinnedToSidebar?: boolean
