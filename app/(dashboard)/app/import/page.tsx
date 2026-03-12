@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import type { ImportedFile } from '@/app/db/financeDB'
 import { formatMonthDisplay, formatDateTime } from '@/app/utils/formatters'
 import FileBrowser from '@/app/components/FileBrowser'
+import ImportWizard from '@/app/components/ImportWizard'
 import MessageModal from '@/app/components/MessageModal'
 import YesNoModal from '@/app/components/YesNoModal'
 import { useToast } from '@/app/components/ToastContainer'
@@ -33,6 +34,7 @@ function ImportPageContent() {
   const [selectedMonth, setSelectedMonth] = useState<string>('')
   const [savedDirHandle, setSavedDirHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [showFileBrowser, setShowFileBrowser] = useState(false)
+  const [showWizard, setShowWizard] = useState(false)
 
   // Modal states
   const [messageModal, setMessageModal] = useState<{ isOpen: boolean; emoji?: string; message: string }>({
@@ -373,10 +375,15 @@ const handleDeleteFile = (file: ImportedFile) => {
           <p>טען קבצי בנק וכרטיסי אשראי לאחסון ועיבוד מאוחר יותר</p>
         </header>
 
-        {/* Import button */}
-        <button onClick={() => setShowFileBrowser(true)} className="file-picker">
-          <span>📥 ייבא קובץ חדש</span>
-        </button>
+        {/* Import buttons */}
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <button onClick={() => setShowFileBrowser(true)} className="file-picker">
+            <span>📥 ייבא קובץ חדש</span>
+          </button>
+          <button onClick={() => setShowWizard(true)} className="file-picker">
+            <span>🧙 אשף ייבוא</span>
+          </button>
+        </div>
 
         {/* Demo files section */}
         <div style={{
@@ -521,6 +528,14 @@ const handleDeleteFile = (file: ImportedFile) => {
             </div>
           </div>
         )}
+
+        {/* Import wizard */}
+        <ImportWizard
+          isOpen={showWizard}
+          onClose={() => setShowWizard(false)}
+          dirHandle={savedDirHandle}
+          onFileSelect={handleFileSelect}
+        />
 
         {/* Month filter */}
         {files.length > 0 && (

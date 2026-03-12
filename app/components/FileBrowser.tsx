@@ -3,8 +3,8 @@
 import { useState, useEffect } from 'react'
 import type { FilePreview } from '@/app/types/file-preview'
 import { FileType } from '@/app/types/file-type'
-import { extractFileMetadata } from '@/app/utils/filePreview'
 import { requestDirectoryPermission } from '@/app/utils/directoryStorage'
+import { scanDirectoryForFiles } from '@/app/utils/folderScanner'
 
 type FileBrowserProps = {
   onFileSelect: (file: File) => void
@@ -14,17 +14,6 @@ type FileBrowserProps = {
   excludeFileNames?: string[]
   showDebug?: boolean
   onDebugInspect?: (preview: FilePreview, file: File) => void
-}
-
-const extractFilePreview = async (file: File): Promise<Partial<FilePreview>> => {
-  const metadata = await extractFileMetadata(file)
-  return {
-    fileType: metadata.fileType,
-    processingMonth: metadata.processingMonth || null,
-    transactionCount: metadata.transactionCount,
-    accountNumber: metadata.accountNumber || null,
-    cardNumber: metadata.cardNumber || null,
-  }
 }
 
 export default function FileBrowser({
@@ -80,50 +69,11 @@ export default function FileBrowser({
     setCurrentDirHandle(dirHandle)
 
     try {
-      const fileHandles: FileSystemFileHandle[] = []
-      const folders: { name: string; handle: FileSystemDirectoryHandle }[] = []
-
-      // Collect all .xls and .xlsx files and sub-folders
-      // TypeScript's built-in types don't include entries() for FileSystemDirectoryHandle, so we cast
-      const dirHandleWithEntries = dirHandle as FileSystemDirectoryHandle & {
-        entries(): AsyncIterableIterator<[string, FileSystemHandle]>
-      }
-
-      for await (const [, entry] of dirHandleWithEntries.entries()) {
-        if (entry.kind === 'directory') {
-          folders.push({ name: entry.name, handle: entry as FileSystemDirectoryHandle })
-        } else if (entry.kind === 'file') {
-          const fileName = entry.name.toLowerCase()
-          if (fileName.endsWith('.xls') || fileName.endsWith('.xlsx')) {
-            fileHandles.push(entry as FileSystemFileHandle)
-          }
-        }
-      }
-
-      folders.sort((a, b) => a.name.localeCompare(b.name))
+      const { files, subfolders: folders } = await scanDirectoryForFiles(dirHandle)
       setSubfolders(folders)
 
-      // Generate previews
-      const previewPromises = fileHandles.map(async (fileHandle) => {
-        const file = await fileHandle.getFile()
-        const preview = await extractFilePreview(file)
-
-        return {
-          fileName: fileHandle.name,
-          fileHandle,
-          fileType: preview.fileType || FileType.Unknown,
-          processingMonth: preview.processingMonth || null,
-          transactionCount: preview.transactionCount || 0,
-          accountNumber: preview.accountNumber || null,
-          cardNumber: preview.cardNumber || null,
-        } as FilePreview
-      })
-
-      const filePreviews = await Promise.all(previewPromises)
       const exclude = new Set((excludeFileNames || []).map((n) => n.toLowerCase()))
-      const validPreviews = filePreviews
-        .filter((p) => p.fileType === FileType.Bank || p.fileType === FileType.CreditCard)
-        .filter((p) => !exclude.has(p.fileName.toLowerCase()))
+      const validPreviews = files.filter((p) => !exclude.has(p.fileName.toLowerCase()))
 
       // Sort by month (descending), then by account
       validPreviews.sort((a, b) => {
