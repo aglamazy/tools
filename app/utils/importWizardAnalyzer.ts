@@ -35,11 +35,14 @@ function getLastThreeMonths(now: Date): string[] {
   return months
 }
 
-function isFresh(importedFile: ImportedFile): boolean {
+function isFresh(importedFile: ImportedFile, now: Date = new Date()): boolean {
   if (!importedFile.importedAt) return false
-  const importedAt = new Date(importedFile.importedAt)
   const monthEnd = getMonthEnd(importedFile.processingMonth)
   if (!monthEnd) return false
+  // Current/future month — always fresh (month hasn't ended yet)
+  if (monthEnd >= now) return true
+  // Past month — fresh only if imported after the month ended
+  const importedAt = new Date(importedFile.importedAt)
   return importedAt > monthEnd
 }
 
@@ -87,7 +90,7 @@ export function analyzeImportStatus(
       const folder = folderFiles.find(
         (f) => f.fileType === 'bank' && f.processingMonth === month && f.accountNumber === account
       )
-      entries.push(buildEntry('bank', month, imported, folder, account))
+      entries.push(buildEntry('bank', month, imported, folder, account, undefined, now))
     }
 
     for (const card of creditCards) {
@@ -97,7 +100,7 @@ export function analyzeImportStatus(
       const folder = folderFiles.find(
         (f) => f.fileType === 'credit-card' && f.processingMonth === month && f.cardNumber === card
       )
-      entries.push(buildEntry('credit-card', month, imported, folder, undefined, card))
+      entries.push(buildEntry('credit-card', month, imported, folder, undefined, card, now))
     }
   }
 
@@ -120,7 +123,7 @@ export function analyzeImportStatus(
           ((ft === 'bank' && imp.accountNumber === f.accountNumber) ||
             (ft === 'credit-card' && imp.cardNumber === f.cardNumber))
       )
-      entries.push(buildEntry(ft, f.processingMonth, imported, f, f.accountNumber || undefined, f.cardNumber || undefined))
+      entries.push(buildEntry(ft, f.processingMonth, imported, f, f.accountNumber || undefined, f.cardNumber || undefined, now))
     }
   }
 
@@ -133,10 +136,11 @@ function buildEntry(
   imported: ImportedFile | undefined,
   folder: FilePreview | undefined,
   accountNumber?: string,
-  cardNumber?: string
+  cardNumber?: string,
+  now?: Date
 ): WizardFileEntry {
   if (imported) {
-    if (isFresh(imported)) {
+    if (isFresh(imported, now)) {
       return { month, fileType, accountNumber, cardNumber, status: 'fresh', importedFile: imported, folderFile: folder }
     }
     // Stale

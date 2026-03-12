@@ -236,88 +236,69 @@ const handleDeleteFile = (file: ImportedFile) => {
         return
       }
 
-      // Create file ID first (before importing)
-      const fileId = `${Date.now()}-${file.name}`
-
-      // Import and save transactions
-      const { fileImportService } = await import('@/app/services/fileImportService')
-
-      if (metadata.fileType === 'credit-card' && metadata.cardNumber) {
-        await fileImportService.importCreditCardFile(file, metadata.cardNumber, null, fileId)
-      } else if (metadata.fileType === 'bank' && metadata.processingMonth) {
-        await fileImportService.importBankFile(file, metadata.processingMonth, fileId)
-      }
-
-      // Create imported file record
-      const importedFile: any = {
-        fileName: file.name,
-        importedAt: new Date().toISOString(),
-        fileType: metadata.fileType,
-        processingMonth: metadata.processingMonth || '',
-        fileKey: fileId,
-        accountNumber: metadata.accountNumber,
-        cardNumber: metadata.cardNumber,
-        transactionCount: metadata.transactionCount,
-      }
-
-      // Save to IndexedDB
+      // Check for duplicates BEFORE importing — match by account/card + month
       const existingData = await transactionStore.getImportedFiles() || { files: [], lastUpdated: '' }
-
-      // Check for duplicates
-      const isDuplicate = existingData.files.some(
-        (f: ImportedFile) => f.fileName === importedFile.fileName && f.processingMonth === importedFile.processingMonth
+      const existingFile = existingData.files.find(
+        (f: ImportedFile) =>
+          f.fileType === metadata.fileType &&
+          f.processingMonth === (metadata.processingMonth || '') &&
+          (metadata.fileType === 'bank'
+            ? f.accountNumber === metadata.accountNumber
+            : f.cardNumber === metadata.cardNumber)
       )
 
-      if (isDuplicate) {
+      // Helper: actually import the file and save
+      const doImport = async () => {
+        const fileId = `${Date.now()}-${file.name}`
+        const { fileImportService } = await import('@/app/services/fileImportService')
+
+        // Delete old transactions if replacing
+        if (existingFile) {
+          await transactionStore.deleteTransactionsForFile(
+            existingFile.fileType,
+            existingFile.processingMonth || '',
+            existingFile.cardNumber,
+            existingFile.fileKey,
+            existingFile.fileName
+          )
+        }
+
+        // Import new transactions
+        if (metadata.fileType === 'credit-card' && metadata.cardNumber) {
+          await fileImportService.importCreditCardFile(file, metadata.cardNumber, null, fileId)
+        } else if (metadata.fileType === 'bank' && metadata.processingMonth) {
+          await fileImportService.importBankFile(file, metadata.processingMonth, fileId)
+        }
+
+        // Reload from DB to include generated IDs
+        const refreshed = await transactionStore.getImportedFiles()
+        if (refreshed) {
+          setFiles(refreshed.files)
+        }
+        setShowFileBrowser(false)
+
+        if (metadata.processingMonth) {
+          setSelectedMonth(metadata.processingMonth)
+        }
+
+        showToast('success', `הקובץ "${file.name}" יובא בהצלחה!`)
+      }
+
+      if (existingFile) {
         setYesNoModal({
           isOpen: true,
-          question: `הקובץ "${file.name}" כבר קיים. האם להחליף אותו?`,
+          question: existingFile.fileName === file.name
+            ? `הקובץ "${file.name}" כבר קיים. האם להחליף אותו?`
+            : `כבר קיים קובץ "${existingFile.fileName}" לאותו חשבון וחודש. האם להחליף אותו?`,
           onConfirm: async () => {
-            // Remove old version
-            existingData.files = existingData.files.filter(
-              (f: ImportedFile) => !(f.fileName === importedFile.fileName && f.processingMonth === importedFile.processingMonth)
-            )
-
-            existingData.files.push(importedFile)
-            existingData.lastUpdated = new Date().toISOString()
-            await transactionStore.saveImportedFiles(existingData)
-
-            // Reload from DB to include generated IDs
-            const refreshed = await transactionStore.getImportedFiles()
-            if (refreshed) {
-              setFiles(refreshed.files)
-            }
-            setShowFileBrowser(false)
-
-            // Set filter to the imported file's month
-            if (metadata.processingMonth) {
-              setSelectedMonth(metadata.processingMonth)
-            }
-
             setYesNoModal({ isOpen: false, question: '', onConfirm: () => {} })
-            showToast('success', `הקובץ "${file.name}" יובא בהצלחה!`)
+            await doImport()
           },
         })
         return
       }
 
-      existingData.files.push(importedFile)
-      existingData.lastUpdated = new Date().toISOString()
-      await transactionStore.saveImportedFiles(existingData)
-
-      // Reload from DB to include generated IDs
-      const refreshed = await transactionStore.getImportedFiles()
-      if (refreshed) {
-        setFiles(refreshed.files)
-      }
-      setShowFileBrowser(false)
-
-      // Set filter to the imported file's month
-      if (metadata.processingMonth) {
-        setSelectedMonth(metadata.processingMonth)
-      }
-
-      showToast('success', `הקובץ "${file.name}" יובא בהצלחה!`)
+      await doImport()
     } catch (err) {
       console.error('Error importing file:', err)
       showToast('error', 'אירעה שגיאה בייבוא הקובץ.')
@@ -385,8 +366,8 @@ const handleDeleteFile = (file: ImportedFile) => {
           </button>
         </div>
 
-        {/* Demo files section */}
-        <div style={{
+        {/* Demo files section — hidden once files are imported */}
+        {files.length === 0 && <div style={{
           marginTop: '1.5rem',
           padding: '1rem',
           background: '#eff6ff',
@@ -476,7 +457,7 @@ const handleDeleteFile = (file: ImportedFile) => {
           <p style={{ margin: '0.75rem 0 0 0', fontSize: '0.75rem', color: '#6b7280' }}>
             💡 לאחר ההורדה, לחץ על "ייבא קובץ חדש" וטען את הקבצים
           </p>
-        </div>
+        </div>}
 
         {/* File browser modal */}
         {showFileBrowser && (
