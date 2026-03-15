@@ -22,6 +22,12 @@
 - API routes: `app/api/`
 - Synced tables registry: `app/services/syncedTables.ts` — add new tables here
 
+## LLM Usage
+- Platform provides Gemini as included — works out of the box, no user configuration needed.
+- User can optionally use their own Anthropic key for Claude.
+- In both cases, functionality must work transparently — APIs must not assume a specific provider.
+- LLM abstraction: `app/services/llm/` — default provider is `gemini`, fall back to it when no Anthropic key is set.
+
 ## Rules
 - Max file length: 850 lines (eslint enforced)
 - No native browser dialogs (alert/confirm/prompt)

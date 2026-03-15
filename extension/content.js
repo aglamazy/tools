@@ -37,6 +37,28 @@
     return parts.join(' > ')
   }
 
+  // Find the nearest section heading for context (e.g. "Personal data", "Contact information")
+  function getSection(el) {
+    let node = el
+    while (node && node !== document.body) {
+      // Look for a preceding heading within the same fieldset/section/form group
+      const parent = node.parentElement
+      if (parent) {
+        const siblings = Array.from(parent.children)
+        const idx = siblings.indexOf(node)
+        for (let i = idx - 1; i >= 0; i--) {
+          const sib = siblings[i]
+          const heading = sib.matches?.('h1,h2,h3,h4,h5,h6,legend')
+            ? sib
+            : sib.querySelector?.('h1,h2,h3,h4,h5,h6,legend')
+          if (heading) return heading.textContent.trim()
+        }
+      }
+      node = parent
+    }
+    return ''
+  }
+
   // Find the label text associated with a form element
   function getLabel(el) {
     // 1. Explicit <label for="...">
@@ -89,6 +111,38 @@
     return el.placeholder || el.name || ''
   }
 
+  // Solve simple math captchas (e.g. "Please add up 1 and 39", "Bitte zählen Sie 3 und 7 zusammen")
+  function solveCaptcha(inputEl) {
+    // Walk up to find a container that has the question text (skip the input itself)
+    let container = inputEl.parentElement
+    let text = ''
+    while (container && container !== document.body) {
+      text = container.textContent || ''
+      if (/\d+\s*(?:and|und|plus|\+)\s*\d+/.test(text)) break
+      container = container.parentElement
+    }
+    if (!text) return null
+    // Match patterns like "add up X and Y", "X und Y zusammen", "X + Y", "sum of X and Y"
+    const patterns = [
+      /(?:add|sum|plus|zählen|zusammen)[^\d]*(\d+)\s*(?:and|und|plus|\+)\s*(\d+)/i,
+      /(\d+)\s*(?:and|und|plus|\+)\s*(\d+)\s*(?:add|sum|together|zusammen)/i,
+      /(\d+)\s*\+\s*(\d+)/,
+      /(\d+)\s*(?:\*|times|mal|×)\s*(\d+)/,
+      /(\d+)\s*(?:-|minus)\s*(\d+)/,
+    ]
+    for (const pattern of patterns) {
+      const match = text.match(pattern)
+      if (match) {
+        const a = parseInt(match[1], 10)
+        const b = parseInt(match[2], 10)
+        if (/\*|times|mal|×/.test(match[0])) return a * b
+        if (/-|minus/.test(match[0])) return a - b
+        return a + b
+      }
+    }
+    return null
+  }
+
   // Extract all form fields from the page
   function extractFields() {
     const fields = []
@@ -100,6 +154,8 @@
       if (type === 'hidden' || type === 'submit' || type === 'button' || type === 'reset') continue
       // Skip elements not visible
       if (el.offsetParent === null && el.type !== 'file') continue
+      // Skip fields outside the main content (login forms, language selectors, nav/footer chrome)
+      if (el.closest('header, nav, footer, [role="banner"], [role="contentinfo"]')) continue
 
       const fieldId = el.id || el.name || `aglamaz-field-${++fieldCounter}`
       if (!el.id && !el.getAttribute('data-aglamaz-id')) {
@@ -110,10 +166,11 @@
         id: fieldId,
         type: el.tagName === 'TEXTAREA' ? 'textarea' : el.tagName === 'SELECT' ? 'select' : type,
         label: getLabel(el),
+        section: getSection(el),
         name: el.name || '',
         placeholder: el.placeholder || '',
         value: el.tagName === 'SELECT' ? el.options[el.selectedIndex]?.text || '' : el.value || '',
-        required: el.required,
+        required: el.required || /^\*/.test(getLabel(el).trim()),
         selector: getSelector(el),
       }
 
@@ -127,10 +184,39 @@
         fieldData.accept = el.accept
       }
 
+      // Solve simple math captchas
+      if (/captcha|sicherheitsabfrage|security.?question/i.test(fieldData.label || fieldData.name || fieldData.id)) {
+        const answer = solveCaptcha(el)
+        if (answer !== null) fieldData.captchaAnswer = String(answer)
+      }
+
       fields.push(fieldData)
     }
 
-    return { fields, pageUrl: window.location.href, hostname: window.location.hostname }
+    // Deduplicate: when multiple fields share the same label, keep the select over input
+    const seen = new Map()
+    for (const f of fields) {
+      const key = f.label.trim().toLowerCase().replace(/[\s*]+/g, ' ').trim()
+      if (!key) continue
+      if (seen.has(key)) {
+        const prev = seen.get(key)
+        // Prefer select over text input (custom widgets often render both)
+        if (f.type === 'select' && prev.type !== 'select') {
+          seen.set(key, f)
+        }
+        // else keep the first one
+      } else {
+        seen.set(key, f)
+      }
+    }
+    // Build deduped list: keep fields with no label as-is, dedup the rest
+    const dedupedIds = new Set(Array.from(seen.values()).map(f => f.id))
+    const deduped = fields.filter(f => {
+      const key = f.label.trim().toLowerCase().replace(/[\s*]+/g, ' ').trim()
+      return !key || dedupedIds.has(f.id)
+    })
+
+    return { fields: deduped, pageUrl: window.location.href, hostname: window.location.hostname }
   }
 
   // Fill a file input using DataTransfer API

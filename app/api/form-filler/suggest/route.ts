@@ -12,6 +12,7 @@ interface FormField {
   id: string
   type: string
   label: string
+  section: string
   name: string
   placeholder: string
   value: string
@@ -62,6 +63,15 @@ Rules:
 - The user's profile may store dates in d/m/yy format (e.g. "5/3/90" = March 5, 1990). Convert to the form's expected format.
 - The form may be in any language. Match fields to profile semantically regardless of language.
 
+Select/dropdown fields:
+- For select fields, you MUST return the EXACT text of one of the provided options. Do not invent values.
+- The profile stores canonical English values for enum-like fields (e.g. Gender: "Male", Marital status: "Single").
+- Match the profile value to the closest option in the form's language. Examples:
+  - Profile "Male" + German form options ["männlich", "weiblich", "divers"] → return "männlich"
+  - Profile "Male" + Hebrew form options ["זכר", "נקבה"] → return "זכר"
+  - Profile "Male" + English form options ["Male", "Female", "Other"] → return "Male"
+- If multiple form fields represent the same concept (e.g. two gender fields), fill all of them consistently.
+
 Site-specific fields:
 - Detect if a field is site-specific, meaning its value is unique to this particular website/service (not a general personal fact).
 - Examples of site-specific fields: username/login for this site, password, account number, membership ID, API key, site-specific codes.
@@ -101,7 +111,7 @@ export async function POST(request: NextRequest) {
 
     // Build the user message with fields and profile data
     const fieldsDescription = fields.map(f => {
-      let desc = `- ID: "${f.id}", Label: "${f.label}", Type: ${f.type}, Name: "${f.name}"`
+      let desc = `- ID: "${f.id}", Label: "${f.section ? f.section + ' > ' : ''}${f.label}", Type: ${f.type}, Name: "${f.name}"`
       if (f.placeholder) desc += `, Placeholder: "${f.placeholder}"`
       if (f.required) desc += ' (required)'
       if (f.options) desc += `, Options: [${f.options.map(o => o.text).join(', ')}]`
@@ -118,15 +128,20 @@ export async function POST(request: NextRequest) {
     const siteInfo = hostname ? `\nPage URL: ${pageUrl || ''}\nHostname: ${hostname}\n` : ''
     const userMessage = `${siteInfo}Form fields:\n${fieldsDescription}\n\nUser profile data:\n${profileDescription}`
 
-    const client = getLLMClient((provider as LLMProvider) || 'anthropic')
+    // Use Anthropic if user provided a key, otherwise fall back to Gemini (platform default)
+    const anthropicKey = apiKey || process.env.ANTHROPIC_API_KEY
+    const resolvedProvider: LLMProvider = (provider as LLMProvider) || (anthropicKey ? 'anthropic' : 'gemini')
+
+    const client = getLLMClient(resolvedProvider)
     const result = await client.chat({
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userMessage }],
       maxTokens: 2048,
-      apiKey: apiKey || process.env.ANTHROPIC_API_KEY,
+      ...(resolvedProvider === 'anthropic' ? { apiKey: anthropicKey } : {}),
     })
 
     if (result.error) {
+      console.error('[Form Filler] LLM error:', result.error)
       return NextResponse.json({ success: false, error: result.error }, { status: 500 })
     }
 

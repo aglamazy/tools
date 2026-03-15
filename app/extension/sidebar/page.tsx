@@ -15,12 +15,14 @@ interface FormField {
   id: string
   type: string
   label: string
+  section: string
   name: string
   placeholder: string
   value: string
   required: boolean
   selector: string
   options?: { value: string; text: string }[]
+  captchaAnswer?: string
 }
 
 interface FieldSuggestion {
@@ -46,6 +48,8 @@ export default function ExtensionSidebarPage() {
   const [profileEntries, setProfileEntries] = useState<ProfileEntry[]>([])
   const [loadingProfile, setLoadingProfile] = useState(false)
   const [showAvatarMenu, setShowAvatarMenu] = useState(false)
+  const [hideKnown, setHideKnown] = useState(false)
+  const [hideOptional, setHideOptional] = useState(false)
   const pendingResolve = useRef<((fields: FormField[]) => void) | null>(null)
   const fillResolve = useRef<(() => void) | null>(null)
 
@@ -73,6 +77,42 @@ export default function ExtensionSidebarPage() {
     }
     window.addEventListener('message', handleMessage)
     return () => window.removeEventListener('message', handleMessage)
+  }, [])
+
+  // Dev bridge: when running as standalone tab (not in iframe/extension),
+  // intercept postMessage and relay via /api/dev-bridge
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const w = window as unknown as Record<string, Record<string, Record<string, string>>>
+    const isStandalone = window.parent === window && !w.chrome?.runtime?.id
+    if (!isStandalone) return
+
+    const orig = window.postMessage.bind(window)
+    window.postMessage = function (msg: unknown, targetOrigin?: string, transfer?: Transferable[]) {
+      const m = msg as Record<string, unknown> | null
+      if (m && (m.type === 'EXTRACT_FIELDS' || m.type === 'FILL_FIELDS')) {
+        fetch('/api/dev-bridge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target: 'form', message: m }),
+        })
+        return
+      }
+      return orig(msg as never, targetOrigin as never, transfer as never)
+    } as typeof window.postMessage
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch('/api/dev-bridge?target=sidebar')
+        const data = await res.json()
+        for (const msg of data.messages) {
+          window.dispatchEvent(new MessageEvent('message', { data: msg }))
+        }
+      } catch { /* dev server may be down */ }
+    }, 2000)
+
+    console.log('[DevBridge] Sidebar bridge active (standalone tab)')
+    return () => clearInterval(interval)
   }, [])
 
   const showFeedback = useCallback((text: string, type: 'success' | 'error') => {
@@ -130,27 +170,53 @@ export default function ExtensionSidebarPage() {
           let val = s[f.id]?.value || ''
           // For select fields: map human-readable text to the form's option value
           if (f.type === 'select' && f.options && val) {
+            const valLower = val.trim().toLowerCase()
             const matchedOpt = f.options.find(o =>
-              o.text.trim().toLowerCase() === val.trim().toLowerCase()
+              o.text.trim().toLowerCase() === valLower
+            ) || f.options.find(o =>
+              o.text.trim().toLowerCase().includes(valLower) || valLower.includes(o.text.trim().toLowerCase())
             )
             if (matchedOpt) val = matchedOpt.value
           }
+          // Auto-fill solved captchas
+          if (!val && f.captchaAnswer) val = f.captchaAnswer
           initial[f.id] = val
         }
+        // Auto-fill "repeat" / "confirm" fields from their counterpart
+        for (const f of extractedFields) {
+          if (initial[f.id]) continue
+          const label = (f.label || f.name || '').toLowerCase()
+          if (!/repeat|wiederh|confirm|bestätig/i.test(label)) continue
+          // Find the matching base field
+          const base = extractedFields.find(other =>
+            other.id !== f.id && other.type === f.type &&
+            initial[other.id] &&
+            label.includes(other.label?.toLowerCase().replace(/^\*\s*/, '') || '___')
+          )
+          if (base) initial[f.id] = initial[base.id]
+        }
         setEditedValues(initial)
+      } else {
+        const err = await suggestRes.json().catch(() => null)
+        showFeedback(err?.error || 'שגיאה בניתוח הטופס', 'error')
       }
     } catch (err) {
       console.error('[Sidebar] Suggest error:', err)
+      showFeedback('שגיאה בחיבור לשרת', 'error')
     }
     setSuggesting(false)
   }, [])
 
-  // Fill form via bridge
+  // Fill form via bridge — send selects separately so AJAX refreshes don't wipe text fields
   const fillForm = useCallback(async () => {
-    const toFill = fields
+    const allFill = fields
       .filter(f => editedValues[f.id] && f.type !== 'file')
-      .map(f => ({ selector: f.selector, value: editedValues[f.id] }))
-    if (toFill.length === 0) return
+      .map(f => ({ selector: f.selector, value: editedValues[f.id], type: f.type }))
+    if (allFill.length === 0) return
+    // Split: selects first (they may trigger AJAX refreshes), then text fields after
+    const selects = allFill.filter(f => f.type === 'select')
+    const rest = allFill.filter(f => f.type !== 'select')
+    const toFill = [...selects, ...rest]
 
     setFilling(true)
     await new Promise<void>((resolve) => {
@@ -164,6 +230,16 @@ export default function ExtensionSidebarPage() {
       }, 3000)
     })
     setFilling(false)
+    // Mark filled fields as known so filters hide them
+    setSuggestions(prev => {
+      const updated = { ...prev }
+      for (const f of fields) {
+        if (editedValues[f.id]) {
+          updated[f.id] = { ...updated[f.id], value: editedValues[f.id], source: 'profile' }
+        }
+      }
+      return updated
+    })
     showFeedback(`מולאו ${toFill.length} שדות`, 'success')
   }, [fields, editedValues, showFeedback])
 
@@ -171,6 +247,11 @@ export default function ExtensionSidebarPage() {
   const saveFacts = useCallback(async () => {
     const newFacts: { question: string; answer: string; answerType: string }[] = []
     for (const field of fields) {
+      // Skip captcha, repeat, and password fields — never persist these
+      const lbl = (field.label || field.name || '').toLowerCase()
+      if (field.captchaAnswer) continue
+      if (/repeat|wiederh|confirm|bestätig/i.test(lbl)) continue
+      if (/password|passwort|kennwort/i.test(lbl)) continue
       const val = editedValues[field.id] || ''
       const orig = suggestions[field.id]?.value || ''
       if (val && val !== orig) {
@@ -180,8 +261,10 @@ export default function ExtensionSidebarPage() {
           const matchedOpt = field.options.find(o => o.value === val)
           if (matchedOpt) answerToSave = matchedOpt.text
         }
+        const baseLabel = suggestions[field.id]?.translatedLabel || field.label || field.name || field.id
+        const question = field.section ? `${field.section}: ${baseLabel.replace(/^\*\s*/, '')}` : baseLabel
         newFacts.push({
-          question: suggestions[field.id]?.translatedLabel || field.label || field.name || field.id,
+          question,
           answer: answerToSave,
           answerType: field.type === 'textarea' ? 'paragraph' : field.type === 'date' ? 'date' : 'word',
         })
@@ -346,7 +429,7 @@ export default function ExtensionSidebarPage() {
         </div>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.3rem', position: 'absolute', left: '50%', transform: 'translateX(-50%)' }}>
           <h2 style={{ fontSize: '1.25rem', color: '#3b82f6', margin: 0 }}>{branding.name}</h2>
-          <span style={{ fontSize: '0.55rem', color: '#94a3b8' }}>v1.0.7</span>
+          <span style={{ fontSize: '0.55rem', color: '#94a3b8' }}>v1.0.8</span>
         </div>
         <div style={{ width: '32px' }} />
       </header>
@@ -412,13 +495,47 @@ export default function ExtensionSidebarPage() {
       {/* Fields list */}
       {fields.length > 0 && (
         <>
-          <p style={{ fontSize: '0.85rem', color: '#334155', margin: '0.75rem 0 0.5rem', fontWeight: 500 }}>
-            {fields.length} שדות
-            {suggesting && <span style={{ color: '#64748b', fontWeight: 400 }}> — מנתח...</span>}
-          </p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '0.75rem 0 0.5rem' }}>
+            <p style={{ fontSize: '0.85rem', color: '#334155', fontWeight: 500, margin: 0 }}>
+              {fields.length} שדות
+              {suggesting && <span style={{ color: '#64748b', fontWeight: 400 }}> — מנתח...</span>}
+            </p>
+            {!suggesting && Object.keys(suggestions).length > 0 && (
+              <div style={{ display: 'flex', gap: '0.35rem' }}>
+                <button
+                  onClick={() => setHideKnown(!hideKnown)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '0.3rem',
+                    fontSize: '0.75rem', color: hideKnown ? '#16a34a' : '#64748b',
+                    background: hideKnown ? '#f0fdf4' : 'transparent',
+                    border: hideKnown ? '1px solid #bbf7d0' : '1px solid #e2e8f0',
+                    borderRadius: '1rem', padding: '0.2rem 0.5rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <span style={{ fontSize: '0.75rem' }}>🟢</span>
+                  {hideKnown ? 'מוסתר' : 'הסתר'}
+                </button>
+                <button
+                  onClick={() => setHideOptional(!hideOptional)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '0.3rem',
+                    fontSize: '0.75rem', color: hideOptional ? '#dc2626' : '#64748b',
+                    background: hideOptional ? '#fef2f2' : 'transparent',
+                    border: hideOptional ? '1px solid #fecaca' : '1px solid #e2e8f0',
+                    borderRadius: '1rem', padding: '0.2rem 0.5rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <span style={{ fontSize: '0.75rem' }}>*</span>
+                  {hideOptional ? 'חובה בלבד' : 'רק חובה'}
+                </button>
+              </div>
+            )}
+          </div>
 
           <div style={fieldsListStyle}>
-            {fields.map((field, i) => (
+            {fields.filter(f => (!hideKnown || suggestions[f.id]?.source !== 'profile') && (!hideOptional || f.required) && !/repeat|wiederh|confirm|bestätig/i.test(f.label || f.name || '') && !f.captchaAnswer).map((field, i) => (
               <div key={field.id + i} style={field.type === 'file' ? fileCardStyle : cardStyle}>
                 <div style={cardHeaderStyle}>
                   <div style={{ minWidth: 0 }}>
@@ -469,20 +586,34 @@ export default function ExtensionSidebarPage() {
             ))}
           </div>
 
-          {/* Action buttons */}
-          {!suggesting && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.75rem' }}>
-              <button onClick={fillForm} disabled={filling} style={primaryBtnStyle}>
-                {filling ? 'ממלא...' : 'מלא טופס ►'}
-              </button>
-              <button onClick={saveFacts} disabled={saving} style={secondaryBtnStyle}>
-                {saving ? 'שומר...' : 'שמור עובדות חדשות'}
-              </button>
-            </div>
-          )}
+          {/* spacer for fixed bottom bar */}
+          {!suggesting && <div style={{ height: '3.5rem' }} />}
         </>
       )}
         </>
+      )}
+
+      {/* Fixed bottom action bar */}
+      {tab === 'scan' && fields.length > 0 && !suggesting && (
+        <div style={{
+          position: 'fixed',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          display: 'flex',
+          gap: '0.5rem',
+          padding: '0.5rem 1rem',
+          background: '#f8fafc',
+          borderTop: '1px solid #e2e8f0',
+          zIndex: 10,
+        }}>
+          <button onClick={fillForm} disabled={filling} style={{ ...primaryBtnStyle, flex: 1, width: 'auto' }}>
+            {filling ? 'ממלא...' : 'מלא טופס ►'}
+          </button>
+          <button onClick={saveFacts} disabled={saving} style={{ ...secondaryBtnStyle, flex: 1, width: 'auto' }}>
+            {saving ? 'שומר...' : 'שמור עובדות חדשות'}
+          </button>
+        </div>
       )}
 
       {/* Feedback toast */}
