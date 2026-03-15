@@ -12,6 +12,9 @@ import { signOut, changePassword, updateDisplayName } from '@/app/services/fireb
 import { isFirebaseConfigured } from '@/app/lib/firebase'
 import { getSyncPassword } from './CloudSyncManager'
 import AuthModal from './AuthModal'
+import Link from 'next/link'
+import { routes, config } from '@/app/config'
+import { userTierStore, UserTier } from '@/app/stores/userTierStore'
 
 type SyncIndicatorStatus = 'syncing' | 'inactive' | 'hidden'
 
@@ -313,21 +316,33 @@ export default function AuthStatus() {
             >
               {user.displayName || user.email}
             </div>
+            <Link href={routes.profile} onClick={() => setShowMenu(false)} className="avatar-menu-link">👤 פרופיל</Link>
+            <Link href={routes.settings} onClick={() => setShowMenu(false)} className="avatar-menu-link">⚙️ הגדרות</Link>
+            <Link href={routes.guide} onClick={() => setShowMenu(false)} className="avatar-menu-link">📖 מדריך</Link>
+            <Link href={routes.about} onClick={() => setShowMenu(false)} className="avatar-menu-link">ℹ️ אודות</Link>
+            {userTierStore.hasAccess(UserTier.OWNER) && (
+              <Link href={routes.admin} onClick={() => setShowMenu(false)} className="avatar-menu-link">👑 ניהול</Link>
+            )}
+            {config.developerMode && (
+              <Link href={routes.devDb} onClick={() => setShowMenu(false)} className="avatar-menu-link">🛠️ Dev DB</Link>
+            )}
+            <div style={{ borderTop: '1px solid #e5e7eb', margin: '0.25rem 0' }} />
             <button
               onClick={() => { setShowMenu(false); setProfileName(user.displayName || ''); setProfileError(null); setProfileSaved(false); setShowEditProfile(true) }}
-              style={{ width: '100%', padding: '0.75rem 1rem', background: 'none', border: 'none', borderBottom: '1px solid #e5e7eb', color: '#374151', fontSize: '0.9rem', cursor: 'pointer', textAlign: 'right' }}
+              className="avatar-menu-btn"
             >
               עריכת פרופיל
             </button>
             <button
               onClick={() => { setShowMenu(false); setShowChangePassword(true); setCpError(null); setCpSuccess(false) }}
-              style={{ width: '100%', padding: '0.75rem 1rem', background: 'none', border: 'none', borderBottom: '1px solid #e5e7eb', color: '#374151', fontSize: '0.9rem', cursor: 'pointer', textAlign: 'right' }}
+              className="avatar-menu-btn"
             >
               שנה סיסמה
             </button>
             <button
               onClick={handleSignOut}
-              style={{ width: '100%', padding: '0.75rem 1rem', background: 'none', border: 'none', color: '#dc2626', fontSize: '0.9rem', cursor: 'pointer', textAlign: 'right' }}
+              className="avatar-menu-btn"
+              style={{ color: '#dc2626' }}
             >
               התנתק
             </button>

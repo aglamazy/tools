@@ -106,7 +106,6 @@ const tierLabels: Record<UserTier, string> = {
 
 export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose?: () => void }) {
   const pathname = usePathname()
-  const [expandedModule, setExpandedModule] = useState<string | null>(null)
   const [pinnedBusinesses, setPinnedBusinesses] = useState<Business[]>([])
   const [userTier, setUserTier] = useState<UserTier>(userTierStore.get())
   const [upgradePrompt, setUpgradePrompt] = useState<{ item: MenuItem } | null>(null)
@@ -119,18 +118,6 @@ export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose
       .filter(item => item.requiredTier !== UserTier.OWNER || userTierStore.hasAccess(UserTier.OWNER)),
   })).filter(mod => mod.items.length > 0 || (mod.includeBusinesses && pinnedBusinesses.length > 0)),
   [pinnedBusinesses, userTier])
-
-  // Auto-expand module that contains the current route
-  useEffect(() => {
-    const activeModule = modules.find(mod => {
-      if (mod.items.some(item => pathname === item.href)) return true
-      if (mod.includeBusinesses && pathname.startsWith('/business/')) return true
-      return false
-    })
-    if (activeModule) {
-      setExpandedModule(activeModule.id)
-    }
-  }, [pathname, modules])
 
   useEffect(() => {
     const loadPinnedBusinesses = async () => {
@@ -152,81 +139,67 @@ export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose
     }
   }, [])
 
-  const toggleModule = (moduleId: string) => {
-    setExpandedModule(prev => prev === moduleId ? null : moduleId)
-  }
-
   const handleLockedClick = (item: MenuItem) => {
     setUpgradePrompt({ item })
   }
+
+  // Flatten all modules into a single list with dividers
+  const flatItems = useMemo(() => {
+    const result: ({ type: 'item'; item: MenuItem } | { type: 'business'; business: Business })[] = []
+    for (const mod of modules) {
+      for (const item of mod.items) result.push({ type: 'item' as const, item })
+      if (mod.includeBusinesses && userTierStore.hasAccess(UserTier.PRO)) {
+        for (const business of pinnedBusinesses) result.push({ type: 'business' as const, business })
+      }
+    }
+    return result
+  }, [modules, pinnedBusinesses])
 
   return (
     <aside className={`sidebar ${isOpen ? 'sidebar-open' : ''}`}>
       <nav className="sidebar-nav">
         <ul className="mod-list">
-          {modules.map((mod) => {
-            const isExpanded = expandedModule === mod.id
-            const hasActivePage = mod.items.some(item => pathname === item.href) ||
-              (mod.includeBusinesses && pathname.startsWith('/business/'))
-
+          {flatItems.map((entry, i) => {
+            if (entry.type === 'business') {
+              const business = entry.business
+              return (
+                <li key={`business-${business.id}`}>
+                  <Link
+                    href={`/business/${business.id}`}
+                    className={`mod-menu-item ${pathname === `/business/${business.id}` ? 'active' : ''}`}
+                    onClick={onClose}
+                  >
+                    <span className="mod-menu-icon">{BUSINESS_TYPE_CONFIG[business.type].icon}</span>
+                    <span className="mod-menu-title">{business.name}</span>
+                    {business.id && <BusinessStatusBadge businessId={business.id} />}
+                  </Link>
+                </li>
+              )
+            }
+            const item = entry.item
+            const hasAccess = userTierStore.hasAccess(item.requiredTier)
+            const isLocked = !hasAccess
+            const isActive = pathname === item.href
             return (
-              <li key={mod.id} className="mod-group">
-                <button
-                  className={`mod-btn ${hasActivePage ? 'mod-active' : ''} ${isExpanded ? 'mod-expanded' : ''}`}
-                  onClick={() => toggleModule(mod.id)}
-                  title={mod.label}
-                >
-                  <span className="mod-icon">{mod.icon}</span>
-                  <span className="mod-label">{mod.label}</span>
-                  <span className={`mod-arrow ${isExpanded ? 'open' : ''}`}>&#9662;</span>
-                </button>
-
-                {isExpanded && (
-                  <ul className="mod-menu">
-                    {mod.items.map((item) => {
-                      const hasAccess = userTierStore.hasAccess(item.requiredTier)
-                      const isLocked = !hasAccess
-                      const isActive = pathname === item.href
-
-                      return (
-                        <li key={item.id}>
-                          {item.available && hasAccess ? (
-                            <Link
-                              href={item.href}
-                              className={`mod-menu-item ${isActive ? 'active' : ''}`}
-                              onClick={onClose}
-                            >
-                              <span className="mod-menu-icon">{item.icon}</span>
-                              <span className="mod-menu-title">{item.title}</span>
-                            </Link>
-                          ) : (
-                            <div
-                              className={`mod-menu-item disabled ${isLocked ? 'locked' : ''}`}
-                              onClick={isLocked ? () => handleLockedClick(item) : undefined}
-                            >
-                              <span className="mod-menu-icon">{item.icon}</span>
-                              <span className="mod-menu-title">{item.title}</span>
-                              {isLocked && <span className="mod-menu-lock">🔒</span>}
-                            </div>
-                          )}
-                        </li>
-                      )
-                    })}
-
-                    {mod.includeBusinesses && userTierStore.hasAccess(UserTier.PRO) && pinnedBusinesses.map((business) => (
-                      <li key={`business-${business.id}`}>
-                        <Link
-                          href={`/business/${business.id}`}
-                          className={`mod-menu-item ${pathname === `/business/${business.id}` ? 'active' : ''}`}
-                          onClick={onClose}
-                        >
-                          <span className="mod-menu-icon">{BUSINESS_TYPE_CONFIG[business.type].icon}</span>
-                          <span className="mod-menu-title">{business.name}</span>
-                          {business.id && <BusinessStatusBadge businessId={business.id} />}
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
+              <li key={item.id}>
+                {item.available && hasAccess ? (
+                  <Link
+                    href={item.href}
+                    className={`mod-menu-item ${isActive ? 'active' : ''}`}
+                    onClick={onClose}
+                  >
+                    <span className="mod-menu-icon">{item.icon}</span>
+                    <span className="mod-menu-title">{item.title}</span>
+                  </Link>
+                ) : (
+                  <div
+                    className={`mod-menu-item disabled ${isLocked ? 'locked' : ''}`}
+                    onClick={isLocked ? () => handleLockedClick(item) : undefined}
+                  >
+                    <span className="mod-menu-icon">{item.icon}</span>
+                    <span className="mod-menu-title">{item.title}</span>
+                    {isLocked && <span className="mod-menu-lock">🔒</span>}
+                  </div>
                 )}
               </li>
             )
