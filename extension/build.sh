@@ -12,14 +12,16 @@ OUTPUT_FILE="$OUTPUT_DIR/aglamaz-form-assistant-${VERSION}.zip"
 # Create output directory
 mkdir -p "$OUTPUT_DIR"
 
-# Remove old build
-rm -f "$OUTPUT_FILE"
+# Remove all old builds
+rm -f "$OUTPUT_DIR"/aglamaz-form-assistant-*.zip
 
 # Package extension (exclude build script and dev files)
 cd "$SCRIPT_DIR"
 zip -r "$OUTPUT_FILE" \
   manifest.json \
   background.js \
+  content.js \
+  config.js \
   sidebar/ \
   popup/ \
   icons/ \

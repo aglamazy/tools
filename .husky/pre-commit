@@ -1,1 +1,7 @@
+# Rebuild extension zip if any extension files are staged
+if git diff --cached --name-only | grep -q '^extension/'; then
+  bash extension/build.sh
+  git add public/extension/aglamaz-form-assistant-*.zip
+fi
+
 npx lint-staged
