@@ -54,6 +54,7 @@ function SettingsTabsContent({ tabs, defaultTab, children }: SettingsTabsProps) 
     display: 'flex',
     alignItems: 'center',
     gap: '0.5rem',
+    whiteSpace: 'nowrap',
   })
 
   return (
@@ -66,6 +67,7 @@ function SettingsTabsContent({ tabs, defaultTab, children }: SettingsTabsProps) 
         background: '#f8fafc',
         borderRadius: '0.5rem 0.5rem 0 0',
         padding: '0.25rem 0.25rem 0',
+        flexWrap: 'wrap',
       }}>
         {tabs.map((tab) => (
           <button

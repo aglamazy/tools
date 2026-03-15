@@ -197,7 +197,7 @@ export default function BusinessTasksTab({ businessId }: { businessId: number })
     if (!driveConnected) return
     setUploading(true)
     try {
-      const result = await uploadTaxDocument(file)
+      const result = await uploadTaxDocument(file, new Date().getFullYear())
       setEditing({
         ...editing,
         attachmentDriveFileId: result.fileId,

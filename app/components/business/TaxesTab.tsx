@@ -1,10 +1,12 @@
 'use client'
 
 import React, { useEffect, useState } from 'react'
-import { db, type TaxDocument, type Business, type Transaction } from '@/app/db/financeDB'
+import { db, type TaxDocument, type Business, type Transaction, type AdvancePayment } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import type { Category } from '@/app/types/category'
 import { getUser } from '@/app/stores/authStore'
+import { uploadAdvancePaymentReceipt, ensureRootFolder } from '@/app/services/googleDriveService'
+import { getAccessToken } from '@/app/services/googleTokenService'
 import { getHouseholdInfo } from '@/app/services/householdService'
 import { type TaxStatus, type TaxStatusInfo } from '@/app/components/TaxExemptBadge'
 import RentalSummaryTable from './TaxRentalSummary'
@@ -128,15 +130,17 @@ function AnnualSummarySubTab() {
   const [taxExemptInfo, setTaxExemptInfo] = useState<TaxStatusInfo | null>(null)
   const [btlRates, setBtlRates] = useState<BTLRates | null>(null)
   const [incomeTaxBrackets, setIncomeTaxBrackets] = useState<IncomeTaxStep[] | null>(null)
+  const [advancePayments, setAdvancePayments] = useState<AdvancePayment[]>([])
   const currentYear = new Date().getFullYear()
   const currentMonth = new Date().getMonth() // 0-based
 
   useEffect(() => {
     const load = async () => {
-      const [allDocs, biz, m] = await Promise.all([
+      const [allDocs, biz, m, advPay] = await Promise.all([
         db.taxDocuments.filter(d => d.year === currentYear).toArray(),
         db.businesses.toArray(),
         loadHouseholdMembers(),
+        db.advancePayments.filter(p => p.month.endsWith(`/${currentYear}`)).toArray(),
       ])
 
       // Build business → category names map from subjectStore (income + expense)
@@ -176,6 +180,7 @@ function AnnualSummarySubTab() {
       setBizCategoryMap(catMap)
       setExpCategoryMap(expCatMap)
       setMembers(m)
+      setAdvancePayments(advPay)
       setLoading(false)
     }
     load()
@@ -190,6 +195,11 @@ function AnnualSummarySubTab() {
         (bizCategoryMap.has(b.id) && (b.userId === selectedUser || userBizIdsFromDocs.has(b.id)))
         || b.userId === selectedUser
       ))
+
+  // Trigger Drive folder migration on page load (if connected)
+  useEffect(() => {
+    getAccessToken().then(token => { if (token) ensureRootFolder().catch(() => {}) })
+  }, [])
 
   // Load platform tax settings (BTL rates + tax limits) — public endpoint, no auth needed
   useEffect(() => {
@@ -240,6 +250,52 @@ function AnnualSummarySubTab() {
       } else { setTaxExemptInfo(null) }
     }).catch(() => setTaxExemptInfo(null))
   }, [selectedUser, relevantBusinesses.length, transactions.length])
+
+  const handleUploadReceipt = async (month: string, file: File) => {
+    const seBiz = relevantBusinesses.filter(b => !b.isTaxFree)
+    const businessId = seBiz[0]?.id
+    if (!businessId) return
+
+    let driveFileId: string | undefined
+    let driveWebViewLink: string | undefined
+    const token = await getAccessToken()
+    if (token) {
+      const result = await uploadAdvancePaymentReceipt(file, currentYear)
+      driveFileId = result.fileId
+      driveWebViewLink = result.webViewLink
+    }
+
+    // Check for existing record
+    const existing = await db.advancePayments
+      .where('[businessId+month+type]')
+      .equals([businessId, month, 'incomeTax'])
+      .first()
+
+    if (existing) {
+      await db.advancePayments.update(existing.id!, {
+        paidAt: new Date().toISOString(),
+        driveFileId,
+        driveWebViewLink,
+        fileName: file.name,
+      })
+    } else {
+      await db.advancePayments.add({
+        businessId,
+        month,
+        type: 'incomeTax',
+        paidAt: new Date().toISOString(),
+        driveFileId,
+        driveWebViewLink,
+        fileName: file.name,
+        userId: getUser()?.uid,
+        createdAt: new Date().toISOString(),
+      })
+    }
+
+    // Reload
+    const advPay = await db.advancePayments.filter(p => p.month.endsWith(`/${currentYear}`)).toArray()
+    setAdvancePayments(advPay)
+  }
 
   if (loading) return <p style={{ textAlign: 'center', color: '#94a3b8' }}>טוען...</p>
 
@@ -313,6 +369,8 @@ function AnnualSummarySubTab() {
             taxExemptInfo={taxExemptInfo}
             btlRates={btlRates}
             incomeTaxBrackets={incomeTaxBrackets}
+            advancePayments={advancePayments}
+            onUploadReceipt={handleUploadReceipt}
           />
         )
       })()}
@@ -333,9 +391,11 @@ type SummarySectionsProps = {
   taxExemptInfo: TaxStatusInfo | null
   btlRates: BTLRates | null
   incomeTaxBrackets: IncomeTaxStep[] | null
+  advancePayments: AdvancePayment[]
+  onUploadReceipt: (month: string, file: File) => Promise<void>
 }
 
-function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBusinesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, taxExemptInfo, btlRates, incomeTaxBrackets }: SummarySectionsProps) {
+function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBusinesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, taxExemptInfo, btlRates, incomeTaxBrackets, advancePayments, onUploadReceipt }: SummarySectionsProps) {
   const [activeSection, setActiveSection] = useState(sections[0].id)
 
   return (
@@ -400,6 +460,8 @@ function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBu
               btlRates={btlRates}
               brackets={incomeTaxBrackets}
               salaryDocs={filteredDocs}
+              advancePayments={advancePayments}
+              onUploadReceipt={onUploadReceipt}
             />
           )}
         </>

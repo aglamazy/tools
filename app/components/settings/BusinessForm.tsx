@@ -180,6 +180,29 @@ export default function BusinessForm({ business, onChange, onSave, onCancel, isN
                   </span>
                 </div>
               </div>
+              {(business.incomeTaxAdvancePercent ?? 0) > 0 && (
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginTop: '0.25rem' }}>
+                  <span style={{ fontSize: '0.8rem', color: '#64748b' }}>תקופת תשלום:</span>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', fontSize: '0.8rem' }}>
+                    <input
+                      type="radio"
+                      name="advancePeriod"
+                      checked={(business.incomeTaxAdvancePeriod ?? 1) === 1}
+                      onChange={() => onChange({ ...business, incomeTaxAdvancePeriod: 1 })}
+                    />
+                    חודשי
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', fontSize: '0.8rem' }}>
+                    <input
+                      type="radio"
+                      name="advancePeriod"
+                      checked={business.incomeTaxAdvancePeriod === 2}
+                      onChange={() => onChange({ ...business, incomeTaxAdvancePeriod: 2 })}
+                    />
+                    דו-חודשי
+                  </label>
+                </div>
+              )}
             </div>
           )}
           {business.type !== BusinessType.Personal && !business.isTaxFree && (

@@ -67,7 +67,8 @@ export default function FilesSubTab({ loadHouseholdMembers, businessId }: { load
       let driveWebViewLink: string | undefined
 
       if (driveConnected) {
-        const result = await uploadTaxDocument(file)
+        const uploadYear = new Date().getFullYear()
+        const result = await uploadTaxDocument(file, uploadYear)
         driveFileId = result.fileId
         driveWebViewLink = result.webViewLink
       }

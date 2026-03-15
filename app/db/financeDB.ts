@@ -115,6 +115,7 @@ export interface Business {
   ypayClientSecret?: string
   btlAdvancePayment?: number // מקדמות ביטוח לאומי — monthly advance set by BTL
   incomeTaxAdvancePercent?: number // מקדמות מס הכנסה — % of monthly income
+  incomeTaxAdvancePeriod?: 1 | 2 // תקופת תשלום מקדמות — 1=חודשי, 2=דו-חודשי
   taxOrder?: number // סדר לחישוב מס — 1=ראשון (מדרגות נמוכות), 2=שני, וכו׳
   pinnedToSidebar?: boolean
   userId?: string // Firebase UID of the owning user
@@ -242,6 +243,21 @@ export interface ExpenseDocument {
   updatedAt?: string
 }
 
+export interface AdvancePayment {
+  id?: number
+  syncId?: string
+  businessId: number
+  month: string // MM/YYYY - the payment period month
+  type: 'incomeTax' | 'btl'
+  paidAt?: string // ISO timestamp — null = waiting
+  driveFileId?: string
+  driveWebViewLink?: string
+  fileName?: string
+  userId?: string
+  createdAt: string
+  updatedAt?: string
+}
+
 class FinanceDB extends Dexie {
   transactions!: Table<Transaction, number>
   importedFiles!: Table<ImportedFile, number>
@@ -263,6 +279,7 @@ class FinanceDB extends Dexie {
   taxDocuments!: Table<TaxDocument, number>
   expenseDocuments!: Table<ExpenseDocument, number>
   businessTasks!: Table<BusinessTask, number>
+  advancePayments!: Table<AdvancePayment, number>
 
   constructor() {
     super('FinanceDB')
@@ -723,6 +740,31 @@ class FinanceDB extends Dexie {
       taxDocuments: '++id, syncId, businessId, userId, month, year, [businessId+year]',
       expenseDocuments: '++id, syncId, transactionId, date, vendor, category, sourceType',
       businessTasks: '++id, syncId, businessId, recurrence, archived',
+    })
+
+    // Define schema version 23 - add advancePayments table
+    this.version(23).stores({
+      transactions: '++id, syncId, type, month, accountNumber, cardNumber, date, chargingDate, [type+month], [cardNumber+month], [accountNumber+month], fileId',
+      importedFiles: '++id, syncId, fileName, fileType, processingMonth, [fileType+processingMonth], [cardNumber+processingMonth]',
+      categories: '++id, syncId, name, type',
+      businessCategories: '++id, syncId, &business',
+      tasks: '++id, syncId, createdAt, priority, quadrant, deadline, delegatedTo, autoTaskId',
+      appSettings: '++id, syncId, &key',
+      businesses: '++id, syncId, &name, type, userId',
+      projects: '++id, syncId, businessId, name, archived',
+      harvestTasks: '++id, syncId, projectId, name, archived',
+      timeEntries: '++id, syncId, taskId, date, startTime, endTime, [taskId+date]',
+      capitalEntries: '++id, syncId, date, institution, accountNumber, description, assetType, currency, employer, investmentTrack, agent, soldDate, [institution+accountNumber+description], fileId',
+      financialInstitutions: '++id, syncId, name, type',
+      ypayDocuments: '++id, syncId, &transactionId, docType',
+      students: '++id, syncId, businessId, name, archived',
+      profileQAs: '++id, syncId, businessId, [businessId+answerType]',
+      scoutResults: '++id, syncId, businessId, status, [businessId+status]',
+      scoutConfigs: '++id, syncId, &businessId',
+      taxDocuments: '++id, syncId, businessId, userId, month, year, [businessId+year]',
+      expenseDocuments: '++id, syncId, transactionId, date, vendor, category, sourceType',
+      businessTasks: '++id, syncId, businessId, recurrence, archived',
+      advancePayments: '++id, syncId, businessId, month, type, [businessId+month+type]',
     })
 
     // Auto-inject syncId and updatedAt on create/update

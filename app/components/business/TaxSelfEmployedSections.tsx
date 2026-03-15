@@ -1,5 +1,5 @@
-import React from 'react'
-import type { Business, TaxDocument, Transaction } from '@/app/db/financeDB'
+import React, { useRef } from 'react'
+import type { Business, TaxDocument, Transaction, AdvancePayment } from '@/app/db/financeDB'
 
 export type BTLRates = {
   reduced: { nationalInsurance: number; healthInsurance: number }
@@ -166,11 +166,15 @@ function computeIncomeTax(income: number, brackets: IncomeTaxStep[]): number {
   return tax
 }
 
-export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, btlRates, brackets, salaryDocs }: {
+export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, btlRates, brackets, salaryDocs, advancePayments, onUploadReceipt }: {
   businesses: Business[]; transactions: Transaction[]; bizCategoryMap: Map<number, string[]>
   expCategoryMap: Map<number, string[]>; currentYear: number; currentMonth: number; btlRates: BTLRates | null; brackets: IncomeTaxStep[]
   salaryDocs: TaxDocument[]
+  advancePayments?: AdvancePayment[]
+  onUploadReceipt?: (month: string, file: File) => Promise<void>
 }) {
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [uploadMonth, setUploadMonth] = React.useState<string | null>(null)
   const seBiz = businesses.filter(b => !b.isTaxFree)
   if (seBiz.length === 0) return null
 
@@ -183,8 +187,9 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
 
   const BTL_DEDUCTION_RATE = 0.52 // 52% of BTL paid is deductible
 
-  // Income tax advance payment — % of income paid each month as מקדמה
+  // Income tax advance payment — % of income paid each month/bi-monthly as מקדמה
   const advancePercent = seBiz.reduce((max, b) => Math.max(max, b.incomeTaxAdvancePercent || 0), 0)
+  const advancePeriod: 1 | 2 = seBiz.some(b => b.incomeTaxAdvancePeriod === 2) ? 2 : 1
   const hasAdvance = advancePercent > 0
 
   // Calculate monthly salary from שכיר docs (grossIncome per month)
@@ -218,10 +223,33 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
     const taxSalaryOnly = computeIncomeTax(salary, brackets)
     const tax = taxTotal - taxSalaryOnly
 
-    // Advance payment paid = % of gross income for that month
-    const advancePaid = hasAdvance ? income * (advancePercent / 100) : 0
+    // Advance payment paid = % of income for the period
+    // Bi-monthly: pay on even months (Feb, Apr, Jun...) covering 2 months of income
+    let advancePaid = 0
+    if (hasAdvance) {
+      if (advancePeriod === 2) {
+        // Bi-monthly: payment on even months (index 1, 3, 5... = Feb, Apr, Jun...)
+        const isPaymentMonth = i % 2 === 1
+        if (isPaymentMonth) {
+          // Sum net income of this month + previous month
+          const prevMonthStr = `${String(i).padStart(2, '0')}/${currentYear}`
+          const prevIncome = transactions.filter(t => t.month === prevMonthStr && t.category && seCatNames.has(t.category)).reduce((s, t) => s + (t.amount || 0), 0)
+          const prevExpenses = transactions.filter(t => t.month === prevMonthStr && t.category && seExpCatNames.has(t.category)).reduce((s, t) => s + Math.abs(t.amount || 0), 0)
+          const prevNetIncome = prevIncome - prevExpenses
+          advancePaid = (prevNetIncome + netIncome) * (advancePercent / 100)
+        }
+      } else {
+        advancePaid = income * (advancePercent / 100)
+      }
+    }
 
-    return { month: i, label: HEBREW_MONTHS[i], income, expenses, netIncome, btlPaid, btlDeduction, taxBase, salary, tax, advancePaid }
+    // Payment status from advancePayments records
+    const monthKey = `${String(i + 1).padStart(2, '0')}/${currentYear}`
+    const paymentRecord = advancePayments?.find(p => p.month === monthKey && p.type === 'incomeTax')
+    const isPaymentMonth = advancePeriod === 2 ? i % 2 === 1 : true
+    const isDue = hasAdvance && isPaymentMonth && advancePaid > 0
+
+    return { month: i, label: HEBREW_MONTHS[i], income, expenses, netIncome, btlPaid, btlDeduction, taxBase, salary, tax, advancePaid, monthKey, paymentRecord, isDue }
   })
 
   const annualTotals = {
@@ -261,6 +289,20 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
         </div>
       </div>
 
+      <input
+        type="file"
+        ref={fileInputRef}
+        style={{ display: 'none' }}
+        accept=".pdf,.png,.jpg,.jpeg,.webp"
+        onChange={async (e) => {
+          const file = e.target.files?.[0]
+          if (file && uploadMonth && onUploadReceipt) {
+            await onUploadReceipt(uploadMonth, file)
+          }
+          e.target.value = ''
+          setUploadMonth(null)
+        }}
+      />
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
         <thead>
           <tr>
@@ -271,7 +313,8 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
             <th style={{ ...hStyle, background: '#fef3c7' }}>בסיס לתשלום</th>
             {annualTotals.salary > 0 && <th style={hStyle}>הכנסה חייבת (שכיר)</th>}
             <th style={{ ...hStyle, background: '#fef3c7' }}>מס הכנסה</th>
-            {hasAdvance && <th style={hStyle}>מקדמה שולמה</th>}
+            {hasAdvance && <th style={hStyle}>מקדמה</th>}
+            {hasAdvance && <th style={hStyle}>סטטוס</th>}
           </tr>
         </thead>
         <tbody>
@@ -285,6 +328,33 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
               {annualTotals.salary > 0 && <td style={cellStyle}>{row.salary ? fmt(row.salary) : '—'}</td>}
               <td style={{ ...cellStyle, background: '#fffbeb', fontWeight: 500, color: '#b45309' }}>{row.tax ? fmt(row.tax) : '—'}</td>
               {hasAdvance && <td style={cellStyle}>{row.advancePaid ? fmt(row.advancePaid) : '—'}</td>}
+              {hasAdvance && (
+                <td style={{ ...cellStyle, direction: 'rtl' }}>
+                  {row.isDue ? (
+                    row.paymentRecord?.paidAt ? (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+                        <span style={{ color: '#16a34a', fontWeight: 500, fontSize: '0.8rem' }}>שולם</span>
+                        {row.paymentRecord.driveWebViewLink && (
+                          <a href={row.paymentRecord.driveWebViewLink} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', fontSize: '0.75rem' }}>קבלה</a>
+                        )}
+                      </span>
+                    ) : (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
+                        <span style={{ color: '#d97706', fontWeight: 500, fontSize: '0.8rem' }}>ממתין</span>
+                        <a href="https://secapp.taxes.gov.il/gmftashmhid/main/dvcTashlumMikdamot" target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', fontSize: '0.75rem' }}>שלם</a>
+                        {onUploadReceipt && (
+                          <button
+                            onClick={() => { setUploadMonth(row.monthKey); fileInputRef.current?.click() }}
+                            style={{ background: 'none', border: '1px solid #e2e8f0', borderRadius: '0.25rem', padding: '0.1rem 0.35rem', cursor: 'pointer', fontSize: '0.7rem', color: '#64748b' }}
+                          >
+                            העלה אישור
+                          </button>
+                        )}
+                      </span>
+                    )
+                  ) : '—'}
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
@@ -298,10 +368,11 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
             {annualTotals.salary > 0 && <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(annualTotals.salary)}</td>}
             <td style={{ ...cellStyle, fontWeight: 700, background: '#fef3c7', color: '#b45309' }}>{fmt(annualTotals.tax)}</td>
             {hasAdvance && <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(annualTotals.advancePaid)}</td>}
+            {hasAdvance && <td style={cellStyle} />}
           </tr>
           {hasAdvance && (
             <tr style={{ background: '#fef3c7' }}>
-              <td colSpan={annualTotals.salary > 0 ? 6 : 5} style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 700 }}>
+              <td colSpan={annualTotals.salary > 0 ? 7 : 6} style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 700 }}>
                 הפרש (מקדמות ששולמו − מס שחושב)
               </td>
               <td colSpan={2} style={{ ...cellStyle, fontWeight: 700, fontSize: '0.95rem', color: annualTotals.advancePaid - annualTotals.tax > 0 ? '#16a34a' : '#dc2626' }}>
