@@ -7,7 +7,7 @@ import PageSearch from './PageSearch'
 import { branding, routes } from '@/app/config'
 import { useToast } from './ToastContainer'
 
-export default function PageHeader() {
+export default function PageHeader({ onMenuToggle }: { onMenuToggle?: () => void }) {
   const { notifications, clearNotifications } = useToast()
 
   return (
@@ -21,9 +21,20 @@ export default function PageHeader() {
         <div className="page-header-title">
           <h1>{branding.name}</h1>
         </div>
-        <Link href={routes.home} className="home-link">
-          <span role="img" aria-label="home">🏠</span>
-        </Link>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <Link href={routes.home} className="home-link">
+            <span role="img" aria-label="home">🏠</span>
+          </Link>
+          {onMenuToggle && (
+            <button
+              className="mobile-menu-toggle"
+              onClick={onMenuToggle}
+              aria-label="תפריט"
+            >
+              ☰
+            </button>
+          )}
+        </div>
       </div>
     </header>
   )
