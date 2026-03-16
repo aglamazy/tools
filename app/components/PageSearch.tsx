@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { userTierStore, UserTier } from '@/app/stores/userTierStore'
+import { businessStore } from '@/app/stores/businessStore'
 import { config, routes } from '@/app/config'
 
 type SearchablePage = {
@@ -13,7 +14,7 @@ type SearchablePage = {
   requiredTier: UserTier
 }
 
-const PAGES: SearchablePage[] = [
+const STATIC_PAGES: SearchablePage[] = [
   { title: 'משק בית', keywords: ['דשבורד', 'ראשי', 'dashboard', 'home'], href: routes.dashboard, icon: '🏠', requiredTier: UserTier.FREE },
   { title: 'ייבוא קבצים', keywords: ['ייבוא', 'קבצים', 'import', 'העלאה'], href: routes.import, icon: '📥', requiredTier: UserTier.FREE },
   { title: 'תזרים מזומנים', keywords: ['תזרים', 'מזומנים', 'cash', 'flow'], href: routes.cashFlow, icon: '💰', requiredTier: UserTier.FREE },
@@ -23,6 +24,8 @@ const PAGES: SearchablePage[] = [
   { title: 'הון', keywords: ['הון', 'נכסים', 'capital'], href: routes.capital, icon: '💎', requiredTier: UserTier.PRO },
   { title: 'מסים', keywords: ['מסים', 'מס', 'tax', 'taxes'], href: routes.taxes, icon: '🏛️', requiredTier: UserTier.PRO },
   { title: 'משימות', keywords: ['משימות', 'todo', 'tasks'], href: routes.todo, icon: '✓', requiredTier: UserTier.FREE },
+  { title: 'עסקים', keywords: ['עסקים', 'עסק', 'business', 'חשבונית'], href: routes.businessCategories, icon: '🏛️', requiredTier: UserTier.PRO },
+  { title: 'מילוי טפסים', keywords: ['טפסים', 'form', 'filler', 'רישום'], href: '/form-filler', icon: '📋', requiredTier: UserTier.FREE },
   { title: 'מחקר שוק', keywords: ['מחקר', 'שוק', 'market', 'research', 'מוצרים'], href: routes.marketResearch, icon: '🔍', requiredTier: UserTier.PRO },
   { title: 'Gmail', keywords: ['gmail', 'מייל', 'דואר'], href: routes.gmail, icon: '📧', requiredTier: UserTier.PRO },
   { title: 'פרופיל', keywords: ['פרופיל', 'profile', 'חשבון'], href: routes.profile, icon: '👤', requiredTier: UserTier.FREE },
@@ -33,7 +36,7 @@ const PAGES: SearchablePage[] = [
 
 // Only include dev/admin pages in developer mode
 if (config.developerMode) {
-  PAGES.push({ title: 'Dev DB', keywords: ['dev', 'db', 'database'], href: routes.devDb, icon: '🛠️', requiredTier: UserTier.PRO })
+  STATIC_PAGES.push({ title: 'Dev DB', keywords: ['dev', 'db', 'database'], href: routes.devDb, icon: '🛠️', requiredTier: UserTier.PRO })
 }
 
 export default function PageSearch() {
@@ -41,11 +44,28 @@ export default function PageSearch() {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [selectedIdx, setSelectedIdx] = useState(0)
+  const [businessPages, setBusinessPages] = useState<SearchablePage[]>([])
   const wrapperRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // Load businesses for search (on focus, so DB is likely unlocked by then)
+  const loadBusinesses = () => {
+    if (businessPages.length > 0 || !userTierStore.hasAccess(UserTier.PRO)) return
+    businessStore.getAll().then(businesses => {
+      setBusinessPages(businesses.map(b => ({
+        title: b.name,
+        keywords: [b.name],
+        href: `/business/${b.id}`,
+        icon: '🏢',
+        requiredTier: UserTier.PRO,
+      })))
+    })
+  }
+
+  const allPages = [...STATIC_PAGES, ...businessPages]
+
   const results = query.trim()
-    ? PAGES.filter(p => {
+    ? allPages.filter(p => {
         if (!userTierStore.hasAccess(p.requiredTier)) return false
         const q = query.trim().toLowerCase()
         return p.title.toLowerCase().includes(q) ||
@@ -95,7 +115,7 @@ export default function PageSearch() {
         type="text"
         value={query}
         onChange={(e) => { setQuery(e.target.value); setOpen(true) }}
-        onFocus={() => setOpen(true)}
+        onFocus={() => { setOpen(true); loadBusinesses() }}
         onKeyDown={handleKeyDown}
         placeholder="חיפוש עמוד..."
         dir="rtl"

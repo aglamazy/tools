@@ -164,11 +164,9 @@ export default function TodoPage() {
     showToast('success', 'האצלה בוטלה', '↩️')
   }
 
-  const snoozeTask = async (task: CombinedTask, days: number) => {
-    const until = new Date()
-    until.setDate(until.getDate() + days)
-    until.setHours(0, 0, 0, 0)
-    const untilISO = until.toISOString()
+  const snoozeTaskUntil = async (task: CombinedTask, untilDate: Date, label: string) => {
+    untilDate.setHours(0, 0, 0, 0)
+    const untilISO = untilDate.toISOString()
 
     if (task.taskType === 'user') {
       await todoStore.snoozeTask(task.id as number, untilISO)
@@ -178,8 +176,14 @@ export default function TodoPage() {
       setAutoTasks(autoTasks.filter(t => t.id !== task.id))
     }
     setSnoozeMenuTaskId(null)
+    showToast('success', `משימה מוסתרת עד ${label}`, '😴')
+  }
+
+  const snoozeTask = async (task: CombinedTask, days: number) => {
+    const until = new Date()
+    until.setDate(until.getDate() + days)
     const labels: Record<number, string> = { 1: 'מחר', 3: '3 ימים', 7: 'שבוע' }
-    showToast('success', `משימה מוסתרת עד ${labels[days] || `${days} ימים`}`, '😴')
+    await snoozeTaskUntil(task, until, labels[days] || `${days} ימים`)
   }
 
   const unsnoozeTask = async (task: CombinedTask) => {
@@ -331,7 +335,7 @@ export default function TodoPage() {
     if (diffDays === 0) return 'היום'
     if (diffDays === 1) return 'מחר'
     if (diffDays < 7) return `בעוד ${diffDays} ימים`
-    return date.toLocaleDateString('he-IL')
+    return date.toLocaleDateString('he-IL', { year: 'numeric', month: '2-digit', day: '2-digit' })
   }
 
   const getDeadlineColor = (dateString?: string): string => {
@@ -535,6 +539,26 @@ export default function TodoPage() {
                       {opt.label}
                     </button>
                   ))}
+                  <div style={{ padding: '0.375rem 0.75rem', borderTop: '1px solid #e5e7eb' }}>
+                    <input
+                      type="date"
+                      min={new Date(Date.now() + 86400000).toISOString().split('T')[0]}
+                      onChange={e => {
+                        if (!e.target.value) return
+                        const d = new Date(e.target.value)
+                        const formatted = d.toLocaleDateString('he-IL', { year: 'numeric', month: '2-digit', day: '2-digit' })
+                        snoozeTaskUntil(task, d, formatted)
+                      }}
+                      style={{
+                        width: '100%',
+                        padding: '0.375rem',
+                        fontSize: '0.8rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.25rem',
+                        cursor: 'pointer',
+                      }}
+                    />
+                  </div>
                 </div>
               )}
             </div>

@@ -202,6 +202,71 @@ export const appSettingsStore = {
   },
 
   /**
+   * Get bottom tab bar configuration (array of page IDs)
+   */
+  getBottomTabConfig: async (): Promise<string[]> => {
+    try {
+      const setting = await db.appSettings.where('key').equals('bottomTabConfig').first()
+      if (setting) return setting.value as string[]
+      return null as unknown as string[]
+    } catch (error) {
+      console.error('Error getting bottomTabConfig:', error)
+      return null as unknown as string[]
+    }
+  },
+
+  /**
+   * Set bottom tab bar configuration
+   */
+  setBottomTabConfig: async (tabIds: string[]): Promise<void> => {
+    try {
+      const existing = await db.appSettings.where('key').equals('bottomTabConfig').first()
+      if (existing) {
+        await db.appSettings.update(existing.id!, { value: tabIds, updatedAt: new Date().toISOString() })
+      } else {
+        await db.appSettings.add({ key: 'bottomTabConfig', value: tabIds, updatedAt: new Date().toISOString() })
+      }
+    } catch (error) {
+      console.error('Error setting bottomTabConfig:', error)
+      throw error
+    }
+  },
+
+  /**
+   * Get active task timer state
+   */
+  getActiveTaskTimer: async (): Promise<{ taskId: number; taskTitle: string; startedAt: string } | null> => {
+    try {
+      const setting = await db.appSettings.where('key').equals('activeTaskTimer').first()
+      return setting ? (setting.value as { taskId: number; taskTitle: string; startedAt: string }) : null
+    } catch (error) {
+      console.error('Error getting activeTaskTimer:', error)
+      return null
+    }
+  },
+
+  /**
+   * Set active task timer state (or null to clear)
+   */
+  setActiveTaskTimer: async (timer: { taskId: number; taskTitle: string; startedAt: string } | null): Promise<void> => {
+    try {
+      const existing = await db.appSettings.where('key').equals('activeTaskTimer').first()
+      if (timer === null) {
+        if (existing) await db.appSettings.delete(existing.id!)
+        return
+      }
+      if (existing) {
+        await db.appSettings.update(existing.id!, { value: timer, updatedAt: new Date().toISOString() })
+      } else {
+        await db.appSettings.add({ key: 'activeTaskTimer', value: timer, updatedAt: new Date().toISOString() })
+      }
+    } catch (error) {
+      console.error('Error setting activeTaskTimer:', error)
+      throw error
+    }
+  },
+
+  /**
    * Initialize default settings if not already set
    */
   initialize: async (): Promise<void> => {

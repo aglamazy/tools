@@ -40,6 +40,16 @@ export const formatDateTime = (isoDate: string): string => {
 }
 
 /**
+ * Format an ISO date string or Date to dd/mm/yyyy
+ * @param date - ISO string or Date object
+ * @returns Formatted date like "15/10/2025"
+ */
+export const formatDate = (date: string | Date): string => {
+  const d = typeof date === 'string' ? new Date(date) : date
+  return d.toLocaleDateString('he-IL', { year: 'numeric', month: '2-digit', day: '2-digit' })
+}
+
+/**
  * Add months to a month string (MM/YYYY format)
  * @param monthStr - Month string in MM/YYYY format
  * @param delta - Number of months to add (can be negative)
