@@ -36,25 +36,25 @@ export type AutoTask = {
 
 /**
  * Determine Eisenhower quadrant for an auto-task based on its deadline.
- * - Deadline within 3 days → Q1 (Do: urgent + important)
- * - Deadline in the future → Q2 (Schedule: important, not urgent)
- * - Past deadline → Q1 (overdue = urgent)
+ * - Before deadline → Q2 (תכנן: important, plan ahead)
+ * - On or past deadline → Q1 (עשה עכשיו: time to act)
  */
 function computeAutoTaskQuadrant(deadline: Date): EisenhowerQuadrant {
   const now = new Date()
-  const diffDays = Math.ceil((deadline.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+  now.setHours(0, 0, 0, 0)
+  const dl = new Date(deadline)
+  dl.setHours(0, 0, 0, 0)
 
-  if (diffDays <= 3) return 'do' // Urgent & important (includes overdue)
-  return 'schedule' // Important but not urgent
+  if (now >= dl) return 'do'
+  return 'schedule'
 }
 
 /**
  * Get the default deadline for auto-tasks: 10th of the relevant month.
- * If the month is in the past, the deadline is already overdue.
  */
 function getAutoTaskDeadline(month: string): Date {
   const [mm, yyyy] = month.split('/').map(Number)
-  return new Date(yyyy, mm - 1, 10) // 10th of that month
+  return new Date(yyyy, mm - 1, 10)
 }
 
 export const todoStore = {
@@ -64,19 +64,12 @@ export const todoStore = {
     quadrant: EisenhowerQuadrant = 'do',
     deadline?: string
   ): Promise<UserTask> {
-    const defaultDeadline = deadline || (() => {
-      const now = new Date()
-      const d = new Date(now.getFullYear(), now.getMonth(), 10)
-      if (d < now) d.setMonth(d.getMonth() + 1)
-      return d.toISOString()
-    })()
-
     const task: Omit<Task, 'id'> = {
       title,
       completed: false,
       priority,
       quadrant,
-      deadline: defaultDeadline,
+      ...(deadline ? { deadline } : {}),
       createdAt: new Date().toISOString(),
     }
     const id = await db.tasks.add(task)
@@ -303,7 +296,8 @@ function isAccountVisibleToUser(accountKey: string, owners: AccountOwners, curre
 
 async function checkMissingFiles(owners: AccountOwners, currentUid: string | undefined): Promise<AutoTask[]> {
   const tasks: AutoTask[] = []
-  const importedFiles = await db.importedFiles.toArray()
+  const data = await transactionStore.getImportedFiles()
+  const importedFiles = data?.files || []
 
   console.log('[TodoStore] checkMissingFiles - Total imported files:', importedFiles.length)
 
