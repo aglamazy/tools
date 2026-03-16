@@ -532,7 +532,21 @@ export const transactionStore = {
       const unclassified = allTransactions.filter((t) => !t.category || t.category.trim() === '')
 
       for (const transaction of unclassified) {
-        const suggestedCategory = businessMap.get(transaction.business)
+        let suggestedCategory = businessMap.get(transaction.business)
+
+        // Fallback: substring match with longest-key-wins
+        // e.g. "פזי קפה סניף חיפה" matches "פזי קפה" (7 chars) over "פז" (2 chars)
+        if (!suggestedCategory) {
+          const bizLower = transaction.business.toLowerCase()
+          let bestLen = 0
+          for (const [key, cat] of businessMap) {
+            const keyLower = key.toLowerCase()
+            if (bizLower.includes(keyLower) && keyLower.length > bestLen) {
+              suggestedCategory = cat
+              bestLen = keyLower.length
+            }
+          }
+        }
 
         if (suggestedCategory) {
           await transactionStore.updateAny(transaction.id, { category: suggestedCategory })

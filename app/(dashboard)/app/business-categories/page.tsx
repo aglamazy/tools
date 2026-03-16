@@ -16,6 +16,13 @@ export default function BusinessCategoriesPage() {
   const [searchTerm, setSearchTerm] = useState('')
   const [filterCategory, setFilterCategory] = useState<string>('')
   const [clearAllModal, setClearAllModal] = useState<{ isOpen: boolean }>({ isOpen: false })
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editValue, setEditValue] = useState('')
+  const [duplicatesModal, setDuplicatesModal] = useState<{
+    isOpen: boolean
+    savedName: string
+    duplicates: BusinessCategory[]
+  }>({ isOpen: false, savedName: '', duplicates: [] })
 
   // Load mappings and categories
   useEffect(() => {
@@ -63,6 +70,72 @@ export default function BusinessCategoriesPage() {
     } catch (error) {
       console.error('Error updating mapping:', error)
       showToast('error', 'שגיאה בעדכון הנושא', '❌')
+    }
+  }
+
+  const handleEditBusiness = (mapping: BusinessCategory) => {
+    setEditingId(mapping.id!)
+    setEditValue(mapping.business)
+  }
+
+  const handleSaveBusiness = async (mapping: BusinessCategory) => {
+    const newName = editValue.trim()
+    if (!newName) {
+      showToast('error', 'שם עסק לא יכול להיות ריק', '❌')
+      return
+    }
+    if (newName === mapping.business) {
+      setEditingId(null)
+      return
+    }
+
+    // Check for duplicate
+    const duplicate = mappings.find((m) => m.id !== mapping.id && m.business === newName)
+    if (duplicate) {
+      showToast('error', `כבר קיים מיפוי עבור "${newName}"`, '❌')
+      return
+    }
+
+    try {
+      await db.businessCategories.put({
+        id: mapping.id,
+        business: newName,
+        category: mapping.category,
+        lastUpdated: new Date().toISOString(),
+      })
+      const updatedMappings = mappings.map((m) =>
+        m.id === mapping.id ? { ...m, business: newName, lastUpdated: new Date().toISOString() } : m
+      )
+      setMappings(updatedMappings)
+      setEditingId(null)
+      showToast('success', 'שם העסק עודכן בהצלחה', '✅')
+
+      // Detect redundant mappings: other entries whose business contains the new name (substring match)
+      // Longest match wins at classify time, so these are truly redundant
+      const nameLower = newName.toLowerCase()
+      const redundant = updatedMappings.filter(
+        (m) => m.id !== mapping.id && m.business.toLowerCase().includes(nameLower) && m.category === mapping.category
+      )
+      if (redundant.length > 0) {
+        setDuplicatesModal({ isOpen: true, savedName: newName, duplicates: redundant })
+      }
+    } catch (error) {
+      console.error('Error updating business name:', error)
+      showToast('error', 'שגיאה בעדכון שם העסק', '❌')
+    }
+  }
+
+  const handleDeleteDuplicates = async () => {
+    const ids = duplicatesModal.duplicates.map((m) => m.id!)
+    try {
+      await db.businessCategories.bulkDelete(ids)
+      setMappings((prev) => prev.filter((m) => !ids.includes(m.id!)))
+      showToast('success', `${ids.length} מיפויים כפולים נמחקו`, '🗑️')
+    } catch (error) {
+      console.error('Error deleting duplicates:', error)
+      showToast('error', 'שגיאה במחיקת כפולים', '❌')
+    } finally {
+      setDuplicatesModal({ isOpen: false, savedName: '', duplicates: [] })
     }
   }
 
@@ -192,7 +265,64 @@ export default function BusinessCategoriesPage() {
                   ) : (
                     filteredMappings.map((mapping) => (
                       <tr key={mapping.id}>
-                        <td style={{ fontWeight: 500 }}>{mapping.business}</td>
+                        <td style={{ fontWeight: 500 }}>
+                          {editingId === mapping.id ? (
+                            <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+                              <input
+                                type="text"
+                                value={editValue}
+                                onChange={(e) => setEditValue(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handleSaveBusiness(mapping)
+                                  if (e.key === 'Escape') setEditingId(null)
+                                }}
+                                autoFocus
+                                style={{
+                                  flex: 1,
+                                  padding: '0.25rem',
+                                  borderRadius: '0.25rem',
+                                  border: '1px solid #3b82f6',
+                                  fontSize: '0.875rem',
+                                }}
+                              />
+                              <button
+                                onClick={() => handleSaveBusiness(mapping)}
+                                style={{
+                                  padding: '0.25rem 0.5rem',
+                                  fontSize: '0.75rem',
+                                  borderRadius: '0.25rem',
+                                  border: '1px solid #22c55e',
+                                  background: '#22c55e',
+                                  color: 'white',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                שמור
+                              </button>
+                              <button
+                                onClick={() => setEditingId(null)}
+                                style={{
+                                  padding: '0.25rem 0.5rem',
+                                  fontSize: '0.75rem',
+                                  borderRadius: '0.25rem',
+                                  border: '1px solid #d1d5db',
+                                  background: 'white',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                ביטול
+                              </button>
+                            </div>
+                          ) : (
+                            <span
+                              onClick={() => handleEditBusiness(mapping)}
+                              style={{ cursor: 'pointer' }}
+                              title="לחץ לעריכה"
+                            >
+                              {mapping.business}
+                            </span>
+                          )}
+                        </td>
                         <td>
                           <select
                             value={mapping.category}
@@ -250,6 +380,13 @@ export default function BusinessCategoriesPage() {
         question="האם אתה בטוח שברצונך למחוק את כל המיפויים?"
         onYes={confirmClearAll}
         onNo={() => setClearAllModal({ isOpen: false })}
+      />
+
+      <YesNoModal
+        isOpen={duplicatesModal.isOpen}
+        question={`נמצאו ${duplicatesModal.duplicates.length} מיפויים שמכילים "${duplicatesModal.savedName}" עם אותו נושא. למחוק אותם?`}
+        onYes={handleDeleteDuplicates}
+        onNo={() => setDuplicatesModal({ isOpen: false, savedName: '', duplicates: [] })}
       />
     </div>
   </main>
