@@ -25,6 +25,9 @@ export const metadata: Metadata = {
   title: branding.name,
   description: branding.tagline,
   manifest: '/manifest.json',
+  verification: {
+    google: 'PBaxmxYIxQXOOVSDCgPt9-Kd0CeHyPxcEXrlisDZSMU',
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
