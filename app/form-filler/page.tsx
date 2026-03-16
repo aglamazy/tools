@@ -5,31 +5,41 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 export default function FormFillerPage() {
   const [url, setUrl] = useState('')
   const [loadedUrl, setLoadedUrl] = useState('')
+  const [loading, setLoading] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
-  const loadUrl = useCallback(() => {
-    if (!url.trim()) return
-    let target = url.trim()
+  const loadUrl = useCallback((targetUrl?: string) => {
+    const raw = (targetUrl || url).trim()
+    if (!raw) return
+    let target = raw
     if (!target.startsWith('http')) target = 'https://' + target
+    setLoading(true)
     setLoadedUrl(`/api/proxy?url=${encodeURIComponent(target)}`)
   }, [url])
 
-  // Forward messages from the proxied iframe to the sidebar iframe
+  // Auto-load on paste
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLInputElement>) => {
+    const pasted = e.clipboardData.getData('text').trim()
+    if (pasted && (pasted.startsWith('http://') || pasted.startsWith('https://'))) {
+      // Let the paste complete, then load
+      setTimeout(() => loadUrl(pasted), 0)
+    }
+  }, [loadUrl])
+
+  // Forward messages between proxied iframe and sidebar iframe
   useEffect(() => {
     function handleMessage(event: MessageEvent) {
       const msg = event.data
       if (!msg || !msg.type) return
 
       // Messages from the proxied page (FIELDS_RESULT, FILL_RESULT)
-      // Forward to the sidebar iframe
       if (msg.type === 'FIELDS_RESULT' || msg.type === 'FILL_RESULT') {
         const sidebarIframe = document.getElementById('sidebar-iframe') as HTMLIFrameElement
         sidebarIframe?.contentWindow?.postMessage(msg, '*')
       }
 
       // Messages from the sidebar (EXTRACT_FIELDS, FILL_FIELDS)
-      // Forward to the proxied page iframe
       if (msg.type === 'EXTRACT_FIELDS' || msg.type === 'FILL_FIELDS') {
         iframeRef.current?.contentWindow?.postMessage(msg, '*')
       }
@@ -71,6 +81,7 @@ export default function FormFillerPage() {
           value={url}
           onChange={e => setUrl(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') loadUrl() }}
+          onPaste={handlePaste}
           placeholder="Enter registration page URL..."
           style={{
             flex: 1,
@@ -84,7 +95,7 @@ export default function FormFillerPage() {
           }}
         />
         <button
-          onClick={loadUrl}
+          onClick={() => loadUrl()}
           style={{
             background: '#3b82f6',
             color: 'white',
@@ -121,17 +132,45 @@ export default function FormFillerPage() {
               </p>
             </div>
           ) : (
-            <iframe
-              ref={iframeRef}
-              src={loadedUrl}
-              style={{
-                width: '100%',
-                height: '100%',
-                border: 'none',
-                background: 'white',
-              }}
-              sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-top-navigation-by-user-activation"
-            />
+            <>
+              {loading && (
+                <div style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: '#f8fafc',
+                  zIndex: 5,
+                }}>
+                  <div style={{ textAlign: 'center', color: '#64748b' }}>
+                    <div style={{
+                      width: '2.5rem',
+                      height: '2.5rem',
+                      border: '3px solid #e2e8f0',
+                      borderTopColor: '#3b82f6',
+                      borderRadius: '50%',
+                      animation: 'spin 0.8s linear infinite',
+                      margin: '0 auto 1rem',
+                    }} />
+                    <p style={{ margin: 0, fontSize: '0.9rem' }}>Loading page...</p>
+                  </div>
+                </div>
+              )}
+              <iframe
+                ref={iframeRef}
+                src={loadedUrl}
+                onLoad={() => setLoading(false)}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  border: 'none',
+                  background: 'white',
+                }}
+                sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-top-navigation-by-user-activation"
+              />
+              <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+            </>
           )}
         </div>
 

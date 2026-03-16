@@ -116,9 +116,16 @@ export function getInjectedScript(finalUrl: string, finalBase: string, hostname:
       window.parent.postMessage({ type: 'FIELDS_RESULT', fields: data.fields, pageUrl: data.pageUrl, hostname: data.hostname }, '*');
     }
     if (msg.type === 'FILL_FIELDS') {
+      // Fill selects first (they may trigger AJAX partial updates), then text after a delay
+      var selects = msg.fields.filter(function(f) { return f.type === 'select'; });
+      var rest = msg.fields.filter(function(f) { return f.type !== 'select'; });
       var results = [];
-      for (var i = 0; i < msg.fields.length; i++) { var f = msg.fields[i]; results.push({ selector: f.selector, success: fillField(f.selector, f.value) }); }
-      window.parent.postMessage({ type: 'FILL_RESULT', results: results }, '*');
+      for (var i = 0; i < selects.length; i++) { var s = selects[i]; results.push({ selector: s.selector, success: fillField(s.selector, s.value) }); }
+      // Wait for AJAX partial updates to settle before filling text fields
+      setTimeout(function() {
+        for (var j = 0; j < rest.length; j++) { var r = rest[j]; results.push({ selector: r.selector, success: fillField(r.selector, r.value) }); }
+        window.parent.postMessage({ type: 'FILL_RESULT', results: results }, '*');
+      }, selects.length > 0 ? 1500 : 0);
     }
   });
 
