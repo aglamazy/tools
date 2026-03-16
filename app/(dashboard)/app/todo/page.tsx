@@ -19,10 +19,10 @@ type QuadrantConfig = {
 }
 
 const QUADRANTS: QuadrantConfig[] = [
-  { key: 'do', title: 'עשה עכשיו', subtitle: 'דחוף וחשוב', color: '#dc2626', bgColor: '#fef2f2', borderColor: '#fecaca', icon: '🔥' },
-  { key: 'schedule', title: 'תזמן', subtitle: 'חשוב, לא דחוף', color: '#2563eb', bgColor: '#eff6ff', borderColor: '#bfdbfe', icon: '📅' },
-  { key: 'delegate', title: 'האצל', subtitle: 'דחוף, לא חשוב', color: '#d97706', bgColor: '#fffbeb', borderColor: '#fde68a', icon: '👥' },
-  { key: 'eliminate', title: 'הסר', subtitle: 'לא דחוף, לא חשוב', color: '#6b7280', bgColor: '#f9fafb', borderColor: '#e5e7eb', icon: '🗑️' },
+  { key: 'do', title: 'עשה עכשיו', subtitle: '', color: '#dc2626', bgColor: '#fef2f2', borderColor: '#fecaca', icon: '🔥' },
+  { key: 'schedule', title: 'תכנן', subtitle: '', color: '#2563eb', bgColor: '#eff6ff', borderColor: '#bfdbfe', icon: '📅' },
+  { key: 'delegate', title: 'האצל', subtitle: '', color: '#d97706', bgColor: '#fffbeb', borderColor: '#fde68a', icon: '👥' },
+  { key: 'eliminate', title: 'בהמשך', subtitle: '', color: '#6b7280', bgColor: '#f9fafb', borderColor: '#e5e7eb', icon: '📌' },
 ]
 
 type CombinedTask = {
@@ -725,7 +725,7 @@ export default function TodoPage() {
             }}>
               <span>← חשוב</span>
               <span style={{ width: '2rem' }}></span>
-              <span>לא חשוב →</span>
+              <span>פחות חשוב →</span>
             </div>
           </div>
 
@@ -770,7 +770,7 @@ export default function TodoPage() {
                     <div>
                       <span style={{ fontSize: '1rem', marginLeft: '0.375rem' }}>{q.icon}</span>
                       <span style={{ fontWeight: 600, color: q.color, fontSize: '0.95rem' }}>{q.title}</span>
-                      <span style={{ color: '#9ca3af', fontSize: '0.75rem', marginRight: '0.5rem' }}>{q.subtitle}</span>
+                      {q.subtitle && <span style={{ color: '#9ca3af', fontSize: '0.75rem', marginRight: '0.5rem' }}>{q.subtitle}</span>}
                     </div>
                     <span style={{
                       fontSize: '0.75rem',
@@ -848,7 +848,7 @@ export default function TodoPage() {
               fontWeight: 600,
               color: '#374151',
             }}>
-              <span>↑ דחוף &nbsp;&nbsp;&nbsp;&nbsp; לא דחוף ↓</span>
+              <span>↑ דחוף &nbsp;&nbsp;&nbsp;&nbsp; פחות דחוף ↓</span>
             </div>
           </div>
         </section>
