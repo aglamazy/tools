@@ -1,0 +1,127 @@
+/**
+ * Bot Service — client-side bot management and task delegation.
+ * Talks to /api/agent/bots endpoints (Firebase auth) and
+ * writes agentTasks to Firestore for real-time subscription.
+ */
+
+import { getIdToken } from './firebaseAuthService'
+import {
+  collection,
+  addDoc,
+  onSnapshot,
+  query,
+  where,
+  type Unsubscribe,
+} from 'firebase/firestore'
+import { getFirebaseFirestore, isFirebaseConfigured } from '@/app/lib/firebase'
+import { getUser } from '@/app/stores/authStore'
+import type { AgentTask, AgentTaskStatus } from '@/app/types/bot'
+
+export type BotSummary = {
+  id: string
+  name: string
+  handle: string
+  createdAt: string
+}
+
+export type CreatedBot = BotSummary & { token: string }
+
+async function authFetch(url: string, options: RequestInit = {}) {
+  const idToken = await getIdToken()
+  if (!idToken) throw new Error('Not authenticated')
+  return fetch(url, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${idToken}`,
+      ...options.headers,
+    },
+  })
+}
+
+export async function listBots(): Promise<BotSummary[]> {
+  const res = await authFetch('/api/agent/bots')
+  const data = await res.json()
+  if (!data.success) throw new Error(data.error || 'Failed to list bots')
+  return data.bots
+}
+
+export async function createBot(name: string): Promise<CreatedBot> {
+  const res = await authFetch('/api/agent/bots', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  })
+  const data = await res.json()
+  if (!data.success) throw new Error(data.error || 'Failed to create bot')
+  return data.bot
+}
+
+export async function deleteBot(id: string): Promise<void> {
+  const res = await authFetch(`/api/agent/bots/${id}`, { method: 'DELETE' })
+  const data = await res.json()
+  if (!data.success) throw new Error(data.error || 'Failed to delete bot')
+}
+
+/**
+ * Create an agent task in Firestore when delegating to a bot.
+ * Returns the Firestore doc ID.
+ */
+export async function createAgentTask(params: {
+  botId: string
+  botHandle: string
+  localTaskId: number
+  title: string
+  description: string
+  priority: 'low' | 'medium' | 'high'
+}): Promise<string> {
+  if (!isFirebaseConfigured()) throw new Error('Firebase not configured')
+  const user = getUser()
+  if (!user) throw new Error('Not authenticated')
+
+  const firestore = getFirebaseFirestore()
+  const now = new Date().toISOString()
+
+  const docRef = await addDoc(
+    collection(firestore, `users/${user.uid}/agentTasks`),
+    {
+      botId: params.botId,
+      botHandle: params.botHandle,
+      localTaskId: params.localTaskId,
+      title: params.title,
+      description: params.description,
+      priority: params.priority,
+      status: 'pending' as AgentTaskStatus,
+      result: null,
+      createdAt: now,
+      updatedAt: now,
+    }
+  )
+
+  return docRef.id
+}
+
+/**
+ * Subscribe to real-time status updates for agent tasks.
+ * Calls onChange whenever any agent task for the current user changes.
+ */
+export function subscribeToAgentTasks(
+  onChange: (tasks: AgentTask[]) => void
+): Unsubscribe | null {
+  if (!isFirebaseConfigured()) return null
+  const user = getUser()
+  if (!user) return null
+
+  const firestore = getFirebaseFirestore()
+  const q = query(
+    collection(firestore, `users/${user.uid}/agentTasks`),
+    where('status', 'in', ['pending', 'in_progress'])
+  )
+
+  return onSnapshot(q, (snapshot) => {
+    const tasks: AgentTask[] = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+    } as AgentTask))
+    onChange(tasks)
+  })
+}

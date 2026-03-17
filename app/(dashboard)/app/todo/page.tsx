@@ -5,6 +5,9 @@ import { useToast } from '@/app/components/ToastContainer'
 import { todoStore, type UserTask, type AutoTask, type EisenhowerQuadrant } from '@/app/stores/todoStore'
 import { getUser } from '@/app/stores/authStore'
 import { getHouseholdInfo } from '@/app/services/householdService'
+import { listBots, createAgentTask, subscribeToAgentTasks, type BotSummary } from '@/app/services/botService'
+import TaskCard, { type CombinedTask } from '@/app/components/todo/TaskCard'
+import DelegatePickerModal, { type DelegateTarget } from '@/app/components/todo/DelegatePickerModal'
 
 type Priority = 'low' | 'medium' | 'high'
 
@@ -24,23 +27,6 @@ const QUADRANTS: QuadrantConfig[] = [
   { key: 'delegate', title: 'האצל', subtitle: 'דחוף, לא חשוב', color: '#d97706', bgColor: '#fffbeb', borderColor: '#fde68a', icon: '👥' },
   { key: 'eliminate', title: 'הסר', subtitle: 'לא דחוף, לא חשוב', color: '#6b7280', bgColor: '#f9fafb', borderColor: '#e5e7eb', icon: '🗑️' },
 ]
-
-type CombinedTask = {
-  id: string | number
-  title: string
-  completed: boolean
-  priority: Priority
-  quadrant: EisenhowerQuadrant
-  deadline?: string
-  snoozedUntil?: string
-  delegatedTo?: string
-  delegatedBy?: string
-  createdAt: string
-  taskType: 'user' | 'auto'
-  autoType?: AutoTask['type']
-  link?: string
-  month?: string
-}
 
 export default function TodoPage() {
   const { showToast } = useToast()
@@ -63,6 +49,10 @@ export default function TodoPage() {
   const [partnerEmail, setPartnerEmail] = useState<string | null>(null)
   const [currentUid, setCurrentUid] = useState<string | null>(null)
 
+  // Bot delegation state
+  const [bots, setBots] = useState<BotSummary[]>([])
+  const [delegatePickerTask, setDelegatePickerTask] = useState<CombinedTask | null>(null)
+
   // Close snooze menu on outside click
   useEffect(() => {
     if (!snoozeMenuTaskId) return
@@ -75,10 +65,28 @@ export default function TodoPage() {
     return () => document.removeEventListener('mousedown', handler)
   }, [snoozeMenuTaskId])
 
-  // Load tasks and household info on mount
+  // Load tasks, household info, and bots on mount
   useEffect(() => {
     loadTasks()
     loadHouseholdPartner()
+    loadBots()
+  }, [])
+
+  // Subscribe to agent task status updates
+  useEffect(() => {
+    const unsubscribe = subscribeToAgentTasks((agentTasks) => {
+      setUserTasks(prev => prev.map(task => {
+        if (!task.agentTaskId) return task
+        const at = agentTasks.find(a => a.id === task.agentTaskId)
+        if (!at) return task
+        if (at.status !== task.agentStatus || at.result !== task.agentResult) {
+          todoStore.updateAgentStatus(task.id, at.status, at.result || undefined)
+          return { ...task, agentStatus: at.status, agentResult: at.result || undefined }
+        }
+        return task
+      }))
+    })
+    return () => { unsubscribe?.() }
   }, [])
 
   const loadTasks = async () => {
@@ -94,7 +102,6 @@ export default function TodoPage() {
     const user = getUser()
     if (!user) return
     setCurrentUid(user.uid)
-
     try {
       const info = await getHouseholdInfo()
       if (info.success && info.household && info.household.members.length === 2) {
@@ -106,7 +113,57 @@ export default function TodoPage() {
         }
       }
     } catch {
-      // No household or error - delegation not available
+      // No household or error
+    }
+  }
+
+  const loadBots = async () => {
+    try {
+      const data = await listBots()
+      setBots(data)
+    } catch {
+      // Not authenticated or no bots
+    }
+  }
+
+  /** Detect @BotName or @PartnerName mention in task title and auto-delegate */
+  const detectMentionAndDelegate = async (task: UserTask, title: string) => {
+    const mentionMatch = title.match(/@(\S+)/)
+    if (!mentionMatch) return
+
+    const mention = mentionMatch[1]
+
+    // Check bots
+    const bot = bots.find(b =>
+      b.name.toLowerCase() === mention.toLowerCase() ||
+      b.handle.toLowerCase() === mention.toLowerCase()
+    )
+    if (bot) {
+      try {
+        const agentTaskId = await createAgentTask({
+          botId: bot.id,
+          botHandle: bot.handle,
+          localTaskId: task.id,
+          title: title.replace(/@\S+\s*/, '').trim(),
+          description: '',
+          priority: task.priority,
+        })
+        await todoStore.delegateToBot(task.id, bot.id, agentTaskId)
+        setUserTasks(prev => prev.map(t =>
+          t.id === task.id
+            ? { ...t, botId: bot.id, agentTaskId, agentStatus: 'pending', quadrant: 'delegate' }
+            : t
+        ))
+        showToast('success', `משימה הואצלה ל${bot.name}`, '🤖')
+      } catch (e: any) {
+        console.log('[Todo] Auto-delegate to bot failed:', e.message)
+      }
+      return
+    }
+
+    // Check partner
+    if (partnerEmail && mention.toLowerCase() === partnerEmail.toLowerCase() && partnerUid) {
+      await delegateToPartner(task.id)
     }
   }
 
@@ -117,6 +174,11 @@ export default function TodoPage() {
     setNewTaskTitle('')
     setNewTaskPriority('medium')
     showToast('success', 'משימה נוספה', '✅')
+
+    // Check for @mention auto-delegation
+    if (newTaskTitle.includes('@')) {
+      await detectMentionAndDelegate(newTask, newTaskTitle)
+    }
   }
 
   const toggleUserTask = async (id: number) => {
@@ -132,10 +194,14 @@ export default function TodoPage() {
 
   const moveTaskToQuadrant = async (task: CombinedTask, newQuadrant: EisenhowerQuadrant) => {
     if (task.taskType === 'user') {
+      // If dragging to delegate quadrant, show picker
+      if (newQuadrant === 'delegate' && !task.delegatedTo && !task.botId) {
+        setDelegatePickerTask(task)
+        return
+      }
       await todoStore.moveTask(task.id as number, newQuadrant)
       setUserTasks(userTasks.map(t => t.id === task.id ? { ...t, quadrant: newQuadrant } : t))
     }
-    // Auto tasks can't be permanently moved (they're computed)
   }
 
   const changeTaskPriority = async (task: CombinedTask, newPriority: Priority) => {
@@ -147,7 +213,7 @@ export default function TodoPage() {
     }
   }
 
-  const delegateTask = async (taskId: number) => {
+  const delegateToPartner = async (taskId: number) => {
     if (!partnerUid) return
     await todoStore.delegateTask(taskId, partnerUid)
     setUserTasks(userTasks.map(t =>
@@ -156,10 +222,49 @@ export default function TodoPage() {
     showToast('success', `משימה הואצלה ל${partnerEmail}`, '👥')
   }
 
+  const delegateToBot = async (taskId: number, bot: BotSummary) => {
+    const task = userTasks.find(t => t.id === taskId)
+    if (!task) return
+    try {
+      const agentTaskId = await createAgentTask({
+        botId: bot.id,
+        botHandle: bot.handle,
+        localTaskId: taskId,
+        title: task.title,
+        description: '',
+        priority: task.priority,
+      })
+      await todoStore.delegateToBot(taskId, bot.id, agentTaskId)
+      setUserTasks(userTasks.map(t =>
+        t.id === taskId
+          ? { ...t, botId: bot.id, agentTaskId, agentStatus: 'pending', quadrant: 'delegate' }
+          : t
+      ))
+      showToast('success', `משימה הואצלה ל${bot.name}`, '🤖')
+    } catch (e: any) {
+      showToast('error', 'שגיאה בהאצלה לבוט')
+      console.log('[Todo] delegateToBot failed:', e.message)
+    }
+  }
+
+  const handleDelegateSelect = async (target: DelegateTarget) => {
+    if (!delegatePickerTask) return
+    const taskId = delegatePickerTask.id as number
+    setDelegatePickerTask(null)
+
+    if (target.type === 'partner') {
+      await delegateToPartner(taskId)
+    } else {
+      await delegateToBot(taskId, target.bot)
+    }
+  }
+
   const undelegateTask = async (taskId: number) => {
     await todoStore.undelegateTask(taskId)
     setUserTasks(userTasks.map(t =>
-      t.id === taskId ? { ...t, delegatedTo: undefined, delegatedBy: undefined, quadrant: 'do' } : t
+      t.id === taskId
+        ? { ...t, delegatedTo: undefined, delegatedBy: undefined, botId: undefined, agentTaskId: undefined, agentStatus: undefined, agentResult: undefined, quadrant: 'do' }
+        : t
     ))
     showToast('success', 'האצלה בוטלה', '↩️')
   }
@@ -169,7 +274,6 @@ export default function TodoPage() {
     until.setDate(until.getDate() + days)
     until.setHours(0, 0, 0, 0)
     const untilISO = until.toISOString()
-
     if (task.taskType === 'user') {
       await todoStore.snoozeTask(task.id as number, untilISO)
       setUserTasks(userTasks.map(t => t.id === task.id ? { ...t, snoozedUntil: untilISO } : t))
@@ -188,7 +292,6 @@ export default function TodoPage() {
       setUserTasks(userTasks.map(t => t.id === task.id ? { ...t, snoozedUntil: undefined } : t))
     } else {
       await todoStore.unsnoozeAutoTask(task.id as string)
-      // Reload auto-tasks so the unsnoozed task reappears
       const autoTasksData = await todoStore.getAutoTasks()
       setAutoTasks(autoTasksData)
     }
@@ -203,13 +306,13 @@ export default function TodoPage() {
   }
 
   const isTaskSnoozed = useCallback((task: CombinedTask): boolean => {
-    if (task.taskType !== 'user') return false // Auto-tasks are pre-filtered by the store
+    if (task.taskType !== 'user') return false
     return !!task.snoozedUntil && task.snoozedUntil > new Date().toISOString()
   }, [])
 
   // Drag and drop handlers
   const handleDragStart = (task: CombinedTask) => {
-    if (task.taskType === 'auto') return // Can't drag auto tasks
+    if (task.taskType === 'auto') return
     setDraggedTask(task)
   }
 
@@ -218,9 +321,7 @@ export default function TodoPage() {
     setDragOverQuadrant(quadrant)
   }
 
-  const handleDragLeave = () => {
-    setDragOverQuadrant(null)
-  }
+  const handleDragLeave = () => { setDragOverQuadrant(null) }
 
   const handleTaskDragOver = (e: React.DragEvent, taskId: string | number) => {
     e.preventDefault()
@@ -238,15 +339,11 @@ export default function TodoPage() {
     e.stopPropagation()
     setDragOverQuadrant(null)
     setDragOverTaskId(null)
-
     if (!draggedTask) return
-
     if (draggedTask.quadrant === targetTask.quadrant) {
-      // Same quadrant: change priority to match the target task
       await changeTaskPriority(draggedTask, targetTask.priority)
     } else {
-      // Different quadrant: move to new quadrant and adopt target's priority
-      await moveTaskToQuadrant(draggedTask, targetTask.quadrant)
+      await moveTaskToQuadrant(draggedTask, targetTask.quadrant as EisenhowerQuadrant)
       await changeTaskPriority(draggedTask, targetTask.priority)
     }
     setDraggedTask(null)
@@ -273,17 +370,9 @@ export default function TodoPage() {
     const combined: CombinedTask[] = [
       ...userTasks.map(t => ({ ...t, id: t.id, taskType: 'user' as const })),
       ...autoTasks.map(t => ({
-        id: t.id,
-        title: t.title,
-        completed: false,
-        priority: t.priority,
-        quadrant: t.quadrant,
-        deadline: t.deadline,
-        createdAt: t.createdAt,
-        taskType: 'auto' as const,
-        autoType: t.type,
-        link: t.link,
-        month: t.month,
+        id: t.id, title: t.title, completed: false, priority: t.priority,
+        quadrant: t.quadrant, deadline: t.deadline, createdAt: t.createdAt,
+        taskType: 'auto' as const, autoType: t.type, link: t.link, month: t.month,
       })),
     ]
     let filtered = combined
@@ -302,7 +391,6 @@ export default function TodoPage() {
     return getAllCombinedTasks(showSnoozed)
       .filter(t => t.quadrant === quadrant)
       .sort((a, b) => {
-        // Sort by priority (high first), then by deadline
         const pv = (p: Priority) => p === 'high' ? 3 : p === 'medium' ? 2 : 1
         const pd = pv(b.priority) - pv(a.priority)
         if (pd !== 0) return pd
@@ -311,297 +399,7 @@ export default function TodoPage() {
       })
   }
 
-  const getAutoTaskIcon = (type: AutoTask['type']): string => {
-    switch (type) {
-      case 'missing-file': return '📄'
-      case 'uncategorized': return '🏷️'
-      case 'expected-payment': return '💳'
-      case 'recurring': return '🔁'
-      case 'other': return '⚠️'
-    }
-  }
-
-  const formatDeadline = (dateString?: string): string => {
-    if (!dateString) return ''
-    const date = new Date(dateString)
-    const now = new Date()
-    const diffDays = Math.ceil((date.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
-
-    if (diffDays < 0) return `באיחור ${Math.abs(diffDays)} ימים`
-    if (diffDays === 0) return 'היום'
-    if (diffDays === 1) return 'מחר'
-    if (diffDays < 7) return `בעוד ${diffDays} ימים`
-    return date.toLocaleDateString('he-IL')
-  }
-
-  const getDeadlineColor = (dateString?: string): string => {
-    if (!dateString) return '#6b7280'
-    const date = new Date(dateString)
-    const now = new Date()
-    const diffDays = Math.ceil((date.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
-    if (diffDays < 0) return '#dc2626'
-    if (diffDays <= 3) return '#f97316'
-    return '#6b7280'
-  }
-
   const activeTaskCount = userTasks.filter(t => !t.completed).length + autoTasks.length
-
-  const getPriorityIndicator = (priority: Priority): { color: string; label: string } => {
-    switch (priority) {
-      case 'high': return { color: '#dc2626', label: 'גבוהה' }
-      case 'medium': return { color: '#f59e0b', label: 'בינונית' }
-      case 'low': return { color: '#6b7280', label: 'נמוכה' }
-    }
-  }
-
-  const renderTask = (task: CombinedTask, quadrant: QuadrantConfig) => {
-    const isDropTarget = dragOverTaskId === task.id && draggedTask && draggedTask.id !== task.id
-    const priorityInfo = getPriorityIndicator(task.priority)
-
-    return (
-    <div
-      key={task.id}
-      draggable={task.taskType === 'user'}
-      onDragStart={() => handleDragStart(task)}
-      onDragEnd={handleDragEnd}
-      onDragOver={(e) => handleTaskDragOver(e, task.id)}
-      onDragLeave={handleTaskDragLeave}
-      onDrop={(e) => handleTaskDrop(e, task)}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '0.5rem',
-        padding: '0.5rem 0.75rem',
-        background: isDropTarget ? '#e0f2fe' : task.completed ? '#f8fafc' : '#fff',
-        borderRadius: '0.375rem',
-        border: `1px solid ${isDropTarget ? '#38bdf8' : task.completed ? '#e2e8f0' : quadrant.borderColor}`,
-        opacity: task.completed ? 0.6 : draggedTask?.id === task.id ? 0.4 : 1,
-        cursor: task.taskType === 'user' ? 'grab' : 'default',
-        transition: 'opacity 0.15s, box-shadow 0.15s, background 0.15s, border-color 0.15s',
-        fontSize: '0.875rem',
-        boxShadow: isDropTarget ? '0 0 0 2px #38bdf8' : 'none',
-      }}
-    >
-      {/* Checkbox — user tasks + recurring auto-tasks are completable */}
-      {task.taskType === 'user' ? (
-        <input
-          type="checkbox"
-          checked={task.completed}
-          onChange={() => toggleUserTask(task.id as number)}
-          style={{ width: '1rem', height: '1rem', cursor: 'pointer', flexShrink: 0 }}
-        />
-      ) : task.autoType === 'recurring' ? (
-        <input
-          type="checkbox"
-          checked={false}
-          onChange={() => markAutoTaskDone(task)}
-          title="סמן כבוצע"
-          style={{ width: '1rem', height: '1rem', cursor: 'pointer', flexShrink: 0 }}
-        />
-      ) : (
-        <span style={{ width: '1rem', flexShrink: 0 }} />
-      )}
-
-      {/* Priority indicator */}
-      <span
-        title={`עדיפות: ${priorityInfo.label}`}
-        style={{
-          width: '0.5rem',
-          height: '0.5rem',
-          borderRadius: '50%',
-          background: priorityInfo.color,
-          flexShrink: 0,
-        }}
-      />
-
-      {/* Task content */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{
-          textDecoration: task.completed ? 'line-through' : 'none',
-          color: task.completed ? '#9ca3af' : '#1f2937',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}>
-          {task.taskType === 'auto' && <span style={{ marginLeft: '0.25rem' }}>{getAutoTaskIcon(task.autoType!)}</span>}
-          {task.taskType === 'auto' && task.link ? (
-            <a href={task.link} style={{ color: '#3b82f6', textDecoration: 'underline' }}>{task.title}</a>
-          ) : task.title}
-        </div>
-
-        {/* Deadline + delegation info */}
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.125rem' }}>
-          {task.deadline && (
-            <span style={{ fontSize: '0.7rem', color: getDeadlineColor(task.deadline) }}>
-              {formatDeadline(task.deadline)}
-            </span>
-          )}
-          {isTaskSnoozed(task) && (
-            <span style={{ fontSize: '0.7rem', color: '#7c3aed', fontWeight: 500 }}>
-              😴 מוסתר
-            </span>
-          )}
-          {task.delegatedTo && (
-            <span style={{ fontSize: '0.7rem', color: '#d97706', fontWeight: 500 }}>
-              👥 {task.delegatedTo === currentUid ? 'הואצל אליי' : `הואצל ל${partnerEmail || 'שותף/ה'}`}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Actions */}
-      <div style={{ display: 'flex', gap: '0.25rem', flexShrink: 0, position: 'relative' }}>
-        {/* Snooze button */}
-        {!task.completed && (
-          isTaskSnoozed(task) ? (
-            <button
-              onClick={() => unsnoozeTask(task)}
-              title="בטל הסתרה"
-              style={{
-                padding: '0.15rem 0.35rem',
-                fontSize: '0.75rem',
-                border: '1px solid #c4b5fd',
-                borderRadius: '0.25rem',
-                background: '#ede9fe',
-                cursor: 'pointer',
-                color: '#7c3aed',
-                lineHeight: 1,
-              }}
-            >
-              ☀️
-            </button>
-          ) : (
-            <div style={{ position: 'relative' }}>
-              <button
-                onClick={() => setSnoozeMenuTaskId(snoozeMenuTaskId === task.id ? null : task.id)}
-                title="הסתר משימה"
-                style={{
-                  padding: '0.15rem 0.35rem',
-                  fontSize: '0.75rem',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '0.25rem',
-                  background: '#f9fafb',
-                  cursor: 'pointer',
-                  color: '#6b7280',
-                  lineHeight: 1,
-                }}
-              >
-                😴
-              </button>
-              {snoozeMenuTaskId === task.id && (
-                <div
-                  ref={snoozeMenuRef}
-                  style={{
-                    position: 'absolute',
-                    bottom: '100%',
-                    left: '50%',
-                    transform: 'translateX(-50%)',
-                    marginBottom: '0.25rem',
-                    background: '#fff',
-                    border: '1px solid #e5e7eb',
-                    borderRadius: '0.5rem',
-                    boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
-                    zIndex: 50,
-                    minWidth: '140px',
-                    overflow: 'hidden',
-                  }}
-                >
-                  <div style={{ padding: '0.375rem 0.75rem', fontSize: '0.7rem', color: '#9ca3af', fontWeight: 600, borderBottom: '1px solid #f3f4f6' }}>
-                    😴 הסתר ל...
-                  </div>
-                  {[
-                    { days: 1, label: '☀️ מחר' },
-                    { days: 3, label: '📅 3 ימים' },
-                    { days: 7, label: '🗓️ שבוע' },
-                  ].map(opt => (
-                    <button
-                      key={opt.days}
-                      onClick={() => snoozeTask(task, opt.days)}
-                      style={{
-                        display: 'block',
-                        width: '100%',
-                        padding: '0.5rem 0.75rem',
-                        fontSize: '0.85rem',
-                        background: 'none',
-                        border: 'none',
-                        borderBottom: '1px solid #f9fafb',
-                        cursor: 'pointer',
-                        textAlign: 'right',
-                        color: '#374151',
-                      }}
-                      onMouseEnter={e => (e.currentTarget.style.background = '#f3f4f6')}
-                      onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )
-        )}
-
-        {/* Delegate button - only for user tasks when partner exists */}
-        {task.taskType === 'user' && partnerUid && !task.completed && (
-          task.delegatedTo ? (
-            <button
-              onClick={() => undelegateTask(task.id as number)}
-              title="בטל האצלה"
-              style={{
-                padding: '0.15rem 0.35rem',
-                fontSize: '0.75rem',
-                border: '1px solid #fde68a',
-                borderRadius: '0.25rem',
-                background: '#fffbeb',
-                cursor: 'pointer',
-                color: '#d97706',
-                lineHeight: 1,
-              }}
-            >
-              ↩️
-            </button>
-          ) : (
-            <button
-              onClick={() => delegateTask(task.id as number)}
-              title={`האצל ל${partnerEmail || 'שותף/ה'}`}
-              style={{
-                padding: '0.15rem 0.35rem',
-                fontSize: '0.75rem',
-                border: '1px solid #bfdbfe',
-                borderRadius: '0.25rem',
-                background: '#eff6ff',
-                cursor: 'pointer',
-                color: '#2563eb',
-                lineHeight: 1,
-              }}
-            >
-              👥
-            </button>
-          )
-        )}
-
-        {/* Delete button */}
-        {task.taskType === 'user' && (
-          <button
-            onClick={() => deleteUserTask(task.id as number)}
-            style={{
-              padding: '0.15rem 0.35rem',
-              fontSize: '0.75rem',
-              border: '1px solid #fecaca',
-              borderRadius: '0.25rem',
-              background: 'white',
-              cursor: 'pointer',
-              color: '#dc2626',
-              lineHeight: 1,
-            }}
-          >
-            ✕
-          </button>
-        )}
-      </div>
-    </div>
-    )
-  }
 
   return (
     <main className="app" dir="rtl">
@@ -619,25 +417,18 @@ export default function TodoPage() {
               value={newTaskTitle}
               onChange={(e) => setNewTaskTitle(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && handleAddUserTask()}
-              placeholder="הוסף משימה חדשה..."
+              placeholder="הוסף משימה חדשה... (השתמש ב@שם כדי להאציל)"
               style={{
-                flex: 1,
-                minWidth: '200px',
-                padding: '0.75rem',
-                borderRadius: '0.375rem',
-                border: '1px solid #d1d5db',
-                fontSize: '1rem',
+                flex: 1, minWidth: '200px', padding: '0.75rem',
+                borderRadius: '0.375rem', border: '1px solid #d1d5db', fontSize: '1rem',
               }}
             />
             <select
               value={newTaskQuadrant}
               onChange={(e) => setNewTaskQuadrant(e.target.value as EisenhowerQuadrant)}
               style={{
-                padding: '0.75rem',
-                borderRadius: '0.375rem',
-                border: '1px solid #d1d5db',
-                fontSize: '0.875rem',
-                background: 'white',
+                padding: '0.75rem', borderRadius: '0.375rem',
+                border: '1px solid #d1d5db', fontSize: '0.875rem', background: 'white',
               }}
             >
               {QUADRANTS.map(q => (
@@ -651,30 +442,20 @@ export default function TodoPage() {
         </section>
 
         {/* Controls */}
-        <section style={{ marginTop: '1rem', display: 'flex', gap: '1rem', alignItems: 'center' }}>
+        <section style={{ marginTop: '1rem', display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#6b7280', cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={showCompleted}
-              onChange={(e) => setShowCompleted(e.target.checked)}
-              style={{ width: '1rem', height: '1rem' }}
-            />
+            <input type="checkbox" checked={showCompleted} onChange={(e) => setShowCompleted(e.target.checked)} style={{ width: '1rem', height: '1rem' }} />
             הצג הושלמו
           </label>
           {snoozedCount > 0 && (
             <button
               onClick={() => setShowSnoozed(!showSnoozed)}
               style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.375rem',
-                fontSize: '0.8rem',
+                display: 'flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.8rem',
                 color: showSnoozed ? '#7c3aed' : '#9ca3af',
                 background: showSnoozed ? '#ede9fe' : '#f9fafb',
                 border: `1px solid ${showSnoozed ? '#c4b5fd' : '#e5e7eb'}`,
-                padding: '0.25rem 0.5rem',
-                borderRadius: '0.25rem',
-                cursor: 'pointer',
+                padding: '0.25rem 0.5rem', borderRadius: '0.25rem', cursor: 'pointer',
               }}
             >
               😴 {snoozedCount} מוסתרות
@@ -685,36 +466,27 @@ export default function TodoPage() {
               👥 שותף/ה: {partnerEmail}
             </span>
           )}
+          {bots.length > 0 && (
+            <span style={{ fontSize: '0.8rem', color: '#1e40af', background: '#eff6ff', padding: '0.25rem 0.5rem', borderRadius: '0.25rem' }}>
+              🤖 {bots.length} בוטים
+            </span>
+          )}
         </section>
 
         {/* Eisenhower Matrix Grid */}
         <section style={{ marginTop: '1.5rem' }}>
-          {/* Axis labels */}
           <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '0.5rem' }}>
-            <div style={{
-              display: 'flex',
-              gap: '0.5rem',
-              alignItems: 'center',
-              fontSize: '0.8rem',
-              fontWeight: 600,
-              color: '#374151',
-            }}>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.8rem', fontWeight: 600, color: '#374151' }}>
               <span>← חשוב</span>
               <span style={{ width: '2rem' }}></span>
               <span>לא חשוב →</span>
             </div>
           </div>
 
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr',
-            gridTemplateRows: 'auto auto',
-            gap: '0.75rem',
-          }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gridTemplateRows: 'auto auto', gap: '0.75rem' }}>
             {QUADRANTS.map(q => {
               const tasks = getTasksForQuadrant(q.key)
               const isDragOver = dragOverQuadrant === q.key
-
               return (
                 <div
                   key={q.key}
@@ -724,24 +496,17 @@ export default function TodoPage() {
                   style={{
                     border: `2px solid ${isDragOver ? q.color : q.borderColor}`,
                     borderRadius: '0.75rem',
-                    background: isDragOver ? `${q.bgColor}` : '#fff',
-                    minHeight: '200px',
-                    display: 'flex',
-                    flexDirection: 'column',
+                    background: isDragOver ? q.bgColor : '#fff',
+                    minHeight: '200px', display: 'flex', flexDirection: 'column',
                     transition: 'border-color 0.2s, background 0.2s',
                     boxShadow: isDragOver ? `0 0 0 3px ${q.borderColor}` : 'none',
                   }}
                 >
-                  {/* Quadrant header */}
                   <div style={{
-                    padding: '0.75rem 1rem',
-                    background: q.bgColor,
-                    borderTopLeftRadius: '0.625rem',
-                    borderTopRightRadius: '0.625rem',
+                    padding: '0.75rem 1rem', background: q.bgColor,
+                    borderTopLeftRadius: '0.625rem', borderTopRightRadius: '0.625rem',
                     borderBottom: `1px solid ${q.borderColor}`,
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                   }}>
                     <div>
                       <span style={{ fontSize: '1rem', marginLeft: '0.375rem' }}>{q.icon}</span>
@@ -749,36 +514,21 @@ export default function TodoPage() {
                       <span style={{ color: '#9ca3af', fontSize: '0.75rem', marginRight: '0.5rem' }}>{q.subtitle}</span>
                     </div>
                     <span style={{
-                      fontSize: '0.75rem',
-                      background: tasks.length > 0 ? q.color : '#d1d5db',
-                      color: '#fff',
-                      padding: '0.125rem 0.5rem',
-                      borderRadius: '1rem',
-                      fontWeight: 600,
+                      fontSize: '0.75rem', background: tasks.length > 0 ? q.color : '#d1d5db',
+                      color: '#fff', padding: '0.125rem 0.5rem', borderRadius: '1rem', fontWeight: 600,
                     }}>
                       {tasks.length}
                     </span>
                   </div>
 
-                  {/* Tasks list */}
                   <div style={{
-                    padding: '0.5rem',
-                    flex: 1,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '0.375rem',
-                    overflowY: 'auto',
-                    maxHeight: '350px',
+                    padding: '0.5rem', flex: 1, display: 'flex', flexDirection: 'column',
+                    gap: '0.375rem', overflowY: 'auto', maxHeight: '350px',
                   }}>
                     {tasks.length === 0 ? (
                       <div style={{
-                        flex: 1,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        color: '#d1d5db',
-                        fontSize: '0.85rem',
-                        fontStyle: 'italic',
+                        flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        color: '#d1d5db', fontSize: '0.85rem', fontStyle: 'italic',
                       }}>
                         {draggedTask ? 'שחרר כאן' : 'אין משימות'}
                       </div>
@@ -790,20 +540,37 @@ export default function TodoPage() {
                         return (
                           <div key={task.id}>
                             {showSeparator && (
-                              <div style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '0.5rem',
-                                padding: '0.125rem 0.5rem',
-                                fontSize: '0.65rem',
-                                color: '#9ca3af',
-                              }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.125rem 0.5rem', fontSize: '0.65rem', color: '#9ca3af' }}>
                                 <div style={{ flex: 1, height: '1px', background: '#e5e7eb' }} />
                                 <span>{priorityLabels[task.priority]}</span>
                                 <div style={{ flex: 1, height: '1px', background: '#e5e7eb' }} />
                               </div>
                             )}
-                            {renderTask(task, q)}
+                            <TaskCard
+                              task={task}
+                              quadrant={q}
+                              currentUid={currentUid}
+                              partnerEmail={partnerEmail}
+                              draggedTaskId={draggedTask?.id ?? null}
+                              isDropTarget={dragOverTaskId === task.id && !!draggedTask && draggedTask.id !== task.id}
+                              isSnoozed={isTaskSnoozed(task)}
+                              snoozeMenuOpen={snoozeMenuTaskId === task.id}
+                              snoozeMenuRef={snoozeMenuRef}
+                              partnerUid={partnerUid}
+                              onToggle={toggleUserTask}
+                              onDelete={deleteUserTask}
+                              onMarkAutoTaskDone={markAutoTaskDone}
+                              onDragStart={handleDragStart}
+                              onDragEnd={handleDragEnd}
+                              onDragOver={handleTaskDragOver}
+                              onDragLeave={handleTaskDragLeave}
+                              onDrop={handleTaskDrop}
+                              onSnoozeMenuToggle={setSnoozeMenuTaskId}
+                              onSnooze={snoozeTask}
+                              onUnsnooze={unsnoozeTask}
+                              onDelegate={(t) => setDelegatePickerTask(t)}
+                              onUndelegate={undelegateTask}
+                            />
                           </div>
                         )
                       })
@@ -814,21 +581,24 @@ export default function TodoPage() {
             })}
           </div>
 
-          {/* Axis label - bottom */}
           <div style={{ display: 'flex', justifyContent: 'center', marginTop: '0.5rem' }}>
-            <div style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              fontSize: '0.8rem',
-              fontWeight: 600,
-              color: '#374151',
-            }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', fontSize: '0.8rem', fontWeight: 600, color: '#374151' }}>
               <span>↑ דחוף &nbsp;&nbsp;&nbsp;&nbsp; לא דחוף ↓</span>
             </div>
           </div>
         </section>
       </div>
+
+      {/* Delegate picker modal */}
+      {delegatePickerTask && (
+        <DelegatePickerModal
+          partnerUid={partnerUid}
+          partnerEmail={partnerEmail}
+          bots={bots}
+          onSelect={handleDelegateSelect}
+          onClose={() => setDelegatePickerTask(null)}
+        />
+      )}
     </main>
   )
 }
