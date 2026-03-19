@@ -1,0 +1,593 @@
+/* ─── Upgrade Modal ─── */
+.upgrade-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.upgrade-modal {
+  background: white;
+  border-radius: 12px;
+  padding: 1.5rem;
+  max-width: 320px;
+  text-align: center;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+}
+
+.upgrade-modal h3 {
+  margin: 0 0 1rem;
+  font-size: 1.25rem;
+}
+
+.upgrade-modal p {
+  margin: 0.5rem 0;
+  color: #475569;
+}
+
+.upgrade-modal-current {
+  font-size: 0.875rem;
+  color: #94a3b8 !important;
+}
+
+.upgrade-modal-actions {
+  margin-top: 1.5rem;
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+}
+
+.upgrade-modal-actions button {
+  padding: 0.5rem 1.5rem;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+
+.upgrade-modal-actions button:hover {
+  background: #e2e8f0;
+}
+
+.upgrade-modal-actions .upgrade-btn {
+  padding: 0.5rem 1.5rem;
+  border-radius: 6px;
+  background: #4338ca;
+  color: white;
+  text-decoration: none;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.upgrade-modal-actions .upgrade-btn:hover {
+  background: #3730a3;
+}
+
+/* ─── Card ─── */
+.card {
+  background: #fff;
+  border-radius: 20px;
+  box-shadow: 0 20px 65px rgba(15, 23, 42, 0.08);
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+header h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1.75rem;
+}
+
+header p {
+  margin: 0;
+  color: #475569;
+}
+
+/* ─── Processing Month Badge ─── */
+.processing-month-badge {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  background: linear-gradient(135deg, #4338ca 0%, #6366f1 100%);
+  color: #fff;
+  border-radius: 0.75rem;
+  font-weight: 600;
+  font-size: 1rem;
+  display: inline-block;
+}
+
+/* ─── Upload / File Picker ─── */
+.upload-another-btn {
+  padding: 0.75rem 1.5rem;
+  background: #fff;
+  border: 2px solid #4338ca;
+  color: #4338ca;
+  border-radius: 999px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 0.9rem;
+}
+
+.upload-another-btn:hover {
+  background: #4338ca;
+  color: #fff;
+}
+
+.file-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem 1.5rem;
+  border-radius: 999px;
+  background-color: #4338ca;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  width: fit-content;
+}
+
+.file-picker span {
+  pointer-events: none;
+}
+
+.file-picker input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.file-picker.secondary {
+  background-color: #f8fafc;
+  border: 2px solid #e2e8f0;
+  color: #4338ca;
+}
+
+.file-picker.secondary:hover {
+  background-color: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
+/* ─── File Preview ─── */
+.file-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.file-preview-card {
+  background: #fff;
+  border: 2px solid #e2e8f0;
+  border-radius: 1rem;
+  padding: 1.25rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.file-preview-card:hover {
+  border-color: #4338ca;
+  box-shadow: 0 4px 12px rgba(67, 56, 202, 0.15);
+  transform: translateY(-2px);
+}
+
+.file-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.file-preview-icon {
+  font-size: 1.75rem;
+}
+
+.file-preview-name {
+  flex: 1;
+  font-weight: 600;
+  color: #0f172a;
+  font-size: 0.95rem;
+  word-break: break-word;
+}
+
+.file-preview-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.file-preview-detail {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.9rem;
+}
+
+.detail-label {
+  color: #64748b;
+  font-weight: 500;
+}
+
+.detail-value {
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.loaded-file-badge {
+  padding: 0.5rem 0.75rem;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.5rem;
+  font-size: 0.85rem;
+  color: #475569;
+  font-weight: 500;
+}
+
+/* ─── Modal ─── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+
+.modal-content {
+  background: #fff;
+  border-radius: 1rem;
+  max-width: 900px;
+  width: 100%;
+  max-height: 90vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.25);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  line-height: 1;
+  transition: color 0.2s;
+}
+
+.modal-close:hover {
+  color: #0f172a;
+}
+
+.modal-body {
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+
+/* ─── Note / Banner ─── */
+.note {
+  margin: 0;
+  color: #475569;
+  font-size: 0.9rem;
+}
+
+.banner {
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem;
+  font-weight: 500;
+}
+
+.banner.error {
+  background-color: #fee2e2;
+  color: #991b1b;
+}
+
+.banner.info {
+  background-color: #e0f2fe;
+  color: #075985;
+}
+
+/* ─── Months Grid ─── */
+.months-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+}
+
+.month-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  padding: 1rem 1.25rem;
+  border-radius: 1rem;
+  border: 1px solid #e0e7ff;
+  background-color: #f8f9ff;
+  color: inherit;
+  cursor: pointer;
+  transition: border 0.2s, background 0.2s, transform 0.2s;
+  font: inherit;
+  text-align: right;
+  width: 100%;
+}
+
+.month-card:hover {
+  border-color: #4c1d95;
+}
+
+.month-card.active {
+  background: linear-gradient(120deg, #312e81, #6366f1);
+  color: #fff;
+  border-color: transparent;
+  transform: translateY(-2px);
+}
+
+.month-card .month-label {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.month-card .month-total {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.month-card .month-count {
+  font-size: 0.9rem;
+  color: inherit;
+  opacity: 0.85;
+}
+
+.month-card:focus-visible {
+  outline: 2px solid #312e81;
+  outline-offset: 2px;
+}
+
+/* ─── Details Section ─── */
+.details {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.details-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.details-total {
+  font-weight: 600;
+  color: #4338ca;
+}
+
+/* ─── Tables ─── */
+.table-wrapper {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+th,
+td {
+  padding: 0.75rem 0.5rem;
+  text-align: right;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+th {
+  color: #475569;
+  font-weight: 600;
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* ─── Credit Card ─── */
+.credit-card-row {
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.credit-card-row:hover {
+  background-color: #f8fafc;
+}
+
+.credit-card-link {
+  color: #4338ca;
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.expand-indicator {
+  display: inline-block;
+  margin-right: 0.5rem;
+  color: #4338ca;
+  font-size: 0.85rem;
+}
+
+.credit-card-details-row {
+  background-color: #f8fafc;
+}
+
+.credit-card-details {
+  padding: 1.5rem;
+  background-color: #fff;
+  border-radius: 0.75rem;
+  border: 2px solid #e0e7ff;
+  margin: 0.5rem 0;
+}
+
+.credit-card-details h4 {
+  margin: 0 0 1rem 0;
+  color: #4338ca;
+  font-size: 1.1rem;
+  font-weight: 700;
+  text-align: right;
+}
+
+.credit-card-details-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.credit-card-details-table th,
+.credit-card-details-table td {
+  padding: 0.5rem;
+  text-align: right;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.credit-card-details-table thead {
+  background-color: #f8fafc;
+}
+
+.credit-card-details-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* ─── Summary Grid ─── */
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.summary-card {
+  padding: 1.5rem;
+  border-radius: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.summary-card.income {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: #fff;
+}
+
+.summary-card.expenses {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  color: #fff;
+}
+
+.summary-card.net {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  color: #fff;
+}
+
+.summary-label {
+  font-size: 0.9rem;
+  opacity: 0.9;
+  font-weight: 500;
+}
+
+.summary-amount {
+  font-size: 1.75rem;
+  font-weight: 700;
+}
+
+.summary-count {
+  font-size: 0.85rem;
+  opacity: 0.85;
+}
+
+/* ─── Amount Colors ─── */
+.amount-positive {
+  color: #10b981;
+  font-weight: 600;
+}
+
+.amount-negative {
+  color: #ef4444;
+  font-weight: 600;
+}
+
+@media (max-width: 768px) {
+  .card {
+    padding: 1.25rem;
+    border-radius: 14px;
+  }
+
+  header h1 {
+    font-size: 1.4rem;
+  }
+
+  .month-card {
+    padding: 0.75rem 1rem;
+  }
+
+  /* Adjust summary cards for mobile */
+  .summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .summary-amount {
+    font-size: 1.5rem;
+  }
+
+  /* Modal adjustments for mobile */
+  .modal-content {
+    max-width: 100%;
+    margin: 0.5rem;
+    max-height: 95vh;
+    border-radius: 0.75rem;
+  }
+
+  .modal-header {
+    padding: 1rem;
+  }
+
+  .modal-body {
+    padding: 1rem;
+  }
+
+  /* Table horizontal scroll on mobile */
+  .table-wrapper {
+    margin: 0 -1rem;
+    padding: 0 1rem;
+  }
+
+  table {
+    font-size: 0.85rem;
+  }
+
+  th, td {
+    padding: 0.6rem 0.35rem;
+  }
+}

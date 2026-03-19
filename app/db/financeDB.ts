@@ -5,6 +5,7 @@ import type { Student } from '@/app/types/student'
 import type { ProfileQA } from '@/app/types/profileQA'
 import type { ScoutResult } from '@/app/types/scoutResult'
 import type { ScoutConfig } from '@/app/types/scoutConfig'
+import type { AgentTaskStatus } from '@/app/types/bot'
 import { BusinessType } from '@/app/types/business'
 
 // Re-export types for convenience
@@ -92,6 +93,10 @@ export interface Task {
   autoTaskId?: string // For auto-task snooze records (e.g. "missing-bank-123-01/2026")
   delegatedTo?: string // Firebase UID of partner
   delegatedBy?: string // Firebase UID of delegator
+  botId?: string // Bot ID when delegated to a bot
+  agentTaskId?: string // Firestore agent task doc ID
+  agentStatus?: AgentTaskStatus // Bot task status
+  agentResult?: string // Bot task result
   createdAt: string
   updatedAt?: string
 }
@@ -749,6 +754,31 @@ class FinanceDB extends Dexie {
       categories: '++id, syncId, name, type',
       businessCategories: '++id, syncId, &business',
       tasks: '++id, syncId, createdAt, priority, quadrant, deadline, delegatedTo, autoTaskId',
+      appSettings: '++id, syncId, &key',
+      businesses: '++id, syncId, &name, type, userId',
+      projects: '++id, syncId, businessId, name, archived',
+      harvestTasks: '++id, syncId, projectId, name, archived',
+      timeEntries: '++id, syncId, taskId, date, startTime, endTime, [taskId+date]',
+      capitalEntries: '++id, syncId, date, institution, accountNumber, description, assetType, currency, employer, investmentTrack, agent, soldDate, [institution+accountNumber+description], fileId',
+      financialInstitutions: '++id, syncId, name, type',
+      ypayDocuments: '++id, syncId, &transactionId, docType',
+      students: '++id, syncId, businessId, name, archived',
+      profileQAs: '++id, syncId, businessId, [businessId+answerType]',
+      scoutResults: '++id, syncId, businessId, status, [businessId+status]',
+      scoutConfigs: '++id, syncId, &businessId',
+      taxDocuments: '++id, syncId, businessId, userId, month, year, [businessId+year]',
+      expenseDocuments: '++id, syncId, transactionId, date, vendor, category, sourceType',
+      businessTasks: '++id, syncId, businessId, recurrence, archived',
+      advancePayments: '++id, syncId, businessId, month, type, [businessId+month+type]',
+    })
+
+    // Define schema version 24 - add botId index to tasks for bot delegation
+    this.version(24).stores({
+      transactions: '++id, syncId, type, month, accountNumber, cardNumber, date, chargingDate, [type+month], [cardNumber+month], [accountNumber+month], fileId',
+      importedFiles: '++id, syncId, fileName, fileType, processingMonth, [fileType+processingMonth], [cardNumber+processingMonth]',
+      categories: '++id, syncId, name, type',
+      businessCategories: '++id, syncId, &business',
+      tasks: '++id, syncId, createdAt, priority, quadrant, deadline, delegatedTo, autoTaskId, botId',
       appSettings: '++id, syncId, &key',
       businesses: '++id, syncId, &name, type, userId',
       projects: '++id, syncId, businessId, name, archived',

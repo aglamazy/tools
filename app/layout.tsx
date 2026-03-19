@@ -2,11 +2,17 @@ import { Analytics } from '@vercel/analytics/react'
 import type { Metadata, Viewport } from 'next'
 import type { ReactNode } from 'react'
 import './globals.css'
+import './layout.css'
+import './components.css'
+import './landing.css'
+import './pages.css'
 import { ToastProvider } from './components/ToastContainer'
 import { branding } from './config'
 import MigrationRunner from './components/MigrationRunner'
 import AuthInitializer from './components/AuthInitializer'
 import CloudSyncManager from './components/CloudSyncManager'
+import PageHeader from './components/PageHeader'
+import SiteFooter from './components/SiteFooter'
 
 if (!process.env.NEXT_PUBLIC_SITE_URL) {
   throw new Error('Missing NEXT_PUBLIC_SITE_URL environment variable')
@@ -65,7 +71,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <MigrationRunner />
           <AuthInitializer />
           <CloudSyncManager />
+          <PageHeader />
           {children}
+          <SiteFooter />
           <Analytics />
         </ToastProvider>
       </body>

@@ -79,13 +79,15 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <footer className="landing-footer">
-        <div className="landing-footer-links">
-          <Link href={routes.about}>אודות</Link>
-          <Link href={routes.guide}>מדריך</Link>
-          <Link href={routes.pricing}>מחירון</Link>
+      <section className="landing-contact">
+        <h2>שאלה? בעיה? דברו איתנו</h2>
+        <p>נשמח לעזור בכל נושא - שלחו הודעה ונחזור אליכם בהקדם</p>
+        <div className="landing-cta">
+          <Link href={routes.contact} className="landing-btn-secondary">
+            שלח הודעה
+          </Link>
         </div>
-      </footer>
+      </section>
     </div>
   )
 }

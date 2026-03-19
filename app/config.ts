@@ -28,6 +28,7 @@ export const routes = {
   guide: '/guide',
   pricing: '/pricing',
   extension: '/extension',
+  contact: '/contact',
   invite: '/invite',
   business: (id: number | string) => `/business/${id}`,
 } as const

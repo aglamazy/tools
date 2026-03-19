@@ -470,8 +470,20 @@ export default function ExtensionSidebarPage() {
                     const val = e.target.value
                     if (val !== entry.answer && entry.id) updateProfileEntry(entry.id, val)
                   }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                  }}
+                  onChange={e => {
+                    const val = e.target.value
+                    const orig = typeof entry.answer === 'string' ? entry.answer : Array.isArray(entry.answer) ? entry.answer.join(', ') : ''
+                    const indicator = e.target.nextElementSibling as HTMLElement | null
+                    if (indicator) indicator.style.opacity = val !== orig ? '1' : '0'
+                  }}
                   style={inputStyle}
                 />
+                <div style={{ fontSize: '0.65rem', color: '#64748b', textAlign: 'left', marginTop: '0.15rem', opacity: 0, transition: 'opacity 0.2s' }}>
+                  לחץ Enter או צא מהשדה לשמירה
+                </div>
               </div>
             ))}
           </div>

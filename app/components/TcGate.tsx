@@ -19,12 +19,15 @@ export default function TcGate({ children }: { children: ReactNode }) {
   const router = useRouter()
   const [authReady, setAuthReady] = useState(false)
   const [loggedIn, setLoggedIn] = useState(false)
+  const [wasLoggedIn, setWasLoggedIn] = useState(false)
   const [tcState, setTcState] = useState(userTierStore.getTcState())
   const [localTcAccepted, setLocalTcAccepted] = useState<boolean | null>(null) // null = loading
 
   useEffect(() => {
     const unsub = subscribeToAuth((s) => {
-      setLoggedIn(s.user !== null)
+      const isLoggedIn = s.user !== null
+      if (isLoggedIn) setWasLoggedIn(true)
+      setLoggedIn(isLoggedIn)
       setAuthReady(s.initialized)
     })
     return unsub
@@ -56,11 +59,13 @@ export default function TcGate({ children }: { children: ReactNode }) {
       if (tcState.loading) return
       if (!tcState.accepted) router.replace(routes.terms)
     } else {
+      // Skip T&C gate for users who just logged out — they already accepted while logged in
+      if (wasLoggedIn) return
       // Free/anonymous: use local appSettings
       if (localTcAccepted === null) return // still loading
       if (!localTcAccepted) router.replace(routes.terms)
     }
-  }, [pathname, authReady, loggedIn, tcState, localTcAccepted, router])
+  }, [pathname, authReady, loggedIn, wasLoggedIn, tcState, localTcAccepted, router])
 
   if (pathname === routes.terms) {
     return <>{children}</>
@@ -70,7 +75,7 @@ export default function TcGate({ children }: { children: ReactNode }) {
   if (authReady && loggedIn && !tcState.loading && !tcState.accepted) {
     return null
   }
-  if (authReady && !loggedIn && localTcAccepted === false) {
+  if (authReady && !loggedIn && !wasLoggedIn && localTcAccepted === false) {
     return null
   }
 

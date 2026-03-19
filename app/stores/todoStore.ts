@@ -3,6 +3,7 @@ import { transactionStore } from './transactionStore'
 import { getUser } from './authStore'
 import { appSettingsStore, AccountOwners } from './appSettingsStore'
 import { routes } from '@/app/config'
+import type { AgentTaskStatus } from '@/app/types/bot'
 
 type Priority = 'low' | 'medium' | 'high'
 
@@ -18,6 +19,10 @@ export type UserTask = {
   snoozedUntil?: string
   delegatedTo?: string
   delegatedBy?: string
+  botId?: string
+  agentTaskId?: string
+  agentStatus?: AgentTaskStatus
+  agentResult?: string
   createdAt: string
 }
 
@@ -88,6 +93,10 @@ export const todoStore = {
       snoozedUntil: t.snoozedUntil,
       delegatedTo: t.delegatedTo,
       delegatedBy: t.delegatedBy,
+      botId: t.botId,
+      agentTaskId: t.agentTaskId,
+      agentStatus: t.agentStatus,
+      agentResult: t.agentResult,
       createdAt: t.createdAt,
     }))
   },
@@ -195,6 +204,22 @@ export const todoStore = {
         quadrant: 'do' as EisenhowerQuadrant,
       })
     }
+  },
+
+  async delegateToBot(id: number, botId: string, agentTaskId: string): Promise<void> {
+    await db.tasks.update(id, {
+      botId,
+      agentTaskId,
+      agentStatus: 'pending' as AgentTaskStatus,
+      quadrant: 'delegate' as EisenhowerQuadrant,
+    })
+  },
+
+  async updateAgentStatus(id: number, status: AgentTaskStatus, result?: string): Promise<void> {
+    const updates: Partial<Task> = { agentStatus: status }
+    if (result !== undefined) updates.agentResult = result
+    if (status === 'done') updates.completed = true
+    await db.tasks.update(id, updates)
   },
 
   async getAutoTasks(): Promise<AutoTask[]> {
