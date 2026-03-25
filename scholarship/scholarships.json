@@ -1,0 +1,919 @@
+{
+  "legend": {
+    "PO": "Project Oriented",
+    "JF": "Jewish Focused",
+    "IO": "Instrument Oriented"
+  },
+  "scholarships": [
+    {
+      "name": "Swiss Study in Switzerland",
+      "category": "with_deadline",
+      "deadline": "31.7",
+      "links": [
+        {
+          "text": "Application | University of Basel",
+          "url": "https://www.unibas.ch/en/Studies/Before-My-Studies/Application-Admission/Application.html"
+        }
+      ],
+      "address": null,
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 1
+    },
+    {
+      "id": 2,
+      "name": "Giuliana und Giorgio Stefanini Stiftung",
+      "category": "with_deadline",
+      "deadline": "22.8",
+      "links": [
+        {
+          "text": "Giuliana und Giorgio Stefanini Stiftung",
+          "url": "https://www.fundraiso.com/en/organisations/giuliana-und-giorgio-stefanini-stiftung"
+        }
+      ],
+      "address": "C/O Giorgio Stefanini, Sonnenrain 2c, CH-8832, Wilen b. Wollerau",
+      "tags": [],
+      "status": null,
+      "notes": null
+    },
+    {
+      "id": 3,
+      "name": "Giuliana and Giorgio Stefanini Foundation",
+      "category": "with_deadline",
+      "deadline": "22.8",
+      "links": [
+        {
+          "text": "Giuliana and Giorgio Stefanini Foundation",
+          "url": "https://www.gi2s-stiftung.ch/#DE"
+        }
+      ],
+      "address": "C/O Giorgio Stefanini, Sonnenrain 2c, CH-8832, Wilen b. Wollerau",
+      "tags": [],
+      "status": null,
+      "notes": null
+    },
+    {
+      "name": "Nicatideluze",
+      "category": "with_deadline",
+      "deadline": "15.5/15.9",
+      "links": [
+        {
+          "text": "Fondation Nicati-de Luze - Projektförderung",
+          "url": "https://www.nicatideluze.ch/de/projektfoerderung/"
+        }
+      ],
+      "address": null,
+      "tags": [],
+      "status": null,
+      "notes": "specific projects",
+      "id": 4
+    },
+    {
+      "name": "Musik und Jugend Förderstiftung",
+      "category": "with_deadline",
+      "deadline": "1.10",
+      "links": [
+        {
+          "text": "Ernst von Siemens Musikstiftung - foundation",
+          "url": "https://www.fundraiso.com/en/organisations/ernst-von-siemens-musikstiftung"
+        },
+        {
+          "text": "Application portal for funding for Youth Projects now open | Ernst von Siemens Musikstiftung",
+          "url": "https://evs-musikstiftung.ch/en/news-post/application-portal-for-funding-for-youth-projects-now-open/"
+        }
+      ],
+      "address": "c/o Advokatur & Notariat Ilario Bondolfi, Poststrasse 43, CH-7000, Chur",
+      "tags": [
+        "PO"
+      ],
+      "status": null,
+      "notes": null,
+      "id": 5
+    },
+    {
+      "name": "WaliDad",
+      "category": "with_deadline",
+      "deadline": "8.10",
+      "links": [
+        {
+          "text": "https://walidad.ch/foerdergesuch",
+          "url": "https://walidad.ch/foerdergesuch"
+        }
+      ],
+      "address": null,
+      "tags": [],
+      "status": null,
+      "notes": "looks like a project based foundation but I am not sure",
+      "id": 6
+    },
+    {
+      "name": "Hirschmann-Stipendium",
+      "category": "with_deadline",
+      "deadline": "15.10",
+      "links": [
+        {
+          "text": "www.hirschmann-stipendium.ch",
+          "url": "http://www.hirschmann-stipendium.ch"
+        }
+      ],
+      "address": null,
+      "tags": [],
+      "status": null,
+      "notes": "CHF 5'000; CHF 5'000",
+      "id": 7
+    },
+    {
+      "name": "Stanley Thomas Johnson Stiftung",
+      "category": "with_deadline",
+      "deadline": "4.3.2025 (Results until 16.6.26) (Results until 16.6.26)",
+      "links": [
+        {
+          "text": "Submitting an application",
+          "url": "https://www.johnsonstiftung.ch/en/applications/submitting-an-application/"
+        }
+      ],
+      "address": "Schwanengasse 6, 3011, Bern",
+      "tags": [
+        "PO"
+      ],
+      "status": null,
+      "notes": null,
+      "id": 8
+    },
+    {
+      "name": "Stadler-Trier Musik Stiftung",
+      "category": "without_deadline",
+      "deadline": null,
+      "links": [
+        {
+          "text": "The Stadler-Trier > Foundation",
+          "url": "https://www.stadler-foundation.ch/en/the-stadler-trier-foundation/"
+        }
+      ],
+      "address": "c/o Dr. Ueli Lang, Parkstrasse 18 CH-6353, Weggis",
+      "tags": [
+        "PO"
+      ],
+      "status": null,
+      "notes": null,
+      "id": 9
+    },
+    {
+      "name": "Auskult",
+      "category": "via_post",
+      "deadline": null,
+      "links": [
+        {
+          "text": "FAQ",
+          "url": "https://www.auskult.ch/faq"
+        }
+      ],
+      "address": null,
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 10
+    },
+    {
+      "name": "Rita Zimmermann Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [
+        {
+          "text": "Rita Zimmermann Musik-Stiftung - > foundation",
+          "url": "https://www.fundraiso.com/en/organisations/rita-zimmermann-musik-stiftung"
+        }
+      ],
+      "address": "c/o Franco Masina, Rechtsanwalt und Notar, Thunstrasse 24, CH-3005, Bern",
+      "tags": [],
+      "status": "sent",
+      "notes": "Shiraz applied via post and got a scholarship",
+      "id": 11
+    },
+    {
+      "name": "Stiftung Pierre Boulez",
+      "category": "via_post",
+      "deadline": null,
+      "links": [
+        {
+          "text": "Pierre Boulez Foundation - > Fundraiso",
+          "url": "https://www.fundraiso.com/en/organisations/stiftung-pierre-boulez"
+        }
+      ],
+      "address": "Steinentorstr. 23 CH-4051, Basel",
+      "tags": [],
+      "status": null,
+      "notes": "Seems it is mostly for contemporary composition rather than\nperformance?",
+      "id": 12
+    },
+    {
+      "name": "Stiftung Melinda Esterházy de Galantha",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "c/o Mathis Zimmermann, Grossmünsterplatz 8 CH-8001, Zürich",
+      "tags": [],
+      "status": "sent",
+      "notes": null,
+      "id": 13
+    },
+    {
+      "name": "Stiftung für Musik- und Gesangspädagogik",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "c/o Shelter Trust Anstalt, Meierhofstrasse 5, 9490, Vaduz",
+      "tags": [],
+      "status": null,
+      "notes": "In liquidation since 26.09.2025]",
+      "id": 14
+    },
+    {
+      "name": "Auskünfte zu Gilda und Hartmut Kuck Stiftung für Musik und Kultur",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "c/o Nievergelt & Stoehr Advokatur AG, Crappun 8 CH-7503, Samedan",
+      "tags": [],
+      "status": "sent",
+      "notes": null,
+      "id": 15
+    },
+    {
+      "name": "Schär-Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "c/o Lilly Schär-Müller, Unterer Rebbergweg 27, 4153, Reinach BL",
+      "tags": [],
+      "status": "sent",
+      "notes": "Seems to be instrument focused",
+      "id": 16
+    },
+    {
+      "name": "Markus und Mimi Meier-Goldener Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "Hohbühlstrasse 22, 9400, Rorschach",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 17
+    },
+    {
+      "name": "Familie Schwarz Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "Feldblumenstrasse 19a, 8048, Zürich",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 18
+    },
+    {
+      "name": "Cecilia Bartoli - Musikstiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "Hornbachstrasse 50, 8008, Zürich",
+      "tags": [],
+      "status": null,
+      "notes": "More research focused",
+      "id": 19
+    },
+    {
+      "name": "Kierzek Wälti Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [
+        {
+          "text": "Kierzek Wälti Stiftung - > Fundraiso",
+          "url": "https://www.fundraiso.ch/en/organisations/kierzek-walti-stiftung"
+        }
+      ],
+      "address": "Breitenrainstrasse 19, 8280, Kreuzlingen",
+      "tags": [
+        "PO"
+      ],
+      "status": null,
+      "notes": null,
+      "id": 20
+    },
+    {
+      "name": "Elisabeth Jenny-Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "Rüchligweg 101, 4125, Riehen",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 21
+    },
+    {
+      "name": "Ernst und Adeline Schneider Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "c/o Umbricht Rechtsanwälte, Georg C. Umbricht, Bahnhofstrasse 22, 8001, Zürich",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 22
+    },
+    {
+      "name": "Stiftung Werner Amsler",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "c/o Ersparniskasse Schaffhausen AG, Münsterplatz 34, 8200 Schaffhausen",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 23
+    },
+    {
+      "name": "Eppur si muove Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "c/o Dr. Hans Heinrich Coninx, Dreikönigstrasse 26, 8002, Zürich",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 24
+    },
+    {
+      "name": "Alfred und Erica Egli-Salm-Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [
+        {
+          "text": "Alfred und Erica > Egli-Salm-Stiftung",
+          "url": "https://www.fundraiso.ch/en/organisations/alfred-und-erica-egli-salm-stiftung"
+        },
+        {
+          "text": "Egli-Salm-Stiftung | > Fördergesuch",
+          "url": "https://www.egli-salm-stiftung.ch/foerderformular/"
+        }
+      ],
+      "address": "c/o Kirchgemeinde Kirchlindach, Lindachstrasse 14, 3038, Kirchlindach",
+      "tags": [],
+      "status": null,
+      "notes": "Does not seem relevant",
+      "id": 25
+    },
+    {
+      "name": "Kedves-Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [
+        {
+          "text": "Kedves-Stiftung",
+          "url": "https://www.fundraiso.ch/en/organisations/kedves-stiftung"
+        }
+      ],
+      "address": "Guetrain 8, 8274, Tägerwilen",
+      "tags": [
+        "PO"
+      ],
+      "status": null,
+      "notes": null,
+      "id": 26
+    },
+    {
+      "name": "Schüller-Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "[c/o Fondation des Fondateurs Breitingerstrasse 35 CH-8002, Zürich]",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 27
+    },
+    {
+      "name": "TAGC Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [
+        {
+          "text": "TAGC Foundation - > Fundraiso",
+          "url": "https://www.fundraiso.ch/en/organisations/tagc-stiftung"
+        }
+      ],
+      "address": "c/o Proventus Treuhand und Verwaltung AG, Aeulestrasse 30, 9490, Vaduz",
+      "tags": [],
+      "status": null,
+      "notes": "Not relevant?",
+      "id": 28
+    },
+    {
+      "name": "Walter Fischli-Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "c/o Walter Fischli, Obertorweg 64, 4123, Allschwil",
+      "tags": [],
+      "status": null,
+      "notes": "Worked with FHNW already but seems PO",
+      "id": 29
+    },
+    {
+      "name": "Peter Kammer Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [
+        {
+          "text": "Peter Kammer Stiftung - > foundation",
+          "url": "https://www.fundraiso.ch/en/organisations/peter-kammer-stiftung"
+        },
+        {
+          "text": "Willkommen in > Solothurn!",
+          "url": "https://classionata.ch/willkommen-in-solothurn/"
+        }
+      ],
+      "address": "Längackerstrasse 6, 4532, Feldbrunnen",
+      "tags": [
+        "PO"
+      ],
+      "status": null,
+      "notes": null,
+      "id": 30
+    },
+    {
+      "name": "Heskem Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "c/o WYSS & PARTNER AG, Kreuzbühel 7, 9493, Mauren FL",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 31
+    },
+    {
+      "name": "C. und A. Kupper-Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "c/o Dr. Fritz Frey, Nüschelerstrasse 35, 8001, Zürich",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 32
+    },
+    {
+      "name": "Walder-Graf-Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "[Walder-Graf-Stiftung c/o Frau Vreni Walder-Graf Höhenweg 16 CH-8714, Feldbach]",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 33
+    },
+    {
+      "name": "Robert Bider-Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [
+        {
+          "text": "https://www.fundraiso.ch/en/organisations/bider-stiftung",
+          "url": "https://www.fundraiso.ch/en/organisations/bider-stiftung"
+        }
+      ],
+      "address": "c/o Rhino Partners AG, Othmarstrasse 8, 8008, Zürich",
+      "tags": [],
+      "status": null,
+      "notes": "Not relevant",
+      "id": 34
+    },
+    {
+      "name": "Stiftung Cultura",
+      "category": "via_post",
+      "deadline": null,
+      "links": [
+        {
+          "text": "Cultura Foundation - > Fundraiso",
+          "url": "https://www.fundraiso.ch/en/organisations/stiftung-cultura"
+        }
+      ],
+      "address": "c/o Beatrix Hanslin, Alpenblickstrasse 13, 8645, Jona",
+      "tags": [
+        "PO"
+      ],
+      "status": null,
+      "notes": null,
+      "id": 35
+    },
+    {
+      "name": "Athene Stiftung Sent",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "c/o Dr. Martin Lenz, Lenz Caemmerer, Elisabethenstrasse 15, 4051, Basel",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 36
+    },
+    {
+      "name": "Susanne und Martin Knechtli-Kradolfer-Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "Höhenweg 40, 9000, St. Gallen",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 37
+    },
+    {
+      "name": "Ernst und Olga Gubler-Hablützel Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [
+        {
+          "text": "Ernst und Olga Gubler-Hablützel > Stiftung",
+          "url": "https://www.fundraiso.com/en/organisations/ernst-und-olga-gubler-hablutzel-stiftung"
+        },
+        {
+          "text": "Antragstellung - Ernst und Olga Gubler-Hablützel Stiftung",
+          "url": "https://gubler-habluetzel.ch/Antragstellung"
+        }
+      ],
+      "address": "c/o Argo Treuhand AG, Holbeinstrasse 34, 8008, Zürich",
+      "tags": [
+        "PO"
+      ],
+      "status": null,
+      "notes": null,
+      "id": 38
+    },
+    {
+      "name": "BJÖRNSON AND PRODAN FOUNDATION",
+      "category": "via_post",
+      "deadline": null,
+      "links": [
+        {
+          "text": "BJÖRNSON AND PRODAN FOUNDATION - > Fundraiso",
+          "url": "https://www.fundraiso.com/en/organisations/bjornson-and-prodan-foundation"
+        }
+      ],
+      "address": "c/o Codex Treuhand Aktiengesellschaft, Lova-Center, 9490, Vaduz",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 39
+    },
+    {
+      "name": "Stiftung Subana",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "Rigacher 21, 5420, Ehrendingen",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 40
+    },
+    {
+      "name": "Françoise Rhyner - Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "c/o Eduran AG, Hauptgasse 7/9, 9620, Lichtensteig",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 41
+    },
+    {
+      "name": "Fondation USM",
+      "category": "via_post",
+      "deadline": null,
+      "links": [
+        {
+          "text": "Fondation USM - > foundation",
+          "url": "https://www.fundraiso.com/en/organisations/fondation-usm"
+        },
+        {
+          "text": "https://fondationusm.org/",
+          "url": "https://fondationusm.org/"
+        }
+      ],
+      "address": "Tannackerstrasse 7a, 3073, Gümligen",
+      "tags": [
+        "PO"
+      ],
+      "status": null,
+      "notes": null,
+      "id": 42
+    },
+    {
+      "name": "Birgit Holzherr - Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "Spycherhalde 4, 6005, St. Niklausen LU",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 43
+    },
+    {
+      "name": "St. Galler Kantonalbank Kulturstiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "Stauffacherstrasse 41, CH-8004, Zürich",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 44
+    },
+    {
+      "name": "Fondation Hermann Suter",
+      "category": "via_post",
+      "deadline": null,
+      "links": [
+        {
+          "text": "Fondation Hermann Suter - > foundation",
+          "url": "https://www.fundraiso.com/en/organisations/fondation-hermann-suter"
+        },
+        {
+          "text": "Über uns -- SONART -- Musikschaffende > Schweiz",
+          "url": "https://www.sonart.swiss/de/verband/sonart/"
+        }
+      ],
+      "address": "c/o SONART - Association suisse de musique, Avenue du Grammont 11 bis, CH-1007, Lausanne",
+      "tags": [],
+      "status": null,
+      "notes": "PO - Discs",
+      "id": 45
+    },
+    {
+      "name": "CALEO Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "c/o Carmen Elvira Ellinger, Badenerstrasse 11, CH-5454, Bellikon",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 46
+    },
+    {
+      "name": "Haiku Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "c/o Thomas Villiger, Schlossbergstrasse 3, 4132, Muttenz",
+      "tags": [],
+      "status": "sent",
+      "notes": null,
+      "id": 47
+    },
+    {
+      "name": "Ernst von Siemens Musikstiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "Chollerstrasse 4, 6300 Zug",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 48
+    },
+    {
+      "name": "Stiftung Pirolo",
+      "category": "via_post",
+      "deadline": null,
+      "links": [
+        {
+          "text": "Pirolo Foundation - > Fundraiso",
+          "url": "https://www.fundraiso.com/en/organisations/stiftung-pirolo"
+        },
+        {
+          "text": "https://pirolo.ch/kontakt/",
+          "url": "https://pirolo.ch/kontakt/"
+        }
+      ],
+      "address": "c/o Georg Fankhauser, Edisonstr. 5, CH-4053, Basel",
+      "tags": [
+        "IO"
+      ],
+      "status": null,
+      "notes": null,
+      "id": 49
+    },
+    {
+      "name": "Stiftung Walter Ruch",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "c/o Walter Ruch, Emmenstrasse 22, CH-3415, Hasle b. Burgdorf",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 50
+    },
+    {
+      "name": "Dätwyler Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [
+        {
+          "text": "Datwyler Foundation - Dätwyler > Stiftung",
+          "url": "https://www.fundraiso.com/en/organisations/datwyler-stiftung"
+        },
+        {
+          "text": "Förderung - Ihr > Gesuch",
+          "url": "https://www.daetwyler-stiftung.ch/foerderung/ihr-gesuch/"
+        }
+      ],
+      "address": "Bahnhofstrasse 27, CH-6460, Altdorf UR",
+      "tags": [
+        "PO"
+      ],
+      "status": null,
+      "notes": null,
+      "id": 51
+    },
+    {
+      "name": "Nia Schmidheiny Foundation",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "Hurdnerstrasse 4, CH-8640, Hurden",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 52
+    },
+    {
+      "name": "Geert und Lore Blanken-Schlemper-Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "Industriestrasse 12, CH-6210, Sursee",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 53
+    },
+    {
+      "name": "Felix und Béatrice Krauer-Mayer-Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "c/o KAUFMANN, WUNDERLIN & PARTNER AG, Falknerstr. 35, CH-4001, Basel",
+      "tags": [],
+      "status": "sent",
+      "notes": null,
+      "id": 54
+    },
+    {
+      "name": "Tharice Foundation",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "c/o burckhardt AG, Steinentorstr. 23, CH-4051,, Basel",
+      "tags": [
+        "PO"
+      ],
+      "status": null,
+      "notes": null,
+      "id": 55
+    },
+    {
+      "name": "c/Young People Foundation",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "Gümligenweg 29A, CH-3112, Allmendingen b. Bern",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 56
+    },
+    {
+      "name": "Walter B. Kielholz Foundation",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "Pilatusstrasse 18, CH-8032, Zürich",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 57
+    },
+    {
+      "name": "Pierino Ambrosoli Foundation",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "Kasinostrasse 11, CH-8032, Zürich",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 58
+    },
+    {
+      "name": "Kosmos-Kultur-Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "Zugerstrasse 76A, CH-6340, Baar",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 59
+    },
+    {
+      "name": "Stiftung Thiébaud-Frey",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "Stockackerweg 61, CH-2564, Bellmund",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 60
+    },
+    {
+      "name": "Dreyfus-Brodsky Stipendien-Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "Aeschenvorstadt 16, CH-4051, Basel",
+      "tags": [
+        "JF"
+      ],
+      "status": "sent",
+      "notes": null,
+      "id": 61
+    },
+    {
+      "name": "Erna und Curt Burgauer Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "Winkelwiese 4, CH-8024, Zürich",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "phone": "+41 44 253 84 02",
+      "id": 62
+    },
+    {
+      "name": "Stiftung Neue Horizonte",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "c/o Peter Keller, Lättenstrasse 69, CH-8142, Uitikon Waldegg",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 63
+    },
+    {
+      "name": "Karolina Blaberg Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "c/o Sequent (Schweiz) AG, Bellerivestrasse 203, CH-8008, Zürich",
+      "tags": [],
+      "status": null,
+      "notes": "Schweiz",
+      "id": 64
+    },
+    {
+      "name": "Hans Lüscher Stiftung",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "c/o HUBER Rechtsanwälte, Churerstrasse 24, CH-8808, Pfäffikon SZ",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 65
+    },
+    {
+      "name": "Posen Stiftung (Posen Foundation, Fondation Posen)",
+      "category": "via_post",
+      "deadline": null,
+      "links": [],
+      "address": "Postfach 1548, 8027, Zürich",
+      "tags": [],
+      "status": null,
+      "notes": null,
+      "id": 66
+    }
+  ]
+}

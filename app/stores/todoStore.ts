@@ -1,4 +1,4 @@
-import { db, Task, EisenhowerQuadrant, type BusinessTask } from '@/app/db/financeDB'
+import { db, Task, EisenhowerQuadrant, type BusinessTask, type TaskType, type LeadTaskExt } from '@/app/db/financeDB'
 import { transactionStore } from './transactionStore'
 import { getUser } from './authStore'
 import { appSettingsStore, AccountOwners } from './appSettingsStore'
@@ -23,6 +23,10 @@ export type UserTask = {
   agentTaskId?: string
   agentStatus?: AgentTaskStatus
   agentResult?: string
+  taskType?: TaskType
+  subject?: string
+  tags?: string[]
+  ext?: Task['ext']
   createdAt: string
 }
 
@@ -97,6 +101,10 @@ export const todoStore = {
       agentTaskId: t.agentTaskId,
       agentStatus: t.agentStatus,
       agentResult: t.agentResult,
+      taskType: t.taskType,
+      subject: t.subject,
+      tags: t.tags,
+      ext: t.ext,
       createdAt: t.createdAt,
     }))
   },
@@ -220,6 +228,60 @@ export const todoStore = {
     if (result !== undefined) updates.agentResult = result
     if (status === 'done') updates.completed = true
     await db.tasks.update(id, updates)
+  },
+
+  async importLeads(
+    leads: { name: string; deadline?: string; links?: { text: string; url: string }[]; address?: string; tags?: string[]; status?: string; notes?: string; phone?: string; priority?: 'low' | 'medium' | 'high' }[],
+    quadrant: EisenhowerQuadrant = 'schedule',
+    subject?: string,
+    taskTags?: string[],
+  ): Promise<number> {
+    const now = new Date().toISOString()
+    const tasks: Omit<Task, 'id'>[] = leads.map(lead => ({
+      title: lead.name,
+      completed: false,
+      priority: lead.priority || 'medium' as const,
+      quadrant,
+      taskType: 'lead' as const,
+      subject,
+      tags: taskTags,
+      ext: {
+        kind: 'lead' as const,
+        links: lead.links || [],
+        address: lead.address,
+        leadTags: lead.tags,
+        applicationStatus: lead.status === 'sent' ? 'sent' as const : 'new' as const,
+        phone: lead.phone,
+        notes: lead.deadline ? `Deadline: ${lead.deadline}${lead.notes ? '; ' + lead.notes : ''}` : lead.notes,
+      } satisfies LeadTaskExt,
+      createdAt: now,
+    }))
+    await db.tasks.bulkAdd(tasks)
+    return tasks.length
+  },
+
+  async importTaskList(
+    lines: string[],
+    quadrant: EisenhowerQuadrant = 'do',
+    subject?: string,
+    taskTags?: string[],
+  ): Promise<number> {
+    const now = new Date().toISOString()
+    const tasks: Omit<Task, 'id'>[] = lines
+      .map(l => l.trim())
+      .filter(l => l.length > 0)
+      .map(title => ({
+        title,
+        completed: false,
+        priority: 'medium' as const,
+        quadrant,
+        taskType: 'personal' as const,
+        subject,
+        tags: taskTags,
+        createdAt: now,
+      }))
+    await db.tasks.bulkAdd(tasks)
+    return tasks.length
   },
 
   async getAutoTasks(): Promise<AutoTask[]> {

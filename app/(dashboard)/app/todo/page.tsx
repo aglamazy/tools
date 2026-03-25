@@ -8,6 +8,8 @@ import { getHouseholdInfo } from '@/app/services/householdService'
 import { listBots, createAgentTask, subscribeToAgentTasks, type BotSummary } from '@/app/services/botService'
 import TaskCard, { type CombinedTask } from '@/app/components/todo/TaskCard'
 import DelegatePickerModal, { type DelegateTarget } from '@/app/components/todo/DelegatePickerModal'
+import ImportTasksModal from '@/app/components/todo/ImportTasksModal'
+import TaskDetailModal from '@/app/components/todo/TaskDetailModal'
 
 type Priority = 'low' | 'medium' | 'high'
 
@@ -52,6 +54,9 @@ export default function TodoPage() {
   // Bot delegation state
   const [bots, setBots] = useState<BotSummary[]>([])
   const [delegatePickerTask, setDelegatePickerTask] = useState<CombinedTask | null>(null)
+  const [showImportModal, setShowImportModal] = useState(false)
+  const [detailTask, setDetailTask] = useState<CombinedTask | null>(null)
+  const [subjectFilter, setSubjectFilter] = useState<string>('')
 
   // Close snooze menu on outside click
   useEffect(() => {
@@ -372,7 +377,7 @@ export default function TodoPage() {
   // Combine and group tasks by quadrant
   const getAllCombinedTasks = (includeSnoozed = false): CombinedTask[] => {
     const combined: CombinedTask[] = [
-      ...userTasks.map(t => ({ ...t, id: t.id, taskType: 'user' as const })),
+      ...userTasks.map(t => ({ ...t, id: t.id, taskType: 'user' as const, dataType: t.taskType, subject: t.subject, tags: t.tags, ext: t.ext })),
       ...autoTasks.map(t => ({
         id: t.id, title: t.title, completed: false, priority: t.priority,
         quadrant: t.quadrant, deadline: t.deadline, createdAt: t.createdAt,
@@ -386,10 +391,15 @@ export default function TodoPage() {
     if (!includeSnoozed) {
       filtered = filtered.filter(t => !isTaskSnoozed(t))
     }
+    if (subjectFilter) {
+      filtered = filtered.filter(t => t.subject === subjectFilter || t.taskType === 'auto')
+    }
     return filtered
   }
 
   const snoozedCount = getAllCombinedTasks(true).filter(t => isTaskSnoozed(t)).length
+
+  const subjects = [...new Set(userTasks.map(t => t.subject).filter((s): s is string => !!s))]
 
   const getTasksForQuadrant = (quadrant: EisenhowerQuadrant): CombinedTask[] => {
     return getAllCombinedTasks(showSnoozed)
@@ -443,6 +453,16 @@ export default function TodoPage() {
             <button onClick={handleAddUserTask} className="file-picker" style={{ margin: 0 }}>
               הוסף
             </button>
+            <button
+              onClick={() => setShowImportModal(true)}
+              style={{
+                margin: 0, padding: '0.75rem 1rem', borderRadius: '0.375rem',
+                border: '1px solid #d1d5db', background: 'white', cursor: 'pointer',
+                fontSize: '0.875rem', color: '#374151',
+              }}
+            >
+              ייבוא
+            </button>
           </div>
         </section>
 
@@ -475,6 +495,21 @@ export default function TodoPage() {
             <span style={{ fontSize: '0.8rem', color: '#1e40af', background: '#eff6ff', padding: '0.25rem 0.5rem', borderRadius: '0.25rem' }}>
               🤖 {bots.length} בוטים
             </span>
+          )}
+          {subjects.length > 0 && (
+            <select
+              value={subjectFilter}
+              onChange={(e) => setSubjectFilter(e.target.value)}
+              style={{
+                padding: '0.25rem 0.5rem', borderRadius: '0.25rem', fontSize: '0.8rem',
+                border: `1px solid ${subjectFilter ? '#a78bfa' : '#e5e7eb'}`,
+                background: subjectFilter ? '#ede9fe' : '#f9fafb',
+                color: subjectFilter ? '#7c3aed' : '#6b7280', cursor: 'pointer',
+              }}
+            >
+              <option value="">כל הנושאים</option>
+              {subjects.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
           )}
         </section>
 
@@ -576,6 +611,7 @@ export default function TodoPage() {
                               onUnsnooze={unsnoozeTask}
                               onDelegate={(t) => setDelegatePickerTask(t)}
                               onUndelegate={undelegateTask}
+                              onTaskClick={setDetailTask}
                             />
                           </div>
                         )
@@ -605,6 +641,19 @@ export default function TodoPage() {
           onClose={() => setDelegatePickerTask(null)}
         />
       )}
+
+      {/* Task detail modal */}
+      <TaskDetailModal task={detailTask} onClose={() => setDetailTask(null)} />
+
+      {/* Import tasks modal */}
+      <ImportTasksModal
+        isOpen={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        onImported={(count) => {
+          showToast('success', `יובאו ${count} משימות`, '📥')
+          loadTasks()
+        }}
+      />
     </main>
   )
 }

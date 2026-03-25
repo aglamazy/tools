@@ -2,6 +2,7 @@
 
 import type { AutoTask } from '@/app/stores/todoStore'
 import type { AgentTaskStatus } from '@/app/types/bot'
+import type { TaskType, TaskExtensions } from '@/app/db/financeDB'
 import AgentStatusBadge from './AgentStatusBadge'
 
 type Priority = 'low' | 'medium' | 'high'
@@ -27,6 +28,10 @@ export type CombinedTask = {
   agentResult?: string
   createdAt: string
   taskType: 'user' | 'auto'
+  dataType?: TaskType
+  subject?: string
+  tags?: string[]
+  ext?: TaskExtensions
   autoType?: AutoTask['type']
   link?: string
   month?: string
@@ -57,6 +62,7 @@ type Props = {
   onUnsnooze: (task: CombinedTask) => void
   onDelegate: (task: CombinedTask) => void
   onUndelegate: (taskId: number) => void
+  onTaskClick?: (task: CombinedTask) => void
 }
 
 const getAutoTaskIcon = (type: AutoTask['type']): string => {
@@ -124,6 +130,7 @@ export default function TaskCard({
   onUnsnooze,
   onDelegate,
   onUndelegate,
+  onTaskClick,
 }: Props) {
   const priorityInfo = getPriorityIndicator(task.priority)
 
@@ -183,7 +190,10 @@ export default function TaskCard({
       />
 
       {/* Task content */}
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div
+        style={{ flex: 1, minWidth: 0, cursor: onTaskClick ? 'pointer' : undefined }}
+        onClick={() => onTaskClick?.(task)}
+      >
         <div style={{
           textDecoration: task.completed ? 'line-through' : 'none',
           color: task.completed ? '#9ca3af' : '#1f2937',
@@ -192,17 +202,26 @@ export default function TaskCard({
           whiteSpace: 'nowrap',
         }}>
           {task.taskType === 'auto' && <span style={{ marginLeft: '0.25rem' }}>{getAutoTaskIcon(task.autoType!)}</span>}
+          {task.dataType === 'lead' && <span style={{ marginLeft: '0.25rem' }}>🔗</span>}
           {task.taskType === 'auto' && task.link ? (
             <a href={task.link} style={{ color: '#3b82f6', textDecoration: 'underline' }}>{task.title}</a>
           ) : task.title}
         </div>
 
-        {/* Deadline + delegation + agent status info */}
+        {/* Deadline + delegation + lead info + agent status */}
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.125rem', flexWrap: 'wrap' }}>
           {task.deadline && (
             <span style={{ fontSize: '0.7rem', color: getDeadlineColor(task.deadline) }}>
               {formatDeadline(task.deadline)}
             </span>
+          )}
+          {task.ext?.kind === 'lead' && task.ext.applicationStatus && task.ext.applicationStatus !== 'new' && (
+            <span style={{ fontSize: '0.7rem', color: '#059669', fontWeight: 500 }}>
+              {task.ext.applicationStatus === 'sent' ? '✓ נשלח' : task.ext.applicationStatus}
+            </span>
+          )}
+          {task.ext?.kind === 'lead' && task.ext.links.length > 0 && (
+            <span style={{ fontSize: '0.7rem', color: '#6b7280' }}>🔗 {task.ext.links.length}</span>
           )}
           {isSnoozed && (
             <span style={{ fontSize: '0.7rem', color: '#7c3aed', fontWeight: 500 }}>
