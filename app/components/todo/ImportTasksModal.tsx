@@ -5,6 +5,7 @@ import Modal from '@/app/components/Modal'
 import { todoStore, type EisenhowerQuadrant } from '@/app/stores/todoStore'
 import { parseDocxToLeads, type LeadEntry } from '@/app/services/scholarshipParserService'
 import { getLLMClient } from '@/app/services/llm'
+import { appSettingsStore } from '@/app/stores/appSettingsStore'
 
 type ImportType = 'task-list' | 'leads'
 type Relevance = 'relevant' | 'unknown' | 'rejected'
@@ -38,7 +39,7 @@ export default function ImportTasksModal({ isOpen, onClose, onImported }: Props)
   const [error, setError] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
   const [subject, setSubject] = useState('')
-  const [filterQuery, setFilterQuery] = useState('')
+  const [filterQuery, setFilterQuery] = useState(() => appSettingsStore.getLocal('import-ai-filter'))
   const [filtering, setFiltering] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
 
@@ -261,7 +262,7 @@ Return a JSON array of exactly ${descriptions.length} objects. No extra text.`,
               <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
                 <input
                   value={filterQuery}
-                  onChange={(e) => setFilterQuery(e.target.value)}
+                  onChange={(e) => { setFilterQuery(e.target.value); appSettingsStore.setLocal('import-ai-filter', e.target.value) }}
                   onKeyDown={(e) => e.key === 'Enter' && handleAIFilter()}
                   placeholder="מה אתה מחפש? (לסינון AI)"
                   style={{ flex: 1, padding: '0.5rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', fontSize: '0.875rem' }}

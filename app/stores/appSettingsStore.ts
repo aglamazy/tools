@@ -297,4 +297,12 @@ export const appSettingsStore = {
       console.error('Error initializing app settings:', error)
     }
   },
+
+  // --- localStorage helpers (for ephemeral UI state) ---
+  getLocal: (key: string, fallback = ''): string => {
+    try { return localStorage.getItem(key) || fallback } catch { return fallback }
+  },
+  setLocal: (key: string, value: string): void => {
+    try { localStorage.setItem(key, value) } catch { /* silent */ }
+  },
 }
