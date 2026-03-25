@@ -165,8 +165,8 @@ export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose
               return (
                 <li key={`business-${business.id}`}>
                   <Link
-                    href={`/business/${business.id}`}
-                    className={`mod-menu-item ${pathname === `/business/${business.id}` ? 'active' : ''}`}
+                    href={`/app/business/${business.id}`}
+                    className={`mod-menu-item ${pathname === `/app/business/${business.id}` ? 'active' : ''}`}
                     onClick={onClose}
                   >
                     <span className="mod-menu-icon">{BUSINESS_TYPE_CONFIG[business.type].icon}</span>

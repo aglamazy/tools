@@ -45,7 +45,7 @@ export function getActiveSection(pathname: string): SectionId | null {
   // Business
   if (
     pathname.startsWith('/app/taxes') ||
-    pathname.startsWith('/business/')
+    pathname.startsWith('/app/business/')
   ) return 'business'
 
   // Tools

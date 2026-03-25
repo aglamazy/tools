@@ -30,7 +30,7 @@ export const routes = {
   extension: '/extension',
   contact: '/contact',
   invite: '/invite',
-  business: (id: number | string) => `/business/${id}`,
+  business: (id: number | string) => `/app/business/${id}`,
 } as const
 
 export const config = {

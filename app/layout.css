@@ -3,7 +3,7 @@
   display: flex;
   flex-direction: column;
   min-height: calc(100vh - 56px);
-  padding-bottom: 64px; /* space for bottom tab bar */
+  padding-bottom: 0;
 }
 
 .main-content {
@@ -48,6 +48,9 @@ main.app {
 }
 
 .page-header-title {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
   align-items: center;
   gap: 0.4rem;
@@ -58,6 +61,7 @@ main.app {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  position: relative;
 }
 
 /* Page header nav (public mode) */
@@ -78,6 +82,169 @@ main.app {
 .page-header-nav-link:hover,
 .page-header-nav-link.active {
   color: #4338ca;
+}
+
+/* ─── App Launcher (Waffle Grid) ─── */
+.app-launcher-wrapper {
+  position: relative;
+}
+
+.app-launcher-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: none;
+  background: none;
+  border-radius: 50%;
+  cursor: pointer;
+  color: #64748b;
+  transition: background 0.15s;
+}
+
+.app-launcher-btn:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.app-launcher-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 340px;
+  max-height: 80vh;
+  background: #fff;
+  border-radius: 1rem;
+  box-shadow: 0 4px 32px rgba(0,0,0,0.18);
+  overflow-y: auto;
+  z-index: 1000;
+  padding: 1rem 0.5rem;
+}
+
+.app-launcher-section {
+  padding: 0 0.5rem;
+}
+
+.app-launcher-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.25rem 0.25rem 0.5rem;
+}
+
+.app-launcher-section-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.app-launcher-edit-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: #f1f5f9;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.app-launcher-edit-btn:hover {
+  background: #e2e8f0;
+}
+
+.app-launcher-divider {
+  height: 1px;
+  background: #e2e8f0;
+  margin: 0.75rem 0.5rem;
+}
+
+.app-launcher-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.25rem;
+}
+
+.app-launcher-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.75rem 0.5rem;
+  border-radius: 0.75rem;
+  text-decoration: none;
+  color: #334155;
+  border: none;
+  background: none;
+  cursor: pointer;
+  transition: background 0.12s;
+  position: relative;
+}
+
+.app-launcher-tile:hover {
+  background: #f1f5f9;
+}
+
+.app-launcher-tile-icon {
+  font-size: 1.75rem;
+  line-height: 1;
+}
+
+.app-launcher-tile-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-align: center;
+  line-height: 1.2;
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-launcher-tile-locked {
+  opacity: 0.5;
+}
+
+.app-launcher-tile-edit {
+  outline: 2px dashed transparent;
+}
+
+.app-launcher-tile-fav {
+  outline-color: #4338ca;
+  background: #eef2ff;
+}
+
+.app-launcher-tile-badge {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #4338ca;
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+@media (max-width: 768px) {
+  .app-launcher-panel {
+    position: fixed;
+    top: auto;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+    max-height: 75vh;
+    border-radius: 1rem 1rem 0 0;
+  }
 }
 
 /* ─── Bottom Tab Bar ─── */
@@ -570,7 +737,7 @@ body.extension-auth-popup .app-layout {
   }
 
   .app-layout {
-    padding-bottom: calc(64px + env(safe-area-inset-bottom, 0));
+    padding-bottom: 0;
   }
 
   .tool-page {

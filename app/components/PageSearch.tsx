@@ -55,7 +55,7 @@ export default function PageSearch() {
       setBusinessPages(businesses.map(b => ({
         title: b.name,
         keywords: [b.name],
-        href: `/business/${b.id}`,
+        href: `/app/business/${b.id}`,
         icon: '🏢',
         requiredTier: UserTier.PRO,
       })))
