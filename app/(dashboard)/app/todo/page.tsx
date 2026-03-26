@@ -10,6 +10,9 @@ import TaskCard, { type CombinedTask } from '@/app/components/todo/TaskCard'
 import DelegatePickerModal, { type DelegateTarget } from '@/app/components/todo/DelegatePickerModal'
 import ImportTasksModal from '@/app/components/todo/ImportTasksModal'
 import TaskDetailModal from '@/app/components/todo/TaskDetailModal'
+import SubjectEditorModal from '@/app/components/todo/SubjectEditorModal'
+import YesNoModal from '@/app/components/YesNoModal'
+import { taskSubjectStore } from '@/app/stores/taskSubjectStore'
 
 type Priority = 'low' | 'medium' | 'high'
 
@@ -57,6 +60,8 @@ export default function TodoPage() {
   const [showImportModal, setShowImportModal] = useState(false)
   const [detailTask, setDetailTask] = useState<CombinedTask | null>(null)
   const [subjectFilter, setSubjectFilter] = useState<string>('')
+  const [editingSubject, setEditingSubject] = useState<string | null>(null)
+  const [deleteSubjectConfirm, setDeleteSubjectConfirm] = useState<string | null>(null)
 
   // Close snooze menu on outside click
   useEffect(() => {
@@ -497,19 +502,39 @@ export default function TodoPage() {
             </span>
           )}
           {subjects.length > 0 && (
-            <select
-              value={subjectFilter}
-              onChange={(e) => setSubjectFilter(e.target.value)}
-              style={{
-                padding: '0.25rem 0.5rem', borderRadius: '0.25rem', fontSize: '0.8rem',
-                border: `1px solid ${subjectFilter ? '#a78bfa' : '#e5e7eb'}`,
-                background: subjectFilter ? '#ede9fe' : '#f9fafb',
-                color: subjectFilter ? '#7c3aed' : '#6b7280', cursor: 'pointer',
-              }}
-            >
-              <option value="">כל הנושאים</option>
-              {subjects.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
+            <div style={{ display: 'flex', gap: '0.375rem', alignItems: 'center' }}>
+              <select
+                value={subjectFilter}
+                onChange={(e) => setSubjectFilter(e.target.value)}
+                style={{
+                  padding: '0.25rem 0.5rem', borderRadius: '0.25rem', fontSize: '0.8rem',
+                  border: `1px solid ${subjectFilter ? '#a78bfa' : '#e5e7eb'}`,
+                  background: subjectFilter ? '#ede9fe' : '#f9fafb',
+                  color: subjectFilter ? '#7c3aed' : '#6b7280', cursor: 'pointer',
+                }}
+              >
+                <option value="">כל הנושאים</option>
+                {subjects.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+              {subjectFilter && (
+                <>
+                  <button
+                    onClick={() => setEditingSubject(subjectFilter)}
+                    title="ערוך נושא"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', padding: '0.125rem' }}
+                  >
+                    ✏️
+                  </button>
+                  <button
+                    onClick={() => setDeleteSubjectConfirm(subjectFilter)}
+                    title="מחק נושא ומשימות"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', padding: '0.125rem' }}
+                  >
+                    🗑️
+                  </button>
+                </>
+              )}
+            </div>
           )}
         </section>
 
@@ -652,6 +677,34 @@ export default function TodoPage() {
         onImported={(count) => {
           showToast('success', `יובאו ${count} משימות`, '📥')
           loadTasks()
+        }}
+      />
+
+      {/* Subject editor modal */}
+      <SubjectEditorModal
+        subjectName={editingSubject}
+        onClose={() => setEditingSubject(null)}
+        onSaved={() => {}}
+      />
+
+      {/* Delete subject confirmation */}
+      <YesNoModal
+        isOpen={!!deleteSubjectConfirm}
+        question={`למחוק את הנושא "${deleteSubjectConfirm}" ו-${userTasks.filter(t => t.subject === deleteSubjectConfirm).length} המשימות שלו?`}
+        yesText="מחק"
+        noText="ביטול"
+        onNo={() => setDeleteSubjectConfirm(null)}
+        onYes={async () => {
+          const name = deleteSubjectConfirm!
+          const tasksToDelete = userTasks.filter(t => t.subject === name)
+          for (const t of tasksToDelete) {
+            await todoStore.deleteTask(t.id)
+          }
+          await taskSubjectStore.delete(name)
+          setDeleteSubjectConfirm(null)
+          setSubjectFilter('')
+          loadTasks()
+          showToast('success', `נמחקו ${tasksToDelete.length} משימות`, '🗑️')
         }}
       />
     </main>
