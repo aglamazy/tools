@@ -12,6 +12,8 @@ import {
   migrateToHouseholdStorage,
   type CloudBackupInfo,
 } from '@/app/services/cloudBackupService'
+import { exportAllStores } from '@/app/services/backupService'
+import { SYNCED_DB_TABLES } from '@/app/services/syncedTables'
 import { signOut } from '@/app/services/firebaseAuthService'
 import { getSyncPassword, setSyncPassword } from '../../CloudSyncManager'
 import AuthModal from '../../AuthModal'
@@ -142,7 +144,14 @@ export default function CloudSyncSection() {
         setSyncPassword(password) // Store in session for auto-sync
         setHasSessionPassword(true)
         setHasEncryption(true)
-        setMessage('הסנכרון הושלם בהצלחה! סנכרון אוטומטי מופעל.')
+        // Show record counts
+        const backup = await exportAllStores()
+        const counts = SYNCED_DB_TABLES
+          .map(name => ({ name, count: ((backup.stores as any)[name] || []).length }))
+          .filter(t => t.count > 0)
+          .map(t => `${t.name}: ${t.count}`)
+          .join(', ')
+        setMessage(`סנכרון הושלם! סנכרון אוטומטי מופעל.\n${counts}`)
         loadBackupInfo()
       } else {
         setMessage(result.error || 'שגיאה בסנכרון')
@@ -437,7 +446,9 @@ export default function CloudSyncSection() {
                 fontSize: '0.9rem',
               }}
             >
-              {message}
+              {message.split('\n').map((line, i) => (
+              <div key={i} style={i > 0 ? { fontSize: '0.8rem', marginTop: '0.375rem', color: '#475569', direction: 'ltr', textAlign: 'left' } : undefined}>{line}</div>
+            ))}
             </div>
           )}
 

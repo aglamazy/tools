@@ -19,8 +19,7 @@ import { getFirebaseAuth } from '@/app/lib/firebase'
 import { getCurrentUser } from './firebaseAuthService'
 import { encrypt, decrypt, generateVerificationToken, verifyPasswordWithToken } from './encryptionService'
 import { exportAllStores, importAllStores, isLocalDataEmpty, type BackupData } from './backupService'
-import { mergeBackups } from './mergeService'
-import { applyMergedBackup } from './applyMergedBackupService'
+import { applyCloudBackup } from './applyMergedBackupService'
 
 const BACKUP_FILE_NAME = 'backup.enc'
 const VERIFICATION_FILE_NAME = 'verify.enc'
@@ -315,7 +314,7 @@ export async function restoreFromCloud(password: string): Promise<CloudBackupRes
   }
 
   try {
-    await importAllStores(result.data)
+    await applyCloudBackup(result.data)
     return { success: true }
   } catch (err: any) {
     console.error('[CloudBackup] Restore failed:', err)
@@ -476,32 +475,23 @@ export async function syncMerge(password: string): Promise<CloudBackupResult> {
   const MAX_RETRIES = 3
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      // 1. Export local
-      const localBackup = await exportAllStores()
-
-      // 2. Download cloud (with generation)
+      // 1. Download cloud (with generation)
       const cloudResult = await downloadBackupWithGeneration(password)
-      let merged: BackupData
       let generation: string | undefined
 
       if (cloudResult.success && cloudResult.data) {
-        // 3. Merge
+        // 2. Apply cloud records to local DB (incremental — no clearing)
         generation = cloudResult.generation
-        merged = mergeBackups(localBackup, cloudResult.data)
+        await applyCloudBackup(cloudResult.data)
       } else if (cloudResult.errorCode === 'no-backup') {
-        // No cloud backup yet — local is the merged result
-        merged = localBackup
+        // No cloud backup yet — just upload local
       } else {
         return { success: false, error: cloudResult.error || 'שגיאה בהורדת הגיבוי', errorCode: 'unknown' }
       }
 
-      // 4. Apply merged backup to local DB
-      await applyMergedBackup(merged)
-
-      // 5. Re-export (now has correct local IDs)
+      // 3. Export local (now includes cloud records) and upload
       const finalBackup = await exportAllStores()
 
-      // 6. Upload with generation check
       const uploadResult = await uploadBackupWithGeneration(finalBackup, password, generation)
       if (!uploadResult.success) {
         if ((uploadResult.errorCode as string) === 'generation-mismatch') {

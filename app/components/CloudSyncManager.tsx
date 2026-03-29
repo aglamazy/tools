@@ -107,8 +107,13 @@ export default function CloudSyncManager() {
       if (backupInfo.exists && localEmpty) {
         const result = await restoreFromCloud(password)
         if (result.success) {
-          window.location.reload()
-          return
+          // Check if data was actually imported before reloading
+          const stillEmpty = await isLocalDataEmpty()
+          if (!stillEmpty) {
+            window.location.reload()
+            return
+          }
+          console.warn('[CloudSync] Restore succeeded but local still empty — skipping reload to avoid loop')
         }
       }
 

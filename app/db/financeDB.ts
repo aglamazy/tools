@@ -318,6 +318,27 @@ class FinanceDB extends Dexie {
     ])
 
     // Auto-inject syncId/updatedAt on create/update, and record deletions
+    // Serialized queue for deletion ledger updates to avoid read-modify-write races
+    let deletionQueue: { tableName: string; syncId: string }[] = []
+    let deletionFlushScheduled = false
+    const flushDeletionQueue = () => {
+      deletionFlushScheduled = false
+      const batch = deletionQueue.splice(0)
+      if (batch.length === 0) return
+      this.appSettings.where('key').equals('deletedRecords').first().then(setting => {
+        const ledger: Record<string, string[]> = setting?.value as Record<string, string[]> || {}
+        for (const { tableName, syncId } of batch) {
+          if (!ledger[tableName]) ledger[tableName] = []
+          if (!ledger[tableName].includes(syncId)) ledger[tableName].push(syncId)
+        }
+        if (setting) {
+          this.appSettings.update(setting.id!, { value: ledger, updatedAt: new Date().toISOString() })
+        } else {
+          this.appSettings.add({ key: 'deletedRecords', value: ledger, updatedAt: new Date().toISOString() })
+        }
+      }).catch(err => console.error('[DB] deletion ledger error:', err))
+    }
+
     this.on('ready', () => {
       this.tables.forEach(table => {
         table.hook('creating', (_primKey, obj) => {
@@ -331,23 +352,11 @@ class FinanceDB extends Dexie {
         if (syncedTables.has(table.name) && table.name !== 'appSettings') {
           table.hook('deleting', (_primKey, obj) => {
             if (!obj?.syncId) return
-            const tableName = table.name
-            const syncId = obj.syncId as string
-            // Queue ledger update after transaction completes (can't nest transactions)
-            setTimeout(() => {
-              this.appSettings.where('key').equals('deletedRecords').first().then(setting => {
-                const ledger: Record<string, string[]> = setting?.value as Record<string, string[]> || {}
-                if (!ledger[tableName]) ledger[tableName] = []
-                if (!ledger[tableName].includes(syncId)) {
-                  ledger[tableName].push(syncId)
-                  if (setting) {
-                    this.appSettings.update(setting.id!, { value: ledger, updatedAt: new Date().toISOString() })
-                  } else {
-                    this.appSettings.add({ key: 'deletedRecords', value: ledger, updatedAt: new Date().toISOString() })
-                  }
-                }
-              }).catch(err => console.error('[DB] deletion ledger error:', err))
-            }, 0)
+            deletionQueue.push({ tableName: table.name, syncId: obj.syncId as string })
+            if (!deletionFlushScheduled) {
+              deletionFlushScheduled = true
+              setTimeout(flushDeletionQueue, 0)
+            }
           })
         }
       })

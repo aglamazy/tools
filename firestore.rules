@@ -8,6 +8,13 @@ service cloud.firestore {
       allow read: if request.auth != null && request.auth.uid == uid;
       // No client writes - tier and household managed server-side only
       allow write: if false;
+
+      // Agent tasks & bots — user can read their own subcollections
+      match /{subcol}/{docId} {
+        allow read: if request.auth != null && request.auth.uid == uid
+                    && subcol in ['agentTasks', 'bots'];
+        allow write: if false;
+      }
     }
 
     // Households collection - read for members, write only via Admin SDK

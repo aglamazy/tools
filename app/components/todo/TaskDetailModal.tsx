@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import Modal from '@/app/components/Modal'
 import { taskSubjectStore } from '@/app/stores/taskSubjectStore'
+import { todoStore } from '@/app/stores/todoStore'
 import type { SubjectData } from '@/app/types/subject'
 import type { CombinedTask } from './TaskCard'
 import SubjectEditorModal from './SubjectEditorModal'
@@ -11,6 +12,7 @@ import ComposeApplicationModal from './ComposeApplicationModal'
 type Props = {
   task: CombinedTask | null
   onClose: () => void
+  onUpdate?: () => void
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -22,10 +24,12 @@ const STATUS_LABELS: Record<string, string> = {
   accepted: 'התקבל',
 }
 
-export default function TaskDetailModal({ task, onClose }: Props) {
+export default function TaskDetailModal({ task, onClose, onUpdate }: Props) {
   const [subjectData, setSubjectData] = useState<SubjectData | null>(null)
   const [showSubjectEditor, setShowSubjectEditor] = useState(false)
   const [showCompose, setShowCompose] = useState(false)
+  const [deadline, setDeadline] = useState('')
+  const [snoozedUntil, setSnoozedUntil] = useState('')
 
   useEffect(() => {
     if (task?.subject) {
@@ -35,7 +39,24 @@ export default function TaskDetailModal({ task, onClose }: Props) {
     }
   }, [task?.subject])
 
+  // Sync local state when task changes
+  useEffect(() => {
+    if (task) {
+      setDeadline(task.deadline ? task.deadline.split('T')[0] : '')
+      setSnoozedUntil(task.snoozedUntil ? task.snoozedUntil.split('T')[0] : '')
+    }
+  }, [task])
+
   if (!task) return null
+
+  const isUserTask = task.taskType === 'user'
+
+  async function saveField(field: 'deadline' | 'snoozedUntil', value: string) {
+    if (!task || !isUserTask || typeof task.id !== 'number') return
+    const update = value ? { [field]: new Date(value).toISOString() } : { [field]: undefined }
+    await todoStore.updateTask(task.id, update)
+    onUpdate?.()
+  }
 
   // If compose modal is open, show that instead
   if (showCompose && task.subject) {
@@ -88,10 +109,82 @@ export default function TaskDetailModal({ task, onClose }: Props) {
             </div>
           )}
 
-          {/* Common task info */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>
-            {task.deadline && <Tag color="#2563eb" bg="#eff6ff" label={`📅 ${task.deadline}`} />}
-            {task.tags?.map(t => <Tag key={t} color="#7c3aed" bg="#ede9fe" label={t} />)}
+          {/* Editable fields for user tasks */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1rem' }}>
+            <div>
+              <Label>📅 דדליין</Label>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                {isUserTask ? (
+                  <>
+                    <input
+                      type="date"
+                      value={deadline}
+                      onChange={e => {
+                        setDeadline(e.target.value)
+                        saveField('deadline', e.target.value)
+                      }}
+                      style={inputStyle}
+                    />
+                    {deadline && (
+                      <button
+                        onClick={() => { setDeadline(''); saveField('deadline', '') }}
+                        style={{ ...clearBtn }}
+                        title="נקה דדליין"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <span style={{ fontSize: '0.85rem', color: '#374151' }}>
+                    {task.deadline ? new Date(task.deadline).toLocaleDateString('he-IL') : 'לא הוגדר'}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <Label>😴 מוסתר עד</Label>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                {isUserTask ? (
+                  <>
+                    <input
+                      type="date"
+                      value={snoozedUntil}
+                      min={new Date().toISOString().split('T')[0]}
+                      onChange={e => {
+                        setSnoozedUntil(e.target.value)
+                        saveField('snoozedUntil', e.target.value)
+                      }}
+                      style={inputStyle}
+                    />
+                    {snoozedUntil && (
+                      <button
+                        onClick={() => { setSnoozedUntil(''); saveField('snoozedUntil', '') }}
+                        style={{ ...clearBtn }}
+                        title="בטל הסתרה"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <span style={{ fontSize: '0.85rem', color: '#374151' }}>
+                    {task.snoozedUntil ? new Date(task.snoozedUntil).toLocaleDateString('he-IL') : 'לא מוסתר'}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Tags */}
+            {task.tags && task.tags.length > 0 && (
+              <div>
+                <Label>תגיות</Label>
+                <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
+                  {task.tags.map(t => <Tag key={t} color="#7c3aed" bg="#ede9fe" label={t} />)}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Lead-specific details */}
@@ -134,9 +227,9 @@ export default function TaskDetailModal({ task, onClose }: Props) {
             </div>
           )}
 
-          {!ext && (
+          {!ext && !isUserTask && (
             <p style={{ margin: 0, fontSize: '0.85rem', color: '#6b7280' }}>
-              {task.taskType === 'auto' ? 'משימה אוטומטית' : 'משימה אישית'}
+              משימה אוטומטית
             </p>
           )}
 
@@ -190,4 +283,23 @@ function Tag({ color, bg, label }: { color: string; bg: string; label: string })
 const linkBtn: React.CSSProperties = {
   background: 'none', border: 'none', color: '#3b82f6',
   cursor: 'pointer', fontSize: '0.8rem', textDecoration: 'underline', padding: 0,
+}
+
+const inputStyle: React.CSSProperties = {
+  padding: '0.375rem 0.5rem',
+  fontSize: '0.85rem',
+  border: '1px solid #d1d5db',
+  borderRadius: '0.375rem',
+  cursor: 'pointer',
+}
+
+const clearBtn: React.CSSProperties = {
+  background: '#fef2f2',
+  border: '1px solid #fecaca',
+  borderRadius: '0.25rem',
+  color: '#dc2626',
+  cursor: 'pointer',
+  fontSize: '0.75rem',
+  padding: '0.25rem 0.4rem',
+  lineHeight: 1,
 }

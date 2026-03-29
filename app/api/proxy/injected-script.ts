@@ -163,6 +163,37 @@ export function getInjectedScript(finalUrl: string, finalBase: string, hostname:
     return origSubmit.call(this);
   };
 
+  // Intercept location.assign / location.replace — JSF and other frameworks call these
+  var origAssign = Location.prototype.assign;
+  Location.prototype.assign = function(url) {
+    var resolved = resolveUrl(url);
+    if (resolved.indexOf(ORIGINAL_BASE) === 0) return origAssign.call(this, proxyUrl(resolved));
+    return origAssign.call(this, url);
+  };
+  var origReplace = Location.prototype.replace;
+  Location.prototype.replace = function(url) {
+    var resolved = resolveUrl(url);
+    if (resolved.indexOf(ORIGINAL_BASE) === 0) return origReplace.call(this, proxyUrl(resolved));
+    return origReplace.call(this, url);
+  };
+
+  // Navigation API catch-all: intercepts window.location.href = '...' and similar
+  // navigations that bypass click/submit handlers (e.g. JSF/Mojarra redirects)
+  if (window.navigation) {
+    window.navigation.addEventListener('navigate', function(e) {
+      var dest = e.destination.url;
+      // If navigating to our own origin but NOT through the proxy, redirect through proxy
+      if (dest.indexOf(window.location.origin) === 0 && dest.indexOf('/api/proxy') === -1) {
+        var parsed = new URL(dest);
+        var targetPath = parsed.pathname + parsed.search;
+        // Resolve against the original site
+        var targetUrl = ORIGINAL_BASE + targetPath;
+        e.preventDefault();
+        window.location.href = proxyUrl(targetUrl);
+      }
+    });
+  }
+
   var origOpen = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function(method, url) {
     var resolved = resolveUrl(url);

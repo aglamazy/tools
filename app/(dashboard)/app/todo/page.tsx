@@ -82,20 +82,43 @@ export default function TodoPage() {
     loadBots()
   }, [])
 
-  // Subscribe to agent task status updates
+  // Subscribe to agent task status updates + webhook-created tasks
   useEffect(() => {
-    const unsubscribe = subscribeToAgentTasks((agentTasks) => {
-      setUserTasks(prev => prev.map(task => {
-        if (!task.agentTaskId) return task
-        const at = agentTasks.find(a => a.id === task.agentTaskId)
-        if (!at) return task
-        if (at.status !== task.agentStatus || at.result !== task.agentResult) {
-          todoStore.updateAgentStatus(task.id, at.status, at.result || undefined)
-          return { ...task, agentStatus: at.status, agentResult: at.result || undefined }
+    const unsubscribe = subscribeToAgentTasks(
+      (agentTasks) => {
+        setUserTasks(prev => prev.map(task => {
+          if (!task.agentTaskId) return task
+          const at = agentTasks.find(a => a.id === task.agentTaskId)
+          if (!at) return task
+          if (at.status !== task.agentStatus || at.result !== task.agentResult) {
+            todoStore.updateAgentStatus(task.id, at.status, at.result || undefined)
+            return { ...task, agentStatus: at.status, agentResult: at.result || undefined }
+          }
+          return task
+        }))
+      },
+      // Auto-import webhook-created tasks into Dexie
+      async (webhookTask) => {
+        console.log('[Todo] Webhook task received:', webhookTask.title)
+        const newTask = await todoStore.addTask(
+          webhookTask.title,
+          webhookTask.priority || 'medium',
+          (webhookTask as any).quadrant || 'do',
+          (webhookTask as any).deadline || undefined,
+        )
+        // Link to agent task and set extra fields
+        const updates: Record<string, any> = {
+          agentTaskId: webhookTask.id,
+          botId: webhookTask.botId,
+          agentStatus: webhookTask.status,
         }
-        return task
-      }))
-    })
+        if ((webhookTask as any).subject) updates.subject = (webhookTask as any).subject
+        if ((webhookTask as any).tags) updates.tags = (webhookTask as any).tags
+        await todoStore.updateTask(newTask.id, updates)
+        loadTasks()
+        showToast('success', `משימה חדשה מ-webhook: ${webhookTask.title}`)
+      },
+    )
     return () => { unsubscribe?.() }
   }, [])
 
@@ -668,7 +691,7 @@ export default function TodoPage() {
       )}
 
       {/* Task detail modal */}
-      <TaskDetailModal task={detailTask} onClose={() => setDetailTask(null)} />
+      <TaskDetailModal task={detailTask} onClose={() => setDetailTask(null)} onUpdate={loadTasks} />
 
       {/* Import tasks modal */}
       <ImportTasksModal

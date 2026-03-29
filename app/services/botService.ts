@@ -103,9 +103,12 @@ export async function createAgentTask(params: {
 /**
  * Subscribe to real-time status updates for agent tasks.
  * Calls onChange whenever any agent task for the current user changes.
+ * Also calls onWebhookTask for webhook-created tasks (localTaskId === 0)
+ * so the client can auto-create a local Dexie task.
  */
 export function subscribeToAgentTasks(
-  onChange: (tasks: AgentTask[]) => void
+  onChange: (tasks: AgentTask[]) => void,
+  onWebhookTask?: (task: AgentTask & { quadrant?: string; deadline?: string; subject?: string; tags?: string[] }) => void,
 ): Unsubscribe | null {
   if (!isFirebaseConfigured()) return null
   const user = getUser()
@@ -117,11 +120,24 @@ export function subscribeToAgentTasks(
     where('status', 'in', ['pending', 'in_progress'])
   )
 
+  const seenWebhookIds = new Set<string>()
+
   return onSnapshot(q, (snapshot) => {
     const tasks: AgentTask[] = snapshot.docs.map(doc => ({
       id: doc.id,
       ...doc.data(),
     } as AgentTask))
     onChange(tasks)
+
+    // Detect webhook-created tasks (localTaskId === 0) and notify
+    if (onWebhookTask) {
+      for (const doc of snapshot.docs) {
+        const data = doc.data()
+        if (data.source === 'webhook' && data.localTaskId === 0 && !seenWebhookIds.has(doc.id)) {
+          seenWebhookIds.add(doc.id)
+          onWebhookTask({ id: doc.id, ...data } as any)
+        }
+      }
+    }
   })
 }

@@ -79,11 +79,13 @@ export async function exportAllStores(): Promise<BackupData> {
 }
 
 /**
- * Check if local data is empty (no transactions)
+ * Check if local data is empty — true only if ALL synced tables are empty.
  */
 export async function isLocalDataEmpty(): Promise<boolean> {
-  const count = await db.transactions.count()
-  return count === 0
+  const counts = await Promise.all(
+    SYNCED_DB_TABLES.map(name => (db as any)[name].count())
+  )
+  return counts.every(c => c === 0)
 }
 
 /**
@@ -101,17 +103,20 @@ export async function importAllStores(backup: BackupData): Promise<void> {
     console.log('[BackupRestore] importing backup', counts)
 
     if (counts.transactions === 0 || counts.importedFiles === 0) {
-      throw new Error('Backup missing core data (transactions/importedFiles)')
+      console.warn('[BackupRestore] Cloud backup missing core data (transactions/importedFiles). Importing other tables only.', counts)
     }
 
     // Clear and import all synced IndexedDB tables
-    // Only clear if backup has data for that table (preserves local data for older backups)
+    // Skip tables whose backup is empty (preserves local data)
+    // Skip core tables (transactions/importedFiles) if backup looks incomplete
+    const skipCore = counts.transactions === 0 || counts.importedFiles === 0
+    const coreTables = new Set(['transactions', 'importedFiles'])
     for (const name of SYNCED_DB_TABLES) {
       const data = (stores as any)[name]
-      if (data?.length > 0) {
-        await (db as any)[name].clear()
-        await (db as any)[name].bulkAdd(data)
-      }
+      if (!data || data.length === 0) continue
+      if (skipCore && coreTables.has(name)) continue
+      await (db as any)[name].clear()
+      await (db as any)[name].bulkAdd(data)
     }
 
     // Let stores import their own data

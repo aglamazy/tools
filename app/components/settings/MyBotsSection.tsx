@@ -52,13 +52,15 @@ export default function MyBotsSection() {
     }
   }
 
+  const [showWebhookGuide, setShowWebhookGuide] = useState(false)
+
   return (
     <div style={{ marginTop: '1.5rem' }}>
       <h3 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '0.75rem', color: '#1f2937' }}>
         🤖 הבוטים שלי
       </h3>
       <p style={{ fontSize: '0.85rem', color: '#6b7280', marginBottom: '1rem' }}>
-        הוסף בוטים שיוכלו לקבל משימות מהלוח. כל בוט מקבל handle וטוקן לאימות.
+        הוסף בוטים שיוכלו לקבל משימות מהלוח או ליצור משימות דרך webhook. כל בוט מקבל handle וטוקן לאימות.
       </p>
 
       {/* Create new bot */}
@@ -186,6 +188,92 @@ export default function MyBotsSection() {
           ))}
         </div>
       )}
+
+      {/* Webhook guide */}
+      <div style={{ marginTop: '2rem', borderTop: '1px solid #e5e7eb', paddingTop: '1.5rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+          <h3 style={{ fontSize: '1.1rem', fontWeight: 600, color: '#1f2937', margin: 0 }}>
+            🔗 יצירת משימות דרך Webhook
+          </h3>
+          <button
+            onClick={() => setShowWebhookGuide(!showWebhookGuide)}
+            style={{
+              background: 'none', border: '1px solid #d1d5db', borderRadius: '0.25rem',
+              cursor: 'pointer', fontSize: '0.75rem', color: '#6b7280', padding: '0.2rem 0.5rem',
+            }}
+          >
+            {showWebhookGuide ? 'הסתר' : 'איך זה עובד?'}
+          </button>
+        </div>
+        <p style={{ fontSize: '0.85rem', color: '#6b7280', margin: '0 0 0.75rem' }}>
+          שלח בקשת POST כדי ליצור משימה אוטומטית בלוח המשימות.
+        </p>
+
+        {showWebhookGuide && (
+          <div style={{
+            background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '0.5rem',
+            padding: '1rem', fontSize: '0.85rem', color: '#374151',
+          }}>
+            <div style={{ marginBottom: '1rem' }}>
+              <strong>Endpoint:</strong>
+              <code style={codeBlockStyle}>
+                POST {typeof window !== 'undefined' ? window.location.origin : ''}/api/webhook/task
+              </code>
+            </div>
+
+            <div style={{ marginBottom: '1rem' }}>
+              <strong>Headers:</strong>
+              <code style={codeBlockStyle}>
+                {`X-Bot-Handle: <handle של הבוט>\nAuthorization: Bearer <token של הבוט>`}
+              </code>
+              <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>
+                ← צור בוט למעלה כדי לקבל handle וטוקן
+              </span>
+            </div>
+
+            <div style={{ marginBottom: '1rem' }}>
+              <strong>Body (JSON):</strong>
+              <code style={codeBlockStyle}>
+{`{
+  "title": "שם המשימה",          // חובה
+  "priority": "medium",          // low / medium / high
+  "quadrant": "do",              // do / schedule / delegate / eliminate
+  "deadline": "2026-04-15",      // תאריך ISO (אופציונלי)
+  "subject": "שם נושא",          // אופציונלי
+  "tags": ["תגית1", "תגית2"]    // אופציונלי
+}`}
+              </code>
+            </div>
+
+            <div>
+              <strong>דוגמה עם curl:</strong>
+              <code style={codeBlockStyle}>
+{`curl -X POST ${typeof window !== 'undefined' ? window.location.origin : 'https://aglamazo.com'}/api/webhook/task \\
+  -H "Content-Type: application/json" \\
+  -H "X-Bot-Handle: bot-xxxxxxxx" \\
+  -H "Authorization: Bearer YOUR_TOKEN" \\
+  -d '{"title": "משימה חדשה", "priority": "high"}'`}
+              </code>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
+}
+
+const codeBlockStyle: React.CSSProperties = {
+  display: 'block',
+  background: '#1e293b',
+  color: '#e2e8f0',
+  padding: '0.625rem',
+  borderRadius: '0.375rem',
+  fontSize: '0.78rem',
+  fontFamily: 'monospace',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-all',
+  marginTop: '0.25rem',
+  marginBottom: '0.5rem',
+  direction: 'ltr',
+  textAlign: 'left',
 }
