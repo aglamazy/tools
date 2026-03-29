@@ -6,8 +6,16 @@ export const metadata: Metadata = {
   title: `מדריך שימוש | ${branding.name}`,
   description: `מדריך מפורט לשימוש ב-${branding.name} - ייבוא קבצים, ניתוח תזרים, ניהול תקציב ותחזית תשלומים.`,
   robots: {
-    index: false, // Don't index the guide in search engines
+    index: true,
     follow: true,
+  },
+  alternates: {
+    canonical: '/guide',
+  },
+  openGraph: {
+    title: `מדריך שימוש | ${branding.name}`,
+    description: `מדריך מפורט לשימוש ב-${branding.name} - ייבוא קבצים, ניתוח תזרים, ניהול תקציב ותחזית תשלומים.`,
+    url: '/guide',
   },
 }
 
