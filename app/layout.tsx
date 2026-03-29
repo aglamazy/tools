@@ -39,9 +39,6 @@ export const metadata: Metadata = {
     statusBarStyle: 'default',
     title: branding.name,
   },
-  alternates: {
-    canonical: '/',
-  },
   openGraph: {
     title: branding.name,
     description: branding.tagline,

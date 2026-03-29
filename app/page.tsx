@@ -5,6 +5,9 @@ import { branding, routes } from '@/app/config'
 export const metadata: Metadata = {
   title: `${branding.name} - ${branding.tagline}`,
   description: `${branding.name} - ניהול פיננסי חכם לעסק שלך. תזרים מזומנים, תקציב, תחזית תשלומים ועוד - הכל בפרטיות מלאה.`,
+  alternates: {
+    canonical: '/',
+  },
 }
 
 export default function LandingPage() {

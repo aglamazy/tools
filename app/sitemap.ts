@@ -48,15 +48,22 @@ function discoverPublicRoutes(dir: string, basePath = ''): string[] {
   return routes
 }
 
+/** Higher-priority routes that should be crawled first */
+const HIGH_PRIORITY_ROUTES = new Set(['/', '/about', '/pricing', '/guide', '/contact'])
+
 export default function sitemap(): MetadataRoute.Sitemap {
   const appDir = path.join(process.cwd(), 'app')
   const routes = discoverPublicRoutes(appDir)
-  const lastModified = new Date()
 
-  return routes.map((route) => ({
-    url: `${normalizedBase}${route === '/' ? '/' : route}`,
-    lastModified,
-    changeFrequency: 'monthly' as const,
-    priority: route === '/' ? 1 : 0.8,
-  }))
+  return routes.map((route) => {
+    const isHome = route === '/'
+    const isHighPriority = HIGH_PRIORITY_ROUTES.has(route)
+
+    return {
+      url: `${normalizedBase}${isHome ? '/' : route}`,
+      lastModified: new Date('2026-03-29'),
+      changeFrequency: (isHome ? 'weekly' : isHighPriority ? 'monthly' : 'yearly') as const,
+      priority: isHome ? 1.0 : isHighPriority ? 0.8 : 0.6,
+    }
+  })
 }

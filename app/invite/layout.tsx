@@ -4,6 +4,7 @@ import { branding } from '@/app/config'
 export const metadata: Metadata = {
   title: `הזמנה | ${branding.name}`,
   description: `הצטרפו ל-${branding.name} לניהול פיננסי משותף. קבלו הזמנה וגשו לניהול התקציב של המשק בית.`,
+  robots: { index: true, follow: true },
   alternates: {
     canonical: '/invite',
   },
