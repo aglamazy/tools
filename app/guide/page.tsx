@@ -19,9 +19,22 @@ export const metadata: Metadata = {
   },
 }
 
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'WebPage',
+  name: `מדריך שימוש | ${branding.name}`,
+  description: `מדריך מפורט לשימוש ב-${branding.name} - ייבוא קבצים, ניתוח תזרים, ניהול תקציב ותחזית תשלומים.`,
+  url: 'https://aglamazo.com/guide',
+  inLanguage: 'he',
+}
+
 export default function GuidePage() {
   return (
     <main className="app" dir="rtl">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
       <div className="card" style={{ maxWidth: '900px', margin: '0 auto' }}>
         <header style={{ marginBottom: '2rem', textAlign: 'center' }}>
           <h1 style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>מדריך שימוש</h1>

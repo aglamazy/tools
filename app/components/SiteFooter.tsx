@@ -21,7 +21,7 @@ export default function SiteFooter() {
           <Link href={routes.pricing}>מחירון</Link>
           <Link href="/demo-form">טופס הדגמה</Link>
           <Link href="/form-filler">מילוי טפסים</Link>
-          <Link href={routes.terms}>תנאי שימוש</Link>
+          <Link href={routes.publicTerms}>תנאי שימוש</Link>
         </div>
 
         <div className="site-footer-section">

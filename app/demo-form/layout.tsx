@@ -15,6 +15,23 @@ export const metadata: Metadata = {
   },
 }
 
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'WebPage',
+  name: `טופס הדגמה | ${branding.name}`,
+  description: `נסו את ${branding.name} עם טופס הדגמה אינטראקטיבי.`,
+  url: 'https://aglamazo.com/demo-form',
+  inLanguage: 'he',
+}
+
 export default function DemoFormLayout({ children }: { children: React.ReactNode }) {
-  return children
+  return (
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
+      {children}
+    </>
+  )
 }

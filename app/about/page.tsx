@@ -16,9 +16,22 @@ export const metadata: Metadata = {
   },
 }
 
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'AboutPage',
+  name: `אודות | ${branding.name}`,
+  description: `${branding.name} - ${branding.tagline}. ניהול פיננסי, תובנות חכמות ועוד.`,
+  url: 'https://aglamazo.com/about',
+  inLanguage: 'he',
+}
+
 export default function AboutPage() {
   return (
     <main className="app" dir="rtl">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
       <div className="card" style={{ maxWidth: '800px', margin: '0 auto' }}>
         <header style={{ marginBottom: '2rem' }}>
           <h1 style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>{branding.name}</h1>
