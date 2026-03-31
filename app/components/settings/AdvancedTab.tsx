@@ -15,6 +15,8 @@ import {
   persistDirectoryHandle,
   requestDirectoryPermission,
 } from '@/app/utils/directoryStorage'
+import { appSettingsStore } from '@/app/stores/appSettingsStore'
+import { ALL_PAGES } from '@/app/lib/pageRegistry'
 import Modal from '../Modal'
 
 export default function AdvancedTab() {
@@ -37,11 +39,13 @@ export default function AdvancedTab() {
   const [dirError, setDirError] = useState('')
   const [dirMeta, setDirMeta] = useState<{ name: string; savedAt: string } | null>(null)
   const [alertModal, setAlertModal] = useState<{ isOpen: boolean; message: string }>({ isOpen: false, message: '' })
+  const [defaultPage, setDefaultPage] = useState<string>('home')
 
   useEffect(() => {
     loadDatabaseStats()
     loadCardTypeIndicators()
     initDirectoryHandle()
+    appSettingsStore.getDefaultPage().then(p => setDefaultPage(p || 'home'))
   }, [])
 
   const loadDatabaseStats = async () => {
@@ -179,8 +183,32 @@ export default function AdvancedTab() {
     }
   }
 
+  const handleDefaultPageChange = async (pageId: string) => {
+    setDefaultPage(pageId)
+    await appSettingsStore.setDefaultPage(pageId === 'home' ? null : pageId)
+  }
+
   return (
     <>
+      {/* Default Page */}
+      <section style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid #e2e8f0', borderRadius: '0.75rem', background: '#f0fdf4' }}>
+        <h2 style={{ margin: 0, fontSize: '1.05rem' }}>עמוד ברירת מחדל</h2>
+        <p style={{ margin: '0.25rem 0 0.75rem', color: '#166534', fontSize: '0.95rem' }}>
+          בחר את העמוד שייפתח כשנכנסים לאפליקציה
+        </p>
+        <select
+          value={defaultPage}
+          onChange={e => handleDefaultPageChange(e.target.value)}
+          style={{ padding: '0.5rem 0.75rem', borderRadius: '0.5rem', border: '1px solid #d1d5db', fontSize: '0.95rem', minWidth: '200px' }}
+        >
+          {ALL_PAGES.map(page => (
+            <option key={page.id} value={page.id}>
+              {page.icon} {page.label}
+            </option>
+          ))}
+        </select>
+      </section>
+
       {/* Database Stats */}
       <section style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid #e2e8f0', borderRadius: '0.75rem', background: '#f0f9ff' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>

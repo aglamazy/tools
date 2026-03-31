@@ -298,6 +298,40 @@ export const appSettingsStore = {
     }
   },
 
+  /**
+   * Get the user's chosen default page (page ID from pageRegistry)
+   */
+  getDefaultPage: async (): Promise<string | null> => {
+    try {
+      const setting = await db.appSettings.where('key').equals('defaultPage').first()
+      return setting ? (setting.value as string) : null
+    } catch (error) {
+      console.error('Error getting defaultPage:', error)
+      return null
+    }
+  },
+
+  /**
+   * Set the user's chosen default page
+   */
+  setDefaultPage: async (pageId: string | null): Promise<void> => {
+    try {
+      const existing = await db.appSettings.where('key').equals('defaultPage').first()
+      if (pageId === null) {
+        if (existing) await db.appSettings.delete(existing.id!)
+        return
+      }
+      if (existing) {
+        await db.appSettings.update(existing.id!, { value: pageId, updatedAt: new Date().toISOString() })
+      } else {
+        await db.appSettings.add({ key: 'defaultPage', value: pageId, updatedAt: new Date().toISOString() })
+      }
+    } catch (error) {
+      console.error('Error setting defaultPage:', error)
+      throw error
+    }
+  },
+
   // --- localStorage helpers (for ephemeral UI state) ---
   getLocal: (key: string, fallback = ''): string => {
     try { return localStorage.getItem(key) || fallback } catch { return fallback }

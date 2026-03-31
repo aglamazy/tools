@@ -23,6 +23,7 @@ export const ALL_PAGES: NavigablePage[] = [
   { id: 'gmail', label: 'Gmail', icon: '📧', href: routes.gmail, requiredTier: UserTier.PRO },
   { id: 'business-categories', label: 'עסקים', icon: '🏛️', href: routes.businessCategories, requiredTier: UserTier.PRO },
   { id: 'form-filler', label: 'מילוי טפסים', icon: '📋', href: '/form-filler', requiredTier: UserTier.FREE },
+  { id: 'settings', label: 'הגדרות', icon: '⚙️', href: routes.settings, requiredTier: UserTier.FREE },
 ]
 
 export const DEFAULT_TAB_IDS = ['home', 'cash-flow', 'todo', 'business-categories']

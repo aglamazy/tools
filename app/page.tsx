@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { branding, routes } from '@/app/config'
+import ReturningUserRedirect from '@/app/components/ReturningUserRedirect'
 
 export const metadata: Metadata = {
   title: `${branding.name} - ${branding.tagline}`,
@@ -10,6 +11,7 @@ export const metadata: Metadata = {
 export default function LandingPage() {
   return (
     <div className="landing" dir="rtl">
+      <ReturningUserRedirect />
       <section className="landing-hero">
         <h1 className="landing-title">{branding.name}</h1>
         <p className="landing-tagline">{branding.tagline}</p>
