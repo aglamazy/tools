@@ -571,7 +571,7 @@ export default function TodoPage() {
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gridTemplateRows: 'auto auto', gap: '0.75rem' }}>
+          <div className="eisenhower-grid">
             {QUADRANTS.map(q => {
               const tasks = getTasksForQuadrant(q.key)
               const isDragOver = dragOverQuadrant === q.key

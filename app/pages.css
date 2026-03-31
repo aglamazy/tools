@@ -370,3 +370,22 @@
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   }
 }
+
+/* ─── Eisenhower Matrix ─── */
+.eisenhower-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.eisenhower-grid > div {
+  min-width: 0;
+}
+
+@media (max-width: 768px) {
+  .eisenhower-grid {
+    grid-template-columns: 1fr;
+  }
+}
