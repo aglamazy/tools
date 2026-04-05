@@ -6,6 +6,7 @@ import type { Business } from '@/app/db/financeDB'
 import { ypayService } from '@/app/services/ypayService'
 import { getUser } from '@/app/stores/authStore'
 import { getHouseholdInfo } from '@/app/services/householdService'
+import BusinessSharingSection from './BusinessSharingSection'
 
 type BizSettingsTabProps = {
   businessId: number
@@ -109,6 +110,9 @@ export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
           {ownerSaved && <span style={{ fontSize: '0.85rem', color: '#16a34a' }}>נשמר</span>}
         </div>
       </section>
+
+      {/* Business sharing */}
+      <BusinessSharingSection business={business} />
 
       <section style={{ padding: '1rem', border: '1px solid #e2e8f0', borderRadius: '0.75rem', background: '#faf5ff' }}>
         <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem', fontWeight: 600 }}>YPAY - חשבוניות</h3>

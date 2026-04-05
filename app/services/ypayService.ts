@@ -76,15 +76,16 @@ export const ypayService = {
     return response.json()
   },
 
-  createDocument: async (transaction: Transaction, business: Business, contact: YpayContact): Promise<{ url: string; serialNumber: string }> => {
+  createDocument: async (transaction: Transaction, business: Business, contact: YpayContact, vatType?: 'exempt' | 'authorized'): Promise<{ url: string; serialNumber: string }> => {
     const credentials = getCredentials(business)
 
-    if (!business.vatType) {
-      throw new Error('סוג עוסק לא הוגדר לעסק')
+    const effectiveVatType = vatType || business.vatType
+    if (!effectiveVatType) {
+      throw new Error('סוג עוסק לא הוגדר — הגדר בפרופיל')
     }
 
     // קבלה for exempt, חשבונית מס קבלה for authorized
-    const docType = business.vatType === 'exempt' ? YpayDocType.Receipt : YpayDocType.TaxInvoiceReceipt
+    const docType = effectiveVatType === 'exempt' ? YpayDocType.Receipt : YpayDocType.TaxInvoiceReceipt
 
     const items = [{
       description: transaction.description,

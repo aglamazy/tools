@@ -26,6 +26,15 @@ service firebase.storage {
                    && request.resource.size < 2621440;
     }
 
+    // Shared business backup files - both owner and recipient access via custom claims
+    match /backups/shared/{businessSyncId}/{fileName} {
+      allow read: if request.auth != null
+                  && businessSyncId in request.auth.token.sharedBusinesses;
+      allow write: if request.auth != null
+                   && businessSyncId in request.auth.token.sharedBusinesses
+                   && request.resource.size < 2621440;
+    }
+
     // Deny all other access
     match /{allPaths=**} {
       allow read, write: if false;

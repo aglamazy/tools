@@ -10,6 +10,7 @@ import { hasGmailAccess, requestGmailAccess, sendEmail, type EmailAttachment } f
 import ProjectEditModal from './ProjectEditModal'
 import Modal from '@/app/components/Modal'
 import type { Category } from '@/app/types/category'
+import { getTaxProfile } from '@/app/components/TaxProfileSection'
 
 type IncomeTabProps = {
   businessId: number
@@ -40,9 +41,11 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
   const [lastCreatedUrl, setLastCreatedUrl] = useState<string | null>(null)
   const [sendingDoc, setSendingDoc] = useState<number | null>(null)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
+  const [profileVatType, setProfileVatType] = useState<'exempt' | 'authorized' | undefined>(undefined)
 
   useEffect(() => {
     loadBusiness()
+    getTaxProfile().then(p => setProfileVatType(p.vatType))
   }, [businessId])
 
   useEffect(() => {
@@ -187,7 +190,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     }
 
     try {
-      const result = await ypayService.createDocument(transaction, business, contact)
+      const result = await ypayService.createDocument(transaction, business, contact, profileVatType)
       setLastCreatedUrl(result.url)
       await loadTransactions()
     } catch (err: any) {
@@ -218,7 +221,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
         transactionId: String(transaction.id),
         url: '',
         serialNumber: linkForm.serialNumber.trim(),
-        docType: business?.vatType === 'authorized' ? YpayDocType.TaxInvoiceReceipt : YpayDocType.Receipt,
+        docType: profileVatType === 'authorized' ? YpayDocType.TaxInvoiceReceipt : YpayDocType.Receipt,
         createdAt: new Date().toISOString(),
       })
       setLinkingDoc(null)
@@ -249,7 +252,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
       if (transaction.ypayDoc.url) {
         const pdfResult = await ypayService.downloadPdf(transaction.ypayDoc.url)
         if (pdfResult.success && pdfResult.base64) {
-          const docTypeLabel = business.vatType === 'authorized' ? 'חשבונית_מס_קבלה' : 'קבלה'
+          const docTypeLabel = profileVatType === 'authorized' ? 'חשבונית_מס_קבלה' : 'קבלה'
           attachments.push({
             filename: `${docTypeLabel}_${transaction.ypayDoc.serialNumber}.pdf`,
             mimeType: 'application/pdf',
@@ -258,7 +261,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
         }
       }
 
-      const docTypeLabel = business.vatType === 'authorized' ? 'חשבונית מס קבלה' : 'קבלה'
+      const docTypeLabel = profileVatType === 'authorized' ? 'חשבונית מס קבלה' : 'קבלה'
       const subject = `${business.name} — ${docTypeLabel} #${transaction.ypayDoc.serialNumber}`
       const html = `
         <div dir="rtl" style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b;">

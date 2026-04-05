@@ -26,6 +26,22 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Business shares collection - read for owner or recipient
+    match /businessShares/{shareId} {
+      allow read: if request.auth != null
+                  && (resource.data.ownerUid == request.auth.uid
+                      || resource.data.sharedWithUid == request.auth.uid);
+      allow write: if false;
+    }
+
+    // Business share invitations - read for invitee or owner
+    match /businessShareInvitations/{invitationId} {
+      allow read: if request.auth != null
+                  && (resource.data.inviteeEmail == request.auth.token.email
+                      || resource.data.ownerUid == request.auth.uid);
+      allow write: if false;
+    }
+
     // Invitations collection - read for invitee or household owner
     match /invitations/{invitationId} {
       // Allow read if:

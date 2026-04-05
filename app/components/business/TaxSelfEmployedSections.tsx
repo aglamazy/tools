@@ -1,5 +1,6 @@
 import React, { useRef } from 'react'
 import type { Business, TaxDocument, Transaction, AdvancePayment } from '@/app/db/financeDB'
+import type { TaxProfile } from '@/app/components/TaxProfileSection'
 
 export type BTLRates = {
   reduced: { nationalInsurance: number; healthInsurance: number }
@@ -35,11 +36,11 @@ function computeMonthlyBTL(monthlyIncome: number, rates: BTLRates) {
   return { nationalInsurance, healthInsurance, total: nationalInsurance + healthInsurance }
 }
 
-export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, rates }: {
+export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, rates, taxProfile }: {
   businesses: Business[]; transactions: Transaction[]; bizCategoryMap: Map<number, string[]>
-  expCategoryMap: Map<number, string[]>; currentYear: number; currentMonth: number; rates: BTLRates
+  expCategoryMap: Map<number, string[]>; currentYear: number; currentMonth: number; rates: BTLRates; taxProfile?: TaxProfile
 }) {
-  const seBiz = businesses.filter(b => !b.isTaxFree)
+  const seBiz = businesses.filter(b => !(taxProfile?.isTaxFree))
   if (seBiz.length === 0) return null
 
   const seCatNames = new Set<string>()
@@ -49,7 +50,7 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
     ;(expCategoryMap.get(biz.id!) || []).forEach(n => seExpCatNames.add(n))
   }
 
-  const monthlyAdvance = seBiz.reduce((s, b) => s + (b.btlAdvancePayment || 0), 0)
+  const monthlyAdvance = taxProfile?.btlAdvancePayment || 0
   const hasAdvance = monthlyAdvance > 0
 
   const monthlyRows = Array.from({ length: currentMonth + 1 }, (_, i) => {
@@ -166,16 +167,17 @@ function computeIncomeTax(income: number, brackets: IncomeTaxStep[]): number {
   return tax
 }
 
-export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, btlRates, brackets, salaryDocs, advancePayments, onUploadReceipt }: {
+export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, btlRates, brackets, salaryDocs, advancePayments, onUploadReceipt, taxProfile }: {
   businesses: Business[]; transactions: Transaction[]; bizCategoryMap: Map<number, string[]>
   expCategoryMap: Map<number, string[]>; currentYear: number; currentMonth: number; btlRates: BTLRates | null; brackets: IncomeTaxStep[]
   salaryDocs: TaxDocument[]
   advancePayments?: AdvancePayment[]
   onUploadReceipt?: (month: string, file: File) => Promise<void>
+  taxProfile?: TaxProfile
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploadMonth, setUploadMonth] = React.useState<string | null>(null)
-  const seBiz = businesses.filter(b => !b.isTaxFree)
+  const seBiz = businesses.filter(b => !(taxProfile?.isTaxFree))
   if (seBiz.length === 0) return null
 
   const seCatNames = new Set<string>()
@@ -187,9 +189,9 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
 
   const BTL_DEDUCTION_RATE = 0.52 // 52% of BTL paid is deductible
 
-  // Income tax advance payment — % of income paid each month/bi-monthly as מקדמה
-  const advancePercent = seBiz.reduce((max, b) => Math.max(max, b.incomeTaxAdvancePercent || 0), 0)
-  const advancePeriod: 1 | 2 = seBiz.some(b => b.incomeTaxAdvancePeriod === 2) ? 2 : 1
+  // Income tax advance payment — from tax profile (person-level)
+  const advancePercent = taxProfile?.incomeTaxAdvancePercent || 0
+  const advancePeriod: 1 | 2 = taxProfile?.incomeTaxAdvancePeriod ?? 1
   const hasAdvance = advancePercent > 0
 
   // Calculate monthly salary from שכיר docs (grossIncome per month)
@@ -211,8 +213,8 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
       const btl = computeMonthlyBTL(monthlyNetForBtl, btlRates)
       btlPaid = btl.total
     }
-    const monthlyAdvance = seBiz.reduce((s, b) => s + (b.btlAdvancePayment || 0), 0)
-    if (monthlyAdvance > 0) btlPaid = monthlyAdvance
+    const btlMonthlyAdvance = taxProfile?.btlAdvancePayment || 0
+    if (btlMonthlyAdvance > 0) btlPaid = btlMonthlyAdvance
 
     const btlDeduction = btlPaid * BTL_DEDUCTION_RATE
     const taxBase = Math.max(0, netIncome - btlDeduction)

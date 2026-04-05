@@ -5,6 +5,7 @@ import { db } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import type { Category } from '@/app/types/category'
 import { getIdToken } from '@/app/services/firebaseAuthService'
+import { getTaxProfile } from '@/app/components/TaxProfileSection'
 
 export type TaxStatus = 'green' | 'yellow' | 'red' | 'gray'
 
@@ -36,14 +37,17 @@ export function useBusinessTaxStatus(businessId?: number): TaxStatusInfo | null 
       const business = await db.businesses.get(businessId)
       if (!business) return
 
+      // Read tax settings from person-level profile
+      const taxProfile = await getTaxProfile()
+
       // Authorized businesses: gray placeholder (logic TBD)
-      if (business.vatType === 'authorized') {
+      if (taxProfile.vatType === 'authorized') {
         setInfo({ status: 'gray' as TaxStatus, currentIncome: 0, maxMonthlyIncome: 0, limit: 0 })
         return
       }
 
       // Only exempt or tax-free businesses get income-vs-limit status
-      if (business.vatType !== 'exempt' && !business.isTaxFree) return
+      if (taxProfile.vatType !== 'exempt' && !taxProfile.isTaxFree) return
 
       const currentYear = new Date().getFullYear()
       const token = await getIdToken()
@@ -85,7 +89,7 @@ export function useBusinessTaxStatus(businessId?: number): TaxStatusInfo | null 
       const maxMonthlyIncome = monthlyIncomes.length > 0 ? Math.max(...monthlyIncomes) : 0
       const status = computeStatus(maxMonthlyIncome, limit)
 
-      console.log(`[TaxBadge] biz=${businessId} "${business.name}" vatType=${business.vatType} isTaxFree=${business.isTaxFree} income=${currentIncome} maxMonthly=${maxMonthlyIncome} limit=${limit} → ${status}`)
+      console.log(`[TaxBadge] biz=${businessId} "${business.name}" vatType=${taxProfile.vatType} isTaxFree=${taxProfile.isTaxFree} income=${currentIncome} maxMonthly=${maxMonthlyIncome} limit=${limit} → ${status}`)
       setInfo({ status, currentIncome, maxMonthlyIncome, limit })
     }
 

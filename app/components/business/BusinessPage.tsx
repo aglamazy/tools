@@ -21,6 +21,7 @@ import BusinessTasksTab from './BusinessTasksTab'
 import FilesSubTab from './TaxFilesSubTab'
 import { getUser } from '@/app/stores/authStore'
 import { getHouseholdInfo } from '@/app/services/householdService'
+import { getTaxProfile } from '@/app/components/TaxProfileSection'
 
 async function loadHouseholdMembers() {
   const currentUser = getUser()
@@ -88,11 +89,16 @@ type BusinessPageProps = {
 export default function BusinessPage({ businessId }: BusinessPageProps) {
   const [business, setBusiness] = useState<Business | null>(null)
   const [loading, setLoading] = useState(true)
+  const [isTaxFree, setIsTaxFree] = useState(false)
 
   useEffect(() => {
     const load = async () => {
-      const b = await businessStore.getById(businessId)
+      const [b, profile] = await Promise.all([
+        businessStore.getById(businessId),
+        getTaxProfile(),
+      ])
       setBusiness(b || null)
+      setIsTaxFree(!!profile.isTaxFree)
       setLoading(false)
     }
     void load()
@@ -162,7 +168,7 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
             </>
           )}
         </SettingsTabs>
-      ) : business.isTaxFree ? (
+      ) : isTaxFree ? (
         <SettingsTabs tabs={APARTMENT_TABS} defaultTab="income">
           {(activeTab) => (
             <>
@@ -171,7 +177,7 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
           )}
         </SettingsTabs>
       ) : (
-        <SettingsTabs tabs={business.isTaxFree ? APARTMENT_TABS : TABS} defaultTab="income">
+        <SettingsTabs tabs={isTaxFree ? APARTMENT_TABS : TABS} defaultTab="income">
           {(activeTab) => (
             <>
               {activeTab === 'income' && <IncomeTab businessId={businessId} />}

@@ -11,6 +11,7 @@ import { getHouseholdInfo } from '@/app/services/householdService'
 import { type TaxStatus, type TaxStatusInfo } from '@/app/components/TaxExemptBadge'
 import RentalSummaryTable from './TaxRentalSummary'
 import { SelfEmployedBTLSection, SelfEmployedIncomeTaxSection, type BTLRates, type IncomeTaxStep } from './TaxSelfEmployedSections'
+import { getTaxProfile, type TaxProfile } from '@/app/components/TaxProfileSection'
 import Modal from '@/app/components/Modal'
 import BusinessForm from '@/app/components/settings/BusinessForm'
 import type { BusinessUI } from '@/app/types/business'
@@ -131,16 +132,18 @@ function AnnualSummarySubTab() {
   const [btlRates, setBtlRates] = useState<BTLRates | null>(null)
   const [incomeTaxBrackets, setIncomeTaxBrackets] = useState<IncomeTaxStep[] | null>(null)
   const [advancePayments, setAdvancePayments] = useState<AdvancePayment[]>([])
+  const [taxProfile, setTaxProfile] = useState<TaxProfile>({})
   const currentYear = new Date().getFullYear()
   const currentMonth = new Date().getMonth() // 0-based
 
   useEffect(() => {
     const load = async () => {
-      const [allDocs, biz, m, advPay] = await Promise.all([
+      const [allDocs, biz, m, advPay, profile] = await Promise.all([
         db.taxDocuments.filter(d => d.year === currentYear).toArray(),
         db.businesses.toArray(),
         loadHouseholdMembers(),
         db.advancePayments.filter(p => p.month.endsWith(`/${currentYear}`)).toArray(),
+        getTaxProfile(),
       ])
 
       // Build business → category names map from subjectStore (income + expense)
@@ -181,6 +184,7 @@ function AnnualSummarySubTab() {
       setExpCategoryMap(expCatMap)
       setMembers(m)
       setAdvancePayments(advPay)
+      setTaxProfile(profile)
       setLoading(false)
     }
     load()
@@ -189,9 +193,11 @@ function AnnualSummarySubTab() {
   // Build derived data (needed before useEffect for tax exempt)
   const filteredDocs = selectedUser === 'all' ? docs : docs.filter(d => d.userId === selectedUser)
   const userBizIdsFromDocs = new Set(filteredDocs.map(d => d.businessId))
+  // Exclude businesses shared with me — those belong to the owner's tax situation
+  const ownBusinesses = businesses.filter(b => !(b as any).sharedWithMe)
   const relevantBusinesses = selectedUser === 'all'
-    ? businesses.filter(b => b.id && bizCategoryMap.has(b.id))
-    : businesses.filter(b => b.id && (
+    ? ownBusinesses.filter(b => b.id && bizCategoryMap.has(b.id))
+    : ownBusinesses.filter(b => b.id && (
         (bizCategoryMap.has(b.id) && (b.userId === selectedUser || userBizIdsFromDocs.has(b.id)))
         || b.userId === selectedUser
       ))
@@ -347,8 +353,8 @@ function AnnualSummarySubTab() {
       {/* Conditional section tabs: שכיר / עצמאי */}
       {(() => {
         const hasDocs = filteredDocs.length > 0
-        const nonRentalBiz = relevantBusinesses.filter(b => !b.isTaxFree)
-        const rentalBiz = relevantBusinesses.filter(b => b.isTaxFree)
+        const nonRentalBiz = taxProfile.isTaxFree ? [] : relevantBusinesses
+        const rentalBiz = taxProfile.isTaxFree ? relevantBusinesses : []
         const sections: { id: string; label: string }[] = []
         if (hasDocs) sections.push({ id: 'employee', label: 'שכיר' })
         if (nonRentalBiz.length > 0) sections.push({ id: 'selfEmployed', label: 'עצמאי' })
@@ -371,6 +377,7 @@ function AnnualSummarySubTab() {
             incomeTaxBrackets={incomeTaxBrackets}
             advancePayments={advancePayments}
             onUploadReceipt={handleUploadReceipt}
+            taxProfile={taxProfile}
           />
         )
       })()}
@@ -393,9 +400,10 @@ type SummarySectionsProps = {
   incomeTaxBrackets: IncomeTaxStep[] | null
   advancePayments: AdvancePayment[]
   onUploadReceipt: (month: string, file: File) => Promise<void>
+  taxProfile?: TaxProfile
 }
 
-function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBusinesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, taxExemptInfo, btlRates, incomeTaxBrackets, advancePayments, onUploadReceipt }: SummarySectionsProps) {
+function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBusinesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, taxExemptInfo, btlRates, incomeTaxBrackets, advancePayments, onUploadReceipt, taxProfile }: SummarySectionsProps) {
   const [activeSection, setActiveSection] = useState(sections[0].id)
 
   return (
@@ -447,6 +455,7 @@ function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBu
               currentYear={currentYear}
               currentMonth={currentMonth}
               rates={btlRates}
+              taxProfile={taxProfile}
             />
           )}
           {incomeTaxBrackets && incomeTaxBrackets.length > 0 && (
@@ -462,6 +471,7 @@ function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBu
               salaryDocs={filteredDocs}
               advancePayments={advancePayments}
               onUploadReceipt={onUploadReceipt}
+              taxProfile={taxProfile}
             />
           )}
         </>
