@@ -171,6 +171,17 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | nul
       // Resolve any unresolved products before checkout
       const { resolved, unresolved } = await resolveProducts(uid, merged)
 
+      // Save resolved catalogIds back to standing list
+      let standingUpdated = false
+      for (const item of resolved) {
+        if (!item.catalogId) continue
+        const standing = data.standingList.find(s => s.name === item.name && !s.catalogId)
+        if (standing) { standing.catalogId = item.catalogId; standingUpdated = true }
+      }
+      if (standingUpdated) {
+        await addToStanding(uid, data.standingList)
+      }
+
       const items = resolved
         .filter(i => i.catalogId)
         .map(i => ({ code: i.catalogId!, qty: i.qty }))

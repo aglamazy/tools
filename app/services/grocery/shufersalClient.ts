@@ -307,6 +307,7 @@ export async function cartAddMany(
 ): Promise<{ added: number; failed: { code: string; error: string }[] }> {
   const cookies = await getAuthenticatedCookies(uid)
   const csrf = getCsrf(cookies)
+  console.log(`[Shufersal] cartAddMany: ${items.length} items, csrf=${csrf ? 'found' : 'MISSING'}, cookies=${Object.keys(cookies).join(',')}`)
   let added = 0
   const failed: { code: string; error: string }[] = []
 
@@ -335,8 +336,12 @@ export async function cartAddMany(
       )
       // Update cookies from response (CSRF can rotate)
       Object.assign(cookies, updated)
-      if (resp.ok) added++
-      else failed.push({ code: item.code, error: `HTTP ${resp.status}` })
+      if (resp.ok) {
+        added++
+      } else {
+        console.error(`[Shufersal] cartAdd ${item.code}: HTTP ${resp.status} body=${resp.text().slice(0, 200)}`)
+        failed.push({ code: item.code, error: `HTTP ${resp.status}` })
+      }
     } catch (err: unknown) {
       failed.push({ code: item.code, error: err instanceof Error ? err.message : String(err) })
     }
