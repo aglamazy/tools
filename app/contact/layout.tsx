@@ -15,14 +15,24 @@ export const metadata: Metadata = {
   },
 }
 
-const jsonLd = {
-  '@context': 'https://schema.org',
-  '@type': 'ContactPage',
-  name: `צור קשר | ${branding.name}`,
-  description: `צרו קשר עם צוות ${branding.name}. נשמח לענות על שאלות, לקבל משוב ולעזור בכל נושא.`,
-  url: 'https://aglamazo.com/contact',
-  inLanguage: 'he',
-}
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'ContactPage',
+    name: `צור קשר | ${branding.name}`,
+    description: `צרו קשר עם צוות ${branding.name}. נשמח לענות על שאלות, לקבל משוב ולעזור בכל נושא.`,
+    url: 'https://aglamazo.com/contact',
+    inLanguage: 'he',
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: branding.name, item: 'https://aglamazo.com/' },
+      { '@type': 'ListItem', position: 2, name: 'צור קשר', item: 'https://aglamazo.com/contact' },
+    ],
+  },
+]
 
 export default function ContactLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -32,6 +42,13 @@ export default function ContactLayout({ children }: { children: React.ReactNode 
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
       {children}
+      <noscript>
+        <div dir="rtl" style={{ maxWidth: '600px', margin: '2rem auto', padding: '2rem' }}>
+          <h1>צור קשר | {branding.name}</h1>
+          <p>צרו קשר עם צוות {branding.name}. נשמח לענות על שאלות, לקבל משוב ולעזור בכל נושא.</p>
+          <p>שלחו אימייל ל-<a href="mailto:support@aglamaz.com">support@aglamaz.com</a></p>
+        </div>
+      </noscript>
     </>
   )
 }

@@ -15,14 +15,24 @@ export const metadata: Metadata = {
   },
 }
 
-const jsonLd = {
-  '@context': 'https://schema.org',
-  '@type': 'WebPage',
-  name: `תנאי שימוש | ${branding.name}`,
-  description: `תנאי השימוש של ${branding.name}. קראו את התנאים וההגבלות לפני השימוש בשירות.`,
-  url: 'https://aglamazo.com/terms',
-  inLanguage: 'he',
-}
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'WebPage',
+    name: `תנאי שימוש | ${branding.name}`,
+    description: `תנאי השימוש של ${branding.name}. קראו את התנאים וההגבלות לפני השימוש בשירות.`,
+    url: 'https://aglamazo.com/terms',
+    inLanguage: 'he',
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: branding.name, item: 'https://aglamazo.com/' },
+      { '@type': 'ListItem', position: 2, name: 'תנאי שימוש', item: 'https://aglamazo.com/terms' },
+    ],
+  },
+]
 
 export default function TermsLayout({ children }: { children: React.ReactNode }) {
   return (

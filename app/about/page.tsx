@@ -16,14 +16,24 @@ export const metadata: Metadata = {
   },
 }
 
-const jsonLd = {
-  '@context': 'https://schema.org',
-  '@type': 'AboutPage',
-  name: `אודות | ${branding.name}`,
-  description: `${branding.name} - ${branding.tagline}. ניהול פיננסי, תובנות חכמות ועוד.`,
-  url: 'https://aglamazo.com/about',
-  inLanguage: 'he',
-}
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'AboutPage',
+    name: `אודות | ${branding.name}`,
+    description: `${branding.name} - ${branding.tagline}. ניהול פיננסי, תובנות חכמות ועוד.`,
+    url: 'https://aglamazo.com/about',
+    inLanguage: 'he',
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: branding.name, item: 'https://aglamazo.com/' },
+      { '@type': 'ListItem', position: 2, name: 'אודות', item: 'https://aglamazo.com/about' },
+    ],
+  },
+]
 
 export default function AboutPage() {
   return (

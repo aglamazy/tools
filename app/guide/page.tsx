@@ -19,14 +19,24 @@ export const metadata: Metadata = {
   },
 }
 
-const jsonLd = {
-  '@context': 'https://schema.org',
-  '@type': 'WebPage',
-  name: `מדריך שימוש | ${branding.name}`,
-  description: `מדריך מפורט לשימוש ב-${branding.name} - ייבוא קבצים, ניתוח תזרים, ניהול תקציב ותחזית תשלומים.`,
-  url: 'https://aglamazo.com/guide',
-  inLanguage: 'he',
-}
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'WebPage',
+    name: `מדריך שימוש | ${branding.name}`,
+    description: `מדריך מפורט לשימוש ב-${branding.name} - ייבוא קבצים, ניתוח תזרים, ניהול תקציב ותחזית תשלומים.`,
+    url: 'https://aglamazo.com/guide',
+    inLanguage: 'he',
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: branding.name, item: 'https://aglamazo.com/' },
+      { '@type': 'ListItem', position: 2, name: 'מדריך שימוש', item: 'https://aglamazo.com/guide' },
+    ],
+  },
+]
 
 export default function GuidePage() {
   return (
