@@ -6,14 +6,45 @@ export const metadata: Metadata = {
   title: `מדריך שימוש | ${branding.name}`,
   description: `מדריך מפורט לשימוש ב-${branding.name} - ייבוא קבצים, ניתוח תזרים, ניהול תקציב ותחזית תשלומים.`,
   robots: {
-    index: false, // Don't index the guide in search engines
+    index: true,
     follow: true,
   },
+  alternates: {
+    canonical: '/guide',
+  },
+  openGraph: {
+    title: `מדריך שימוש | ${branding.name}`,
+    description: `מדריך מפורט לשימוש ב-${branding.name} - ייבוא קבצים, ניתוח תזרים, ניהול תקציב ותחזית תשלומים.`,
+    url: '/guide',
+  },
 }
+
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'WebPage',
+    name: `מדריך שימוש | ${branding.name}`,
+    description: `מדריך מפורט לשימוש ב-${branding.name} - ייבוא קבצים, ניתוח תזרים, ניהול תקציב ותחזית תשלומים.`,
+    url: 'https://aglamazo.com/guide',
+    inLanguage: 'he',
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: branding.name, item: 'https://aglamazo.com/' },
+      { '@type': 'ListItem', position: 2, name: 'מדריך שימוש', item: 'https://aglamazo.com/guide' },
+    ],
+  },
+]
 
 export default function GuidePage() {
   return (
     <main className="app" dir="rtl">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
       <div className="card" style={{ maxWidth: '900px', margin: '0 auto' }}>
         <header style={{ marginBottom: '2rem', textAlign: 'center' }}>
           <h1 style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>מדריך שימוש</h1>

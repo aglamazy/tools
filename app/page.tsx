@@ -6,6 +6,9 @@ import ReturningUserRedirect from '@/app/components/ReturningUserRedirect'
 export const metadata: Metadata = {
   title: `${branding.name} - ${branding.tagline}`,
   description: `${branding.name} - ניהול פיננסי חכם לעסק שלך. תזרים מזומנים, תקציב, תחזית תשלומים ועוד - הכל בפרטיות מלאה.`,
+  alternates: {
+    canonical: '/',
+  },
 }
 
 export default function LandingPage() {
@@ -78,6 +81,28 @@ export default function LandingPage() {
           <Link href={routes.pricing} className="landing-btn-secondary">
             ראה מסלולים ומחירים
           </Link>
+        </div>
+      </section>
+
+      <section className="landing-links">
+        <h2>גלה עוד</h2>
+        <div className="landing-steps">
+          <div className="landing-step">
+            <h3><Link href={routes.about}>אודות</Link></h3>
+            <p>למד עוד על {branding.name} והחזון שלנו.</p>
+          </div>
+          <div className="landing-step">
+            <h3><Link href={routes.guide}>מדריך שימוש</Link></h3>
+            <p>מדריך מפורט לשימוש במערכת — ייבוא, ניתוח ותקציב.</p>
+          </div>
+          <div className="landing-step">
+            <h3><Link href="/demo-form">טופס הדגמה</Link></h3>
+            <p>נסו את כלי מילוי הטפסים שלנו עם טופס דוגמה אינטראקטיבי.</p>
+          </div>
+          <div className="landing-step">
+            <h3><Link href="/form-filler">מילוי טפסים</Link></h3>
+            <p>כלי אוטומטי למילוי טפסים מקוונים — חסכו זמן בהרשמות.</p>
+          </div>
         </div>
       </section>
 

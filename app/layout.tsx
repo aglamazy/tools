@@ -39,9 +39,6 @@ export const metadata: Metadata = {
     statusBarStyle: 'default',
     title: branding.name,
   },
-  alternates: {
-    canonical: '/',
-  },
   openGraph: {
     title: branding.name,
     description: branding.tagline,
@@ -63,10 +60,28 @@ export const viewport: Viewport = {
   themeColor: '#4338ca',
 }
 
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'WebSite',
+  name: branding.name,
+  description: branding.tagline,
+  url: siteUrl,
+  inLanguage: 'he',
+  publisher: {
+    '@type': 'Organization',
+    name: branding.name,
+    url: siteUrl,
+  },
+}
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="he">
       <body>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        />
         <ToastProvider>
           <MigrationRunner />
           <AuthInitializer />

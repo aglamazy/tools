@@ -24,6 +24,7 @@ export const routes = {
   admin: '/app/admin',
   businessCategories: '/app/business-categories',
   terms: '/app/terms',
+  publicTerms: '/terms',
   about: '/about',
   guide: '/guide',
   pricing: '/pricing',
