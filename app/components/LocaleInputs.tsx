@@ -1,8 +1,24 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
-import { format, parse, isValid } from 'date-fns'
-import { he } from 'date-fns/locale'
+import React, { useState, useEffect, useRef } from 'react'
+
+/** Parse d/m/yy or d/m/yyyy into YYYY-MM-DD, returns null if invalid */
+function parseLocalDate(input: string): string | null {
+  const match = input.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})$/)
+  if (!match) return null
+  const day = parseInt(match[1], 10)
+  const month = parseInt(match[2], 10)
+  let year = parseInt(match[3], 10)
+  if (year < 100) year += 2000
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
+/** Format YYYY-MM-DD as d/m/yy */
+function formatLocalDate(iso: string): string {
+  const [y, m, d] = iso.split('-')
+  return `${parseInt(d, 10)}/${parseInt(m, 10)}/${y.slice(-2)}`
+}
 
 type LocaleDateInputProps = {
   value: string // ISO format: YYYY-MM-DD
@@ -12,13 +28,11 @@ type LocaleDateInputProps = {
 
 export function LocaleDateInput({ value, onChange, style }: LocaleDateInputProps) {
   const [displayValue, setDisplayValue] = useState('')
+  const hiddenRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (value) {
-      const date = parse(value, 'yyyy-MM-dd', new Date())
-      if (isValid(date)) {
-        setDisplayValue(format(date, 'd/M/yy', { locale: he }))
-      }
+      setDisplayValue(formatLocalDate(value))
     } else {
       setDisplayValue('')
     }
@@ -27,37 +41,59 @@ export function LocaleDateInput({ value, onChange, style }: LocaleDateInputProps
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const input = e.target.value
     setDisplayValue(input)
-
-    // Try to parse various formats
-    const formats = ['d/M/yy', 'd/M/yyyy', 'd.M.yy', 'd.M.yyyy', 'd-M-yy', 'd-M-yyyy']
-    for (const fmt of formats) {
-      const parsed = parse(input, fmt, new Date())
-      if (isValid(parsed)) {
-        onChange(format(parsed, 'yyyy-MM-dd'))
-        return
-      }
-    }
+    const parsed = parseLocalDate(input)
+    if (parsed) onChange(parsed)
   }
 
   const handleBlur = () => {
-    // Re-format on blur if valid
-    if (value) {
-      const date = parse(value, 'yyyy-MM-dd', new Date())
-      if (isValid(date)) {
-        setDisplayValue(format(date, 'd/M/yy', { locale: he }))
-      }
-    }
+    if (value) setDisplayValue(formatLocalDate(value))
   }
 
   return (
-    <input
-      type="text"
-      value={displayValue}
-      onChange={handleChange}
-      onBlur={handleBlur}
-      placeholder="d/m/yy"
-      style={style}
-    />
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+      <input
+        type="text"
+        value={displayValue}
+        onChange={handleChange}
+        onBlur={handleBlur}
+        placeholder="d/m/yy"
+        style={style}
+      />
+      <div style={{ position: 'relative' }}>
+        <input
+          ref={hiddenRef}
+          type="date"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '1px',
+            height: '1px',
+            opacity: 0,
+            pointerEvents: 'none',
+          }}
+          tabIndex={-1}
+        />
+        <button
+          type="button"
+          onClick={() => hiddenRef.current?.showPicker()}
+          style={{
+            background: 'none',
+            border: '1px solid #e2e8f0',
+            borderRadius: '0.375rem',
+            padding: '0.4rem',
+            cursor: 'pointer',
+            fontSize: '1rem',
+            lineHeight: 1,
+          }}
+          title="בחר תאריך"
+        >
+          📅
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -68,42 +104,12 @@ type LocaleTimeInputProps = {
 }
 
 export function LocaleTimeInput({ value, onChange, style }: LocaleTimeInputProps) {
-  const [displayValue, setDisplayValue] = useState(value || '')
-
-  useEffect(() => {
-    setDisplayValue(value || '')
-  }, [value])
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const input = e.target.value
-    setDisplayValue(input)
-
-    // Accept HH:mm or H:mm format
-    const match = input.match(/^(\d{1,2}):(\d{2})$/)
-    if (match) {
-      const h = parseInt(match[1], 10)
-      const m = parseInt(match[2], 10)
-      if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
-        onChange(`${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`)
-      }
-    }
-  }
-
-  const handleBlur = () => {
-    // Re-format on blur
-    if (value) {
-      setDisplayValue(value)
-    }
-  }
-
   return (
     <input
-      type="text"
-      value={displayValue}
-      onChange={handleChange}
-      onBlur={handleBlur}
-      placeholder="HH:mm"
-      style={{ ...style, width: '70px' }}
+      type="time"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      style={{ ...style, width: '120px' }}
     />
   )
 }

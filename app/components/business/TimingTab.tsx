@@ -471,11 +471,22 @@ export default function TimingTab({ businessId }: TimingTabProps) {
 
   const handleOpenManualEntry = () => {
     const today = formatLocalDate(new Date())
+    // Default to a date within the viewed period, not always today
+    let defaultDate = today
+    if (viewMode === 'daily') {
+      defaultDate = selectedDate
+    } else if (viewMode === 'weekly') {
+      const { start, end } = getWeekDates(weekOffset)
+      defaultDate = today >= start && today <= end ? today : start
+    } else if (viewMode === 'monthly') {
+      const { start, end } = getMonthDates(monthOffset)
+      defaultDate = today >= start && today <= end ? today : start
+    }
     setEditingEntry(null)
     setFormData({
       projectId: selectedProjectId,
       taskId: selectedTaskId,
-      date: today,
+      date: defaultDate,
       startTime: '09:00',
       endTime: '10:00',
       endNextDay: false,

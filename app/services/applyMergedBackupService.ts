@@ -14,7 +14,6 @@
 
 import { db } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
-import { timerStore } from '@/app/stores/timerStore'
 import { initializeAppSettings } from '@/app/services/appSettingsService'
 import type { BackupData } from './backupService'
 import { SYNCED_DB_TABLES, getSyncedDexieTables } from './syncedTables'
@@ -256,7 +255,8 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
   if (cloud.stores.subjectStore) {
     await subjectStore.import(cloud.stores.subjectStore)
   }
-  timerStore.import(cloud.stores.timerStore ?? null)
+  // Local timer always wins — don't restore cloud timer (user may have stopped it locally)
+  // timerStore is only imported during full restore (importAllStores), not incremental sync
 
   await initializeAppSettings()
 }
