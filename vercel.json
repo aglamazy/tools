@@ -8,6 +8,10 @@
     {
       "path": "/api/scout/run",
       "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/grocery/cron",
+      "schedule": "0 */2 * * *"
     }
   ]
 }
