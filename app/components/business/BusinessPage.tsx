@@ -53,6 +53,9 @@ const TABS: TabItem[] = [
   { id: 'extension', label: 'תוסף', icon: '🧩' },
 ]
 
+// Tabs hidden from sharees (sharedWithMe businesses)
+const OWNER_ONLY_TABS = new Set(['settings', 'extension'])
+
 const APARTMENT_TABS: TabItem[] = [
   { id: 'income', label: 'הכנסות', icon: '💰' },
 ]
@@ -120,6 +123,10 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
     )
   }
 
+  const isSharedWithMe = !!business.sharedWithMe
+  const filterTabs = (tabs: TabItem[]) =>
+    isSharedWithMe ? tabs.filter(t => !OWNER_ONLY_TABS.has(t.id)) : tabs
+
   return (
     <div className="card">
       <header>
@@ -132,7 +139,7 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
       </header>
 
       {business.type === BusinessType.Employee ? (
-        <SettingsTabs tabs={EMPLOYEE_TABS} defaultTab="payslips">
+        <SettingsTabs tabs={filterTabs(EMPLOYEE_TABS)} defaultTab="payslips">
           {(activeTab) => (
             <>
               {activeTab === 'payslips' && <FilesSubTab loadHouseholdMembers={loadHouseholdMembers} businessId={businessId} />}
@@ -142,7 +149,7 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
           )}
         </SettingsTabs>
       ) : business.type === BusinessType.Teacher ? (
-        <SettingsTabs tabs={TEACHER_TABS} defaultTab="students">
+        <SettingsTabs tabs={filterTabs(TEACHER_TABS)} defaultTab="students">
           {(activeTab) => (
             <>
               {activeTab === 'students' && <StudentsTab businessId={businessId} />}
@@ -154,7 +161,7 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
           )}
         </SettingsTabs>
       ) : business.type === BusinessType.Artist ? (
-        <SettingsTabs tabs={ARTIST_TABS} defaultTab="profile">
+        <SettingsTabs tabs={filterTabs(ARTIST_TABS)} defaultTab="profile">
           {(activeTab) => (
             <>
               {activeTab === 'profile' && <ProfileTab businessId={businessId} />}
@@ -177,7 +184,7 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
           )}
         </SettingsTabs>
       ) : (
-        <SettingsTabs tabs={isTaxFree ? APARTMENT_TABS : TABS} defaultTab="income">
+        <SettingsTabs tabs={filterTabs(isTaxFree ? APARTMENT_TABS : TABS)} defaultTab="income">
           {(activeTab) => (
             <>
               {activeTab === 'income' && <IncomeTab businessId={businessId} />}

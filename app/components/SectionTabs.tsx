@@ -48,8 +48,8 @@ export default function SectionTabs() {
 
   // Build dynamic business tabs for the business section
   const businessTabs: { id: string; label: string; href: string; icon?: string }[] = []
-  if (section === 'business' && userTierStore.hasAccess(UserTier.PRO)) {
-    for (const biz of pinnedBusinesses) {
+  if (section === 'business') {
+    for (const biz of pinnedBusinesses.filter(b => userTierStore.hasAccess(UserTier.PRO) || b.sharedWithMe)) {
       businessTabs.push({
         id: `biz-${biz.id}`,
         label: biz.name,

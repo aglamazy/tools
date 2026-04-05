@@ -66,10 +66,11 @@ async function exportBusinessData(businessSyncId: string): Promise<BackupData | 
   const businessId = business.id!
 
   // Collect child records by businessId
-  const [projects, taxDocuments, advancePayments] = await Promise.all([
+  const [projects, taxDocuments, advancePayments, businessTasks] = await Promise.all([
     db.projects.where('businessId').equals(businessId).toArray(),
     db.taxDocuments.where('businessId').equals(businessId).toArray(),
     db.advancePayments.where('businessId').equals(businessId).toArray(),
+    db.businessTasks.where('businessId').equals(businessId).toArray(),
   ])
 
   // Collect harvestTasks via projectIds
@@ -112,6 +113,7 @@ async function exportBusinessData(businessSyncId: string): Promise<BackupData | 
     timeEntries,
     taxDocuments,
     advancePayments,
+    businessTasks,
     subjectStore: null,
     timerStore: null,
   }
@@ -124,23 +126,72 @@ async function exportBusinessData(businessSyncId: string): Promise<BackupData | 
 }
 
 /**
+ * Detect new items in incoming backup by comparing syncIds with local DB.
+ */
+async function detectNewItems(cloud: BackupData): Promise<{ businessTasks: number; harvestTasks: number }> {
+  const counts = { businessTasks: 0, harvestTasks: 0 }
+
+  const incomingBizTasks = cloud.stores.businessTasks || []
+  if (incomingBizTasks.length > 0) {
+    const existing = new Set((await db.businessTasks.toArray()).map(t => t.syncId).filter(Boolean))
+    counts.businessTasks = incomingBizTasks.filter((t: any) => t.syncId && !existing.has(t.syncId)).length
+  }
+
+  const incomingHarvestTasks = cloud.stores.harvestTasks || []
+  if (incomingHarvestTasks.length > 0) {
+    const existing = new Set((await db.harvestTasks.toArray()).map(t => t.syncId).filter(Boolean))
+    counts.harvestTasks = incomingHarvestTasks.filter((t: any) => t.syncId && !existing.has(t.syncId)).length
+  }
+
+  return counts
+}
+
+/**
  * Apply shared business backup to local DB.
  * Wraps applyCloudBackup but marks the business as sharedWithMe for recipients.
+ * Detects new items and emits notification events.
  */
 async function applySharedBackup(
   cloud: BackupData,
   businessSyncId: string,
   isOwner: boolean,
 ): Promise<void> {
-  // If recipient, mark the business as shared
-  if (!isOwner && cloud.stores.businesses?.length > 0) {
+  // Mark business correctly based on role
+  if (cloud.stores.businesses?.length > 0) {
     for (const biz of cloud.stores.businesses) {
-      biz.sharedWithMe = true
+      if (isOwner) {
+        // Owner must never get sharedWithMe (sharee's upload may have it)
+        delete biz.sharedWithMe
+      } else {
+        biz.sharedWithMe = true
+      }
     }
   }
 
+  // Detect new items before applying
+  const businessName = cloud.stores.businesses?.[0]?.name || ''
+  const newCounts = await detectNewItems(cloud)
+
   // Use the existing merge logic — it handles syncId matching, dedup, FK resolution
   await applyCloudBackup(cloud)
+
+  // Notify about new items
+  const totalNew = newCounts.businessTasks + newCounts.harvestTasks
+  if (totalNew > 0 && typeof window !== 'undefined') {
+    const localBiz = await db.businesses.where('syncId').equals(businessSyncId).first()
+    // Pick the right tab based on what's new
+    const tab = newCounts.businessTasks > 0 && newCounts.harvestTasks === 0
+      ? 'tasks' : newCounts.harvestTasks > 0 && newCounts.businessTasks === 0
+      ? 'projects' : undefined
+    window.dispatchEvent(new CustomEvent('shared-business-new-tasks', {
+      detail: {
+        count: totalNew,
+        businessName,
+        businessId: localBiz?.id,
+        tab,
+      },
+    }))
+  }
 }
 
 /**
@@ -325,7 +376,7 @@ async function isBusinessOwner(businessSyncId: string): Promise<boolean> {
   const business = await db.businesses.where('syncId').equals(businessSyncId).first()
   if (!business) return false
   // If business exists locally and is NOT marked as sharedWithMe, user is the owner
-  return !(business as any).sharedWithMe
+  return !business.sharedWithMe
 }
 
 /**

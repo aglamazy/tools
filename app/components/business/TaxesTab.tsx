@@ -194,7 +194,7 @@ function AnnualSummarySubTab() {
   const filteredDocs = selectedUser === 'all' ? docs : docs.filter(d => d.userId === selectedUser)
   const userBizIdsFromDocs = new Set(filteredDocs.map(d => d.businessId))
   // Exclude businesses shared with me — those belong to the owner's tax situation
-  const ownBusinesses = businesses.filter(b => !(b as any).sharedWithMe)
+  const ownBusinesses = businesses.filter(b => !b.sharedWithMe)
   const relevantBusinesses = selectedUser === 'all'
     ? ownBusinesses.filter(b => b.id && bizCategoryMap.has(b.id))
     : ownBusinesses.filter(b => b.id && (

@@ -41,6 +41,7 @@ export interface BackupData {
     financialInstitutions: any[]
     ypayDocuments: any[]
     taxDocuments?: any[]
+    businessTasks?: any[]
     // localStorage data
     subjectStore: any
     timerStore: any

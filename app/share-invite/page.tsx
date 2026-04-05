@@ -6,6 +6,7 @@ import { getCurrentUser, subscribeToAuthState, refreshIdToken } from '@/app/serv
 import { acceptShareInvitation } from '@/app/services/businessShareService'
 import { saveSharedPassword } from '@/app/services/sharedBusinessSyncService'
 import { db } from '@/app/db/financeDB'
+import { BusinessType } from '@/app/types/business'
 import AuthStatus from '@/app/components/AuthStatus'
 import { routes } from '@/app/config'
 
@@ -95,11 +96,12 @@ function ShareInviteContent() {
             const newId = await db.businesses.add({
               name: businessName,
               syncId: businessSyncId,
-              type: 'business',
+              type: BusinessType.Business,
               sharedWithMe: true,
+              pinnedToSidebar: true,
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
-            } as any)
+            })
             router.push(`/app/business/${newId}`)
             return
           } else {

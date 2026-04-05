@@ -6,7 +6,7 @@ import NotificationCenter from './NotificationCenter'
 import type { ToastType, ToastData, Notification } from '@/app/types/notifications'
 
 type ToastContextType = {
-  showToast: (type: ToastType, message: string, emoji?: string, duration?: number) => void
+  showToast: (type: ToastType, message: string, emoji?: string, duration?: number, href?: string) => void
   notifications: Notification[]
   clearNotifications: () => void
 }
@@ -29,13 +29,13 @@ export function ToastProvider({ children }: ToastProviderProps) {
   const [toasts, setToasts] = useState<ToastData[]>([])
   const [notifications, setNotifications] = useState<Notification[]>([])
 
-  const showToast = useCallback((type: ToastType, message: string, emoji?: string, duration?: number) => {
+  const showToast = useCallback((type: ToastType, message: string, emoji?: string, duration?: number, href?: string) => {
     const id = `${Date.now()}-${Math.random()}`
     setToasts((prev) => [...prev, { id, type, message, emoji, duration }])
 
     // Add to notification history
     setNotifications((prev) => [
-      { id, type, message, timestamp: new Date() },
+      { id, type, message, timestamp: new Date(), href },
       ...prev,
     ])
   }, [])

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import type { Notification } from '@/app/types/notifications'
 
 type NotificationCenterProps = {
@@ -10,6 +11,7 @@ type NotificationCenterProps = {
 
 export default function NotificationCenter({ notifications, onClear }: NotificationCenterProps) {
   const [isOpen, setIsOpen] = useState(false)
+  const router = useRouter()
 
   const getEmoji = (type: Notification['type']) => {
     switch (type) {
@@ -151,12 +153,15 @@ export default function NotificationCenter({ notifications, onClear }: Notificat
                 notifications.map((notification) => (
                   <div
                     key={notification.id}
+                    onClick={notification.href ? () => { router.push(notification.href!); setIsOpen(false) } : undefined}
                     style={{
                       padding: '1rem',
                       borderBottom: '1px solid #f3f4f6',
                       display: 'flex',
                       gap: '0.75rem',
                       alignItems: 'flex-start',
+                      cursor: notification.href ? 'pointer' : 'default',
+                      ...(notification.href ? { background: '#f0f9ff' } : {}),
                     }}
                   >
                     <span style={{ fontSize: '1.25rem' }}>{getEmoji(notification.type)}</span>
@@ -166,6 +171,7 @@ export default function NotificationCenter({ notifications, onClear }: Notificat
                         {formatTime(notification.timestamp)}
                       </span>
                     </div>
+                    {notification.href && <span style={{ fontSize: '0.85rem', color: '#3b82f6' }}>{'◀'}</span>}
                   </div>
                 ))
               )}

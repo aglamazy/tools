@@ -13,4 +13,5 @@ export type Notification = {
   type: ToastType
   message: string
   timestamp: Date
+  href?: string
 }

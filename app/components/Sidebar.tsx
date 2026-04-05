@@ -148,8 +148,12 @@ export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose
     const result: ({ type: 'item'; item: MenuItem } | { type: 'business'; business: Business })[] = []
     for (const mod of modules) {
       for (const item of mod.items) result.push({ type: 'item' as const, item })
-      if (mod.includeBusinesses && userTierStore.hasAccess(UserTier.PRO)) {
-        for (const business of pinnedBusinesses) result.push({ type: 'business' as const, business })
+      if (mod.includeBusinesses && (userTierStore.hasAccess(UserTier.PRO) || pinnedBusinesses.some(b => b.sharedWithMe))) {
+        for (const business of pinnedBusinesses) {
+          if (userTierStore.hasAccess(UserTier.PRO) || business.sharedWithMe) {
+            result.push({ type: 'business' as const, business })
+          }
+        }
       }
     }
     return result

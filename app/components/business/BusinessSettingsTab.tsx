@@ -3,7 +3,11 @@
 import React, { useEffect, useState } from 'react'
 import { projectStore } from '@/app/stores/projectStore'
 import { harvestTaskStore } from '@/app/stores/harvestTaskStore'
+import { businessStore } from '@/app/stores/businessStore'
 import type { Project, HarvestTask } from '@/app/db/financeDB'
+import { listShares, type BusinessShare } from '@/app/services/businessShareService'
+import { getUser } from '@/app/stores/authStore'
+import { subscribeToAuthState } from '@/app/services/firebaseAuthService'
 import FormModal, { FormField, inputStyle } from '../FormModal'
 import ProjectEditModal from './ProjectEditModal'
 
@@ -48,9 +52,17 @@ export default function BusinessSettingsTab({ businessId }: BusinessSettingsTabP
   const [isNewProject, setIsNewProject] = useState(false)
   const [isNewTask, setIsNewTask] = useState(false)
   const [newTaskProjectId, setNewTaskProjectId] = useState<number | null>(null)
+  const [teamMembers, setTeamMembers] = useState<{ email: string }[]>([])
 
   useEffect(() => {
     void loadProjects()
+    const unsub = subscribeToAuthState((user) => {
+      if (user) {
+        void loadTeamMembers()
+        unsub()
+      }
+    })
+    return unsub
   }, [businessId])
 
   const loadProjects = async () => {
@@ -61,6 +73,33 @@ export default function BusinessSettingsTab({ businessId }: BusinessSettingsTabP
   const loadTasks = async (projectId: number) => {
     const t = await harvestTaskStore.getByProjectId(projectId)
     setTasks((prev) => ({ ...prev, [projectId]: t.sort((a, b) => a.name.localeCompare(b.name, 'he')) }))
+  }
+
+  const loadTeamMembers = async () => {
+    const business = await businessStore.getById(businessId)
+    if (!business?.syncId) return
+    const user = getUser()
+    const members: { email: string }[] = []
+    if (user?.email) members.push({ email: user.email })
+    try {
+      const result = await listShares()
+      if (result.success) {
+        const bizShares = (result.ownedShares || []).filter(
+          (s: BusinessShare) => s.businessSyncId === business.syncId && s.status === 'active',
+        )
+        for (const share of bizShares) {
+          if (!members.some(m => m.email === share.sharedWithEmail)) {
+            members.push({ email: share.sharedWithEmail })
+          }
+        }
+        // If I'm a sharee, add owner info from share
+        if (business.sharedWithMe) {
+          // My email is already added above; owner email isn't easily available here
+          // but the shared data will include tasks assigned to me
+        }
+      }
+    } catch { /* no shares */ }
+    setTeamMembers(members)
   }
 
   const handleExpandProject = async (projectId: number) => {
@@ -153,11 +192,13 @@ export default function BusinessSettingsTab({ businessId }: BusinessSettingsTabP
         projectId: editingTask.projectId,
         name: editingTask.name.trim(),
         hourlyRate: editingTask.hourlyRate,
+        assignedTo: editingTask.assignedTo || undefined,
       })
     } else {
       await harvestTaskStore.update(editingTask.id!, {
         name: editingTask.name.trim(),
         hourlyRate: editingTask.hourlyRate,
+        assignedTo: editingTask.assignedTo || undefined,
       })
     }
 
@@ -319,6 +360,19 @@ export default function BusinessSettingsTab({ businessId }: BusinessSettingsTabP
                         >
                           <span style={{ flex: 1 }}>{task.name}</span>
 
+                          {task.assignedTo && (
+                            <span style={{
+                              fontSize: '0.7rem',
+                              padding: '0.1rem 0.4rem',
+                              background: '#dbeafe',
+                              color: '#1e40af',
+                              borderRadius: '0.25rem',
+                              whiteSpace: 'nowrap',
+                            }}>
+                              @{task.assignedTo.split('@')[0]}
+                            </span>
+                          )}
+
                           {task.hourlyRate && (
                             <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
                               {task.hourlyRate}₪/שעה
@@ -411,6 +465,21 @@ export default function BusinessSettingsTab({ businessId }: BusinessSettingsTabP
               <span style={{ color: '#64748b', whiteSpace: 'nowrap' }}>₪ / שעה</span>
             </div>
           </FormField>
+
+          {teamMembers.length > 1 && (
+            <FormField label="שיוך למשתמש">
+              <select
+                value={editingTask.assignedTo || ''}
+                onChange={(e) => setEditingTask({ ...editingTask, assignedTo: e.target.value || undefined })}
+                style={inputStyle}
+              >
+                <option value="">לא משויך</option>
+                {teamMembers.map(m => (
+                  <option key={m.email} value={m.email}>{m.email}</option>
+                ))}
+              </select>
+            </FormField>
+          )}
         </FormModal>
       )}
     </div>

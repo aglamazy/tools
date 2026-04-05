@@ -29,9 +29,14 @@ export default function AppLauncher() {
 
   useEffect(() => {
     if (!open) return
-    if (userTierStore.hasAccess(UserTier.PRO)) {
-      businessStore.getAll().then(setBusinesses)
-    }
+    businessStore.getAll().then(all => {
+      if (userTierStore.hasAccess(UserTier.PRO)) {
+        setBusinesses(all)
+      } else {
+        // Free-tier users only see shared businesses
+        setBusinesses(all.filter(b => b.sharedWithMe))
+      }
+    })
   }, [open])
 
   // Close on outside click

@@ -141,6 +141,7 @@ export interface Business {
   incomeTaxAdvancePeriod?: 1 | 2 // תקופת תשלום מקדמות — 1=חודשי, 2=דו-חודשי
   taxOrder?: number // סדר לחישוב מס — 1=ראשון (מדרגות נמוכות), 2=שני, וכו׳
   pinnedToSidebar?: boolean
+  sharedWithMe?: boolean // true for businesses shared by another user
   userId?: string // Firebase UID of the owning user
   createdAt: string
   updatedAt: string
@@ -168,6 +169,7 @@ export interface HarvestTask {
   projectId: number
   name: string
   hourlyRate?: number
+  assignedTo?: string // email of assigned team member
   archived: boolean
   createdAt: string
   updatedAt: string
@@ -314,7 +316,7 @@ class FinanceDB extends Dexie {
       'businesses', 'categories', 'appSettings', 'businessCategories',
       'importedFiles', 'transactions', 'tasks', 'financialInstitutions',
       'capitalEntries', 'ypayDocuments', 'projects', 'harvestTasks',
-      'timeEntries', 'taxDocuments', 'advancePayments',
+      'timeEntries', 'taxDocuments', 'advancePayments', 'businessTasks',
     ])
 
     // Auto-inject syncId/updatedAt on create/update, and record deletions

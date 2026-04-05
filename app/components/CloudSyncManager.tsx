@@ -15,6 +15,7 @@ import { isLocalDataEmpty } from '@/app/services/backupService'
 import { syncAllSharedBusinesses, getSharedPassword } from '@/app/services/sharedBusinessSyncService'
 import { config } from '@/app/config'
 import EncryptionPasswordModal from './EncryptionPasswordModal'
+import { useToast } from './ToastContainer'
 
 // Session storage - cleared on tab close, simple and reliable
 const SYNC_PASSWORD_KEY = 'cloud_sync_pwd'
@@ -63,6 +64,21 @@ export default function CloudSyncManager() {
   const initialCheckDoneRef = useRef(false)
   const [showPasswordModal, setShowPasswordModal] = useState(false)
   const [passwordMode, setPasswordMode] = useState<'setup' | 'enter'>('enter')
+  const { showToast } = useToast()
+
+  // Listen for new shared business tasks
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { count, businessName, businessId, tab } = (e as CustomEvent).detail
+      const msg = count === 1
+        ? `משימה חדשה ב-${businessName}`
+        : `${count} משימות חדשות ב-${businessName}`
+      const href = businessId ? `/app/business/${businessId}?tab=${tab || 'tasks'}` : undefined
+      showToast('info', msg, undefined, undefined, href)
+    }
+    window.addEventListener('shared-business-new-tasks', handler)
+    return () => window.removeEventListener('shared-business-new-tasks', handler)
+  }, [showToast])
 
   useEffect(() => {
     const checkAndPromptPassword = async () => {
