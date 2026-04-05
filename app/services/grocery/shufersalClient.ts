@@ -323,8 +323,10 @@ export async function checkSession(cookies: Record<string, string>): Promise<boo
   try {
     const { resp } = await shuFetch('/authentication/get-status-includes-otp', cookies)
     const text = resp.text()
+    console.log(`[Shufersal] checkSession: status=${resp.status} body=${text.slice(0, 200)}`)
     return resp.status === 200 && !text.toLowerCase().includes('anonymous')
-  } catch {
+  } catch (err) {
+    console.error('[Shufersal] checkSession error:', err)
     return false
   }
 }
@@ -591,7 +593,14 @@ export async function ordersList(uid: string): Promise<ActiveOrder[]> {
   const { resp } = await shuFetch('/my-account/orders', cookies, {
     headers: { 'X-Requested-With': 'XMLHttpRequest' },
   })
-  const data = resp.json() as any
+  const rawText = resp.text()
+  let data: any
+  try {
+    data = JSON.parse(rawText)
+  } catch {
+    console.error('[Shufersal] ordersList got non-JSON response. Status:', resp.status, 'Body (first 500 chars):', rawText.slice(0, 500))
+    throw new Error('Shufersal returned non-JSON response (possibly login page)')
+  }
   const active = data.activeOrders || []
 
   return active.map((o: any) => {
