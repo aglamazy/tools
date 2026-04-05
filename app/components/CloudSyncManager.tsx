@@ -12,6 +12,7 @@ import {
   getBackupInfo,
 } from '@/app/services/cloudBackupService'
 import { isLocalDataEmpty } from '@/app/services/backupService'
+import { syncAllSharedBusinesses, getSharedPassword } from '@/app/services/sharedBusinessSyncService'
 import { config } from '@/app/config'
 import EncryptionPasswordModal from './EncryptionPasswordModal'
 
@@ -227,6 +228,48 @@ export default function CloudSyncManager() {
       unsubscribe()
       if (intervalRef.current) {
         clearInterval(intervalRef.current)
+      }
+    }
+  }, [])
+
+  // Independent shared business sync — runs regardless of personal sync/tier
+  useEffect(() => {
+    const sharedIntervalRef = { current: null as NodeJS.Timeout | null }
+    const isSyncingShared = { current: false }
+
+    const doSharedSync = async () => {
+      if (isSyncingShared.current) return
+      isSyncingShared.current = true
+      try {
+        await syncAllSharedBusinesses(getSharedPassword)
+      } catch (err) {
+        console.error('[CloudSync] Shared business sync error:', err)
+      } finally {
+        isSyncingShared.current = false
+      }
+    }
+
+    const unsubscribe = subscribeToAuth((state) => {
+      if (state.user && !state.loading) {
+        if (!sharedIntervalRef.current) {
+          setTimeout(() => void doSharedSync(), 5000)
+          sharedIntervalRef.current = setInterval(
+            () => void doSharedSync(),
+            config.syncIntervalMinutes * 60 * 1000,
+          )
+        }
+      } else {
+        if (sharedIntervalRef.current) {
+          clearInterval(sharedIntervalRef.current)
+          sharedIntervalRef.current = null
+        }
+      }
+    })
+
+    return () => {
+      unsubscribe()
+      if (sharedIntervalRef.current) {
+        clearInterval(sharedIntervalRef.current)
       }
     }
   }, [])

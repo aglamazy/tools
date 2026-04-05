@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import { getCurrentUser, subscribeToAuthState, refreshIdToken } from '@/app/services/firebaseAuthService'
 import { acceptShareInvitation } from '@/app/services/businessShareService'
 import { saveSharedPassword } from '@/app/services/sharedBusinessSyncService'
+import { db } from '@/app/db/financeDB'
 import AuthStatus from '@/app/components/AuthStatus'
 import { routes } from '@/app/config'
 
@@ -82,9 +83,29 @@ function ShareInviteContent() {
       if (result.success) {
         await refreshIdToken()
 
-        // Save the shared encryption password locally
+        // Save the shared encryption password
         if (password && businessSyncId) {
           await saveSharedPassword(businessSyncId, password)
+        }
+
+        // Create the business record in local DB immediately
+        if (businessSyncId && businessName) {
+          const exists = await db.businesses.where('syncId').equals(businessSyncId).first()
+          if (!exists) {
+            const newId = await db.businesses.add({
+              name: businessName,
+              syncId: businessSyncId,
+              type: 'business',
+              sharedWithMe: true,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            } as any)
+            router.push(`/app/business/${newId}`)
+            return
+          } else {
+            router.push(`/app/business/${exists.id}`)
+            return
+          }
         }
 
         setAccepted(true)

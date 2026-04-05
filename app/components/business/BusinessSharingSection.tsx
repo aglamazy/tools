@@ -13,6 +13,7 @@ import {
   setupSharedPassword,
   getSharedPassword,
   saveSharedPassword,
+  syncSharedBusiness,
 } from '@/app/services/sharedBusinessSyncService'
 import type { Business } from '@/app/db/financeDB'
 import { refreshIdToken, subscribeToAuthState } from '@/app/services/firebaseAuthService'

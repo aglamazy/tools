@@ -309,6 +309,27 @@ export default function CloudSyncSection() {
                   ? 'נדרשת הזנת סיסמה לסנכרון'
                   : 'סנכרון אוטומטי פעיל'}
             </span>
+            {!hasEncryption && (
+              <button
+                onClick={() => {
+                  setPasswordMode('setup')
+                  setPendingAction('upload')
+                  setShowPasswordModal(true)
+                }}
+                style={{
+                  marginRight: 'auto',
+                  padding: '0.25rem 0.75rem',
+                  background: '#3b82f6',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '0.25rem',
+                  cursor: 'pointer',
+                  fontSize: '0.85rem',
+                }}
+              >
+                הגדר סיסמה
+              </button>
+            )}
             {hasEncryption && !hasSessionPassword && (
               <button
                 onClick={() => {

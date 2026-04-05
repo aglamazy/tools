@@ -20,7 +20,7 @@ import { getCurrentUser } from './firebaseAuthService'
 import { encrypt, decrypt, generateVerificationToken, verifyPasswordWithToken } from './encryptionService'
 import { exportAllStores, importAllStores, isLocalDataEmpty, type BackupData } from './backupService'
 import { applyCloudBackup } from './applyMergedBackupService'
-import { syncAllSharedBusinesses, getSharedPassword } from './sharedBusinessSyncService'
+// Shared business sync is triggered independently from CloudSyncManager
 
 const BACKUP_FILE_NAME = 'backup.enc'
 const VERIFICATION_FILE_NAME = 'verify.enc'
