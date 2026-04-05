@@ -28,36 +28,58 @@ import {
   ordersList,
   saveCredentials,
   setCredentialsVerified,
-  hasCredentials as checkCredentials,
   isCredentialsVerified,
   login as shufersalLogin,
+  search,
 } from '@/app/services/grocery/shufersalClient'
 
 const SHUFERSAL_ACTIONS = new Set(['show_orders', 'trigger_order', 'cancel_order'])
 import { getOrderCycle, setOrderCycle, type OrderCycle } from '@/app/services/grocery/groceryStore'
-import { resolveProducts } from '@/app/services/grocery/productResolver'
+// Product resolver used for mapping lookup only — search results shown to user for picking
 
 export interface ActionResult {
   /** Extra text to append to the bot's reply (e.g. the list). Null = nothing to add. */
   followUp: string | null
+  /** Pending product searches that need user selection. */
+  pendingSelections?: PendingProductSelection[]
+}
+
+export interface PendingProductSelection {
+  name: string
+  qty: number
+  results: { catalogId: string; name: string; brand: string; price: string }[]
 }
 
 export async function executeActions(uid: string, actions: ChatAction[]): Promise<ActionResult> {
   const followUps: string[] = []
+  const allPending: PendingProductSelection[] = []
 
   for (const action of actions) {
     try {
       const result = await executeOne(uid, action)
-      if (result) followUps.push(result)
+      if (typeof result === 'string') {
+        followUps.push(result)
+      } else if (result) {
+        if (result.followUp) followUps.push(result.followUp)
+        if (result.pendingSelections) allPending.push(...result.pendingSelections)
+      }
     } catch (err) {
       console.error(`[ActionExecutor] Failed action=${action.action}:`, err)
     }
   }
 
-  return { followUp: followUps.length > 0 ? followUps.join('\n\n') : null }
+  return {
+    followUp: followUps.length > 0 ? followUps.join('\n\n') : null,
+    pendingSelections: allPending.length > 0 ? allPending : undefined,
+  }
 }
 
-async function executeOne(uid: string, action: ChatAction): Promise<string | null> {
+interface ExecuteOneResult {
+  followUp?: string | null
+  pendingSelections?: PendingProductSelection[]
+}
+
+async function executeOne(uid: string, action: ChatAction): Promise<string | ExecuteOneResult | null> {
   // Guard: Shufersal actions require verified credentials
   if (SHUFERSAL_ACTIONS.has(action.action)) {
     const verified = await isCredentialsVerified(uid)
@@ -66,38 +88,54 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | nul
 
   switch (action.action) {
     case 'add_items': {
-      let items = normalizeItems(action.items)
+      const items = normalizeItems(action.items)
       if (items.length === 0) return null
 
-      // Resolve product codes from Shufersal
       const verified = await isCredentialsVerified(uid)
-      if (verified) {
-        const { resolved, unresolved } = await resolveProducts(uid, items)
-        items = resolved
-        if (unresolved.length > 0) {
-          console.log(`[ActionExecutor] Unresolved products: ${unresolved.join(', ')}`)
+      const pendingSelections: PendingProductSelection[] = []
+
+      for (const item of items) {
+        if (item.catalogId) {
+          await addPendingItems(uid, [item])
+          continue
         }
-      }
 
-      await addPendingItems(uid, items)
+        if (verified) {
+          // Check saved mappings only (no auto-search)
+          const { lookupMapping } = await import('@/app/services/grocery/productResolver')
+          const mapping = await lookupMapping(uid, item.name)
+          if (mapping) {
+            await addPendingItems(uid, [{ ...item, catalogId: mapping.catalogId }])
+            continue
+          }
 
-      // If there's an active order, also add to live Shufersal cart
-      const cycle = await getOrderCycle(uid)
-      if (cycle?.status === 'active' || cycle?.status === 'review') {
-        const shuItems = items.filter(i => i.catalogId).map(i => ({ code: i.catalogId!, qty: i.qty }))
-        if (shuItems.length > 0) {
+          // No mapping — search Shufersal and let user pick
           try {
-            if (cycle.orderId) await orderLoadToCart(uid, cycle.orderId)
-            for (const item of shuItems) {
-              await cartAdd(uid, item.code, item.qty)
+            const results = await search(uid, item.name)
+            if (results.length > 0) {
+              await addPendingItems(uid, [item])
+              pendingSelections.push({
+                name: item.name,
+                qty: item.qty,
+                results: results.slice(0, 5).map(r => ({
+                  catalogId: r.catalogId,
+                  name: r.name,
+                  brand: r.brand,
+                  price: r.price,
+                })),
+              })
+              continue
             }
           } catch (err) {
-            console.error('[ActionExecutor] Failed to add to live Shufersal cart:', err)
-            return 'נוסף לרשימה, אבל לא הצלחתי לעדכן את ההזמנה בשופרסל.'
+            console.error(`[ActionExecutor] Search failed for "${item.name}":`, err)
           }
         }
+
+        // No credentials or search failed — add without catalogId
+        await addPendingItems(uid, [item])
       }
-      return null
+
+      return pendingSelections.length > 0 ? { pendingSelections } : null
     }
 
     case 'remove_items': {
@@ -127,15 +165,8 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | nul
     }
 
     case 'add_standing': {
-      let items = normalizeItems(action.items)
+      const items = normalizeItems(action.items)
       if (items.length === 0) return null
-
-      // Resolve product codes
-      const verifiedStanding = await isCredentialsVerified(uid)
-      if (verifiedStanding) {
-        const { resolved } = await resolveProducts(uid, items)
-        items = resolved
-      }
 
       await addToStanding(uid, items)
       return null
@@ -168,39 +199,24 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | nul
       const merged = mergeList(data.standingList, data.pendingChanges)
       if (merged.length === 0) return 'הרשימה ריקה — אין מה להזמין.'
 
-      // Resolve any unresolved products before checkout
-      const { resolved, unresolved } = await resolveProducts(uid, merged)
+      const withId = merged.filter(i => i.catalogId)
+      const withoutId = merged.filter(i => !i.catalogId)
 
-      // Save resolved catalogIds back to standing list
-      let standingUpdated = false
-      for (const item of resolved) {
-        if (!item.catalogId) continue
-        const standing = data.standingList.find(s => s.name === item.name && !s.catalogId)
-        if (standing) { standing.catalogId = item.catalogId; standingUpdated = true }
-      }
-      if (standingUpdated) {
-        await addToStanding(uid, data.standingList)
+      if (withId.length === 0) {
+        return `אין מוצרים מקושרים לשופרסל. ${withoutId.length} מוצרים לא מקושרים: ${withoutId.map(i => i.name).join(', ')}`
       }
 
-      const items = resolved
-        .filter(i => i.catalogId)
-        .map(i => ({ code: i.catalogId!, qty: i.qty }))
-
-      if (items.length === 0) {
-        const msg = unresolved.length > 0
-          ? `לא מצאתי את המוצרים האלה בשופרסל: ${unresolved.join(', ')}`
-          : 'אין מוצרים עם קוד שופרסל ברשימה.'
-        return msg
+      if (withoutId.length > 0) {
+        console.log(`[ActionExecutor] Ordering without unlinked: ${withoutId.map(i => i.name).join(', ')}`)
       }
 
-      if (unresolved.length > 0) {
-        console.log(`[ActionExecutor] Ordering without unresolved: ${unresolved.join(', ')}`)
-      }
+      const items = withId.map(i => ({ code: i.catalogId!, qty: i.qty }))
 
       const schedule = data.schedule
       const result = await checkout(uid, items, {
         day: schedule?.preferredSlot.day,
-        time: schedule?.preferredSlot.time?.split('-')[0], // "14:00-16:00" → "14:00"
+        time: schedule?.preferredSlot.time?.split('-')[0],
+        nearest: !schedule, // no schedule = pick first available slot
       })
 
       if (result.success) {

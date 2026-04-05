@@ -30,6 +30,28 @@ async function saveMappings(uid: string, mappings: ProductMapping): Promise<void
     .collection('private').doc('productMappings').set(mappings)
 }
 
+/** Look up a saved mapping (no search). Returns null if not found. */
+export async function lookupMapping(uid: string, name: string) {
+  const mappings = await loadMappings(uid)
+  return findMapping(name, mappings)
+}
+
+/** Save a single product mapping (called when user picks from search results). */
+export async function saveProductMapping(
+  uid: string,
+  hebrewName: string,
+  catalogId: string,
+  shufersalName: string,
+): Promise<void> {
+  const mappings = await loadMappings(uid)
+  mappings[hebrewName.toLowerCase()] = {
+    catalogId,
+    shufersalName,
+    resolvedAt: new Date().toISOString(),
+  }
+  await saveMappings(uid, mappings)
+}
+
 /**
  * Resolve a list of items — fill in catalogId where missing.
  * Returns the items with catalogId populated and a list of unresolved names.

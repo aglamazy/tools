@@ -8,10 +8,12 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
-import { sendMessage } from '@/app/services/telegram/telegramClient'
+import { sendMessage, sendWithKeyboard, answerCallbackQuery } from '@/app/services/telegram/telegramClient'
 import { processChat, type ChatMessage, type UserContext } from '@/app/services/telegram/chatProcessor'
 import { executeActions } from '@/app/services/telegram/actionExecutor'
-import { getGroceryData, mergeList } from '@/app/services/grocery/groceryStore'
+import { getGroceryData, mergeList, addPendingItems, addToStanding } from '@/app/services/grocery/groceryStore'
+import { saveProductMapping } from '@/app/services/grocery/productResolver'
+import type { TelegramCallbackQuery } from '@/app/services/telegram/types'
 import { isCredentialsVerified, saveCredentials, setCredentialsVerified, login as shufersalLogin } from '@/app/services/grocery/shufersalClient'
 import type { TelegramUpdate, TelegramMessage } from '@/app/services/telegram/types'
 
@@ -50,9 +52,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  // Handle callback queries (inline keyboard presses) — future layer
+  // Handle callback queries (inline keyboard presses)
   if (update.callback_query) {
-    // TODO: layer 2 — route callback to intent handler
+    try {
+      await handleCallbackQuery(update.callback_query)
+    } catch (err) {
+      console.error('[Telegram] Callback error:', err)
+    }
     return NextResponse.json({ ok: true })
   }
 
@@ -147,11 +153,14 @@ export async function POST(request: NextRequest) {
 
     // Execute actions against Firestore
     let replyText = result.reply
+    let pendingSelections: typeof actionResult.pendingSelections | undefined
+    let actionResult: Awaited<ReturnType<typeof executeActions>> = { followUp: null }
     if (result.actions.length > 0) {
-      const actionResult = await executeActions(link.uid, result.actions)
+      actionResult = await executeActions(link.uid, result.actions)
       if (actionResult.followUp) {
         replyText = `${replyText}\n\n${actionResult.followUp}`
       }
+      pendingSelections = actionResult.pendingSelections
     }
 
     // Store bot reply in history
@@ -164,10 +173,26 @@ export async function POST(request: NextRequest) {
         ok: true,
         response: replyText,
         actions: result.actions,
+        pendingSelections,
       })
     }
 
     await sendMessage(chatId, replyText)
+
+    // Send product selection keyboards for unresolved items
+    if (pendingSelections?.length) {
+      for (const sel of pendingSelections) {
+        const buttons = sel.results.map(r => [{
+          text: `${r.name} ${r.brand ? `(${r.brand})` : ''} — ${r.price}₪`,
+          callback_data: `pick:${sel.name}:${r.catalogId}`,
+        }])
+        await sendWithKeyboard(
+          chatId,
+          `בחר "${sel.name}":`,
+          { inline_keyboard: buttons },
+        )
+      }
+    }
 
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.message : String(err)
@@ -282,4 +307,57 @@ async function resolveLink(telegramUserId: number, chatId: number) {
   }
 
   return null
+}
+
+/**
+ * Handle inline keyboard button press (product selection).
+ * callback_data format: "pick:<itemName>:<catalogId>"
+ */
+async function handleCallbackQuery(query: TelegramCallbackQuery) {
+  const data = query.data || ''
+  if (!data.startsWith('pick:')) {
+    await answerCallbackQuery(query.id)
+    return
+  }
+
+  const parts = data.split(':')
+  if (parts.length < 3) {
+    await answerCallbackQuery(query.id, 'שגיאה')
+    return
+  }
+
+  const itemName = parts[1]
+  const catalogId = parts.slice(2).join(':') // catalogId might contain ':'
+  const chatId = query.message?.chat.id
+  if (!chatId) return
+
+  // Resolve user
+  const link = await resolveLink(query.from.id, chatId)
+  if (!link) {
+    await answerCallbackQuery(query.id, 'חשבון לא מחובר')
+    return
+  }
+
+  // Save mapping for future use
+  const buttonText = ((query.message as any)?.reply_markup?.inline_keyboard as any[])
+    ?.flat().find((b: any) => b.callback_data === data)?.text || ''
+  const shufersalName = buttonText.split('—')[0]?.trim() || itemName
+  await saveProductMapping(link.uid, itemName, catalogId, shufersalName)
+
+  // Update the item in pending/standing with the catalogId
+  const groceryData = await getGroceryData(link.uid)
+  const pendingItem = groceryData.pendingChanges.add.find(i => i.name === itemName)
+  if (pendingItem) {
+    pendingItem.catalogId = catalogId
+    await addPendingItems(link.uid, [pendingItem])
+  }
+  const standingItem = groceryData.standingList.find(i => i.name === itemName)
+  if (standingItem) {
+    standingItem.catalogId = catalogId
+    await addToStanding(link.uid, [standingItem])
+  }
+
+  await answerCallbackQuery(query.id, `נבחר: ${shufersalName}`)
+  await sendMessage(chatId, `${itemName} → ${shufersalName}`)
+  console.log(`[Telegram] Product picked: "${itemName}" → ${catalogId}`)
 }
