@@ -52,35 +52,50 @@ export default function BusinessCard({ business, onEdit, onDelete, onTogglePin }
             {BUSINESS_TYPE_CONFIG[business.type].label}
           </span>
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
-          <button
-            onClick={() => onEdit(business)}
-            style={{
-              padding: '0.35rem 0.75rem',
-              fontSize: '0.85rem',
-              background: 'transparent',
-              border: '1px solid #cbd5e1',
-              borderRadius: '0.375rem',
-              cursor: 'pointer',
-              color: '#475569',
-            }}
-          >
-            {'\u05E2\u05E8\u05D5\u05DA'}
-          </button>
-          <button
-            onClick={() => onDelete(business.id)}
-            style={{
-              padding: '0.35rem 0.75rem',
-              fontSize: '0.85rem',
-              background: 'transparent',
-              border: '1px solid #fecaca',
-              borderRadius: '0.375rem',
-              cursor: 'pointer',
-              color: '#dc2626',
-            }}
-          >
-            {'\u05DE\u05D7\u05E7'}
-          </button>
+        <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0, alignItems: 'center' }}>
+          {business.sharedWithMe && (
+            <span style={{
+              fontSize: '0.7rem',
+              padding: '0.15rem 0.5rem',
+              background: '#dbeafe',
+              color: '#1e40af',
+              borderRadius: '0.25rem',
+            }}>
+              משותף
+            </span>
+          )}
+          {!business.sharedWithMe && (
+            <button
+              onClick={() => onEdit(business)}
+              style={{
+                padding: '0.35rem 0.75rem',
+                fontSize: '0.85rem',
+                background: 'transparent',
+                border: '1px solid #cbd5e1',
+                borderRadius: '0.375rem',
+                cursor: 'pointer',
+                color: '#475569',
+              }}
+            >
+              {'\u05E2\u05E8\u05D5\u05DA'}
+            </button>
+          )}
+          {!business.sharedWithMe && (
+            <button
+              onClick={() => onDelete(business.id)}
+              style={{
+                padding: '0.35rem 0.75rem',
+                fontSize: '0.85rem',
+                background: 'transparent',
+                border: '1px solid #fecaca',
+                borderRadius: '0.375rem',
+                cursor: 'pointer',
+                color: '#dc2626',
+              }}
+            >
+              {'\u05DE\u05D7\u05E7'}
+            </button>
+          )}
         </div>
       </div>
     </div>

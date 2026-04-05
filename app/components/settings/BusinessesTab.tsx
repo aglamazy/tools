@@ -36,6 +36,7 @@ export default function BusinessesTab() {
             vatType: b.vatType,
             isTaxFree: b.isTaxFree,
             pinnedToSidebar: b.pinnedToSidebar,
+            sharedWithMe: b.sharedWithMe,
           } as BusinessUI
         })
         .filter((b): b is BusinessUI => Boolean(b))
@@ -97,6 +98,11 @@ export default function BusinessesTab() {
   }
 
   const handleDelete = (id: number) => {
+    const biz = businesses.find(b => b.id === id)
+    if (biz?.sharedWithMe) {
+      setAlertMessage('לא ניתן למחוק עסק משותף — רק הבעלים יכול למחוק')
+      return
+    }
     setDeleteConfirm({ isOpen: true, id })
     setAlertMessage('')
   }

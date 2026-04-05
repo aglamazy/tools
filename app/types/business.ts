@@ -21,6 +21,7 @@ export type Business = {
   taxOrder?: number // סדר לחישוב מס — 1=ראשון (מדרגות נמוכות), 2=שני, וכו׳
   userId?: string
   pinnedToSidebar?: boolean
+  sharedWithMe?: boolean
   createdAt: string
   updatedAt: string
 }
