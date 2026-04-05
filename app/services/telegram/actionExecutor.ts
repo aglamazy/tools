@@ -35,6 +35,7 @@ import {
 
 const SHUFERSAL_ACTIONS = new Set(['show_orders', 'trigger_order', 'cancel_order'])
 import { getOrderCycle, setOrderCycle, type OrderCycle } from '@/app/services/grocery/groceryStore'
+import { resolveProducts } from '@/app/services/grocery/productResolver'
 
 export interface ActionResult {
   /** Extra text to append to the bot's reply (e.g. the list). Null = nothing to add. */
@@ -65,8 +66,19 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | nul
 
   switch (action.action) {
     case 'add_items': {
-      const items = normalizeItems(action.items)
+      let items = normalizeItems(action.items)
       if (items.length === 0) return null
+
+      // Resolve product codes from Shufersal
+      const verified = await isCredentialsVerified(uid)
+      if (verified) {
+        const { resolved, unresolved } = await resolveProducts(uid, items)
+        items = resolved
+        if (unresolved.length > 0) {
+          console.log(`[ActionExecutor] Unresolved products: ${unresolved.join(', ')}`)
+        }
+      }
+
       await addPendingItems(uid, items)
 
       // If there's an active order, also add to live Shufersal cart
@@ -75,7 +87,6 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | nul
         const shuItems = items.filter(i => i.catalogId).map(i => ({ code: i.catalogId!, qty: i.qty }))
         if (shuItems.length > 0) {
           try {
-            // Load order into cart first, then add
             if (cycle.orderId) await orderLoadToCart(uid, cycle.orderId)
             for (const item of shuItems) {
               await cartAdd(uid, item.code, item.qty)
@@ -116,8 +127,16 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | nul
     }
 
     case 'add_standing': {
-      const items = normalizeItems(action.items)
+      let items = normalizeItems(action.items)
       if (items.length === 0) return null
+
+      // Resolve product codes
+      const verifiedStanding = await isCredentialsVerified(uid)
+      if (verifiedStanding) {
+        const { resolved } = await resolveProducts(uid, items)
+        items = resolved
+      }
+
       await addToStanding(uid, items)
       return null
     }
@@ -132,7 +151,10 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | nul
     case 'show_list': {
       const merged = await getMergedList(uid)
       if (merged.length === 0) return 'הרשימה ריקה.'
-      const lines = merged.map(i => `• ${i.name}${i.qty > 1 ? ` x${i.qty}` : ''}`)
+      const lines = merged.map(i => {
+        const resolved = i.catalogId ? '' : ' (לא מקושר)'
+        return `• ${i.name}${i.qty > 1 ? ` x${i.qty}` : ''}${resolved}`
+      })
       return `רשימה להזמנה:\n${lines.join('\n')}`
     }
 
@@ -146,11 +168,23 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | nul
       const merged = mergeList(data.standingList, data.pendingChanges)
       if (merged.length === 0) return 'הרשימה ריקה — אין מה להזמין.'
 
-      const items = merged
+      // Resolve any unresolved products before checkout
+      const { resolved, unresolved } = await resolveProducts(uid, merged)
+
+      const items = resolved
         .filter(i => i.catalogId)
         .map(i => ({ code: i.catalogId!, qty: i.qty }))
 
-      if (items.length === 0) return 'אין מוצרים עם קוד שופרסל ברשימה.'
+      if (items.length === 0) {
+        const msg = unresolved.length > 0
+          ? `לא מצאתי את המוצרים האלה בשופרסל: ${unresolved.join(', ')}`
+          : 'אין מוצרים עם קוד שופרסל ברשימה.'
+        return msg
+      }
+
+      if (unresolved.length > 0) {
+        console.log(`[ActionExecutor] Ordering without unresolved: ${unresolved.join(', ')}`)
+      }
 
       const schedule = data.schedule
       const result = await checkout(uid, items, {
