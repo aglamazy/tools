@@ -331,8 +331,11 @@ export async function checkSession(cookies: Record<string, string>): Promise<boo
   try {
     const { resp } = await shuFetch('/authentication/get-status-includes-otp', cookies)
     const text = resp.text()
-    console.log(`[Shufersal] checkSession: status=${resp.status} body=${text.slice(0, 200)}`)
-    return resp.status === 200 && !text.toLowerCase().includes('anonymous')
+    console.log(`[Shufersal] checkSession: status=${resp.status} bodyLen=${text.length} isHtml=${text.trimStart().startsWith('<')}`)
+    // Invalid session returns HTML (login page) or contains "anonymous"
+    if (text.trimStart().startsWith('<')) return false
+    if (text.toLowerCase().includes('anonymous')) return false
+    return resp.status === 200
   } catch (err) {
     console.error('[Shufersal] checkSession error:', err)
     return false
