@@ -111,7 +111,7 @@ function parseCookiesFromHeaders(headers: Headers, existing: Record<string, stri
 function nodeRequest(
   url: string,
   options: { method?: string; headers?: Record<string, string>; body?: string },
-): Promise<{ statusCode: number; setCookies: string[]; body: string; location: string | null }> {
+): Promise<{ statusCode: number; headers: Record<string, string[]>; body: string; rawHeaders: http.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url)
     const req = https.request({
@@ -123,23 +123,14 @@ function nodeRequest(
       agent,
       timeout: 30000,
     }, (res) => {
-      // Extract individual Set-Cookie headers from rawHeaders (name/value pairs)
-      const setCookies: string[] = []
-      const rawH = res.rawHeaders
-      for (let i = 0; i < rawH.length; i += 2) {
-        if (rawH[i].toLowerCase() === 'set-cookie') {
-          setCookies.push(rawH[i + 1])
-        }
-      }
-
       const chunks: Buffer[] = []
       res.on('data', (chunk: Buffer) => chunks.push(chunk))
       res.on('end', () => {
         resolve({
           statusCode: res.statusCode || 0,
-          setCookies,
+          headers: (res.headersDistinct || {}) as Record<string, string[]>,
           body: Buffer.concat(chunks).toString('utf-8'),
-          location: res.headers.location || null,
+          rawHeaders: res.headers,
         })
       })
     })
@@ -181,7 +172,8 @@ async function shuFetch(
 
   // Parse Set-Cookie headers
   const updatedCookies = { ...cookies }
-  for (const sc of raw.setCookies) {
+  const setCookies = raw.headers['set-cookie'] || []
+  for (const sc of setCookies) {
     const match = sc.match(/^\s*([^=]+)=([^;]*)/)
     if (match && match[2]) {
       updatedCookies[match[1].trim()] = match[2]
@@ -195,7 +187,7 @@ async function shuFetch(
     text: () => bodyText,
     json: () => JSON.parse(bodyText),
     headers: {
-      get: (name: string) => name.toLowerCase() === 'location' ? raw.location : null,
+      get: (name: string) => (raw.rawHeaders[name.toLowerCase()] as string) || null,
     },
   }
 
