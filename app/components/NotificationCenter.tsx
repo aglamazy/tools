@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import type { Notification } from '@/app/types/notifications'
 
 type NotificationCenterProps = {
@@ -11,7 +10,6 @@ type NotificationCenterProps = {
 
 export default function NotificationCenter({ notifications, onClear }: NotificationCenterProps) {
   const [isOpen, setIsOpen] = useState(false)
-  const router = useRouter()
 
   const getEmoji = (type: Notification['type']) => {
     switch (type) {
@@ -153,7 +151,16 @@ export default function NotificationCenter({ notifications, onClear }: Notificat
                 notifications.map((notification) => (
                   <div
                     key={notification.id}
-                    onClick={notification.href ? () => { router.push(notification.href!); setIsOpen(false) } : undefined}
+                    onClick={notification.href ? () => {
+                      setIsOpen(false)
+                      const target = notification.href!
+                      if (window.location.pathname + window.location.search === target) {
+                        // Already on this page — just refresh data
+                        window.dispatchEvent(new Event('shared-data-updated'))
+                      } else {
+                        window.location.href = target
+                      }
+                    } : undefined}
                     style={{
                       padding: '1rem',
                       borderBottom: '1px solid #f3f4f6',

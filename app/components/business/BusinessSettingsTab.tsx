@@ -62,8 +62,20 @@ export default function BusinessSettingsTab({ businessId }: BusinessSettingsTabP
         unsub()
       }
     })
-    return unsub
-  }, [businessId])
+
+    // Refresh when shared sync delivers new data
+    const handleRefresh = () => {
+      void loadProjects()
+      // Reload tasks for expanded project
+      if (expandedProject) void loadTasks(expandedProject)
+    }
+    window.addEventListener('shared-data-updated', handleRefresh)
+
+    return () => {
+      unsub()
+      window.removeEventListener('shared-data-updated', handleRefresh)
+    }
+  }, [businessId, expandedProject])
 
   const loadProjects = async () => {
     const p = await projectStore.getByBusinessId(businessId)

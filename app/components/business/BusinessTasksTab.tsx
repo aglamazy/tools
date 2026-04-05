@@ -119,6 +119,10 @@ export default function BusinessTasksTab({ businessId }: { businessId: number })
   useEffect(() => {
     loadTasks()
     getAccessToken().then(token => setDriveConnected(!!token))
+
+    const handleRefresh = () => void loadTasks()
+    window.addEventListener('shared-data-updated', handleRefresh)
+    return () => window.removeEventListener('shared-data-updated', handleRefresh)
   }, [loadTasks])
 
   const handleAdd = () => {

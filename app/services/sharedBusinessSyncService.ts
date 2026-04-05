@@ -175,6 +175,11 @@ async function applySharedBackup(
   // Use the existing merge logic — it handles syncId matching, dedup, FK resolution
   await applyCloudBackup(cloud)
 
+  // Refresh any open business UI
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('shared-data-updated'))
+  }
+
   // Notify about new items
   const totalNew = newCounts.businessTasks + newCounts.harvestTasks
   if (totalNew > 0 && typeof window !== 'undefined') {
