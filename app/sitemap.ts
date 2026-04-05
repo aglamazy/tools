@@ -74,7 +74,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     return {
       url: `${normalizedBase}${isHome ? '/' : route}`,
       lastModified,
-      changeFrequency: (isHome ? 'weekly' : isHighPriority ? 'monthly' : 'yearly') as const,
+      changeFrequency: isHome ? 'weekly' : isHighPriority ? 'monthly' : 'yearly',
       priority: isHome ? 1.0 : isHighPriority ? 0.8 : 0.6,
     }
   })

@@ -233,6 +233,22 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
 
         syncIdToLocalId[tableName] = tableIdMap
       }
+
+      // Persist the combined deletion ledger so local-only deletions survive into the next export
+      const combinedLedgerValue: Record<string, string[]> = {}
+      for (const [table, syncIds] of Object.entries(allDeletions)) {
+        if (syncIds.size > 0) {
+          combinedLedgerValue[table] = Array.from(syncIds)
+        }
+      }
+      if (Object.keys(combinedLedgerValue).length > 0) {
+        const existing = await db.appSettings.where('key').equals('deletedRecords').first()
+        if (existing) {
+          await db.appSettings.update(existing.id!, { value: combinedLedgerValue, updatedAt: new Date().toISOString() })
+        } else {
+          await db.appSettings.add({ key: 'deletedRecords', value: combinedLedgerValue, updatedAt: new Date().toISOString() })
+        }
+      }
     },
   )
 
