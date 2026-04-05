@@ -17,8 +17,9 @@ import * as cheerio from 'cheerio'
 // so we use a custom https.Agent with IPv4-only lookup.
 dns.setDefaultResultOrder('ipv4first')
 const ipv4Agent = new https.Agent({
-  lookup: (hostname, options, callback) => {
-    dns.lookup(hostname, { family: 4 }, callback as any)
+  lookup: (hostname: string, opts: any, cb: any) => {
+    if (typeof opts === 'function') { cb = opts; opts = {} }
+    dns.lookup(hostname, { ...opts, family: 4 }, cb)
   },
 })
 // On Vercel, the custom agent may not work — fall back to default

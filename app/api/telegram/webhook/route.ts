@@ -12,7 +12,7 @@ import { sendMessage } from '@/app/services/telegram/telegramClient'
 import { processChat, type ChatMessage, type UserContext } from '@/app/services/telegram/chatProcessor'
 import { executeActions } from '@/app/services/telegram/actionExecutor'
 import { getGroceryData, mergeList } from '@/app/services/grocery/groceryStore'
-import { isCredentialsVerified } from '@/app/services/grocery/shufersalClient'
+import { isCredentialsVerified, saveCredentials, setCredentialsVerified, login as shufersalLogin } from '@/app/services/grocery/shufersalClient'
 import type { TelegramUpdate, TelegramMessage } from '@/app/services/telegram/types'
 
 const MAX_HISTORY = 10
