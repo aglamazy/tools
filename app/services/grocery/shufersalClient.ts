@@ -6,28 +6,12 @@
  * Credentials stored in Firestore groceries/{uid}/credentials (server-encrypted).
  */
 
-import dns from 'dns'
-import http from 'http'
-import https from 'https'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import * as cheerio from 'cheerio'
 
-// Shufersal's IPv6 endpoints are unreachable from some networks.
-// Node's built-in fetch (undici) ignores dns.setDefaultResultOrder,
-// so we use a custom https.Agent with IPv4-only lookup.
-dns.setDefaultResultOrder('ipv4first')
-const ipv4Agent = new https.Agent({
-  lookup: (hostname: string, opts: any, cb: any) => {
-    if (typeof opts === 'function') { cb = opts; opts = {} }
-    dns.lookup(hostname, { ...opts, family: 4 }, cb)
-  },
-})
-// On Vercel, the custom agent may not work — fall back to default
-const isVercel = !!process.env.VERCEL
-const agent = isVercel ? undefined : ipv4Agent
-
 const BASE_URL = 'https://www.shufersal.co.il/online/he'
-const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36'
+const PROXY_URL = process.env.SHUFERSAL_PROXY_URL || ''
+const PROXY_SECRET = process.env.SHUFERSAL_PROXY_SECRET || ''
 
 // --- Types ---
 
@@ -78,78 +62,7 @@ export interface SearchResult {
   price: string
 }
 
-// --- Cookie helpers ---
-
-function cookieHeader(cookies: Record<string, string>): string {
-  return Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join('; ')
-}
-
-function parseCookiesFromHeaders(headers: Headers, existing: Record<string, string>): Record<string, string> {
-  const updated = { ...existing }
-
-  // getSetCookie() returns individual Set-Cookie headers (Node 18.14.1+)
-  // Fallback to raw 'set-cookie' header if not available
-  let setCookies: string[] = []
-  if (typeof headers.getSetCookie === 'function') {
-    setCookies = headers.getSetCookie()
-  } else {
-    const raw = headers.get('set-cookie')
-    if (raw) setCookies = raw.split(/,(?=\s*\w+=)/)
-  }
-
-  for (const sc of setCookies) {
-    const match = sc.match(/^\s*([^=]+)=([^;]*)/)
-    if (match && match[2]) {
-      updated[match[1].trim()] = match[2]
-    }
-  }
-  return updated
-}
-
-// --- HTTP helpers ---
-
-/** HTTP request using Node native https (bypasses undici IPv6 issue). */
-function nodeRequest(
-  url: string,
-  options: { method?: string; headers?: Record<string, string>; body?: string },
-): Promise<{ statusCode: number; setCookies: string[]; body: string; location: string | null }> {
-  return new Promise((resolve, reject) => {
-    const parsed = new URL(url)
-    const req = https.request({
-      hostname: parsed.hostname,
-      port: 443,
-      path: parsed.pathname + parsed.search,
-      method: options.method || 'GET',
-      headers: options.headers,
-      agent,
-      timeout: 30000,
-    }, (res) => {
-      // Extract Set-Cookie from rawHeaders (name/value pairs array)
-      // res.rawHeaders is ['Header-Name', 'value', 'Header-Name', 'value', ...]
-      const setCookies: string[] = []
-      for (let i = 0; i < res.rawHeaders.length; i += 2) {
-        if (res.rawHeaders[i].toLowerCase() === 'set-cookie') {
-          setCookies.push(res.rawHeaders[i + 1])
-        }
-      }
-
-      const chunks: Buffer[] = []
-      res.on('data', (chunk: Buffer) => chunks.push(chunk))
-      res.on('end', () => {
-        resolve({
-          statusCode: res.statusCode || 0,
-          setCookies,
-          body: Buffer.concat(chunks).toString('utf-8'),
-          location: res.headers.location || null,
-        })
-      })
-    })
-    req.on('error', reject)
-    req.on('timeout', () => { req.destroy(); reject(new Error('Request timeout')) })
-    if (options.body) req.write(options.body)
-    req.end()
-  })
-}
+// --- HTTP via Cloud Run proxy ---
 
 interface ShuResponse {
   status: number
@@ -159,40 +72,54 @@ interface ShuResponse {
   headers: { get: (name: string) => string | null }
 }
 
+/**
+ * All Shufersal HTTP calls go through the Cloud Run proxy.
+ * The proxy handles the actual HTTP connection to shufersal.co.il.
+ */
 async function shuFetch(
   path: string,
   cookies: Record<string, string>,
   options: RequestInit = {},
 ): Promise<{ resp: ShuResponse; cookies: Record<string, string> }> {
-  const url = path.startsWith('http') ? path : `${BASE_URL}${path}`
-  const headers: Record<string, string> = {
-    'User-Agent': UA,
-    'Accept': '*/*',
-    'Accept-Language': 'he-IL,he;q=0.9',
-    'Cookie': cookieHeader(cookies),
-    ...(options.headers as Record<string, string> || {}),
+  if (!PROXY_URL) throw new Error('SHUFERSAL_PROXY_URL not configured')
+
+  const extraHeaders = (options.headers as Record<string, string>) || {}
+
+  const proxyBody = {
+    method: (options.method as string) || 'GET',
+    path,
+    headers: extraHeaders,
+    body: typeof options.body === 'string' ? options.body : undefined,
+    cookies,
   }
 
-  const body = typeof options.body === 'string' ? options.body : undefined
-  const raw = await nodeRequest(url, {
-    method: (options.method as string) || 'GET',
-    headers,
-    body,
+  const resp = await fetch(PROXY_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Proxy-Secret': PROXY_SECRET,
+    },
+    body: JSON.stringify(proxyBody),
   })
 
-  // Parse Set-Cookie headers
-  const updatedCookies = { ...cookies }
-  for (const sc of raw.setCookies) {
-    const match = sc.match(/^\s*([^=]+)=([^;]*)/)
-    if (match && match[2]) {
-      updatedCookies[match[1].trim()] = match[2]
-    }
+  if (!resp.ok) {
+    const errText = await resp.text()
+    throw new Error(`Proxy error ${resp.status}: ${errText}`)
   }
 
+  const raw = await resp.json() as {
+    status: number
+    body: string
+    setCookies: Record<string, string>
+    location: string | null
+  }
+
+  const updatedCookies = { ...cookies, ...raw.setCookies }
   const bodyText = raw.body
-  const resp: ShuResponse = {
-    status: raw.statusCode,
-    ok: raw.statusCode >= 200 && raw.statusCode < 300,
+
+  const shuResp: ShuResponse = {
+    status: raw.status,
+    ok: raw.status >= 200 && raw.status < 300,
     text: () => bodyText,
     json: () => JSON.parse(bodyText),
     headers: {
@@ -200,7 +127,7 @@ async function shuFetch(
     },
   }
 
-  return { resp, cookies: updatedCookies }
+  return { resp: shuResp, cookies: updatedCookies }
 }
 
 function getCsrf(cookies: Record<string, string>): string {
