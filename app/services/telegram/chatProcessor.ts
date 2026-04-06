@@ -61,6 +61,7 @@ const SYSTEM_PROMPT = `אתה AglamazoBot — עוזר משפחתי לניהול
 - {"action":"search_product","query":"חלב","qty":1,"target":"pending"} — חפש מוצר בשופרסל. target: "pending" (להזמנה השבועית) או "standing" (לרשימה הקבועה). המשתמש יבחר מתוך תוצאות החיפוש.
 - {"action":"remove_items","items":["ביצים"]} — הסר מההזמנה השבועית
 - {"action":"remove_standing","items":["חלב"]} — הסר מהרשימה קבועה
+- {"action":"re_search","query":"קוטג 5%","qty":6,"target":"standing"} — חפש מחדש מוצר (מוחק את הבחירה הקודמת ומציג תוצאות חדשות). כשמשתמש אומר "תחליף" או "לא את זה" או "בחרתי לא נכון"
 - {"action":"show_list"} — הצג רשימה
 - {"action":"clear_pending"} — נקה שינויים שבועיים
 - {"action":"trigger_order","day":"...","time":"..."} — בצע הזמנה. day=יום משלוח בעברית (אופציונלי), time=שעה (אופציונלי). בלי day/time = המשלוח הראשון הזמין

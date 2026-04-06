@@ -36,6 +36,21 @@ export async function lookupMapping(uid: string, name: string) {
   return findMapping(name, mappings)
 }
 
+/** Delete a saved mapping so user can re-pick. */
+export async function deleteMapping(uid: string, name: string): Promise<boolean> {
+  const mappings = await loadMappings(uid)
+  const lower = name.toLowerCase()
+  let deleted = false
+  for (const key of Object.keys(mappings)) {
+    if (key === lower || key.includes(lower) || lower.includes(key)) {
+      delete mappings[key]
+      deleted = true
+    }
+  }
+  if (deleted) await saveMappings(uid, mappings)
+  return deleted
+}
+
 /** Save a single product mapping (called when user picks from search results). */
 export async function saveProductMapping(
   uid: string,

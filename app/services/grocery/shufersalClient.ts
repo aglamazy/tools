@@ -6,12 +6,25 @@
  * Credentials stored in Firestore groceries/{uid}/credentials (server-encrypted).
  */
 
+import dns from 'dns'
+import https from 'https'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import * as cheerio from 'cheerio'
 
 const BASE_URL = 'https://www.shufersal.co.il/online/he'
+const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36'
 const PROXY_URL = process.env.SHUFERSAL_PROXY_URL || ''
 const PROXY_SECRET = process.env.SHUFERSAL_PROXY_SECRET || ''
+const USE_PROXY = process.env.NODE_ENV === 'production' && !!PROXY_URL
+
+// Direct connection: IPv4-only agent for local dev
+dns.setDefaultResultOrder('ipv4first')
+const directAgent = new https.Agent({
+  lookup: (hostname: string, opts: any, cb: any) => {
+    if (typeof opts === 'function') { cb = opts; opts = {} }
+    dns.lookup(hostname, { ...opts, family: 4 }, cb)
+  },
+})
 
 // --- Types ---
 
@@ -60,6 +73,7 @@ export interface SearchResult {
   name: string
   brand: string
   price: string
+  unitPrice: string  // e.g. "11.56 ש"ח ל-100 גרם"
 }
 
 // --- HTTP via Cloud Run proxy ---
@@ -73,22 +87,96 @@ interface ShuResponse {
 }
 
 /**
- * All Shufersal HTTP calls go through the Cloud Run proxy.
- * The proxy handles the actual HTTP connection to shufersal.co.il.
+ * Route Shufersal HTTP calls: direct in dev, via Cloud Run proxy in production.
  */
 async function shuFetch(
   path: string,
   cookies: Record<string, string>,
   options: RequestInit = {},
 ): Promise<{ resp: ShuResponse; cookies: Record<string, string> }> {
-  if (!PROXY_URL) throw new Error('SHUFERSAL_PROXY_URL not configured')
+  return USE_PROXY ? shuFetchProxy(path, cookies, options) : shuFetchDirect(path, cookies, options)
+}
 
+/** Direct HTTP connection (local dev) */
+async function shuFetchDirect(
+  path: string,
+  cookies: Record<string, string>,
+  options: RequestInit = {},
+): Promise<{ resp: ShuResponse; cookies: Record<string, string> }> {
+  const url = path.startsWith('http') ? path : `${BASE_URL}${path}`
   const extraHeaders = (options.headers as Record<string, string>) || {}
+  const method = (options.method as string) || 'GET'
+  const body = typeof options.body === 'string' ? options.body : undefined
+
+  const raw = await new Promise<{ statusCode: number; setCookies: string[]; body: string; location: string | null }>((resolve, reject) => {
+    const parsed = new URL(url)
+    // Encode [] in query params — Shufersal requires %5B%5D not raw brackets
+    const reqPath = parsed.pathname + parsed.search.replace(/\[/g, '%5B').replace(/\]/g, '%5D')
+    const req = https.request({
+      hostname: parsed.hostname,
+      port: 443,
+      path: reqPath,
+      method,
+      headers: {
+        'User-Agent': UA,
+        'Accept': '*/*',
+        'Accept-Language': 'he-IL,he;q=0.9',
+        'Cookie': Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join('; '),
+        ...extraHeaders,
+      },
+      agent: directAgent,
+      timeout: 30000,
+    }, (res) => {
+      const sc: string[] = []
+      for (let i = 0; i < res.rawHeaders.length; i += 2) {
+        if (res.rawHeaders[i].toLowerCase() === 'set-cookie') sc.push(res.rawHeaders[i + 1])
+      }
+      const chunks: Buffer[] = []
+      res.on('data', (c: Buffer) => chunks.push(c))
+      res.on('end', () => resolve({
+        statusCode: res.statusCode || 0,
+        setCookies: sc,
+        body: Buffer.concat(chunks).toString('utf-8'),
+        location: res.headers.location || null,
+      }))
+    })
+    req.on('error', reject)
+    req.on('timeout', () => { req.destroy(); reject(new Error('Request timeout')) })
+    if (body) req.write(body)
+    req.end()
+  })
+
+  const updatedCookies = { ...cookies }
+  for (const sc of raw.setCookies) {
+    const match = sc.match(/^\s*([^=]+)=([^;]*)/)
+    if (match && match[2]) updatedCookies[match[1].trim()] = match[2]
+  }
+
+  const bodyText = raw.body
+  return {
+    resp: {
+      status: raw.statusCode,
+      ok: raw.statusCode >= 200 && raw.statusCode < 300,
+      text: () => bodyText,
+      json: () => JSON.parse(bodyText),
+      headers: { get: (name: string) => name.toLowerCase() === 'location' ? raw.location : null },
+    },
+    cookies: updatedCookies,
+  }
+}
+
+/** Via Cloud Run proxy (production) */
+async function shuFetchProxy(
+  path: string,
+  cookies: Record<string, string>,
+  options: RequestInit = {},
+): Promise<{ resp: ShuResponse; cookies: Record<string, string> }> {
+  if (!PROXY_URL) throw new Error('SHUFERSAL_PROXY_URL not configured')
 
   const proxyBody = {
     method: (options.method as string) || 'GET',
     path,
-    headers: extraHeaders,
+    headers: (options.headers as Record<string, string>) || {},
     body: typeof options.body === 'string' ? options.body : undefined,
     cookies,
   }
@@ -97,10 +185,7 @@ async function shuFetch(
   for (let attempt = 0; attempt < 3; attempt++) {
     resp = await fetch(PROXY_URL, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Proxy-Secret': PROXY_SECRET,
-      },
+      headers: { 'Content-Type': 'application/json', 'X-Proxy-Secret': PROXY_SECRET },
       body: JSON.stringify(proxyBody),
     })
     if (resp.status !== 429) break
@@ -114,27 +199,20 @@ async function shuFetch(
     throw new Error(`Proxy error ${resp?.status}: ${errText}`)
   }
 
-  const raw = await resp.json() as {
-    status: number
-    body: string
-    setCookies: Record<string, string>
-    location: string | null
-  }
-
+  const raw = await resp.json() as { status: number; body: string; setCookies: Record<string, string>; location: string | null }
   const updatedCookies = { ...cookies, ...raw.setCookies }
   const bodyText = raw.body
 
-  const shuResp: ShuResponse = {
-    status: raw.status,
-    ok: raw.status >= 200 && raw.status < 300,
-    text: () => bodyText,
-    json: () => JSON.parse(bodyText),
-    headers: {
-      get: (name: string) => name.toLowerCase() === 'location' ? raw.location : null,
+  return {
+    resp: {
+      status: raw.status,
+      ok: raw.status >= 200 && raw.status < 300,
+      text: () => bodyText,
+      json: () => JSON.parse(bodyText),
+      headers: { get: (name: string) => name.toLowerCase() === 'location' ? raw.location : null },
     },
+    cookies: updatedCookies,
   }
-
-  return { resp: shuResp, cookies: updatedCookies }
 }
 
 function getCsrf(cookies: Record<string, string>): string {
@@ -360,10 +438,12 @@ export async function cartAddMany(
       )
       // Update cookies from response (CSRF can rotate)
       Object.assign(cookies, updated)
-      if (resp.ok) {
+      console.log(`[Shufersal] cartAdd ${item.code}: status=${resp.status} ok=${resp.ok}`)
+      if (resp.ok || resp.status === 302) {
+        // 302 is normal for cart add (redirect to cart page)
         added++
       } else {
-        console.error(`[Shufersal] cartAdd ${item.code}: HTTP ${resp.status} body=${resp.text().slice(0, 200)}`)
+        console.error(`[Shufersal] cartAdd ${item.code} FAILED: HTTP ${resp.status}`)
         failed.push({ code: item.code, error: `HTTP ${resp.status}` })
       }
     } catch (err: unknown) {
@@ -481,7 +561,7 @@ export async function checkout(
   }
 
   // === CHECKOUT AUTH ===
-  const { resp: authResp } = await shuFetch('/cart/checkout/auth', cookies, {
+  const { resp: authResp, cookies: authCookies } = await shuFetch('/cart/checkout/auth', cookies, {
     method: 'POST',
     body: new URLSearchParams({
       j_username: creds.email,
@@ -496,8 +576,11 @@ export async function checkout(
     },
   })
 
+  Object.assign(cookies, authCookies)
+  console.log(`[Shufersal] Checkout auth: status=${authResp.status}`)
   try {
     const authResult = authResp.json()
+    console.log(`[Shufersal] Checkout auth result: ${JSON.stringify(authResult)}`)
     if (!authResult.success) {
       return { success: false, error: 'Checkout auth failed', deliveryWindow }
     }
@@ -506,29 +589,54 @@ export async function checkout(
   }
 
   // === PLACE ORDER ===
-  // Load checkout page (sets server-side state)
-  const { resp: checkoutPage } = await shuFetch('/miglog-checkout', cookies)
-  console.log(`[Shufersal] Checkout page: status=${checkoutPage.status}`)
-  // Place order
-  const { resp: confirmResp } = await shuFetch('/miglog-confirmation', cookies)
-  const confirmHtml = confirmResp.text()
-  console.log(`[Shufersal] Confirmation: status=${confirmResp.status} bodyLen=${confirmHtml.length} isHtml=${confirmHtml.trimStart().startsWith('<')}`)
+  // Use a fetch-with-redirect-follow that carries cookies through the chain
+  async function fetchWithRedirects(startPath: string, startCookies: Record<string, string>): Promise<{ body: string; status: number; cookies: Record<string, string> }> {
+    let path = startPath
+    const c = { ...startCookies }
+    for (let i = 0; i < 10; i++) {
+      const { resp, cookies: newCookies } = await shuFetch(path, c)
+      Object.assign(c, newCookies)
+      if (resp.status !== 302) {
+        return { body: resp.text(), status: resp.status, cookies: c }
+      }
+      const loc = resp.headers.get('location')
+      if (!loc) return { body: resp.text(), status: resp.status, cookies: c }
+      console.log(`[Shufersal] Redirect ${i + 1}: ${loc.slice(0, 80)}`)
+      path = loc
+    }
+    return { body: '', status: 0, cookies: c }
+  }
 
-  // Extract order ID (8-digit number)
-  const orderMatch = confirmHtml.match(/(\d{8})/)
-  let orderId = orderMatch?.[1] || null
-  console.log(`[Shufersal] Order ID from confirmation: ${orderId || 'not found'}`)
+  // Step 1: Load checkout page
+  const checkout = await fetchWithRedirects('/miglog-checkout', cookies)
+  Object.assign(cookies, checkout.cookies)
+  console.log(`[Shufersal] Checkout page: status=${checkout.status} body=${checkout.body.length} chars`)
 
-  // Fallback: check orders API
-  if (!orderId) {
+  // Step 2: Place order
+  const confirm = await fetchWithRedirects('/miglog-confirmation', cookies)
+  Object.assign(cookies, confirm.cookies)
+  const confirmHtml = confirm.body
+  console.log(`[Shufersal] Confirmation: status=${confirm.status} body=${confirmHtml.length} chars`)
+
+  // Get order ID from orders API (most reliable)
+  let orderId: string | null = null
+  try {
     const { resp: ordersResp } = await shuFetch('/my-account/orders', cookies, {
       headers: { 'X-Requested-With': 'XMLHttpRequest' },
     })
-    try {
-      const orders = ordersResp.json() as any
-      const active = orders.activeOrders || []
-      if (active.length > 0) orderId = active[0].code
-    } catch { /* ignore */ }
+    const orders = ordersResp.json() as any
+    const active = orders.activeOrders || []
+    if (active.length > 0) {
+      orderId = active[0].code
+      console.log(`[Shufersal] Order ID from API: ${orderId}`)
+    }
+  } catch { /* ignore */ }
+
+  // Fallback: regex on confirmation page
+  if (!orderId) {
+    const orderMatch = confirmHtml.match(/0[23]\d{6}/)
+    orderId = orderMatch?.[0] || null
+    console.log(`[Shufersal] Order ID from HTML: ${orderId || 'not found'}`)
   }
 
   // Save updated session
@@ -683,11 +791,15 @@ function parseSearchResults(html: string): SearchResult[] {
       brand = brandSpans.last().text().trim()
     }
 
+    const unitPriceText = $el.find('.pricePerUnit, [class*=pricePerUnit]').text().trim()
+      .replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ')
+
     results.push({
       catalogId: code,
       name,
       brand,
       price: priceMatch?.[0] || '',
+      unitPrice: unitPriceText,
     })
   })
   return results

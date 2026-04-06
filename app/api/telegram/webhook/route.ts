@@ -216,7 +216,7 @@ export async function POST(request: NextRequest) {
         const sel = pendingSelections[si]
         const searchKey = searchKeys[si]
         const buttons = sel.results.map((r, idx) => [{
-          text: `${r.name}${r.brand ? ` | ${r.brand}` : ''} — ${r.price}₪`,
+          text: `${r.name}${r.brand ? ` | ${r.brand}` : ''} — ${r.price}₪${r.unitPrice ? ` (${r.unitPrice})` : ''}`,
           callback_data: `p:${searchKey}:${idx}`,
         }])
         const targetLabel = sel.target === 'standing' ? 'רשימה קבועה' : 'הזמנה'

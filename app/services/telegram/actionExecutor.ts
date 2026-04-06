@@ -36,9 +36,9 @@ import {
 
 import { randomBytes } from 'crypto'
 import { getOrderCycle, setOrderCycle, type OrderCycle } from '@/app/services/grocery/groceryStore'
-import { lookupMapping } from '@/app/services/grocery/productResolver'
+import { lookupMapping, deleteMapping } from '@/app/services/grocery/productResolver'
 
-const SHUFERSAL_ACTIONS = new Set(['show_orders', 'trigger_order', 'cancel_order', 'search_product'])
+const SHUFERSAL_ACTIONS = new Set(['show_orders', 'trigger_order', 'cancel_order', 'search_product', 're_search'])
 
 // --- Pending search storage (for callback_data 64-byte limit) ---
 
@@ -80,7 +80,7 @@ export interface PendingProductSelection {
   query: string
   qty: number
   target: 'pending' | 'standing'
-  results: { catalogId: string; name: string; brand: string; price: string }[]
+  results: { catalogId: string; name: string; brand: string; price: string; unitPrice: string }[]
 }
 
 export async function executeActions(uid: string, actions: ChatAction[]): Promise<ActionResult> {
@@ -144,12 +144,43 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
           pendingSelections: [{
             query, qty, target,
             results: results.slice(0, 5).map(r => ({
-              catalogId: r.catalogId, name: r.name, brand: r.brand, price: r.price,
+              catalogId: r.catalogId, name: r.name, brand: r.brand, price: r.price, unitPrice: r.unitPrice,
             })),
           }],
         }
       } catch (err) {
         console.error(`[ActionExecutor] Search failed for "${query}":`, err)
+        return `שגיאה בחיפוש "${query}".`
+      }
+    }
+
+    case 're_search': {
+      const query = typeof action.query === 'string' ? action.query.trim() : ''
+      const qty = typeof action.qty === 'number' && action.qty > 0 ? action.qty : 1
+      const target = action.target === 'standing' ? 'standing' as const : 'pending' as const
+      if (!query) return null
+
+      // Delete old mapping
+      await deleteMapping(uid, query)
+
+      // Remove old item from list if it exists
+      if (target === 'standing') await removeFromStanding(uid, [query])
+      else await removePendingItems(uid, [query])
+
+      // Search fresh
+      try {
+        const results = await search(uid, query)
+        if (results.length === 0) return `לא נמצאו תוצאות עבור "${query}".`
+        return {
+          pendingSelections: [{
+            query, qty, target,
+            results: results.slice(0, 5).map(r => ({
+              catalogId: r.catalogId, name: r.name, brand: r.brand, price: r.price, unitPrice: r.unitPrice,
+            })),
+          }],
+        }
+      } catch (err) {
+        console.error(`[ActionExecutor] Re-search failed for "${query}":`, err)
         return `שגיאה בחיפוש "${query}".`
       }
     }
