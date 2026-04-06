@@ -45,6 +45,20 @@ export const metadata: Metadata = {
     url: '/',
     siteName: branding.name,
     type: 'website',
+    images: [
+      {
+        url: '/logo.png',
+        width: 2816,
+        height: 1536,
+        alt: branding.name,
+      },
+    ],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: branding.name,
+    description: branding.tagline,
+    images: ['/logo.png'],
   },
   robots: {
     index: true,
@@ -60,19 +74,29 @@ export const viewport: Viewport = {
   themeColor: '#4338ca',
 }
 
-const jsonLd = {
-  '@context': 'https://schema.org',
-  '@type': 'WebSite',
-  name: branding.name,
-  description: branding.tagline,
-  url: siteUrl,
-  inLanguage: 'he',
-  publisher: {
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'WebSite',
+    name: branding.name,
+    description: branding.tagline,
+    url: siteUrl,
+    inLanguage: 'he',
+    publisher: {
+      '@type': 'Organization',
+      name: branding.name,
+      url: siteUrl,
+    },
+  },
+  {
+    '@context': 'https://schema.org',
     '@type': 'Organization',
     name: branding.name,
     url: siteUrl,
+    logo: `${siteUrl}/logo.png`,
+    description: branding.tagline,
   },
-}
+]
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (

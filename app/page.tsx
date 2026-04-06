@@ -3,6 +3,8 @@ import Link from 'next/link'
 import { branding, routes } from '@/app/config'
 import ReturningUserRedirect from '@/app/components/ReturningUserRedirect'
 
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://aglamazo.com'
+
 export const metadata: Metadata = {
   title: `${branding.name} - ${branding.tagline}`,
   description: `${branding.name} - ניהול פיננסי חכם לעסק שלך. תזרים מזומנים, תקציב, תחזית תשלומים ועוד - הכל בפרטיות מלאה.`,
@@ -11,9 +13,26 @@ export const metadata: Metadata = {
   },
 }
 
+const breadcrumbJsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'BreadcrumbList',
+  itemListElement: [
+    {
+      '@type': 'ListItem',
+      position: 1,
+      name: 'דף הבית',
+      item: siteUrl,
+    },
+  ],
+}
+
 export default function LandingPage() {
   return (
     <div className="landing" dir="rtl">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
+      />
       <ReturningUserRedirect />
       <section className="landing-hero">
         <h1 className="landing-title">{branding.name}</h1>
