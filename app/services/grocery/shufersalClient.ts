@@ -93,18 +93,25 @@ async function shuFetch(
     cookies,
   }
 
-  const resp = await fetch(PROXY_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Proxy-Secret': PROXY_SECRET,
-    },
-    body: JSON.stringify(proxyBody),
-  })
+  let resp: Response | null = null
+  for (let attempt = 0; attempt < 3; attempt++) {
+    resp = await fetch(PROXY_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Proxy-Secret': PROXY_SECRET,
+      },
+      body: JSON.stringify(proxyBody),
+    })
+    if (resp.status !== 429) break
+    const wait = (attempt + 1) * 2000
+    console.log(`[Shufersal] Rate limited, retrying in ${wait}ms...`)
+    await new Promise(r => setTimeout(r, wait))
+  }
 
-  if (!resp.ok) {
-    const errText = await resp.text()
-    throw new Error(`Proxy error ${resp.status}: ${errText}`)
+  if (!resp || !resp.ok) {
+    const errText = resp ? await resp.text() : 'No response'
+    throw new Error(`Proxy error ${resp?.status}: ${errText}`)
   }
 
   const raw = await resp.json() as {
@@ -278,6 +285,23 @@ export async function cartRead(uid: string): Promise<CartItem[]> {
   return parseCart(html)
 }
 
+export async function cartClear(uid: string): Promise<number> {
+  const items = await cartRead(uid)
+  let removed = 0
+  for (const item of items) {
+    if (item.entryNumber) {
+      try {
+        await cartRemove(uid, item.entryNumber)
+        removed++
+      } catch (err) {
+        console.error(`[Shufersal] Failed to remove entry ${item.entryNumber}:`, err)
+      }
+    }
+  }
+  console.log(`[Shufersal] Cart cleared: ${removed}/${items.length} items`)
+  return removed
+}
+
 export async function cartAdd(uid: string, productCode: string, qty = 1): Promise<void> {
   const cookies = await getAuthenticatedCookies(uid)
   const csrf = getCsrf(cookies)
@@ -409,17 +433,19 @@ export async function checkout(
   const creds = await loadCredentials(uid)
   if (!creds) return { success: false, error: 'Credentials not configured' }
 
-  const cookies = await getAuthenticatedCookies(uid)
-  const csrf = getCsrf(cookies)
-
-  // === BUILD CART ===
+  // === CLEAR + BUILD CART ===
   if (items.length > 0) {
+    await cartClear(uid)
     const result = await cartAddMany(uid, items)
     console.log(`[Shufersal] Cart built: ${result.added}/${items.length} items`)
     if (result.added === 0) {
       return { success: false, error: 'No items added to cart' }
     }
   }
+
+  // Reload cookies after cart build (cartAddMany saves updated session)
+  const cookies = await getAuthenticatedCookies(uid)
+  const csrf = getCsrf(cookies)
 
   // === GET SLOTS ===
   const { resp: slotsResp } = await shuFetch(
@@ -428,7 +454,13 @@ export async function checkout(
   if (!slotsResp.ok) return { success: false, error: `Failed to fetch slots: ${slotsResp.status}` }
 
   const rawSlots = slotsResp.json() as Record<string, any[]>
-  const slot = findMatchingSlot(rawSlots, options.day, options.time, options.nearest)
+  console.log(`[Shufersal] Slots: ${Object.keys(rawSlots).length} days, day=${options.day || 'any'} nearest=${options.nearest}`)
+  let slot = findMatchingSlot(rawSlots, options.day, options.time, options.nearest)
+  // Fallback to nearest if preferred day not available
+  if (!slot && options.day) {
+    console.log(`[Shufersal] Preferred day "${options.day}" not available, using nearest`)
+    slot = findMatchingSlot(rawSlots, undefined, undefined, true)
+  }
   if (!slot) return { success: false, error: 'No matching delivery slot found' }
 
   console.log(`[Shufersal] Selected slot: ${slot.day} ${slot.date} ${slot.time}`)

@@ -4,6 +4,7 @@
  */
 
 import type { ChatAction } from './chatProcessor'
+import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import {
   addPendingItems,
   removePendingItems,
@@ -33,9 +34,40 @@ import {
   search,
 } from '@/app/services/grocery/shufersalClient'
 
-const SHUFERSAL_ACTIONS = new Set(['show_orders', 'trigger_order', 'cancel_order'])
+import { randomBytes } from 'crypto'
 import { getOrderCycle, setOrderCycle, type OrderCycle } from '@/app/services/grocery/groceryStore'
-// Product resolver used for mapping lookup only — search results shown to user for picking
+import { lookupMapping } from '@/app/services/grocery/productResolver'
+
+const SHUFERSAL_ACTIONS = new Set(['show_orders', 'trigger_order', 'cancel_order', 'search_product'])
+
+// --- Pending search storage (for callback_data 64-byte limit) ---
+
+export async function savePendingSearch(uid: string, selection: PendingProductSelection): Promise<string> {
+  const key = randomBytes(3).toString('hex')
+  await getAdminFirestore().collection('groceries').doc(uid)
+    .collection('private').doc('pendingSearches').set(
+      { [key]: { ...selection, createdAt: new Date().toISOString() } },
+      { merge: true },
+    )
+  return key
+}
+
+export async function loadPendingSearch(uid: string, key: string): Promise<PendingProductSelection | null> {
+  const doc = await getAdminFirestore().collection('groceries').doc(uid)
+    .collection('private').doc('pendingSearches').get()
+  if (!doc.exists) return null
+  const entry = doc.data()?.[key]
+  if (!entry) return null
+  // Expire after 24h
+  if (entry.createdAt && Date.now() - new Date(entry.createdAt).getTime() > 24 * 60 * 60 * 1000) return null
+  return entry as PendingProductSelection
+}
+
+export async function deletePendingSearch(uid: string, key: string): Promise<void> {
+  const { FieldValue } = await import('firebase-admin/firestore')
+  await getAdminFirestore().collection('groceries').doc(uid)
+    .collection('private').doc('pendingSearches').update({ [key]: FieldValue.delete() })
+}
 
 export interface ActionResult {
   /** Extra text to append to the bot's reply (e.g. the list). Null = nothing to add. */
@@ -45,8 +77,9 @@ export interface ActionResult {
 }
 
 export interface PendingProductSelection {
-  name: string
+  query: string
   qty: number
+  target: 'pending' | 'standing'
   results: { catalogId: string; name: string; brand: string; price: string }[]
 }
 
@@ -87,55 +120,46 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
   }
 
   switch (action.action) {
+    // --- Product search (with Shufersal credentials) ---
+    case 'search_product': {
+      const query = typeof action.query === 'string' ? action.query.trim() : ''
+      const qty = typeof action.qty === 'number' && action.qty > 0 ? action.qty : 1
+      const target = action.target === 'standing' ? 'standing' as const : 'pending' as const
+      if (!query) return null
+
+      // Fast path: check saved mapping
+      const mapping = await lookupMapping(uid, query)
+      if (mapping) {
+        const item = { name: mapping.shufersalName, qty, catalogId: mapping.catalogId }
+        if (target === 'standing') await addToStanding(uid, [item])
+        else await addPendingItems(uid, [item])
+        return `${query} → ${mapping.shufersalName}`
+      }
+
+      // Search Shufersal
+      try {
+        const results = await search(uid, query)
+        if (results.length === 0) return `לא נמצאו תוצאות עבור "${query}".`
+        return {
+          pendingSelections: [{
+            query, qty, target,
+            results: results.slice(0, 5).map(r => ({
+              catalogId: r.catalogId, name: r.name, brand: r.brand, price: r.price,
+            })),
+          }],
+        }
+      } catch (err) {
+        console.error(`[ActionExecutor] Search failed for "${query}":`, err)
+        return `שגיאה בחיפוש "${query}".`
+      }
+    }
+
+    // --- No-creds fallback: add by name only ---
     case 'add_items': {
       const items = normalizeItems(action.items)
       if (items.length === 0) return null
-
-      const verified = await isCredentialsVerified(uid)
-      const pendingSelections: PendingProductSelection[] = []
-
-      for (const item of items) {
-        if (item.catalogId) {
-          await addPendingItems(uid, [item])
-          continue
-        }
-
-        if (verified) {
-          // Check saved mappings only (no auto-search)
-          const { lookupMapping } = await import('@/app/services/grocery/productResolver')
-          const mapping = await lookupMapping(uid, item.name)
-          if (mapping) {
-            await addPendingItems(uid, [{ ...item, catalogId: mapping.catalogId }])
-            continue
-          }
-
-          // No mapping — search Shufersal and let user pick
-          try {
-            const results = await search(uid, item.name)
-            if (results.length > 0) {
-              await addPendingItems(uid, [item])
-              pendingSelections.push({
-                name: item.name,
-                qty: item.qty,
-                results: results.slice(0, 5).map(r => ({
-                  catalogId: r.catalogId,
-                  name: r.name,
-                  brand: r.brand,
-                  price: r.price,
-                })),
-              })
-              continue
-            }
-          } catch (err) {
-            console.error(`[ActionExecutor] Search failed for "${item.name}":`, err)
-          }
-        }
-
-        // No credentials or search failed — add without catalogId
-        await addPendingItems(uid, [item])
-      }
-
-      return pendingSelections.length > 0 ? { pendingSelections } : null
+      await addPendingItems(uid, items)
+      return null
     }
 
     case 'remove_items': {
@@ -212,11 +236,16 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
 
       const items = withId.map(i => ({ code: i.catalogId!, qty: i.qty }))
 
+      // Use day/time from action if provided, otherwise fall back to schedule, otherwise nearest
+      const actionDay = typeof action.day === 'string' ? action.day : undefined
+      const actionTime = typeof action.time === 'string' ? action.time : undefined
       const schedule = data.schedule
+      const day = actionDay || schedule?.preferredSlot.day
+      const time = actionTime || schedule?.preferredSlot.time?.split('-')[0]
       const result = await checkout(uid, items, {
-        day: schedule?.preferredSlot.day,
-        time: schedule?.preferredSlot.time?.split('-')[0],
-        nearest: !schedule, // no schedule = pick first available slot
+        day,
+        time,
+        nearest: !day, // no day specified at all = pick first available
       })
 
       if (result.success) {

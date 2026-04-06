@@ -10,8 +10,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import { sendMessage, sendWithKeyboard, answerCallbackQuery } from '@/app/services/telegram/telegramClient'
 import { processChat, type ChatMessage, type UserContext } from '@/app/services/telegram/chatProcessor'
-import { executeActions } from '@/app/services/telegram/actionExecutor'
-import { getGroceryData, mergeList, addPendingItems, addToStanding } from '@/app/services/grocery/groceryStore'
+import { executeActions, savePendingSearch, loadPendingSearch, deletePendingSearch, type PendingProductSelection } from '@/app/services/telegram/actionExecutor'
+import { getGroceryData } from '@/app/services/grocery/groceryStore'
+import { addPendingItems, addToStanding } from '@/app/services/grocery/groceryStore'
 import { saveProductMapping } from '@/app/services/grocery/productResolver'
 import type { TelegramCallbackQuery } from '@/app/services/telegram/types'
 import { isCredentialsVerified, saveCredentials, setCredentialsVerified, login as shufersalLogin } from '@/app/services/grocery/shufersalClient'
@@ -100,6 +101,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true })
     }
 
+    // Handle /clear command — clear standing list and pending changes
+    if (message.text === '/clear') {
+      const testMode = request.headers.get('x-telegram-test') === 'true'
+      const clearUid = testMode ? 'test-user' : (await resolveLink(message.from.id, message.chat.id))?.uid
+      if (clearUid) {
+        const firestore = getAdminFirestore()
+        const doc = await firestore.collection('groceries').doc(clearUid).get()
+        if (doc.exists) {
+          await firestore.collection('groceries').doc(clearUid).update({
+            standingList: [],
+            pendingChanges: { add: [], remove: [] },
+            updatedAt: new Date().toISOString(),
+          })
+        }
+      }
+      const reply = 'רשימה קבועה ושינויים שבועיים נמחקו.'
+      if (testMode) return NextResponse.json({ ok: true, response: reply, actions: [] })
+      await sendMessage(message.chat.id, reply)
+      return NextResponse.json({ ok: true })
+    }
+
     // Handle /start command (Telegram's default on first interaction)
     if (message.text === '/start') {
       await sendMessage(message.chat.id,
@@ -167,28 +189,40 @@ export async function POST(request: NextRequest) {
     history.push({ role: 'assistant', content: replyText })
     await saveHistory(link.uid, history)
 
+    // Save pending searches (both test and prod need this for callbacks)
+    const searchKeys: string[] = []
+    if (pendingSelections?.length) {
+      for (const sel of pendingSelections) {
+        const key = await savePendingSearch(link.uid, sel)
+        searchKeys.push(key)
+      }
+    }
+
     // In test mode, return response directly
     if (testMode) {
       return NextResponse.json({
         ok: true,
         response: replyText,
         actions: result.actions,
-        pendingSelections,
+        pendingSelections: pendingSelections?.map((sel, i) => ({ ...sel, searchKey: searchKeys[i] })),
       })
     }
 
     await sendMessage(chatId, replyText)
 
-    // Send product selection keyboards for unresolved items
+    // Send product selection keyboards
     if (pendingSelections?.length) {
-      for (const sel of pendingSelections) {
-        const buttons = sel.results.map(r => [{
-          text: `${r.name} ${r.brand ? `(${r.brand})` : ''} — ${r.price}₪`,
-          callback_data: `pick:${sel.name}:${r.catalogId}`,
+      for (let si = 0; si < pendingSelections.length; si++) {
+        const sel = pendingSelections[si]
+        const searchKey = searchKeys[si]
+        const buttons = sel.results.map((r, idx) => [{
+          text: `${r.name}${r.brand ? ` | ${r.brand}` : ''} — ${r.price}₪`,
+          callback_data: `p:${searchKey}:${idx}`,
         }])
+        const targetLabel = sel.target === 'standing' ? 'רשימה קבועה' : 'הזמנה'
         await sendWithKeyboard(
           chatId,
-          `בחר "${sel.name}":`,
+          `בחר "${sel.query}" (${targetLabel}):`,
           { inline_keyboard: buttons },
         )
       }
@@ -311,53 +345,57 @@ async function resolveLink(telegramUserId: number, chatId: number) {
 
 /**
  * Handle inline keyboard button press (product selection).
- * callback_data format: "pick:<itemName>:<catalogId>"
+ * callback_data format: "p:<searchKey>:<resultIndex>"
  */
 async function handleCallbackQuery(query: TelegramCallbackQuery) {
   const data = query.data || ''
-  if (!data.startsWith('pick:')) {
+  if (!data.startsWith('p:')) {
     await answerCallbackQuery(query.id)
     return
   }
 
   const parts = data.split(':')
-  if (parts.length < 3) {
+  if (parts.length !== 3) {
     await answerCallbackQuery(query.id, 'שגיאה')
     return
   }
 
-  const itemName = parts[1]
-  const catalogId = parts.slice(2).join(':') // catalogId might contain ':'
+  const searchKey = parts[1]
+  const resultIndex = parseInt(parts[2], 10)
   const chatId = query.message?.chat.id
   if (!chatId) return
 
-  // Resolve user
   const link = await resolveLink(query.from.id, chatId)
   if (!link) {
     await answerCallbackQuery(query.id, 'חשבון לא מחובר')
     return
   }
 
+  // Load stored search context
+  const pendingSearch = await loadPendingSearch(link.uid, searchKey)
+  if (!pendingSearch || resultIndex >= pendingSearch.results.length) {
+    await answerCallbackQuery(query.id, 'החיפוש פג תוקף')
+    return
+  }
+
+  const selected = pendingSearch.results[resultIndex]
+  const item = { name: selected.name, qty: pendingSearch.qty, catalogId: selected.catalogId }
+
+  // Save to correct target
+  if (pendingSearch.target === 'standing') {
+    await addToStanding(link.uid, [item])
+  } else {
+    await addPendingItems(link.uid, [item])
+  }
+
   // Save mapping for future use
-  const buttonText = ((query.message as any)?.reply_markup?.inline_keyboard as any[])
-    ?.flat().find((b: any) => b.callback_data === data)?.text || ''
-  const shufersalName = buttonText.split('—')[0]?.trim() || itemName
-  await saveProductMapping(link.uid, itemName, catalogId, shufersalName)
+  await saveProductMapping(link.uid, pendingSearch.query, selected.catalogId, selected.name)
 
-  // Update the item in pending/standing with the catalogId
-  const groceryData = await getGroceryData(link.uid)
-  const pendingItem = groceryData.pendingChanges.add.find(i => i.name === itemName)
-  if (pendingItem) {
-    pendingItem.catalogId = catalogId
-    await addPendingItems(link.uid, [pendingItem])
-  }
-  const standingItem = groceryData.standingList.find(i => i.name === itemName)
-  if (standingItem) {
-    standingItem.catalogId = catalogId
-    await addToStanding(link.uid, [standingItem])
-  }
+  // Cleanup
+  await deletePendingSearch(link.uid, searchKey)
 
-  await answerCallbackQuery(query.id, `נבחר: ${shufersalName}`)
-  await sendMessage(chatId, `${itemName} → ${shufersalName}`)
-  console.log(`[Telegram] Product picked: "${itemName}" → ${catalogId}`)
+  const targetLabel = pendingSearch.target === 'standing' ? 'קבועה' : 'הזמנה'
+  await answerCallbackQuery(query.id, `נוסף ל${targetLabel}`)
+  await sendMessage(chatId, `${pendingSearch.query} → ${selected.name} (${targetLabel})`)
+  console.log(`[Telegram] Product picked: "${pendingSearch.query}" → ${selected.catalogId} (${pendingSearch.target})`)
 }
