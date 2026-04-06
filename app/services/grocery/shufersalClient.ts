@@ -507,14 +507,17 @@ export async function checkout(
 
   // === PLACE ORDER ===
   // Load checkout page (sets server-side state)
-  await shuFetch('/miglog-checkout', cookies)
+  const { resp: checkoutPage } = await shuFetch('/miglog-checkout', cookies)
+  console.log(`[Shufersal] Checkout page: status=${checkoutPage.status}`)
   // Place order
   const { resp: confirmResp } = await shuFetch('/miglog-confirmation', cookies)
   const confirmHtml = confirmResp.text()
+  console.log(`[Shufersal] Confirmation: status=${confirmResp.status} bodyLen=${confirmHtml.length} isHtml=${confirmHtml.trimStart().startsWith('<')}`)
 
   // Extract order ID (8-digit number)
   const orderMatch = confirmHtml.match(/(\d{8})/)
   let orderId = orderMatch?.[1] || null
+  console.log(`[Shufersal] Order ID from confirmation: ${orderId || 'not found'}`)
 
   // Fallback: check orders API
   if (!orderId) {

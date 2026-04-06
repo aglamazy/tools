@@ -154,14 +154,6 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
       }
     }
 
-    // --- No-creds fallback: add by name only ---
-    case 'add_items': {
-      const items = normalizeItems(action.items)
-      if (items.length === 0) return null
-      await addPendingItems(uid, items)
-      return null
-    }
-
     case 'remove_items': {
       const names = normalizeNames(action.items)
       if (names.length === 0) return null
@@ -185,14 +177,6 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
           return 'הוסר מהרשימה, אבל לא הצלחתי לעדכן את ההזמנה בשופרסל.'
         }
       }
-      return null
-    }
-
-    case 'add_standing': {
-      const items = normalizeItems(action.items)
-      if (items.length === 0) return null
-
-      await addToStanding(uid, items)
       return null
     }
 
