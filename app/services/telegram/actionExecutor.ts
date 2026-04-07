@@ -164,13 +164,8 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
           const selected = filtered[0]
           const unit = selected.unitPrice?.split('/')?.pop()?.trim() || undefined
           const item = { name: selected.name, qty, catalogId: selected.catalogId, unit }
-          if (action.store) {
-            if (target === 'standing') await addToStoreStanding(uid, storeId, [item])
-            else await addStorePendingItems(uid, storeId, [item])
-          } else {
-            if (target === 'standing') await addToStanding(uid, [item])
-            else await addPendingItems(uid, [item])
-          }
+          if (target === 'standing') await addToStoreStanding(uid, storeId, [item])
+          else await addStorePendingItems(uid, storeId, [item])
           await saveProductMapping(uid, query, selected.catalogId, selected.name)
           const targetLabel = target === 'standing' ? 'קבועה' : 'הזמנה'
           return `✅ ${selected.name} (x${qty}) נוסף לרשימה ${targetLabel} ב${store.label}`
