@@ -70,10 +70,16 @@ ENDJSON
 
   bot_reply=$(echo "$response" | jq -r '.response // empty')
   actions=$(echo "$response" | jq -r '.actions // [] | if length > 0 then map(.action) | join(", ") else empty end')
+  has_selections=$(echo "$response" | jq -r '.pendingSelections // [] | length')
 
   if [[ -n "$bot_reply" ]]; then
     printf "בוט: %s\n" "$bot_reply"
     [[ -n "$actions" ]] && printf "  ⚡ פעולות: %s\n" "$actions"
+
+    # Show product search results for selection
+    if [[ "$has_selections" -gt 0 ]]; then
+      echo "$response" | jq -r '.pendingSelections[] | "  🔍 \(.query) (\(.target)):", (.results | to_entries[] | "    [\(.key + 1)] \(.value.name)\(if .value.brand != "" then " | \(.value.brand)" else "" end) — \(.value.price)₪\(if .value.unitPrice != "" then " (\(.value.unitPrice))" else "" end)")'
+    fi
   else
     echo "Raw: $response"
   fi

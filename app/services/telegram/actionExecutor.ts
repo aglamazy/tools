@@ -36,7 +36,7 @@ import {
 
 import { randomBytes } from 'crypto'
 import { getOrderCycle, setOrderCycle, type OrderCycle } from '@/app/services/grocery/groceryStore'
-import { lookupMapping, deleteMapping } from '@/app/services/grocery/productResolver'
+import { deleteMapping } from '@/app/services/grocery/productResolver'
 
 const SHUFERSAL_ACTIONS = new Set(['show_orders', 'trigger_order', 'cancel_order', 'search_product', 're_search'])
 
@@ -127,17 +127,7 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
       const target = action.target === 'standing' ? 'standing' as const : 'pending' as const
       if (!query) return null
 
-      // Fast path: check saved mapping
-      const mapping = await lookupMapping(uid, query)
-      if (mapping) {
-        const item = { name: mapping.shufersalName, qty, catalogId: mapping.catalogId }
-        if (target === 'standing') await addToStanding(uid, [item])
-        else await addPendingItems(uid, [item])
-        const listName = target === 'standing' ? 'רשימה קבועה' : 'הזמנה'
-        return `✅ ${mapping.shufersalName} (x${qty}) נוסף ל${listName}`
-      }
-
-      // Search Shufersal
+      // Always search Shufersal and show results — let user pick
       try {
         const results = await search(uid, query)
         if (results.length === 0) return `לא נמצאו תוצאות עבור "${query}".`
