@@ -205,8 +205,8 @@ function buildContextBlock(ctx: UserContext): string {
 function parseResponse(text: string): ChatResult {
   const actions: ChatAction[] = []
 
-  // Extract ```action ... ``` blocks
-  const actionRegex = /```action\s*\n?([\s\S]*?)```/g
+  // Extract ```action/json ... ``` blocks containing {action: ...}
+  const actionRegex = /```(?:action|json)\s*\n?([\s\S]*?)```/g
   let match
   while ((match = actionRegex.exec(text)) !== null) {
     try {
@@ -220,7 +220,7 @@ function parseResponse(text: string): ChatResult {
   }
 
   // Remove action blocks from the reply text
-  const reply = text.replace(/```action\s*\n?[\s\S]*?```/g, '').trim()
+  const reply = text.replace(/```(?:action|json)\s*\n?[\s\S]*?```/g, '').trim()
 
   return { reply, actions }
 }

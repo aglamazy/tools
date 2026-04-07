@@ -396,6 +396,6 @@ async function handleCallbackQuery(query: TelegramCallbackQuery) {
 
   const targetLabel = pendingSearch.target === 'standing' ? 'קבועה' : 'הזמנה'
   await answerCallbackQuery(query.id, `נוסף ל${targetLabel}`)
-  await sendMessage(chatId, `${pendingSearch.query} → ${selected.name} (${targetLabel})`)
+  await sendMessage(chatId, `✅ ${selected.name} (x${pendingSearch.qty}) נוסף לרשימה ${targetLabel}`)
   console.log(`[Telegram] Product picked: "${pendingSearch.query}" → ${selected.catalogId} (${pendingSearch.target})`)
 }
