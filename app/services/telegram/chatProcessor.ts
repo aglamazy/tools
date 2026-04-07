@@ -79,9 +79,16 @@ const SYSTEM_PROMPT = `אתה AglamazoBot — עוזר משפחתי לניהול
 - המשתמש יכול לשאול "מה ברשימה של שופרסל?" או "תוסיף ביצים למקור השפע"
 
 ## איך לבצע פעולות
-כשהמשתמש מבקש פעולה, הגב בטקסט טבעי וגם הוסף בלוק JSON בסוף ההודעה בפורמט:
+כשהמשתמש מבקש פעולה, הגב בטקסט טבעי וגם הוסף בלוק JSON לכל פעולה בסוף ההודעה.
+כשיש **מספר פריטים** — הוסף **בלוק נפרד לכל פריט**, כך:
 \`\`\`action
-{"action": "...", "store": "shufersal", ...}
+{"action": "search_product", "query": "חלב", "qty": 2, "target": "pending", "store": "shufersal"}
+\`\`\`
+\`\`\`action
+{"action": "search_product", "query": "לחם", "qty": 1, "target": "pending", "store": "shufersal"}
+\`\`\`
+\`\`\`action
+{"action": "search_product", "query": "ביצים", "qty": 1, "target": "pending", "store": "shufersal"}
 \`\`\`
 
 פעולות זמינות (כל פעולה מקבלת שדה "store" אופציונלי):
@@ -158,7 +165,7 @@ export async function processChat(
   const result = await gemini.chat({
     system: fullSystem,
     messages: cleanMessages,
-    maxTokens: 512,
+    maxTokens: 1024,
   })
 
   console.log('[ChatProcessor] LLM reply:', result.text)
