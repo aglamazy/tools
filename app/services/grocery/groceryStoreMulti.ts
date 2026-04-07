@@ -203,9 +203,12 @@ export async function movePendingToStanding(uid: string, store: StoreType, names
 
   if (toMove.length === 0) return { moved: [] }
 
-  // Add to standing (update if exists)
+  // Add to standing (update if exists — fuzzy match to avoid duplicates)
   for (const item of toMove) {
-    const existing = data.standingList.find(i => i.name === item.name)
+    const itemLower = item.name.toLowerCase()
+    const existing = data.standingList.find(i =>
+      i.name.toLowerCase().includes(itemLower) || itemLower.includes(i.name.toLowerCase())
+    )
     if (existing) {
       existing.qty = item.qty
       if (item.catalogId) existing.catalogId = item.catalogId
