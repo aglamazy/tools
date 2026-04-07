@@ -12,7 +12,7 @@
 
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import type { StoreType } from './storeTypes'
-import type { GroceryData, GroceryItem, PendingChanges, OrderCycle, GrocerySchedule } from './groceryStore'
+import { findExisting, deduplicateItems, type GroceryData, type GroceryItem, type PendingChanges, type OrderCycle, type GrocerySchedule } from './groceryStore'
 
 const COLLECTION = 'groceries'
 
@@ -97,14 +97,17 @@ export async function getStoreStandingList(uid: string, store: StoreType): Promi
 export async function addToStoreStanding(uid: string, store: StoreType, items: GroceryItem[]): Promise<GroceryItem[]> {
   const data = await getStoreData(uid, store)
   for (const item of items) {
-    const existing = data.standingList.find(i => i.name === item.name)
+    const existing = findExisting(data.standingList, item)
     if (existing) {
       existing.qty = item.qty
+      existing.name = item.name
       if (item.catalogId) existing.catalogId = item.catalogId
+      if (item.unit) existing.unit = item.unit
     } else {
       data.standingList.push(item)
     }
   }
+  data.standingList = deduplicateItems(data.standingList)
   await saveStoreData(uid, store, data)
   return data.standingList
 }
@@ -127,13 +130,17 @@ export async function addStorePendingItems(uid: string, store: StoreType, items:
     data.pendingChanges.remove = data.pendingChanges.remove.filter(
       n => !n.toLowerCase().includes(item.name.toLowerCase())
     )
-    const existing = data.pendingChanges.add.find(i => i.name === item.name)
+    const existing = findExisting(data.pendingChanges.add, item)
     if (existing) {
       existing.qty = item.qty
+      existing.name = item.name
+      if (item.catalogId) existing.catalogId = item.catalogId
+      if (item.unit) existing.unit = item.unit
     } else {
       data.pendingChanges.add.push(item)
     }
   }
+  data.pendingChanges.add = deduplicateItems(data.pendingChanges.add)
   await saveStoreData(uid, store, data)
   return data.pendingChanges
 }
@@ -203,14 +210,11 @@ export async function movePendingToStanding(uid: string, store: StoreType, names
 
   if (toMove.length === 0) return { moved: [] }
 
-  // Add to standing (update if exists — fuzzy match to avoid duplicates)
   for (const item of toMove) {
-    const itemLower = item.name.toLowerCase()
-    const existing = data.standingList.find(i =>
-      i.name.toLowerCase().includes(itemLower) || itemLower.includes(i.name.toLowerCase())
-    )
+    const existing = findExisting(data.standingList, item)
     if (existing) {
       existing.qty = item.qty
+      existing.name = item.name
       if (item.catalogId) existing.catalogId = item.catalogId
       if (item.unit) existing.unit = item.unit
     } else {
@@ -218,6 +222,7 @@ export async function movePendingToStanding(uid: string, store: StoreType, names
     }
   }
 
+  data.standingList = deduplicateItems(data.standingList)
   data.pendingChanges.add = remaining
   await saveStoreData(uid, store, data)
   return { moved: toMove }
@@ -234,9 +239,12 @@ export function mergeStoreList(standing: GroceryItem[], pending: PendingChanges)
     }
   }
   for (const item of pending.add) {
-    const existing = merged.find(i => i.name === item.name)
+    const existing = findExisting(merged, item)
     if (existing) {
       existing.qty = item.qty
+      existing.name = item.name
+      if (item.catalogId) existing.catalogId = item.catalogId
+      if (item.unit) existing.unit = item.unit
     } else {
       merged.push({ ...item })
     }

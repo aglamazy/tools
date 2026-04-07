@@ -86,13 +86,17 @@ export async function getMergedList(uid: string): Promise<GroceryItem[]> {
 export async function addToStanding(uid: string, items: GroceryItem[]): Promise<GroceryItem[]> {
   const data = await getGroceryData(uid)
   for (const item of items) {
-    const existing = data.standingList.find(i => i.name === item.name)
+    const existing = findExisting(data.standingList, item)
     if (existing) {
       existing.qty = item.qty
+      existing.name = item.name
+      if (item.catalogId) existing.catalogId = item.catalogId
+      if (item.unit) existing.unit = item.unit
     } else {
       data.standingList.push(item)
     }
   }
+  data.standingList = deduplicateItems(data.standingList)
   data.updatedAt = now()
   await docRef(uid).set(data)
   return data.standingList
@@ -118,13 +122,17 @@ export async function addPendingItems(uid: string, items: GroceryItem[]): Promis
     data.pendingChanges.remove = data.pendingChanges.remove.filter(
       n => !n.toLowerCase().includes(item.name.toLowerCase())
     )
-    const existing = data.pendingChanges.add.find(i => i.name === item.name)
+    const existing = findExisting(data.pendingChanges.add, item)
     if (existing) {
       existing.qty = item.qty
+      existing.name = item.name
+      if (item.catalogId) existing.catalogId = item.catalogId
+      if (item.unit) existing.unit = item.unit
     } else {
       data.pendingChanges.add.push(item)
     }
   }
+  data.pendingChanges.add = deduplicateItems(data.pendingChanges.add)
   data.updatedAt = now()
   await docRef(uid).set(data)
   return data.pendingChanges
@@ -168,12 +176,10 @@ export async function movePendingToStanding(uid: string, names: string[]): Promi
   if (toMove.length === 0) return { moved: [] }
 
   for (const item of toMove) {
-    const itemLower = item.name.toLowerCase()
-    const existing = data.standingList.find(i =>
-      i.name.toLowerCase().includes(itemLower) || itemLower.includes(i.name.toLowerCase())
-    )
+    const existing = findExisting(data.standingList, item)
     if (existing) {
       existing.qty = item.qty
+      existing.name = item.name
       if (item.catalogId) existing.catalogId = item.catalogId
       if (item.unit) existing.unit = item.unit
     } else {
@@ -181,6 +187,7 @@ export async function movePendingToStanding(uid: string, names: string[]): Promi
     }
   }
 
+  data.standingList = deduplicateItems(data.standingList)
   data.pendingChanges.add = remaining
   data.updatedAt = now()
   await docRef(uid).set(data)
@@ -238,6 +245,31 @@ function now(): string {
   return new Date().toISOString()
 }
 
+/** Match item by catalogId (preferred) or name fallback. */
+export function findExisting(list: GroceryItem[], item: GroceryItem): GroceryItem | undefined {
+  if (item.catalogId) {
+    const byCatalog = list.find(i => i.catalogId === item.catalogId)
+    if (byCatalog) return byCatalog
+  }
+  return list.find(i => i.name === item.name)
+}
+
+/** Deduplicate items by catalogId — later entries win. */
+export function deduplicateItems(items: GroceryItem[]): GroceryItem[] {
+  const seen = new Map<string, number>() // catalogId → index in result
+  const result: GroceryItem[] = []
+  for (const item of items) {
+    if (item.catalogId && seen.has(item.catalogId)) {
+      // Replace earlier entry with this one (keeps position)
+      result[seen.get(item.catalogId)!] = item
+    } else {
+      if (item.catalogId) seen.set(item.catalogId, result.length)
+      result.push(item)
+    }
+  }
+  return result
+}
+
 export function mergeList(standing: GroceryItem[], pending: PendingChanges): GroceryItem[] {
   const lowerRemoves = pending.remove.map(n => n.toLowerCase())
   const merged: GroceryItem[] = []
@@ -251,9 +283,12 @@ export function mergeList(standing: GroceryItem[], pending: PendingChanges): Gro
 
   // Plus pending adds
   for (const item of pending.add) {
-    const existing = merged.find(i => i.name === item.name)
+    const existing = findExisting(merged, item)
     if (existing) {
       existing.qty = item.qty
+      existing.name = item.name
+      if (item.catalogId) existing.catalogId = item.catalogId
+      if (item.unit) existing.unit = item.unit
     } else {
       merged.push({ ...item })
     }
