@@ -358,16 +358,10 @@ async function resolveLink(telegramUserId: number, chatId: number) {
     return groupQuery.docs[0].data() as { uid: string }
   }
 
-  // Fallback: find any link for this Telegram user (e.g. private chat link)
-  const userQuery = await firestore
-    .collection('telegramLinks')
-    .where('telegramUserId', '==', telegramUserId)
-    .limit(1)
-    .get()
-
-  if (!userQuery.empty) {
-    return userQuery.docs[0].data() as { uid: string }
-  }
+  // Fallback: check user's private chat link (in private chats, chatId == userId)
+  const privateLinkId = `${telegramUserId}_${telegramUserId}`
+  const privateDoc = await firestore.collection('telegramLinks').doc(privateLinkId).get()
+  if (privateDoc.exists) return privateDoc.data() as { uid: string }
 
   return null
 }
