@@ -4,6 +4,7 @@
  */
 
 import type { ChatAction } from './chatProcessor'
+import { filterSearchResults } from './chatProcessor'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import {
   addPendingItems,
@@ -126,16 +127,20 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
       const target = action.target === 'standing' ? 'standing' as const : 'pending' as const
       if (!query) return null
 
-      // Always search Shufersal and show results — let user pick
+      // Always search Shufersal, filter with LLM, then show results
       try {
         const results = await search(uid, query)
         if (results.length === 0) return `לא נמצאו תוצאות עבור "${query}".`
+        const allResults = results.slice(0, 12).map(r => ({
+          catalogId: r.catalogId, name: r.name, brand: r.brand, price: r.price, unitPrice: r.unitPrice,
+        }))
+        const { filtered, comment } = await filterSearchResults(query, allResults)
+        const followUp = comment || null
         return {
+          followUp,
           pendingSelections: [{
             query, qty, target,
-            results: results.slice(0, 8).map(r => ({
-              catalogId: r.catalogId, name: r.name, brand: r.brand, price: r.price, unitPrice: r.unitPrice,
-            })),
+            results: filtered.slice(0, 8),
           }],
         }
       } catch (err) {
@@ -157,16 +162,20 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
       if (target === 'standing') await removeFromStanding(uid, [query])
       else await removePendingItems(uid, [query])
 
-      // Search fresh
+      // Search fresh, filter with LLM
       try {
         const results = await search(uid, query)
         if (results.length === 0) return `לא נמצאו תוצאות עבור "${query}".`
+        const allResults = results.slice(0, 12).map(r => ({
+          catalogId: r.catalogId, name: r.name, brand: r.brand, price: r.price, unitPrice: r.unitPrice,
+        }))
+        const { filtered, comment } = await filterSearchResults(query, allResults)
+        const followUp = comment || null
         return {
+          followUp,
           pendingSelections: [{
             query, qty, target,
-            results: results.slice(0, 8).map(r => ({
-              catalogId: r.catalogId, name: r.name, brand: r.brand, price: r.price, unitPrice: r.unitPrice,
-            })),
+            results: filtered.slice(0, 8),
           }],
         }
       } catch (err) {

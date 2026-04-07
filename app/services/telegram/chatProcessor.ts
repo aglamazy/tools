@@ -200,6 +200,66 @@ function buildContextBlock(ctx: UserContext): string {
   return parts.join('\n')
 }
 
+interface SearchResultItem {
+  catalogId: string
+  name: string
+  brand: string
+  price: string
+  unitPrice: string
+}
+
+/**
+ * Smart filter: ask LLM to rank/filter Shufersal results based on what the user actually wants.
+ * Returns filtered+reordered results and an optional comment.
+ */
+export async function filterSearchResults(
+  userQuery: string,
+  results: SearchResultItem[],
+): Promise<{ filtered: SearchResultItem[]; comment: string }> {
+  if (results.length <= 2) return { filtered: results, comment: '' }
+
+  const resultsList = results.map((r, i) =>
+    `[${i}] ${r.name} | ${r.brand} — ${r.price}₪ (${r.unitPrice})`
+  ).join('\n')
+
+  const prompt = `המשתמש חיפש: "${userQuery}"
+תוצאות מהחנות:
+${resultsList}
+
+החזר JSON בלבד:
+{"indices": [0, 2, 5], "comment": "..."}
+
+indices = אינדקסים של המוצרים הרלוונטיים ביותר, מסודרים לפי רלוונטיות. סנן מוצרים שלא מתאימים לכוונת המשתמש.
+comment = הערה קצרה אם יש מוצרים שלא נמצאו או הצעה לחיפוש אחר. ריק אם הכל בסדר.
+
+דוגמה: אם המשתמש חיפש "גבינה צהובה בלוק" ויש תוצאות של פרוסות וגם בלוקים, החזר רק את הבלוקים.`
+
+  try {
+    const result = await gemini.chat({
+      system: 'אתה מסנן תוצאות חיפוש. החזר JSON בלבד, בלי טקסט נוסף.',
+      messages: [{ role: 'user', content: prompt }],
+      maxTokens: 200,
+    })
+
+    if (!result.text) return { filtered: results, comment: '' }
+
+    // Extract JSON from response (might be wrapped in ```json)
+    const jsonMatch = result.text.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) return { filtered: results, comment: '' }
+
+    const parsed = JSON.parse(jsonMatch[0]) as { indices: number[]; comment: string }
+    const filtered = parsed.indices
+      .filter(i => i >= 0 && i < results.length)
+      .map(i => results[i])
+
+    if (filtered.length === 0) return { filtered: results, comment: parsed.comment || '' }
+    return { filtered, comment: parsed.comment || '' }
+  } catch (err) {
+    console.error('[ChatProcessor] Filter search failed:', err)
+    return { filtered: results, comment: '' }
+  }
+}
+
 /**
  * Parse LLM response — extract plain text reply and any action blocks.
  */
