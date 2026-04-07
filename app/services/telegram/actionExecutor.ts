@@ -218,8 +218,27 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
     }
 
     case 'show_list': {
-      // Return null — the LLM already shows the list from context data
-      return null
+      const data = await getGroceryData(uid)
+      const standing = data.standingList
+      const pending = data.pendingChanges
+      if (standing.length === 0 && pending.add.length === 0) return 'הרשימה ריקה.'
+      const parts: string[] = []
+      if (standing.length > 0) {
+        parts.push('רשימה קבועה:')
+        for (const i of standing) {
+          parts.push(`• ${i.name}${i.qty > 1 ? ` x${i.qty}` : ''}`)
+        }
+      }
+      if (pending.add.length > 0) {
+        parts.push('\nתוספות השבוע:')
+        for (const i of pending.add) {
+          parts.push(`• ${i.name}${i.qty > 1 ? ` x${i.qty}` : ''}`)
+        }
+      }
+      if (pending.remove.length > 0) {
+        parts.push(`\nהסרות השבוע: ${pending.remove.join(', ')}`)
+      }
+      return parts.join('\n')
     }
 
     case 'clear_pending': {
