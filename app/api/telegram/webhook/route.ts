@@ -83,19 +83,19 @@ export async function POST(request: NextRequest) {
 
   try {
     // Handle /link command — registration flow
-    if (message.text.startsWith('/link ') || message.text === '/link') {
+    if (message.text.match(/^\/link(@\w+)?(\s|$)/)) {
       await handleLinkCommand(message)
       return NextResponse.json({ ok: true })
     }
 
     // Handle /unlink command
-    if (message.text === '/unlink') {
+    if (message.text.match(/^\/unlink(@\w+)?$/)) {
       await handleUnlinkCommand(message)
       return NextResponse.json({ ok: true })
     }
 
     // Handle /reset command — clear chat history
-    if (message.text === '/reset') {
+    if (message.text.match(/^\/reset(@\w+)?$/)) {
       const testMode = request.headers.get('x-telegram-test') === 'true'
       const resetUid = testMode ? 'test-user' : (await resolveLink(message.from.id, message.chat.id))?.uid
       if (resetUid) await saveHistory(resetUid, [])
@@ -106,7 +106,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Handle /clear command — clear standing list and pending changes
-    if (message.text === '/clear') {
+    if (message.text.match(/^\/clear(@\w+)?$/)) {
       const testMode = request.headers.get('x-telegram-test') === 'true'
       const clearUid = testMode ? 'test-user' : (await resolveLink(message.from.id, message.chat.id))?.uid
       if (clearUid) {
@@ -259,7 +259,8 @@ export async function POST(request: NextRequest) {
  * The code is generated in the Aglamazo UI (layer 6).
  */
 async function handleLinkCommand(message: TelegramMessage) {
-  const parts = message.text!.split(' ')
+  // In groups Telegram sends "/link@BotName CODE" — strip the @mention from the command
+  const parts = message.text!.replace(/^\/link(@\w+)?/, '/link').split(' ')
   if (parts.length < 2) {
     await sendMessage(message.chat.id,
       'שימוש: /link <קוד>\nאת הקוד תמצא בהגדרות של Aglamazo.'
