@@ -133,7 +133,8 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
         const item = { name: mapping.shufersalName, qty, catalogId: mapping.catalogId }
         if (target === 'standing') await addToStanding(uid, [item])
         else await addPendingItems(uid, [item])
-        return `${query} → ${mapping.shufersalName}`
+        const listName = target === 'standing' ? 'רשימה קבועה' : 'הזמנה'
+        return `✅ ${mapping.shufersalName} (x${qty}) נוסף ל${listName}`
       }
 
       // Search Shufersal
