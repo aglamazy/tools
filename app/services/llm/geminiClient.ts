@@ -1,7 +1,7 @@
 import type { LLMClient, LLMChatOptions, LLMResult } from './types'
 
 const GEMINI_API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY
-const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent'
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent'
 
 export class GeminiClient implements LLMClient {
   async chat(options: LLMChatOptions): Promise<LLMResult> {
