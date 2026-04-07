@@ -178,13 +178,13 @@ function buildContextBlock(ctx: UserContext): string {
       if (store.otpPending) parts.push('ממתין לקוד SMS (otpPending=true)')
       if (store.connected) {
         if (store.standingList?.length) {
-          parts.push(`רשימה קבועה (${store.standingList.length} פריטים): ${store.standingList.map(i => i.name).join(', ')}`)
+          parts.push(`רשימה קבועה (${store.standingList.length} פריטים): ${store.standingList.map(i => `${i.name}${i.unit ? ` ${i.unit}` : ''}`).join(', ')}`)
         } else {
           parts.push('רשימה קבועה: ריקה')
         }
         if (store.pendingChanges) {
           const adds = store.pendingChanges.add?.length
-            ? `הוספות: ${store.pendingChanges.add.map(i => i.name).join(', ')}`
+            ? `הוספות: ${store.pendingChanges.add.map(i => `${i.name}${i.unit ? ` ${i.unit}` : ''}`).join(', ')}`
             : ''
           const removes = store.pendingChanges.remove?.length
             ? `הסרות: ${store.pendingChanges.remove.join(', ')}`
@@ -201,7 +201,7 @@ function buildContextBlock(ctx: UserContext): string {
   } else {
     // Legacy single-store fallback
     if (ctx.standingList?.length) {
-      parts.push(`רשימה קבועה (${ctx.standingList.length} פריטים): ${ctx.standingList.map(i => i.name).join(', ')}`)
+      parts.push(`רשימה קבועה (${ctx.standingList.length} פריטים): ${ctx.standingList.map(i => `${i.name}${i.unit ? ` ${i.unit}` : ''}`).join(', ')}`)
     }
     parts.push(`חשבון שופרסל: ${ctx.hasCredentials ? 'מחובר' : 'לא מחובר'}`)
     if (ctx.schedule) {
