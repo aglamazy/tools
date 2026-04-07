@@ -60,6 +60,13 @@
 - Healthchecks.io: pings `HEALTHCHECK_CRON_URL` after each run, `/fail` on errors
 - Schedule: `groceries/{uid}/schedule` — orderDay, preferredSlot, reviewReminderHours
 
+## Testing & Tools
+- MCP Chrome DevTools: use for browsing any web service (Gmail, Telegram Web, Shufersal, healthchecks.io) — don't ask user to do it manually
+- Telegram test CLI: `scripts/telegram-test.sh` — supports product picker callbacks, type a number to pick
+- Cloud Run proxy source: `gcloud run deploy shu-test --source . --region me-west1` (source in GCS)
+- Always test locally before deploying to prod
+- When testing, go end-to-end (20 questions, not 3)
+
 ## Workflow
 1. Check if related code already exists before implementing
 2. Implement exactly what's requested — suggest improvements but wait for approval
