@@ -47,7 +47,8 @@ export async function GET(request: NextRequest) {
       if (currentDay === orderDay && currentHour >= 8 && currentHour < 10) {
         if (data.orderCycle?.status === 'active') continue // already ordered this week
 
-        const merged = mergeList(data.standingList, data.pendingChanges)
+        const mergedMap = mergeList(data.standingList, data.pendingChanges)
+        const merged = Object.values(mergedMap)
         if (merged.length === 0) {
           if (chatId) await sendMessage(chatId, 'הרשימה ריקה — לא פותח הזמנה השבוע.')
           results.push({ uid, action: 'skip_empty', ok: true })

@@ -16,9 +16,16 @@ export interface GroceryItem {
   unit?: string        // e.g. "ק"ג", "יח'", "מארז"
 }
 
+/** Key for dedup: catalogId when available, else name. */
+export function itemKey(item: GroceryItem): string {
+  return item.catalogId || item.name
+}
+
+export type GroceryItemMap = Record<string, GroceryItem>
+
 export interface PendingChanges {
-  add: GroceryItem[]
-  remove: string[]     // item names to remove
+  add: GroceryItemMap
+  remove: string[]     // item keys or names to remove
 }
 
 export interface OrderCycle {
@@ -44,7 +51,7 @@ export interface GrocerySchedule {
 }
 
 export interface GroceryData {
-  standingList: GroceryItem[]
+  standingList: GroceryItemMap
   pendingChanges: PendingChanges
   orderCycle: OrderCycle | null
   schedule: GrocerySchedule | null
@@ -57,15 +64,36 @@ function docRef(uid: string) {
   return getAdminFirestore().collection(COLLECTION).doc(uid)
 }
 
+/** Convert legacy array format to map on read. */
+function migrateToMap(raw: GroceryItem[] | GroceryItemMap | undefined): GroceryItemMap {
+  if (!raw) return {}
+  if (Array.isArray(raw)) {
+    const map: GroceryItemMap = {}
+    for (const item of raw) map[itemKey(item)] = item
+    return map
+  }
+  return raw
+}
+
 // --- Read ---
 
 export async function getGroceryData(uid: string): Promise<GroceryData> {
   const doc = await docRef(uid).get()
   if (!doc.exists) return defaultData()
-  return doc.data() as GroceryData
+  const raw = doc.data()!
+  return {
+    ...raw,
+    standingList: migrateToMap(raw.standingList),
+    pendingChanges: {
+      add: migrateToMap(raw.pendingChanges?.add),
+      remove: raw.pendingChanges?.remove || [],
+    },
+    orderCycle: raw.orderCycle || null,
+    schedule: raw.schedule || null,
+  } as GroceryData
 }
 
-export async function getStandingList(uid: string): Promise<GroceryItem[]> {
+export async function getStandingList(uid: string): Promise<GroceryItemMap> {
   const data = await getGroceryData(uid)
   return data.standingList
 }
@@ -76,34 +104,31 @@ export async function getPendingChanges(uid: string): Promise<PendingChanges> {
 }
 
 /** Get merged list: standing + pending adds - pending removes. */
-export async function getMergedList(uid: string): Promise<GroceryItem[]> {
+export async function getMergedList(uid: string): Promise<GroceryItemMap> {
   const data = await getGroceryData(uid)
   return mergeList(data.standingList, data.pendingChanges)
 }
 
 // --- Standing list ---
 
-export async function addToStanding(uid: string, items: GroceryItem[]): Promise<GroceryItem[]> {
+export async function addToStanding(uid: string, items: GroceryItem[]): Promise<GroceryItemMap> {
   const data = await getGroceryData(uid)
   for (const item of items) {
-    const existing = data.standingList.find(i => i.name === item.name)
-    if (existing) {
-      existing.qty = item.qty
-    } else {
-      data.standingList.push(item)
-    }
+    data.standingList[itemKey(item)] = item
   }
   data.updatedAt = now()
   await docRef(uid).set(data)
   return data.standingList
 }
 
-export async function removeFromStanding(uid: string, names: string[]): Promise<GroceryItem[]> {
+export async function removeFromStanding(uid: string, names: string[]): Promise<GroceryItemMap> {
   const data = await getGroceryData(uid)
   const lowerNames = names.map(n => n.toLowerCase())
-  data.standingList = data.standingList.filter(
-    i => !lowerNames.some(n => i.name.toLowerCase().includes(n))
-  )
+  for (const [key, item] of Object.entries(data.standingList)) {
+    if (lowerNames.some(n => item.name.toLowerCase().includes(n) || key.toLowerCase().includes(n))) {
+      delete data.standingList[key]
+    }
+  }
   data.updatedAt = now()
   await docRef(uid).set(data)
   return data.standingList
@@ -118,12 +143,7 @@ export async function addPendingItems(uid: string, items: GroceryItem[]): Promis
     data.pendingChanges.remove = data.pendingChanges.remove.filter(
       n => !n.toLowerCase().includes(item.name.toLowerCase())
     )
-    const existing = data.pendingChanges.add.find(i => i.name === item.name)
-    if (existing) {
-      existing.qty = item.qty
-    } else {
-      data.pendingChanges.add.push(item)
-    }
+    data.pendingChanges.add[itemKey(item)] = item
   }
   data.updatedAt = now()
   await docRef(uid).set(data)
@@ -135,9 +155,11 @@ export async function removePendingItems(uid: string, names: string[]): Promise<
   const lowerNames = names.map(n => n.toLowerCase())
 
   // Remove from pending adds if there
-  data.pendingChanges.add = data.pendingChanges.add.filter(
-    i => !lowerNames.some(n => i.name.toLowerCase().includes(n))
-  )
+  for (const [key, item] of Object.entries(data.pendingChanges.add)) {
+    if (lowerNames.some(n => item.name.toLowerCase().includes(n) || key.toLowerCase().includes(n))) {
+      delete data.pendingChanges.add[key]
+    }
+  }
 
   // Add to remove list (to remove from standing on merge)
   for (const name of names) {
@@ -154,39 +176,26 @@ export async function removePendingItems(uid: string, names: string[]): Promise<
 export async function movePendingToStanding(uid: string, names: string[]): Promise<{ moved: GroceryItem[] }> {
   const data = await getGroceryData(uid)
   const lowerNames = names.map(n => n.toLowerCase())
-  const toMove: GroceryItem[] = []
-  const remaining: GroceryItem[] = []
+  const moved: GroceryItem[] = []
 
-  for (const item of data.pendingChanges.add) {
-    if (lowerNames.some(n => item.name.toLowerCase().includes(n))) {
-      toMove.push(item)
-    } else {
-      remaining.push(item)
+  for (const [key, item] of Object.entries(data.pendingChanges.add)) {
+    if (lowerNames.some(n => item.name.toLowerCase().includes(n) || key.toLowerCase().includes(n))) {
+      data.standingList[itemKey(item)] = item
+      delete data.pendingChanges.add[key]
+      moved.push(item)
     }
   }
 
-  if (toMove.length === 0) return { moved: [] }
+  if (moved.length === 0) return { moved: [] }
 
-  for (const item of toMove) {
-    const existing = data.standingList.find(i => i.name === item.name)
-    if (existing) {
-      existing.qty = item.qty
-      if (item.catalogId) existing.catalogId = item.catalogId
-      if (item.unit) existing.unit = item.unit
-    } else {
-      data.standingList.push({ ...item })
-    }
-  }
-
-  data.pendingChanges.add = remaining
   data.updatedAt = now()
   await docRef(uid).set(data)
-  return { moved: toMove }
+  return { moved }
 }
 
 export async function clearPending(uid: string): Promise<void> {
   const data = await getGroceryData(uid)
-  data.pendingChanges = { add: [], remove: [] }
+  data.pendingChanges = { add: {}, remove: [] }
   data.updatedAt = now()
   await docRef(uid).set(data)
 }
@@ -223,8 +232,8 @@ export async function setSchedule(uid: string, schedule: GrocerySchedule): Promi
 
 function defaultData(): GroceryData {
   return {
-    standingList: [],
-    pendingChanges: { add: [], remove: [] },
+    standingList: {},
+    pendingChanges: { add: {}, remove: [] },
     orderCycle: null,
     schedule: null,
     updatedAt: now(),
@@ -235,25 +244,20 @@ function now(): string {
   return new Date().toISOString()
 }
 
-export function mergeList(standing: GroceryItem[], pending: PendingChanges): GroceryItem[] {
+export function mergeList(standing: GroceryItemMap, pending: PendingChanges): GroceryItemMap {
   const lowerRemoves = pending.remove.map(n => n.toLowerCase())
-  const merged: GroceryItem[] = []
+  const merged: GroceryItemMap = {}
 
   // Standing minus removes
-  for (const item of standing) {
-    if (!lowerRemoves.some(r => item.name.toLowerCase().includes(r))) {
-      merged.push({ ...item })
+  for (const [key, item] of Object.entries(standing)) {
+    if (!lowerRemoves.some(r => item.name.toLowerCase().includes(r) || key.toLowerCase().includes(r))) {
+      merged[key] = { ...item }
     }
   }
 
-  // Plus pending adds
-  for (const item of pending.add) {
-    const existing = merged.find(i => i.name === item.name)
-    if (existing) {
-      existing.qty = item.qty
-    } else {
-      merged.push({ ...item })
-    }
+  // Plus pending adds (overwrites by key = no duplicates)
+  for (const [key, item] of Object.entries(pending.add)) {
+    merged[key] = { ...item }
   }
 
   return merged

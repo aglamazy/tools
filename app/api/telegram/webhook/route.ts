@@ -13,7 +13,7 @@ import { processChat, type ChatMessage, type UserContext } from '@/app/services/
 import { executeActions, savePendingSearch, loadPendingSearch, deletePendingSearch, type PendingProductSelection } from '@/app/services/telegram/actionExecutor'
 import { getGroceryData } from '@/app/services/grocery/groceryStore'
 import { addPendingItems, addToStanding } from '@/app/services/grocery/groceryStore'
-import { addToStoreStanding, addStorePendingItems } from '@/app/services/grocery/groceryStoreMulti'
+import { addToStoreStanding, addStorePendingItems, getStoreData } from '@/app/services/grocery/groceryStoreMulti'
 import { initStores } from '@/app/services/grocery/initStores'
 import { getUserStores } from '@/app/services/grocery/groceryStoreMulti'
 import { getAllStores } from '@/app/services/grocery/storeRegistry'
@@ -113,8 +113,8 @@ export async function POST(request: NextRequest) {
         const doc = await firestore.collection('groceries').doc(clearUid).get()
         if (doc.exists) {
           await firestore.collection('groceries').doc(clearUid).update({
-            standingList: [],
-            pendingChanges: { add: [], remove: [] },
+            standingList: {},
+            pendingChanges: { add: {}, remove: [] },
             updatedAt: new Date().toISOString(),
           })
         }
@@ -164,15 +164,15 @@ export async function POST(request: NextRequest) {
     const storeContexts = await Promise.all(
       getAllStores().map(async (store) => {
         const connected = await store.isAuthenticated(link.uid).catch(() => false)
-        // For now, use root groceryData for shufersal (backward compat)
-        const storeData = store.id === 'shufersal' && groceryData ? groceryData : null
+        // Load store-specific data (shufersal falls back to root doc via getStoreData)
+        const storeData = await getStoreData(link.uid, store.id).catch(() => null)
         return {
           id: store.id,
           label: store.label,
           connected,
-          standingList: storeData?.standingList?.map(i => ({ name: i.name, qty: i.qty })),
+          standingList: storeData?.standingList ? Object.values(storeData.standingList).map(i => ({ name: i.name, qty: i.qty })) : undefined,
           pendingChanges: storeData ? {
-            add: storeData.pendingChanges.add.map(i => ({ name: i.name, qty: i.qty })),
+            add: Object.values(storeData.pendingChanges.add).map(i => ({ name: i.name, qty: i.qty })),
             remove: storeData.pendingChanges.remove,
           } : undefined,
           orderStatus: storeData?.orderCycle?.status,
@@ -187,9 +187,9 @@ export async function POST(request: NextRequest) {
       defaultStore: userStores.defaultStore,
       // Legacy fallback
       hasCredentials: hasCreds,
-      standingList: groceryData?.standingList?.map(i => ({ name: i.name, qty: i.qty })),
+      standingList: groceryData?.standingList ? Object.values(groceryData.standingList).map(i => ({ name: i.name, qty: i.qty })) : undefined,
       pendingChanges: groceryData ? {
-        add: groceryData.pendingChanges.add.map(i => ({ name: i.name, qty: i.qty })),
+        add: Object.values(groceryData.pendingChanges.add).map(i => ({ name: i.name, qty: i.qty })),
         remove: groceryData.pendingChanges.remove,
       } : undefined,
       orderStatus: groceryData?.orderCycle?.status,

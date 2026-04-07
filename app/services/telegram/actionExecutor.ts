@@ -250,28 +250,28 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
       const data = action.store
         ? await getStoreData(uid, slStoreId)
         : await getGroceryData(uid)
-      const standing = data.standingList
-      const pending = data.pendingChanges
-      if (standing.length === 0 && pending.add.length === 0) return `הרשימה של ${slStore?.label || slStoreId} ריקה.`
+      const standingItems = Object.values(data.standingList)
+      const pendingAddItems = Object.values(data.pendingChanges.add)
+      if (standingItems.length === 0 && pendingAddItems.length === 0) return `הרשימה של ${slStore?.label || slStoreId} ריקה.`
       const parts: string[] = []
-      if (standing.length > 0) {
+      if (standingItems.length > 0) {
         parts.push(`רשימה קבועה (${slStore?.label || slStoreId}):`)
-        for (const i of standing) {
+        for (const i of standingItems) {
           const qtyStr = i.qty > 1 ? ` x${i.qty}` : ''
           const unitStr = i.unit ? ` ${i.unit}` : ''
           parts.push(`• ${i.name}${qtyStr}${unitStr}`)
         }
       }
-      if (pending.add.length > 0) {
+      if (pendingAddItems.length > 0) {
         parts.push('\nתוספות השבוע:')
-        for (const i of pending.add) {
+        for (const i of pendingAddItems) {
           const qtyStr = i.qty > 1 ? ` x${i.qty}` : ''
           const unitStr = i.unit ? ` ${i.unit}` : ''
           parts.push(`• ${i.name}${qtyStr}${unitStr}`)
         }
       }
-      if (pending.remove.length > 0) {
-        parts.push(`\nהסרות השבוע: ${pending.remove.join(', ')}`)
+      if (data.pendingChanges.remove.length > 0) {
+        parts.push(`\nהסרות השבוע: ${data.pendingChanges.remove.join(', ')}`)
       }
       return parts.join('\n')
     }
@@ -293,7 +293,7 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
       const data = action.store
         ? await getStoreData(uid, storeId)
         : await getGroceryData(uid)
-      const merged = mergeList(data.standingList, data.pendingChanges)
+      const merged = Object.values(mergeList(data.standingList, data.pendingChanges))
       if (merged.length === 0) return 'הרשימה ריקה — אין מה להזמין.'
 
       const withId = merged.filter(i => i.catalogId)

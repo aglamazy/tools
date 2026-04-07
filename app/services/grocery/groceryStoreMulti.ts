@@ -12,7 +12,8 @@
 
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import type { StoreType } from './storeTypes'
-import type { GroceryData, GroceryItem, PendingChanges, OrderCycle, GrocerySchedule } from './groceryStore'
+import type { GroceryData, GroceryItem, GroceryItemMap, PendingChanges, OrderCycle, GrocerySchedule } from './groceryStore'
+import { itemKey } from './groceryStore'
 
 const COLLECTION = 'groceries'
 
@@ -26,10 +27,21 @@ function metaRef(uid: string) {
     .collection('stores').doc('_meta')
 }
 
+/** Convert legacy array format to map on read. */
+function migrateToMap(raw: GroceryItem[] | GroceryItemMap | undefined): GroceryItemMap {
+  if (!raw) return {}
+  if (Array.isArray(raw)) {
+    const map: GroceryItemMap = {}
+    for (const item of raw) map[itemKey(item)] = item
+    return map
+  }
+  return raw
+}
+
 function defaultData(): GroceryData {
   return {
-    standingList: [],
-    pendingChanges: { add: [], remove: [] },
+    standingList: {},
+    pendingChanges: { add: {}, remove: [] },
     orderCycle: null,
     schedule: null,
     updatedAt: new Date().toISOString(),
@@ -71,15 +83,26 @@ export async function addActiveStore(uid: string, store: StoreType): Promise<voi
 export async function getStoreData(uid: string, store: StoreType): Promise<GroceryData> {
   // Try store-specific doc first
   const storeDoc = await storeRef(uid, store).get()
-  if (storeDoc.exists) return storeDoc.data() as GroceryData
+  let raw = storeDoc.exists ? storeDoc.data()! : null
 
   // Shufersal fallback: read from root doc (pre-migration data)
-  if (store === 'shufersal') {
+  if (!raw && store === 'shufersal') {
     const rootDoc = await getAdminFirestore().collection(COLLECTION).doc(uid).get()
-    if (rootDoc.exists) return rootDoc.data() as GroceryData
+    if (rootDoc.exists) raw = rootDoc.data()!
   }
 
-  return defaultData()
+  if (!raw) return defaultData()
+
+  return {
+    ...raw,
+    standingList: migrateToMap(raw.standingList),
+    pendingChanges: {
+      add: migrateToMap(raw.pendingChanges?.add),
+      remove: raw.pendingChanges?.remove || [],
+    },
+    orderCycle: raw.orderCycle || null,
+    schedule: raw.schedule || null,
+  } as GroceryData
 }
 
 async function saveStoreData(uid: string, store: StoreType, data: GroceryData): Promise<void> {
@@ -89,32 +112,28 @@ async function saveStoreData(uid: string, store: StoreType, data: GroceryData): 
 
 // --- Standing list ---
 
-export async function getStoreStandingList(uid: string, store: StoreType): Promise<GroceryItem[]> {
+export async function getStoreStandingList(uid: string, store: StoreType): Promise<GroceryItemMap> {
   const data = await getStoreData(uid, store)
   return data.standingList
 }
 
-export async function addToStoreStanding(uid: string, store: StoreType, items: GroceryItem[]): Promise<GroceryItem[]> {
+export async function addToStoreStanding(uid: string, store: StoreType, items: GroceryItem[]): Promise<GroceryItemMap> {
   const data = await getStoreData(uid, store)
   for (const item of items) {
-    const existing = data.standingList.find(i => i.name === item.name)
-    if (existing) {
-      existing.qty = item.qty
-      if (item.catalogId) existing.catalogId = item.catalogId
-    } else {
-      data.standingList.push(item)
-    }
+    data.standingList[itemKey(item)] = item
   }
   await saveStoreData(uid, store, data)
   return data.standingList
 }
 
-export async function removeFromStoreStanding(uid: string, store: StoreType, names: string[]): Promise<GroceryItem[]> {
+export async function removeFromStoreStanding(uid: string, store: StoreType, names: string[]): Promise<GroceryItemMap> {
   const data = await getStoreData(uid, store)
   const lowerNames = names.map(n => n.toLowerCase())
-  data.standingList = data.standingList.filter(
-    i => !lowerNames.some(n => i.name.toLowerCase().includes(n))
-  )
+  for (const [key, item] of Object.entries(data.standingList)) {
+    if (lowerNames.some(n => item.name.toLowerCase().includes(n) || key.toLowerCase().includes(n))) {
+      delete data.standingList[key]
+    }
+  }
   await saveStoreData(uid, store, data)
   return data.standingList
 }
@@ -127,12 +146,7 @@ export async function addStorePendingItems(uid: string, store: StoreType, items:
     data.pendingChanges.remove = data.pendingChanges.remove.filter(
       n => !n.toLowerCase().includes(item.name.toLowerCase())
     )
-    const existing = data.pendingChanges.add.find(i => i.name === item.name)
-    if (existing) {
-      existing.qty = item.qty
-    } else {
-      data.pendingChanges.add.push(item)
-    }
+    data.pendingChanges.add[itemKey(item)] = item
   }
   await saveStoreData(uid, store, data)
   return data.pendingChanges
@@ -141,9 +155,11 @@ export async function addStorePendingItems(uid: string, store: StoreType, items:
 export async function removeStorePendingItems(uid: string, store: StoreType, names: string[]): Promise<PendingChanges> {
   const data = await getStoreData(uid, store)
   const lowerNames = names.map(n => n.toLowerCase())
-  data.pendingChanges.add = data.pendingChanges.add.filter(
-    i => !lowerNames.some(n => i.name.toLowerCase().includes(n))
-  )
+  for (const [key, item] of Object.entries(data.pendingChanges.add)) {
+    if (lowerNames.some(n => item.name.toLowerCase().includes(n) || key.toLowerCase().includes(n))) {
+      delete data.pendingChanges.add[key]
+    }
+  }
   for (const name of names) {
     if (!data.pendingChanges.remove.includes(name)) {
       data.pendingChanges.remove.push(name)
@@ -155,7 +171,7 @@ export async function removeStorePendingItems(uid: string, store: StoreType, nam
 
 export async function clearStorePending(uid: string, store: StoreType): Promise<void> {
   const data = await getStoreData(uid, store)
-  data.pendingChanges = { add: [], remove: [] }
+  data.pendingChanges = { add: {}, remove: [] }
   await saveStoreData(uid, store, data)
 }
 
@@ -190,53 +206,34 @@ export async function setStoreSchedule(uid: string, store: StoreType, schedule: 
 export async function movePendingToStanding(uid: string, store: StoreType, names: string[]): Promise<{ moved: GroceryItem[] }> {
   const data = await getStoreData(uid, store)
   const lowerNames = names.map(n => n.toLowerCase())
-  const toMove: GroceryItem[] = []
-  const remaining: GroceryItem[] = []
+  const moved: GroceryItem[] = []
 
-  for (const item of data.pendingChanges.add) {
-    if (lowerNames.some(n => item.name.toLowerCase().includes(n))) {
-      toMove.push(item)
-    } else {
-      remaining.push(item)
+  for (const [key, item] of Object.entries(data.pendingChanges.add)) {
+    if (lowerNames.some(n => item.name.toLowerCase().includes(n) || key.toLowerCase().includes(n))) {
+      data.standingList[itemKey(item)] = item
+      delete data.pendingChanges.add[key]
+      moved.push(item)
     }
   }
 
-  if (toMove.length === 0) return { moved: [] }
+  if (moved.length === 0) return { moved: [] }
 
-  // Add to standing (update if exists)
-  for (const item of toMove) {
-    const existing = data.standingList.find(i => i.name === item.name)
-    if (existing) {
-      existing.qty = item.qty
-      if (item.catalogId) existing.catalogId = item.catalogId
-      if (item.unit) existing.unit = item.unit
-    } else {
-      data.standingList.push({ ...item })
-    }
-  }
-
-  data.pendingChanges.add = remaining
   await saveStoreData(uid, store, data)
-  return { moved: toMove }
+  return { moved }
 }
 
 // --- Merge helper ---
 
-export function mergeStoreList(standing: GroceryItem[], pending: PendingChanges): GroceryItem[] {
+export function mergeStoreList(standing: GroceryItemMap, pending: PendingChanges): GroceryItemMap {
   const lowerRemoves = pending.remove.map(n => n.toLowerCase())
-  const merged: GroceryItem[] = []
-  for (const item of standing) {
-    if (!lowerRemoves.some(r => item.name.toLowerCase().includes(r))) {
-      merged.push({ ...item })
+  const merged: GroceryItemMap = {}
+  for (const [key, item] of Object.entries(standing)) {
+    if (!lowerRemoves.some(r => item.name.toLowerCase().includes(r) || key.toLowerCase().includes(r))) {
+      merged[key] = { ...item }
     }
   }
-  for (const item of pending.add) {
-    const existing = merged.find(i => i.name === item.name)
-    if (existing) {
-      existing.qty = item.qty
-    } else {
-      merged.push({ ...item })
-    }
+  for (const [key, item] of Object.entries(pending.add)) {
+    merged[key] = { ...item }
   }
   return merged
 }
