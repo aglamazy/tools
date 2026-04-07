@@ -99,6 +99,7 @@ const SYSTEM_PROMPT = `אתה AglamazoBot — עוזר משפחתי לניהול
 - {"action":"verify_otp","otp":"1234","store":"retalix"} — אמת קוד SMS
 - {"action":"set_schedule","orderDay":0,"preferredSlot":{"day":"רביעי","time":"14:00-16:00"},"reviewReminderHours":36,"store":"..."} — הגדר לוח זמנים
 - {"action":"show_schedule","store":"..."} — הצג לוח זמנים
+- {"action":"browse_category","category":"ירקות","store":"..."} — הצג כל המוצרים בקטגוריה (פירות, ירקות, חלב, בשר...). לשאלות כמו "מה יש בירקות?" או "איזה פירות יש?"
 - {"action":"set_default_store","store":"..."} — שנה חנות ברירת מחדל
 - {"action":"create_task","title":"...","deadline":"..."} — צור משימה (לא קשור לחנות)
 - {"action":"list_tasks"} — הצג משימות

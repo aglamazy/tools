@@ -366,6 +366,23 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
       return null
     }
 
+    case 'browse_category': {
+      const category = typeof action.category === 'string' ? action.category.trim() : ''
+      const storeId = await resolveActionStore(uid, action)
+      const store = getStore(storeId)
+      if (!store) return `חנות "${storeId}" לא מוכרת.`
+      try {
+        // Direct search without LLM filter — category browsing returns all matches
+        const results = await store.search(uid, category)
+        if (results.length === 0) return `לא נמצאו מוצרים בקטגוריה "${category}" ב${store.label}.`
+        const lines = results.map(r => `• ${r.name} — ${r.price}₪/${r.unitPrice.split('/').pop()?.trim() || ''}`)
+        return `${category} ב${store.label} (${results.length}):\n${lines.join('\n')}\n\nמשהו מעניין לרשימה?`
+      } catch (err) {
+        console.error(`[ActionExecutor] Browse failed for "${category}" (${storeId}):`, err)
+        return `שגיאה בסריקת "${category}".`
+      }
+    }
+
     case 'show_schedule': {
       const schedule = await getSchedule(uid)
       if (!schedule) return 'לא הוגדר לוח זמנים. תגיד לי מתי לפתוח הזמנה ומתי המשלוח.'

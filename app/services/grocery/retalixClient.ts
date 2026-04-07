@@ -274,19 +274,26 @@ export async function searchCatalog(uid: string, query: string): Promise<Retalix
   const products = await loadCatalog(uid)
   const q = query.toLowerCase()
 
-  const matches = products.filter(p => {
-    const searchable = `${p.name} ${p.fullName} ${p.category} ${p.parentCategory}`.toLowerCase()
-    return searchable.includes(q)
-  })
+  const nameMatch = products.filter(p =>
+    `${p.name} ${p.fullName}`.toLowerCase().includes(q)
+  )
+  // Exact category match first, then partial
+  const exactCatMatch = products.filter(p => p.category.toLowerCase() === q)
+  const partialCatMatch = products.filter(p =>
+    p.category.toLowerCase().includes(q) || p.parentCategory.toLowerCase().includes(q)
+  )
+  const categoryMatch = exactCatMatch.length > 0 ? exactCatMatch : partialCatMatch
 
+  // Use category matches when they significantly outnumber name matches (broad query)
+  const matches = categoryMatch.length > nameMatch.length * 2 ? categoryMatch : nameMatch.length > 0 ? nameMatch : categoryMatch
   matches.sort((a, b) => (a.price || 999) - (b.price || 999))
 
-  return matches.slice(0, 12).map(p => ({
+  return matches.slice(0, 20).map(p => ({
     productId: String(p.id),
     name: p.fullName || p.name,
     brand: p.category,
     price: String(p.price || ''),
-    unitPrice: `${p.price} ₪ / ${p.unit}`,
+    unitPrice: `${p.price} ₪/${p.unit}`,
     sellingUnitId: p.sellingUnitId || 0,
   }))
 }
