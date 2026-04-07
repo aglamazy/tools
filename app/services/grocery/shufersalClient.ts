@@ -330,13 +330,22 @@ export async function login(uid: string): Promise<Record<string, string>> {
 
 export async function getAuthenticatedCookies(uid: string): Promise<Record<string, string>> {
   const session = await loadSession(uid)
-  if (session) {
-    // Verify session is still valid
-    const valid = await checkSession(session.cookies)
-    if (valid) return session.cookies
-    console.log(`[Shufersal] Session expired for uid=${uid}, re-logging in`)
-  }
+  if (session) return session.cookies
   return login(uid)
+}
+
+/** Get cookies, but re-login if the response indicates expired session. */
+async function withAuth<T>(
+  uid: string,
+  fn: (cookies: Record<string, string>) => Promise<T>,
+  isInvalid: (result: T) => boolean,
+): Promise<T> {
+  let cookies = await getAuthenticatedCookies(uid)
+  const result = await fn(cookies)
+  if (!isInvalid(result)) return result
+  console.log(`[Shufersal] Session expired for uid=${uid}, re-logging in`)
+  cookies = await login(uid)
+  return fn(cookies)
 }
 
 export async function checkSession(cookies: Record<string, string>): Promise<boolean> {
@@ -701,18 +710,23 @@ export interface ActiveOrder {
 }
 
 export async function ordersList(uid: string): Promise<ActiveOrder[]> {
-  const cookies = await getAuthenticatedCookies(uid)
-  const { resp } = await shuFetch('/my-account/orders', cookies, {
-    headers: { 'X-Requested-With': 'XMLHttpRequest' },
-  })
-  const rawText = resp.text()
-  let data: any
-  try {
-    data = JSON.parse(rawText)
-  } catch {
-    console.error('[Shufersal] ordersList got non-JSON response. Status:', resp.status, 'Body (first 500 chars):', rawText.slice(0, 500))
-    throw new Error('Shufersal returned non-JSON response (possibly login page)')
-  }
+  const data = await withAuth(
+    uid,
+    async (cookies) => {
+      const { resp } = await shuFetch('/my-account/orders', cookies, {
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      })
+      const rawText = resp.text()
+      try {
+        return JSON.parse(rawText) as any
+      } catch {
+        // Non-JSON = expired session (login page HTML)
+        return null
+      }
+    },
+    (result) => result === null,
+  )
+  if (!data) throw new Error('Shufersal returned non-JSON response after re-login')
   const active = data.activeOrders || []
 
   return active.map((o: any) => {
