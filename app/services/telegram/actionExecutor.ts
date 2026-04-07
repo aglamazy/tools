@@ -12,6 +12,7 @@ import {
   addToStanding,
   removeFromStanding,
   clearPending,
+  movePendingToStanding,
   getSchedule,
   setSchedule,
   getGroceryData,
@@ -29,7 +30,7 @@ import {
 } from '@/app/services/grocery/shufersalClient'
 import { sendOtp, verifyOtp, saveRetalixCredentials } from '@/app/services/grocery/retalixClient'
 import { getStore, getAllStores } from '@/app/services/grocery/storeRegistry'
-import { getUserStores, setDefaultStore, addActiveStore, getStoreData, addToStoreStanding, addStorePendingItems, removeFromStoreStanding, removeStorePendingItems, clearStorePending } from '@/app/services/grocery/groceryStoreMulti'
+import { getUserStores, setDefaultStore, addActiveStore, getStoreData, addToStoreStanding, addStorePendingItems, removeFromStoreStanding, removeStorePendingItems, clearStorePending, movePendingToStanding as moveStorePendingToStanding } from '@/app/services/grocery/groceryStoreMulti'
 import type { OtpStorePlugin, CredentialsStorePlugin } from '@/app/services/grocery/storeTypes'
 
 import { randomBytes } from 'crypto'
@@ -224,6 +225,23 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
         await removeFromStanding(uid, names)
       }
       return null
+    }
+
+    case 'move_to_standing': {
+      const names = normalizeNames(action.items)
+      if (names.length === 0) return null
+      const storeId = await resolveActionStore(uid, action)
+      let moved: GroceryItem[]
+      if (action.store) {
+        const result = await moveStorePendingToStanding(uid, storeId, names)
+        moved = result.moved
+      } else {
+        const result = await movePendingToStanding(uid, names)
+        moved = result.moved
+      }
+      if (moved.length === 0) return 'לא נמצאו פריטים תואמים ברשימה השבועית.'
+      const movedNames = moved.map(i => i.name).join(', ')
+      return `✅ הועבר לרשימה הקבועה: ${movedNames}`
     }
 
     case 'show_list': {

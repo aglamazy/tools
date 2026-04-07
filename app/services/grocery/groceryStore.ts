@@ -151,6 +151,39 @@ export async function removePendingItems(uid: string, names: string[]): Promise<
   return data.pendingChanges
 }
 
+export async function movePendingToStanding(uid: string, names: string[]): Promise<{ moved: GroceryItem[] }> {
+  const data = await getGroceryData(uid)
+  const lowerNames = names.map(n => n.toLowerCase())
+  const toMove: GroceryItem[] = []
+  const remaining: GroceryItem[] = []
+
+  for (const item of data.pendingChanges.add) {
+    if (lowerNames.some(n => item.name.toLowerCase().includes(n))) {
+      toMove.push(item)
+    } else {
+      remaining.push(item)
+    }
+  }
+
+  if (toMove.length === 0) return { moved: [] }
+
+  for (const item of toMove) {
+    const existing = data.standingList.find(i => i.name === item.name)
+    if (existing) {
+      existing.qty = item.qty
+      if (item.catalogId) existing.catalogId = item.catalogId
+      if (item.unit) existing.unit = item.unit
+    } else {
+      data.standingList.push({ ...item })
+    }
+  }
+
+  data.pendingChanges.add = remaining
+  data.updatedAt = now()
+  await docRef(uid).set(data)
+  return { moved: toMove }
+}
+
 export async function clearPending(uid: string): Promise<void> {
   const data = await getGroceryData(uid)
   data.pendingChanges = { add: [], remove: [] }
