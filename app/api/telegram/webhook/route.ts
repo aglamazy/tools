@@ -13,6 +13,7 @@ import { processChat, type ChatMessage, type UserContext } from '@/app/services/
 import { executeActions, savePendingSearch, loadPendingSearch, deletePendingSearch, type PendingProductSelection } from '@/app/services/telegram/actionExecutor'
 import { getGroceryData } from '@/app/services/grocery/groceryStore'
 import { addPendingItems, addToStanding } from '@/app/services/grocery/groceryStore'
+import { addToStoreStanding, addStorePendingItems } from '@/app/services/grocery/groceryStoreMulti'
 import { initStores } from '@/app/services/grocery/initStores'
 import { getUserStores } from '@/app/services/grocery/groceryStoreMulti'
 import { getAllStores } from '@/app/services/grocery/storeRegistry'
@@ -436,11 +437,19 @@ async function handleCallbackQuery(query: TelegramCallbackQuery, testMode = fals
   const selected = pendingSearch.results[resultIndex]
   const item = { name: selected.name, qty: pendingSearch.qty, catalogId: selected.catalogId }
 
-  // Save to correct target
-  if (pendingSearch.target === 'standing') {
-    await addToStanding(uid, [item])
+  // Save to correct target (store-aware if store field present)
+  if (pendingSearch.store) {
+    if (pendingSearch.target === 'standing') {
+      await addToStoreStanding(uid, pendingSearch.store, [item])
+    } else {
+      await addStorePendingItems(uid, pendingSearch.store, [item])
+    }
   } else {
-    await addPendingItems(uid, [item])
+    if (pendingSearch.target === 'standing') {
+      await addToStanding(uid, [item])
+    } else {
+      await addPendingItems(uid, [item])
+    }
   }
 
   // Save mapping for future use

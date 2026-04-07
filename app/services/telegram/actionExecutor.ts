@@ -29,7 +29,7 @@ import {
 } from '@/app/services/grocery/shufersalClient'
 import { sendOtp, verifyOtp, saveRetalixCredentials } from '@/app/services/grocery/retalixClient'
 import { getStore, getAllStores } from '@/app/services/grocery/storeRegistry'
-import { getUserStores, setDefaultStore, addActiveStore } from '@/app/services/grocery/groceryStoreMulti'
+import { getUserStores, setDefaultStore, addActiveStore, getStoreData, removeFromStoreStanding, removeStorePendingItems, clearStorePending } from '@/app/services/grocery/groceryStoreMulti'
 import type { OtpStorePlugin, CredentialsStorePlugin } from '@/app/services/grocery/storeTypes'
 
 import { randomBytes } from 'crypto'
@@ -201,24 +201,29 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
     case 'remove_items': {
       const names = normalizeNames(action.items)
       if (names.length === 0) return null
-      await removePendingItems(uid, names)
+      const rmStoreId = await resolveActionStore(uid, action)
+      // Use multi-store if store specified, otherwise legacy
+      if (action.store) {
+        await removeStorePendingItems(uid, rmStoreId, names)
+      } else {
+        await removePendingItems(uid, names)
+      }
 
-      // If there's an active order, also remove from live Shufersal cart
-      const removeCycle = await getOrderCycle(uid)
-      if (removeCycle?.status === 'active' || removeCycle?.status === 'review') {
-        try {
-          if (removeCycle.orderId) await orderLoadToCart(uid, removeCycle.orderId)
-          const cart = await cartRead(uid)
-          for (const name of names) {
-            const lowerName = name.toLowerCase()
-            const match = cart.find(c => c.name.toLowerCase().includes(lowerName))
-            if (match?.entryNumber) {
-              await cartRemove(uid, match.entryNumber)
+      // If Shufersal and active order, also remove from live cart
+      if (rmStoreId === 'shufersal') {
+        const removeCycle = await getOrderCycle(uid)
+        if (removeCycle?.status === 'active' || removeCycle?.status === 'review') {
+          try {
+            if (removeCycle.orderId) await orderLoadToCart(uid, removeCycle.orderId)
+            const cart = await cartRead(uid)
+            for (const name of names) {
+              const lowerName = name.toLowerCase()
+              const match = cart.find((c: any) => c.name.toLowerCase().includes(lowerName))
+              if (match?.entryNumber) await cartRemove(uid, match.entryNumber)
             }
+          } catch (err) {
+            console.error(`[ActionExecutor] Failed to remove from live cart:`, err)
           }
-        } catch (err) {
-          console.error('[ActionExecutor] Failed to remove from live Shufersal cart:', err)
-          return 'הוסר מהרשימה, אבל לא הצלחתי לעדכן את ההזמנה בשופרסל.'
         }
       }
       return null
@@ -227,18 +232,26 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
     case 'remove_standing': {
       const names = normalizeNames(action.items)
       if (names.length === 0) return null
-      await removeFromStanding(uid, names)
+      if (action.store) {
+        await removeFromStoreStanding(uid, await resolveActionStore(uid, action), names)
+      } else {
+        await removeFromStanding(uid, names)
+      }
       return null
     }
 
     case 'show_list': {
-      const data = await getGroceryData(uid)
+      const slStoreId = await resolveActionStore(uid, action)
+      const slStore = getStore(slStoreId)
+      const data = action.store
+        ? await getStoreData(uid, slStoreId)
+        : await getGroceryData(uid)
       const standing = data.standingList
       const pending = data.pendingChanges
-      if (standing.length === 0 && pending.add.length === 0) return 'הרשימה ריקה.'
+      if (standing.length === 0 && pending.add.length === 0) return `הרשימה של ${slStore?.label || slStoreId} ריקה.`
       const parts: string[] = []
       if (standing.length > 0) {
-        parts.push('רשימה קבועה:')
+        parts.push(`רשימה קבועה (${slStore?.label || slStoreId}):`)
         for (const i of standing) {
           parts.push(`• ${i.name}${i.qty > 1 ? ` x${i.qty}` : ''}`)
         }
@@ -256,7 +269,11 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
     }
 
     case 'clear_pending': {
-      await clearPending(uid)
+      if (action.store) {
+        await clearStorePending(uid, await resolveActionStore(uid, action))
+      } else {
+        await clearPending(uid)
+      }
       return null
     }
 
@@ -265,7 +282,9 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
       const store = getStore(storeId)
       if (!store) return `חנות "${storeId}" לא מוכרת.`
 
-      const data = await getGroceryData(uid)
+      const data = action.store
+        ? await getStoreData(uid, storeId)
+        : await getGroceryData(uid)
       const merged = mergeList(data.standingList, data.pendingChanges)
       if (merged.length === 0) return 'הרשימה ריקה — אין מה להזמין.'
 
