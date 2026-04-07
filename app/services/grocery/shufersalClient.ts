@@ -560,8 +560,8 @@ export async function checkout(
     return { success: false, dryRun: true, deliveryWindow }
   }
 
-  // === CHECKOUT AUTH ===
-  const { resp: authResp, cookies: authCookies } = await shuFetch('/cart/checkout/auth', cookies, {
+  // === CHECKOUT AUTH (Spring Security form post) ===
+  const { resp: authResp, cookies: authCookies } = await shuFetch('/checkout/j_spring_security_check', cookies, {
     method: 'POST',
     body: new URLSearchParams({
       j_username: creds.email,
@@ -570,73 +570,99 @@ export async function checkout(
       fail_url: '/login/?error=true',
       CSRFToken: csrf,
     }).toString(),
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'X-Requested-With': 'XMLHttpRequest',
-    },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
   })
-
   Object.assign(cookies, authCookies)
   console.log(`[Shufersal] Checkout auth: status=${authResp.status}`)
-  try {
-    const authResult = authResp.json()
-    console.log(`[Shufersal] Checkout auth result: ${JSON.stringify(authResult)}`)
-    if (!authResult.success) {
-      return { success: false, error: 'Checkout auth failed', deliveryWindow }
+
+  // Follow redirect chain: /checkout → /miglog-checkout
+  if (authResp.status === 302) {
+    let loc = authResp.headers.get('location')
+    for (let i = 0; i < 5 && loc; i++) {
+      const { resp: r, cookies: c } = await shuFetch(loc, cookies)
+      Object.assign(cookies, c)
+      console.log(`[Shufersal] Auth redirect ${i + 1}: ${r.status} → ${loc.slice(0, 60)}`)
+      loc = r.status === 302 ? r.headers.get('location') : null
     }
-  } catch {
-    return { success: false, error: `Checkout auth unexpected: ${authResp.status}`, deliveryWindow }
   }
+
+  // === SSO TOKEN (required for payment gateway) ===
+  const { resp: ssoResp, cookies: ssoCookies } = await shuFetch('/miglog-sso/customer-token', cookies)
+  Object.assign(cookies, ssoCookies)
+  console.log(`[Shufersal] SSO token: status=${ssoResp.status}`)
+
+  // === SET SLOT (checkout context) ===
+  // Refresh CSRF after checkout auth — it may have rotated
+  const checkoutCsrf = getCsrf(cookies)
+  const { resp: slotSetResp, cookies: slotCookies } = await shuFetch('/checkout/timeSlot/postHomeDeliverySlot', cookies, {
+    method: 'POST',
+    body: JSON.stringify({
+      homeDeliveryTimeSlot: { code: slot.code, sourceOfSupply: 'DIRECT' },
+    }),
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Requested-With': 'XMLHttpRequest',
+      'csrftoken': checkoutCsrf,
+    },
+  })
+  Object.assign(cookies, slotCookies)
+  const slotBody = slotSetResp.text()
+  console.log(`[Shufersal] Checkout slot set: status=${slotSetResp.status} body=${slotBody.slice(0, 300)}`)
+
+  // === GET PAYMENT JWT from Payme ===
+  const jwtResp = await fetch('https://hf.payme.io/client-data', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Origin': 'https://www.shufersal.co.il',
+      'Referer': 'https://www.shufersal.co.il/',
+    },
+    body: JSON.stringify({
+      isTestMode: false, ip: null, accept: null,
+      javaEnabled: false, javaScriptEnabled: true,
+      language: 'he-IL', colorDepth: 24,
+      screen: { height: 1080, width: 1920 },
+      timezone: -180,
+      userAgent: UA.toLowerCase(),
+    }),
+  })
+  const jwtData = await jwtResp.json() as { hash: string }
+  const jwtPayme = jwtData.hash
+  if (!jwtPayme) return { success: false, error: 'Failed to get payment token', deliveryWindow }
+  console.log(`[Shufersal] Got Payme JWT (${jwtPayme.length} chars)`)
 
   // === PLACE ORDER ===
-  // Use a fetch-with-redirect-follow that carries cookies through the chain
-  async function fetchWithRedirects(startPath: string, startCookies: Record<string, string>): Promise<{ body: string; status: number; cookies: Record<string, string> }> {
-    let path = startPath
-    const c = { ...startCookies }
-    for (let i = 0; i < 10; i++) {
-      const { resp, cookies: newCookies } = await shuFetch(path, c)
-      Object.assign(c, newCookies)
-      if (resp.status !== 302) {
-        return { body: resp.text(), status: resp.status, cookies: c }
-      }
-      const loc = resp.headers.get('location')
-      if (!loc) return { body: resp.text(), status: resp.status, cookies: c }
-      console.log(`[Shufersal] Redirect ${i + 1}: ${loc.slice(0, 80)}`)
-      path = loc
-    }
-    return { body: '', status: 0, cookies: c }
+  const { resp: orderResp, cookies: orderCookies } = await shuFetch(
+    `/checkout/placeOrder?jwtPayme=${encodeURIComponent(jwtPayme)}&after3ds=false`, cookies,
+  )
+  Object.assign(cookies, orderCookies)
+  const orderBody = orderResp.text()
+  console.log(`[Shufersal] Place order: status=${orderResp.status} body=${orderBody.slice(0, 500)}`)
+
+  if (orderResp.status !== 200) {
+    return { success: false, error: `Place order failed: ${orderResp.status} — ${orderBody.slice(0, 200)}`, deliveryWindow }
   }
 
-  // Step 1: Load checkout page
-  const checkout = await fetchWithRedirects('/miglog-checkout', cookies)
-  Object.assign(cookies, checkout.cookies)
-  console.log(`[Shufersal] Checkout page: status=${checkout.status} body=${checkout.body.length} chars`)
+  // Check for error in response body (placeOrder returns 200 even on errors)
+  if (orderBody.includes('ERROR') || orderBody.includes('TIMESLOT_UNAVAILABLE')) {
+    return { success: false, error: `Place order error: ${orderBody.slice(0, 300)}`, deliveryWindow }
+  }
 
-  // Step 2: Place order
-  const confirm = await fetchWithRedirects('/miglog-confirmation', cookies)
-  Object.assign(cookies, confirm.cookies)
-  const confirmHtml = confirm.body
-  console.log(`[Shufersal] Confirmation: status=${confirm.status} body=${confirmHtml.length} chars`)
-
-  // Get order ID from orders API (most reliable)
+  // === GET ORDER ID ===
   let orderId: string | null = null
   try {
     const { resp: ordersResp } = await shuFetch('/my-account/orders', cookies, {
       headers: { 'X-Requested-With': 'XMLHttpRequest' },
     })
-    const orders = ordersResp.json() as any
+    const rawText = ordersResp.text()
+    const orders = JSON.parse(rawText) as any
     const active = orders.activeOrders || []
     if (active.length > 0) {
       orderId = active[0].code
-      console.log(`[Shufersal] Order ID from API: ${orderId}`)
+      console.log(`[Shufersal] Order ID: ${orderId}`)
     }
-  } catch { /* ignore */ }
-
-  // Fallback: regex on confirmation page
-  if (!orderId) {
-    const orderMatch = confirmHtml.match(/0[23]\d{6}/)
-    orderId = orderMatch?.[0] || null
-    console.log(`[Shufersal] Order ID from HTML: ${orderId || 'not found'}`)
+  } catch (err) {
+    console.error('[Shufersal] Failed to get order ID:', err)
   }
 
   // Save updated session
