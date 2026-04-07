@@ -288,14 +288,19 @@ export async function searchCatalog(uid: string, query: string): Promise<Retalix
   const matches = categoryMatch.length > nameMatch.length * 2 ? categoryMatch : nameMatch.length > 0 ? nameMatch : categoryMatch
   matches.sort((a, b) => (a.price || 999) - (b.price || 999))
 
-  return matches.slice(0, 20).map(p => ({
-    productId: String(p.id),
-    name: p.fullName || p.name,
-    brand: p.category,
-    price: String(p.price || ''),
-    unitPrice: `${p.price} ₪/${p.unit}`,
-    sellingUnitId: p.sellingUnitId || 0,
-  }))
+  return matches.slice(0, 20).map(p => {
+    // Prefer kg selling unit for weight products
+    const kgUnit = p.sellingUnits.find(u => u.unitName === 'ק"ג')
+    const bestUnit = p.soldByWeight && kgUnit ? kgUnit : p.sellingUnits[0]
+    return {
+      productId: String(p.id),
+      name: p.fullName || p.name,
+      brand: p.category,
+      price: String(p.price || ''),
+      unitPrice: `${p.price} ₪/${bestUnit?.unitName || p.unit}`,
+      sellingUnitId: bestUnit?.sellingUnitId || p.sellingUnitId || 0,
+    }
+  })
 }
 
 // --- Delivery Slots ---
