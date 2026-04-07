@@ -17,8 +17,8 @@ export interface StoreContext {
   id: string
   label: string
   connected: boolean
-  standingList?: { name: string; qty: number }[]
-  pendingChanges?: { add: { name: string; qty: number }[]; remove: string[] }
+  standingList?: { name: string; qty: number; unit?: string }[]
+  pendingChanges?: { add: { name: string; qty: number; unit?: string }[]; remove: string[] }
   orderStatus?: string
   schedule?: {
     orderDay: number
@@ -39,9 +39,9 @@ export interface UserContext {
 
   // Legacy — kept for backward compat during migration
   /** @deprecated use stores instead */
-  standingList?: { name: string; qty: number }[]
+  standingList?: { name: string; qty: number; unit?: string }[]
   /** @deprecated use stores instead */
-  pendingChanges?: { add: { name: string; qty: number }[]; remove: string[] }
+  pendingChanges?: { add: { name: string; qty: number; unit?: string }[]; remove: string[] }
   /** @deprecated use stores instead */
   orderStatus?: string
   /** @deprecated use stores instead */
@@ -177,13 +177,13 @@ function buildContextBlock(ctx: UserContext): string {
       if (store.otpPending) parts.push('ממתין לקוד SMS (otpPending=true)')
       if (store.connected) {
         if (store.standingList?.length) {
-          parts.push(`רשימה קבועה: ${store.standingList.map(i => `${i.name} x${i.qty}`).join(', ')}`)
+          parts.push(`רשימה קבועה:\n${store.standingList.map(i => `• ${i.name}${i.qty > 1 ? ` x${i.qty}` : ''}${i.unit ? ` ${i.unit}` : ''}`).join('\n')}`)
         } else {
           parts.push('רשימה קבועה: ריקה')
         }
         if (store.pendingChanges) {
           const adds = store.pendingChanges.add?.length
-            ? `הוספות: ${store.pendingChanges.add.map(i => `${i.name} x${i.qty}`).join(', ')}`
+            ? `הוספות:\n${store.pendingChanges.add.map(i => `• ${i.name}${i.qty > 1 ? ` x${i.qty}` : ''}${i.unit ? ` ${i.unit}` : ''}`).join('\n')}`
             : ''
           const removes = store.pendingChanges.remove?.length
             ? `הסרות: ${store.pendingChanges.remove.join(', ')}`
@@ -200,7 +200,7 @@ function buildContextBlock(ctx: UserContext): string {
   } else {
     // Legacy single-store fallback
     if (ctx.standingList?.length) {
-      parts.push(`רשימה קבועה: ${ctx.standingList.map(i => `${i.name} x${i.qty}`).join(', ')}`)
+      parts.push(`רשימה קבועה:\n${ctx.standingList.map(i => `• ${i.name}${i.qty > 1 ? ` x${i.qty}` : ''}${i.unit ? ` ${i.unit}` : ''}`).join('\n')}`)
     }
     parts.push(`חשבון שופרסל: ${ctx.hasCredentials ? 'מחובר' : 'לא מחובר'}`)
     if (ctx.schedule) {

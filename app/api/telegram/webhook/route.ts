@@ -170,9 +170,9 @@ export async function POST(request: NextRequest) {
           id: store.id,
           label: store.label,
           connected,
-          standingList: storeData?.standingList ? Object.values(storeData.standingList).map(i => ({ name: i.name, qty: i.qty })) : undefined,
+          standingList: storeData?.standingList ? Object.values(storeData.standingList).map(i => ({ name: i.name, qty: i.qty, unit: i.unit })) : undefined,
           pendingChanges: storeData ? {
-            add: Object.values(storeData.pendingChanges.add).map(i => ({ name: i.name, qty: i.qty })),
+            add: Object.values(storeData.pendingChanges.add).map(i => ({ name: i.name, qty: i.qty, unit: i.unit })),
             remove: storeData.pendingChanges.remove,
           } : undefined,
           orderStatus: storeData?.orderCycle?.status,
@@ -187,9 +187,9 @@ export async function POST(request: NextRequest) {
       defaultStore: userStores.defaultStore,
       // Legacy fallback
       hasCredentials: hasCreds,
-      standingList: groceryData?.standingList ? Object.values(groceryData.standingList).map(i => ({ name: i.name, qty: i.qty })) : undefined,
+      standingList: groceryData?.standingList ? Object.values(groceryData.standingList).map(i => ({ name: i.name, qty: i.qty, unit: i.unit })) : undefined,
       pendingChanges: groceryData ? {
-        add: Object.values(groceryData.pendingChanges.add).map(i => ({ name: i.name, qty: i.qty })),
+        add: Object.values(groceryData.pendingChanges.add).map(i => ({ name: i.name, qty: i.qty, unit: i.unit })),
         remove: groceryData.pendingChanges.remove,
       } : undefined,
       orderStatus: groceryData?.orderCycle?.status,
