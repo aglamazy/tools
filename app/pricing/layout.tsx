@@ -42,6 +42,19 @@ export default function PricingLayout({ children }: { children: React.ReactNode 
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
       {children}
+      <section dir="rtl" style={{ maxWidth: '800px', margin: '0 auto', padding: '1.5rem 1rem' }}>
+        <h2 style={{ fontSize: '1.25rem', marginBottom: '0.75rem', color: '#1e293b' }}>למה {branding.name}?</h2>
+        <p style={{ color: '#475569', lineHeight: 1.7 }}>
+          {branding.name} מציע ניהול פיננסי מלא לעסקים קטנים ובינוניים בישראל.
+          התוכנית החינמית כוללת תזרים מזומנים, ייבוא קבצי בנק וניהול תקציב — ללא הגבלת זמן.
+          תוכנית הבית מאפשרת שיתוף עם בן/בת זוג וסנכרון בין מכשירים.
+          התוכנית המקצועית מוסיפה ניהול עסקים מרובים, מעקב הון ותחזית תשלומים.
+        </p>
+        <p style={{ color: '#475569', lineHeight: 1.7 }}>
+          כל התוכניות כוללות פרטיות מלאה — הנתונים נשמרים בדפדפן שלכם בלבד.
+          גיבוי מוצפן ל-Google Drive זמין בתוכניות הבית והמקצועית.
+        </p>
+      </section>
       <noscript>
         <div dir="rtl" style={{ maxWidth: '800px', margin: '2rem auto', padding: '2rem' }}>
           <h1>תוכניות ומחירים | {branding.name}</h1>

@@ -42,6 +42,18 @@ export default function ContactLayout({ children }: { children: React.ReactNode 
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
       {children}
+      <section dir="rtl" style={{ maxWidth: '600px', margin: '0 auto', padding: '1.5rem 1rem' }}>
+        <h2 style={{ fontSize: '1.25rem', marginBottom: '0.75rem', color: '#1e293b' }}>דרכי יצירת קשר</h2>
+        <p style={{ color: '#475569', lineHeight: 1.7 }}>
+          צוות {branding.name} זמין לכל שאלה, הצעה או בעיה טכנית.
+          ניתן לשלוח הודעה דרך הטופס למעלה או לכתוב ישירות ל-<a href="mailto:support@aglamaz.com" style={{ color: '#4338ca' }}>support@aglamaz.com</a>.
+          אנו משתדלים להשיב תוך יום עסקים אחד.
+        </p>
+        <p style={{ color: '#475569', lineHeight: 1.7 }}>
+          {branding.name} הוא כלי לניהול פיננסי חכם לעסקים קטנים ובינוניים בישראל.
+          המערכת כוללת תזרים מזומנים, ניהול תקציב, ייבוא קבצי בנק ואשראי ותחזית תשלומים — הכל בפרטיות מלאה, ללא שרתים חיצוניים.
+        </p>
+      </section>
       <noscript>
         <div dir="rtl" style={{ maxWidth: '600px', margin: '2rem auto', padding: '2rem' }}>
           <h1>צור קשר | {branding.name}</h1>

@@ -63,19 +63,24 @@ function discoverPublicRoutes(dir: string, basePath = ''): RouteInfo[] {
 /** Higher-priority routes that should be crawled first */
 const HIGH_PRIORITY_ROUTES = new Set(['/', '/about', '/pricing', '/guide', '/contact'])
 
+/** Routes that should not appear in the sitemap (personalized / requires auth) */
+const NOINDEX_ROUTES = new Set(['/share-invite'])
+
 export default function sitemap(): MetadataRoute.Sitemap {
   const appDir = path.join(process.cwd(), 'app')
   const routes = discoverPublicRoutes(appDir)
 
-  return routes.map(({ path: route, lastModified }) => {
-    const isHome = route === '/'
-    const isHighPriority = HIGH_PRIORITY_ROUTES.has(route)
+  return routes
+    .filter(({ path: route }) => !NOINDEX_ROUTES.has(route))
+    .map(({ path: route, lastModified }) => {
+      const isHome = route === '/'
+      const isHighPriority = HIGH_PRIORITY_ROUTES.has(route)
 
-    return {
-      url: `${normalizedBase}${isHome ? '/' : route}`,
-      lastModified,
-      changeFrequency: isHome ? 'weekly' : isHighPriority ? 'monthly' : 'yearly',
-      priority: isHome ? 1.0 : isHighPriority ? 0.8 : 0.6,
-    }
-  })
+      return {
+        url: `${normalizedBase}${isHome ? '/' : route}`,
+        lastModified,
+        changeFrequency: isHome ? 'weekly' : isHighPriority ? 'weekly' : 'monthly',
+        priority: isHome ? 1.0 : isHighPriority ? 0.8 : 0.6,
+      }
+    })
 }

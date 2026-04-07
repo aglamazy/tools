@@ -122,6 +122,10 @@ export default function LandingPage() {
             <h3><Link href="/form-filler">מילוי טפסים</Link></h3>
             <p>כלי אוטומטי למילוי טפסים מקוונים — חסכו זמן בהרשמות.</p>
           </div>
+          <div className="landing-step">
+            <h3><Link href={routes.publicTerms}>תנאי שימוש</Link></h3>
+            <p>קראו את התנאים וההגבלות לשימוש ב-{branding.name}.</p>
+          </div>
         </div>
       </section>
 

@@ -42,6 +42,18 @@ export default function FormFillerLayout({ children }: { children: React.ReactNo
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
       {children}
+      <section dir="rtl" style={{ maxWidth: '700px', margin: '0 auto', padding: '1.5rem 1rem' }}>
+        <h2 style={{ fontSize: '1.25rem', marginBottom: '0.75rem', color: '#1e293b' }}>מילוי טפסים אוטומטי</h2>
+        <p style={{ color: '#475569', lineHeight: 1.7 }}>
+          כלי מילוי הטפסים של {branding.name} חוסך זמן יקר לבעלי עסקים.
+          הזינו כתובת URL של טופס מקוון והמערכת תזהה את השדות ותמלא אותם אוטומטית עם הנתונים שלכם.
+        </p>
+        <p style={{ color: '#475569', lineHeight: 1.7 }}>
+          הכלי תומך בטפסי הרשמה, בקשות רשמיות, דוחות ומסמכים מקוונים.
+          כל הנתונים נשמרים בדפדפן שלכם בלבד — ללא שרתים חיצוניים, ללא צדדים שלישיים.
+          מתאים במיוחד לעסקים קטנים ועצמאים שממלאים טפסים שונים באופן קבוע.
+        </p>
+      </section>
       <noscript>
         <div dir="rtl" style={{ maxWidth: '700px', margin: '2rem auto', padding: '2rem' }}>
           <h1>מילוי טפסים אוטומטי | {branding.name}</h1>

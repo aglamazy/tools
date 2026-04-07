@@ -42,6 +42,18 @@ export default function DemoFormLayout({ children }: { children: React.ReactNode
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
       {children}
+      <section dir="rtl" style={{ maxWidth: '700px', margin: '0 auto', padding: '1.5rem 1rem' }}>
+        <h2 style={{ fontSize: '1.25rem', marginBottom: '0.75rem', color: '#1e293b' }}>על טופס ההדגמה</h2>
+        <p style={{ color: '#475569', lineHeight: 1.7 }}>
+          טופס ההדגמה של {branding.name} מאפשר לנסות את כלי מילוי הטפסים האוטומטי שלנו.
+          הטופס כולל שלבים מרובים — פרטים אישיים, רקע מקצועי והעלאת מסמכים — בדיוק כמו טפסי הרשמה אמיתיים.
+        </p>
+        <p style={{ color: '#475569', lineHeight: 1.7 }}>
+          בעזרת {branding.name}, ניתן למלא טפסים מקוונים בלחיצה אחת.
+          המערכת שומרת את הנתונים שלכם בדפדפן ומאפשרת למלא טפסים חוזרים ללא הקלדה מחדש.
+          מתאים לבעלי עסקים שממלאים טפסים רבים — הרשמות, בקשות, דוחות ועוד.
+        </p>
+      </section>
       <noscript>
         <div dir="rtl" style={{ maxWidth: '700px', margin: '2rem auto', padding: '2rem' }}>
           <h1>טופס הדגמה | {branding.name}</h1>

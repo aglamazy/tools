@@ -42,6 +42,16 @@ export default function TermsLayout({ children }: { children: React.ReactNode })
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
       {children}
+      <noscript>
+        <div dir="rtl" style={{ maxWidth: '700px', margin: '2rem auto', padding: '2rem' }}>
+          <h1>תנאי שימוש | {branding.name}</h1>
+          <p>
+            {branding.name} הוא שירות לניהול פיננסי חכם.
+            הנתונים נשמרים בדפדפן שלכם בלבד.
+            קראו את התנאים המלאים לפני השימוש בשירות.
+          </p>
+        </div>
+      </noscript>
     </>
   )
 }
