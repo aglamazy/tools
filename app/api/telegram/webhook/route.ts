@@ -55,8 +55,10 @@ export async function POST(request: NextRequest) {
 
   // Handle callback queries (inline keyboard presses)
   if (update.callback_query) {
+    const testMode = request.headers.get('x-telegram-test') === 'true'
     try {
-      await handleCallbackQuery(update.callback_query)
+      const cbResult = await handleCallbackQuery(update.callback_query, testMode)
+      if (testMode) return NextResponse.json({ ok: true, ...cbResult })
     } catch (err) {
       console.error('[Telegram] Callback error:', err)
     }
@@ -347,35 +349,35 @@ async function resolveLink(telegramUserId: number, chatId: number) {
  * Handle inline keyboard button press (product selection).
  * callback_data format: "p:<searchKey>:<resultIndex>"
  */
-async function handleCallbackQuery(query: TelegramCallbackQuery) {
+async function handleCallbackQuery(query: TelegramCallbackQuery, testMode = false) {
   const data = query.data || ''
   if (!data.startsWith('p:')) {
-    await answerCallbackQuery(query.id)
-    return
+    if (!testMode) await answerCallbackQuery(query.id)
+    return { callbackAnswer: 'unknown' }
   }
 
   const parts = data.split(':')
   if (parts.length !== 3) {
-    await answerCallbackQuery(query.id, 'שגיאה')
-    return
+    if (!testMode) await answerCallbackQuery(query.id, 'שגיאה')
+    return { callbackAnswer: 'שגיאה' }
   }
 
   const searchKey = parts[1]
   const resultIndex = parseInt(parts[2], 10)
   const chatId = query.message?.chat.id
-  if (!chatId) return
+  if (!chatId) return { callbackAnswer: 'שגיאה' }
 
-  const link = await resolveLink(query.from.id, chatId)
-  if (!link) {
-    await answerCallbackQuery(query.id, 'חשבון לא מחובר')
-    return
+  const uid = testMode ? 'test-user' : (await resolveLink(query.from.id, chatId))?.uid
+  if (!uid) {
+    if (!testMode) await answerCallbackQuery(query.id, 'חשבון לא מחובר')
+    return { callbackAnswer: 'חשבון לא מחובר' }
   }
 
   // Load stored search context
-  const pendingSearch = await loadPendingSearch(link.uid, searchKey)
+  const pendingSearch = await loadPendingSearch(uid, searchKey)
   if (!pendingSearch || resultIndex >= pendingSearch.results.length) {
-    await answerCallbackQuery(query.id, 'החיפוש פג תוקף')
-    return
+    if (!testMode) await answerCallbackQuery(query.id, 'החיפוש פג תוקף')
+    return { callbackAnswer: 'החיפוש פג תוקף' }
   }
 
   const selected = pendingSearch.results[resultIndex]
@@ -383,19 +385,23 @@ async function handleCallbackQuery(query: TelegramCallbackQuery) {
 
   // Save to correct target
   if (pendingSearch.target === 'standing') {
-    await addToStanding(link.uid, [item])
+    await addToStanding(uid, [item])
   } else {
-    await addPendingItems(link.uid, [item])
+    await addPendingItems(uid, [item])
   }
 
   // Save mapping for future use
-  await saveProductMapping(link.uid, pendingSearch.query, selected.catalogId, selected.name)
+  await saveProductMapping(uid, pendingSearch.query, selected.catalogId, selected.name)
 
   // Cleanup
-  await deletePendingSearch(link.uid, searchKey)
+  await deletePendingSearch(uid, searchKey)
 
   const targetLabel = pendingSearch.target === 'standing' ? 'קבועה' : 'הזמנה'
-  await answerCallbackQuery(query.id, `נוסף ל${targetLabel}`)
-  await sendMessage(chatId, `✅ ${selected.name} (x${pendingSearch.qty}) נוסף לרשימה ${targetLabel}`)
+  const confirmMsg = `✅ ${selected.name} (x${pendingSearch.qty}) נוסף לרשימה ${targetLabel}`
+  if (!testMode) {
+    await answerCallbackQuery(query.id, `נוסף ל${targetLabel}`)
+    await sendMessage(chatId, confirmMsg)
+  }
   console.log(`[Telegram] Product picked: "${pendingSearch.query}" → ${selected.catalogId} (${pendingSearch.target})`)
+  return { callbackAnswer: confirmMsg }
 }
