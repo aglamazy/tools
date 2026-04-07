@@ -10,7 +10,6 @@ import {
   removePendingItems,
   addToStanding,
   removeFromStanding,
-  getMergedList,
   clearPending,
   getSchedule,
   setSchedule,
@@ -210,13 +209,8 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
     }
 
     case 'show_list': {
-      const merged = await getMergedList(uid)
-      if (merged.length === 0) return 'הרשימה ריקה.'
-      const lines = merged.map(i => {
-        const resolved = i.catalogId ? '' : ' (לא מקושר)'
-        return `• ${i.name}${i.qty > 1 ? ` x${i.qty}` : ''}${resolved}`
-      })
-      return `רשימה להזמנה:\n${lines.join('\n')}`
+      // Return null — the LLM already shows the list from context data
+      return null
     }
 
     case 'clear_pending': {
