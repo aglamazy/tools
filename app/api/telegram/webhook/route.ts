@@ -72,14 +72,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true })
   }
 
-  // In groups, only respond to bot commands or mentions
-  if (message.chat.type !== 'private') {
-    const isBotCommand = message.entities?.some(e => e.type === 'bot_command')
-    const mentionsBot = message.entities?.some(e => e.type === 'mention')
-    if (!isBotCommand && !mentionsBot) {
-      return NextResponse.json({ ok: true })
-    }
-  }
+  // In groups, respond to all messages (bot must be admin with privacy mode off)
 
   try {
     // Handle /link command — registration flow
