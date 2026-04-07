@@ -20,25 +20,31 @@ import {
   type GrocerySchedule,
 } from '@/app/services/grocery/groceryStore'
 import {
-  checkout,
-  cancelOrder as shufersalCancel,
-  cartAdd,
+  saveCredentials,
+  setCredentialsVerified,
+  login as shufersalLogin,
   cartRead,
   cartRemove,
   orderLoadToCart,
-  ordersList,
-  saveCredentials,
-  setCredentialsVerified,
-  isCredentialsVerified,
-  login as shufersalLogin,
-  search,
 } from '@/app/services/grocery/shufersalClient'
+import { sendOtp, verifyOtp, saveRetalixCredentials } from '@/app/services/grocery/retalixClient'
+import { getStore, getAllStores } from '@/app/services/grocery/storeRegistry'
+import { getUserStores, setDefaultStore, addActiveStore } from '@/app/services/grocery/groceryStoreMulti'
+import type { OtpStorePlugin, CredentialsStorePlugin } from '@/app/services/grocery/storeTypes'
 
 import { randomBytes } from 'crypto'
 import { getOrderCycle, setOrderCycle, type OrderCycle } from '@/app/services/grocery/groceryStore'
 import { deleteMapping } from '@/app/services/grocery/productResolver'
 
-const SHUFERSAL_ACTIONS = new Set(['show_orders', 'trigger_order', 'cancel_order', 'search_product', 're_search'])
+/** Actions that require a connected store */
+const STORE_ACTIONS = new Set(['show_orders', 'trigger_order', 'cancel_order', 'search_product', 're_search'])
+
+/** Resolve which store an action targets */
+async function resolveActionStore(uid: string, action: ChatAction): Promise<string> {
+  if (typeof action.store === 'string') return action.store
+  const meta = await getUserStores(uid)
+  return meta.defaultStore
+}
 
 // --- Pending search storage (for callback_data 64-byte limit) ---
 
@@ -80,6 +86,7 @@ export interface PendingProductSelection {
   query: string
   qty: number
   target: 'pending' | 'standing'
+  store?: string  // which store these results came from
   results: { catalogId: string; name: string; brand: string; price: string; unitPrice: string }[]
 }
 
@@ -113,39 +120,47 @@ interface ExecuteOneResult {
 }
 
 async function executeOne(uid: string, action: ChatAction): Promise<string | ExecuteOneResult | null> {
-  // Guard: Shufersal actions require verified credentials
-  if (SHUFERSAL_ACTIONS.has(action.action)) {
-    const verified = await isCredentialsVerified(uid)
-    if (!verified) return 'חשבון שופרסל לא מחובר. שלח לי אימייל וסיסמה של שופרסל כדי לחבר.'
+  // Guard: store actions require authenticated store
+  if (STORE_ACTIONS.has(action.action)) {
+    const storeId = await resolveActionStore(uid, action)
+    const store = getStore(storeId)
+    if (!store) return `חנות "${storeId}" לא מוכרת.`
+    const authenticated = await store.isAuthenticated(uid)
+    if (!authenticated) {
+      if (store.authType === 'otp') return `${store.label} לא מחובר. שלח מספר טלפון כדי לחבר.`
+      return `${store.label} לא מחובר. שלח אימייל וסיסמה כדי לחבר.`
+    }
   }
 
   switch (action.action) {
-    // --- Product search (with Shufersal credentials) ---
+    // --- Product search (routed through store plugin) ---
     case 'search_product': {
       const query = typeof action.query === 'string' ? action.query.trim() : ''
       const qty = typeof action.qty === 'number' && action.qty > 0 ? action.qty : 1
       const target = action.target === 'standing' ? 'standing' as const : 'pending' as const
       if (!query) return null
 
-      // Always search Shufersal, filter with LLM, then show results
+      const storeId = await resolveActionStore(uid, action)
+      const store = getStore(storeId)
+      if (!store) return `חנות "${storeId}" לא מוכרת.`
+
       try {
-        const results = await search(uid, query)
-        if (results.length === 0) return `לא נמצאו תוצאות עבור "${query}".`
+        const results = await store.search(uid, query)
+        if (results.length === 0) return `לא נמצאו תוצאות עבור "${query}" ב${store.label}.`
         const allResults = results.slice(0, 12).map(r => ({
-          catalogId: r.catalogId, name: r.name, brand: r.brand, price: r.price, unitPrice: r.unitPrice,
+          catalogId: r.productId, name: r.name, brand: r.brand, price: r.price, unitPrice: r.unitPrice,
         }))
         const { filtered, comment } = await filterSearchResults(query, allResults)
-        const followUp = comment || null
         return {
-          followUp,
+          followUp: comment || null,
           pendingSelections: [{
-            query, qty, target,
+            query, qty, target, store: storeId,
             results: filtered.slice(0, 8),
           }],
         }
       } catch (err) {
-        console.error(`[ActionExecutor] Search failed for "${query}":`, err)
-        return `שגיאה בחיפוש "${query}".`
+        console.error(`[ActionExecutor] Search failed for "${query}" (${storeId}):`, err)
+        return `שגיאה בחיפוש "${query}" ב${store.label}.`
       }
     }
 
@@ -155,32 +170,31 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
       const target = action.target === 'standing' ? 'standing' as const : 'pending' as const
       if (!query) return null
 
-      // Delete old mapping
       await deleteMapping(uid, query)
-
-      // Remove old item from list if it exists
       if (target === 'standing') await removeFromStanding(uid, [query])
       else await removePendingItems(uid, [query])
 
-      // Search fresh, filter with LLM
+      const storeId = await resolveActionStore(uid, action)
+      const store = getStore(storeId)
+      if (!store) return `חנות "${storeId}" לא מוכרת.`
+
       try {
-        const results = await search(uid, query)
-        if (results.length === 0) return `לא נמצאו תוצאות עבור "${query}".`
+        const results = await store.search(uid, query)
+        if (results.length === 0) return `לא נמצאו תוצאות עבור "${query}" ב${store.label}.`
         const allResults = results.slice(0, 12).map(r => ({
-          catalogId: r.catalogId, name: r.name, brand: r.brand, price: r.price, unitPrice: r.unitPrice,
+          catalogId: r.productId, name: r.name, brand: r.brand, price: r.price, unitPrice: r.unitPrice,
         }))
         const { filtered, comment } = await filterSearchResults(query, allResults)
-        const followUp = comment || null
         return {
-          followUp,
+          followUp: comment || null,
           pendingSelections: [{
-            query, qty, target,
+            query, qty, target, store: storeId,
             results: filtered.slice(0, 8),
           }],
         }
       } catch (err) {
-        console.error(`[ActionExecutor] Re-search failed for "${query}":`, err)
-        return `שגיאה בחיפוש "${query}".`
+        console.error(`[ActionExecutor] Re-search failed for "${query}" (${storeId}):`, err)
+        return `שגיאה בחיפוש "${query}" ב${store.label}.`
       }
     }
 
@@ -247,79 +261,73 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
     }
 
     case 'trigger_order': {
+      const storeId = await resolveActionStore(uid, action)
+      const store = getStore(storeId)
+      if (!store) return `חנות "${storeId}" לא מוכרת.`
+
       const data = await getGroceryData(uid)
       const merged = mergeList(data.standingList, data.pendingChanges)
       if (merged.length === 0) return 'הרשימה ריקה — אין מה להזמין.'
 
       const withId = merged.filter(i => i.catalogId)
       const withoutId = merged.filter(i => !i.catalogId)
-
       if (withId.length === 0) {
-        return `אין מוצרים מקושרים לשופרסל. ${withoutId.length} מוצרים לא מקושרים: ${withoutId.map(i => i.name).join(', ')}`
+        return `אין מוצרים מקושרים. ${withoutId.length} מוצרים לא מקושרים: ${withoutId.map(i => i.name).join(', ')}`
       }
-
       if (withoutId.length > 0) {
         console.log(`[ActionExecutor] Ordering without unlinked: ${withoutId.map(i => i.name).join(', ')}`)
       }
 
       const items = withId.map(i => ({ code: i.catalogId!, qty: i.qty }))
-
-      // Use day/time from action if provided, otherwise fall back to schedule, otherwise nearest
       const actionDay = typeof action.day === 'string' ? action.day : undefined
       const actionTime = typeof action.time === 'string' ? action.time : undefined
       const schedule = data.schedule
       const day = actionDay || schedule?.preferredSlot.day
       const time = actionTime || schedule?.preferredSlot.time?.split('-')[0]
-      const result = await checkout(uid, items, {
-        day,
-        time,
-        nearest: !day, // no day specified at all = pick first available
-      })
 
+      const result = await store.checkout(uid, items, { day, time, nearest: !day })
       if (result.success) {
-        return `הזמנה בוצעה! #${result.orderId || ''}\nמשלוח: ${result.deliveryWindow?.day} ${result.deliveryWindow?.date} ${result.deliveryWindow?.time}`
+        return `הזמנה בוצעה ב${store.label}! #${result.orderId || ''}\nמשלוח: ${result.deliveryWindow?.day} ${result.deliveryWindow?.date} ${result.deliveryWindow?.time}`
       }
-      return `שגיאה בהזמנה: ${result.error}`
+      return `שגיאה בהזמנה ב${store.label}: ${result.error}`
     }
 
     case 'show_orders': {
+      const storeId = await resolveActionStore(uid, action)
+      const store = getStore(storeId)
+      if (!store) return `חנות "${storeId}" לא מוכרת.`
+
       try {
-        const orders = await ordersList(uid)
-        if (orders.length === 0) return 'אין הזמנות פעילות.'
+        const orders = await store.listOrders(uid)
+        if (orders.length === 0) return `אין הזמנות פעילות ב${store.label}.`
         const lines = orders.map(o => {
-          const del = o.delivery
-          const deliveryStr = del.date ? `${del.date} ${del.time}-${del.endTime}` : 'לא נקבע'
-          const flags = [
-            o.updatable ? 'ניתן לעדכן' : null,
-            o.cancelable ? 'ניתן לבטל' : null,
-          ].filter(Boolean).join(', ')
-          const deadline = o.updateDeadline ? `\n  עדכון עד: ${o.updateDeadline}` : ''
-          const itemsSummary = o.items.length > 0
-            ? '\n  ' + o.items.slice(0, 5).map(i => `${i.name} x${i.qty}`).join(', ')
-              + (o.itemsCount > 5 ? ` (+${o.itemsCount - 5} עוד)` : '')
-            : `\n  ${o.itemsCount} פריטים`
-          return `#${o.orderId} — ${o.total}\n  משלוח: ${deliveryStr}\n  ${flags}${deadline}${itemsSummary}`
+          const deliveryStr = o.delivery.date ? `${o.delivery.date} ${o.delivery.time}${o.delivery.endTime ? `-${o.delivery.endTime}` : ''}` : 'לא נקבע'
+          return `#${o.orderId} — ${o.total}\n  משלוח: ${deliveryStr}\n  ${o.cancelable ? 'ניתן לבטל' : ''}\n  ${o.itemsCount} פריטים`
         })
-        return `הזמנות פעילות:\n\n${lines.join('\n\n')}`
+        return `הזמנות פעילות ב${store.label}:\n\n${lines.join('\n\n')}`
       } catch (err) {
-        console.error('[ActionExecutor] Failed to list orders:', err)
-        return 'שגיאה בקריאת הזמנות משופרסל.'
+        console.error(`[ActionExecutor] Failed to list orders (${storeId}):`, err)
+        return `שגיאה בקריאת הזמנות מ${store.label}.`
       }
     }
 
     case 'cancel_order': {
+      const storeId = await resolveActionStore(uid, action)
+      const store = getStore(storeId)
+      if (!store) return `חנות "${storeId}" לא מוכרת.`
+
       const data = await getGroceryData(uid)
       const cancelCycle = data.orderCycle
       if (!cancelCycle || cancelCycle.status === 'delivered') {
-        return 'אין הזמנה פעילה לביטול.'
+        return `אין הזמנה פעילה לביטול ב${store.label}.`
       }
       if (cancelCycle.orderId) {
         try {
-          const ok = await shufersalCancel(uid, cancelCycle.orderId)
-          if (!ok) return 'שופרסל לא אישר את הביטול. אולי ההזמנה כבר ננעלה.'
+          const ok = await store.cancelOrder(uid, cancelCycle.orderId)
+          if (!ok) return `${store.label} לא אישר את הביטול.`
         } catch (err) {
-          console.error('[ActionExecutor] Cancel order failed:', err)
-          return 'שגיאה בביטול ההזמנה בשופרסל.'
+          console.error(`[ActionExecutor] Cancel order failed (${storeId}):`, err)
+          return `שגיאה בביטול ההזמנה ב${store.label}.`
         }
       }
       await setOrderCycle(uid, { ...cancelCycle, status: 'delivered', updatedAt: new Date().toISOString() })
@@ -344,22 +352,23 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
       if (!schedule) return 'לא הוגדר לוח זמנים. תגיד לי מתי לפתוח הזמנה ומתי המשלוח.'
       const DAY_NAMES = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת']
       return [
-        `לוח זמנים:`,
+        'לוח זמנים:',
         `• פתיחת הזמנה: יום ${DAY_NAMES[schedule.orderDay]}`,
         `• משלוח: ${schedule.preferredSlot.day} ${schedule.preferredSlot.time}`,
         `• תזכורת: ${schedule.reviewReminderHours} שעות לפני`,
       ].join('\n')
     }
 
+    // --- Store connection ---
     case 'set_credentials': {
       const email = typeof action.email === 'string' ? action.email.trim() : ''
       const password = typeof action.password === 'string' ? action.password : ''
       if (!email || !password) return 'חסר אימייל או סיסמה.'
       await saveCredentials(uid, email, password)
-      // Try to login immediately to verify
       try {
         await shufersalLogin(uid)
         await setCredentialsVerified(uid, true)
+        await addActiveStore(uid, 'shufersal')
         return 'פרטי שופרסל נשמרו והתחברות הצליחה!'
       } catch (err) {
         console.error('[ActionExecutor] Shufersal login failed:', err)
@@ -367,13 +376,45 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
       }
     }
 
+    case 'set_otp_phone': {
+      const phone = typeof action.phone === 'string' ? action.phone.trim() : ''
+      if (!phone) return 'חסר מספר טלפון.'
+      try {
+        await saveRetalixCredentials(uid, phone)
+        await sendOtp(uid)
+        return 'שלחתי קוד SMS. שלח לי את הקוד שקיבלת.'
+      } catch (err) {
+        console.error('[ActionExecutor] Send OTP failed:', err)
+        return 'שגיאה בשליחת SMS. בדוק את מספר הטלפון.'
+      }
+    }
+
+    case 'verify_otp': {
+      const otp = typeof action.otp === 'string' ? action.otp.trim() : ''
+      if (!otp) return 'חסר קוד.'
+      try {
+        await verifyOtp(uid, otp)
+        await addActiveStore(uid, 'retalix')
+        return 'חשבון מקור השפע חובר בהצלחה!'
+      } catch (err) {
+        console.error('[ActionExecutor] Verify OTP failed:', err)
+        return 'הקוד שגוי. נסה שוב או בקש קוד חדש.'
+      }
+    }
+
+    case 'set_default_store': {
+      const storeId = typeof action.store === 'string' ? action.store : ''
+      if (!storeId || !getStore(storeId)) return 'חנות לא מוכרת.'
+      await setDefaultStore(uid, storeId)
+      const store = getStore(storeId)!
+      return `חנות ברירת מחדל שונתה ל${store.label}.`
+    }
+
     case 'create_task': {
-      // TODO: push to confidential queue (agentTasks)
       return null
     }
 
     case 'list_tasks': {
-      // TODO: read from open layer tasks
       return null
     }
 

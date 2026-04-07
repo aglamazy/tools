@@ -13,6 +13,9 @@ import { processChat, type ChatMessage, type UserContext } from '@/app/services/
 import { executeActions, savePendingSearch, loadPendingSearch, deletePendingSearch, type PendingProductSelection } from '@/app/services/telegram/actionExecutor'
 import { getGroceryData } from '@/app/services/grocery/groceryStore'
 import { addPendingItems, addToStanding } from '@/app/services/grocery/groceryStore'
+import { initStores } from '@/app/services/grocery/initStores'
+import { getUserStores } from '@/app/services/grocery/groceryStoreMulti'
+import { getAllStores } from '@/app/services/grocery/storeRegistry'
 import { saveProductMapping } from '@/app/services/grocery/productResolver'
 import type { TelegramCallbackQuery } from '@/app/services/telegram/types'
 import { isCredentialsVerified, saveCredentials, setCredentialsVerified, login as shufersalLogin } from '@/app/services/grocery/shufersalClient'
@@ -42,6 +45,8 @@ const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET
 export const maxDuration = 30
 
 export async function POST(request: NextRequest) {
+  initStores()
+
   // Validate Telegram secret token
   const secret = request.headers.get('x-telegram-bot-api-secret-token')
   if (!WEBHOOK_SECRET || secret !== WEBHOOK_SECRET) {
@@ -147,23 +152,47 @@ export async function POST(request: NextRequest) {
     const history = await loadHistory(link.uid)
     history.push({ role: 'user', content: message.text })
 
-    // Load grocery data and credentials status for context
-    const [groceryData, hasCreds] = await Promise.all([
+    // Load grocery data and store info for context
+    const [groceryData, hasCreds, userStores] = await Promise.all([
       getGroceryData(link.uid).catch(() => null),
       isCredentialsVerified(link.uid).catch(() => false),
+      getUserStores(link.uid).catch(() => ({ activeStores: [] as string[], defaultStore: 'shufersal' })),
     ])
+
+    // Build per-store context
+    const storeContexts = await Promise.all(
+      getAllStores().map(async (store) => {
+        const connected = await store.isAuthenticated(link.uid).catch(() => false)
+        // For now, use root groceryData for shufersal (backward compat)
+        const storeData = store.id === 'shufersal' && groceryData ? groceryData : null
+        return {
+          id: store.id,
+          label: store.label,
+          connected,
+          standingList: storeData?.standingList?.map(i => ({ name: i.name, qty: i.qty })),
+          pendingChanges: storeData ? {
+            add: storeData.pendingChanges.add.map(i => ({ name: i.name, qty: i.qty })),
+            remove: storeData.pendingChanges.remove,
+          } : undefined,
+          orderStatus: storeData?.orderCycle?.status,
+          schedule: storeData?.schedule,
+        }
+      })
+    )
+
     const context: UserContext = {
       displayName: message.from.first_name,
+      stores: storeContexts,
+      defaultStore: userStores.defaultStore,
+      // Legacy fallback
       hasCredentials: hasCreds,
-    }
-    if (groceryData) {
-      context.standingList = groceryData.standingList.map(i => ({ name: i.name, qty: i.qty }))
-      context.pendingChanges = {
+      standingList: groceryData?.standingList?.map(i => ({ name: i.name, qty: i.qty })),
+      pendingChanges: groceryData ? {
         add: groceryData.pendingChanges.add.map(i => ({ name: i.name, qty: i.qty })),
         remove: groceryData.pendingChanges.remove,
-      }
-      context.orderStatus = groceryData.orderCycle?.status
-      context.schedule = groceryData.schedule
+      } : undefined,
+      orderStatus: groceryData?.orderCycle?.status,
+      schedule: groceryData?.schedule,
     }
 
     // Process via LLM
