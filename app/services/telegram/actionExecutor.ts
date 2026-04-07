@@ -29,12 +29,12 @@ import {
 } from '@/app/services/grocery/shufersalClient'
 import { sendOtp, verifyOtp, saveRetalixCredentials } from '@/app/services/grocery/retalixClient'
 import { getStore, getAllStores } from '@/app/services/grocery/storeRegistry'
-import { getUserStores, setDefaultStore, addActiveStore, getStoreData, removeFromStoreStanding, removeStorePendingItems, clearStorePending } from '@/app/services/grocery/groceryStoreMulti'
+import { getUserStores, setDefaultStore, addActiveStore, getStoreData, addToStoreStanding, addStorePendingItems, removeFromStoreStanding, removeStorePendingItems, clearStorePending } from '@/app/services/grocery/groceryStoreMulti'
 import type { OtpStorePlugin, CredentialsStorePlugin } from '@/app/services/grocery/storeTypes'
 
 import { randomBytes } from 'crypto'
 import { getOrderCycle, setOrderCycle, type OrderCycle } from '@/app/services/grocery/groceryStore'
-import { deleteMapping } from '@/app/services/grocery/productResolver'
+import { deleteMapping, saveProductMapping } from '@/app/services/grocery/productResolver'
 
 /** Actions that require a connected store */
 const STORE_ACTIONS = new Set(['show_orders', 'trigger_order', 'cancel_order', 'search_product', 're_search'])
@@ -133,12 +133,19 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
   }
 
   switch (action.action) {
-    // --- Product search (routed through store plugin) ---
-    case 'search_product': {
+    case 'search_product':
+    case 're_search': {
       const query = typeof action.query === 'string' ? action.query.trim() : ''
       const qty = typeof action.qty === 'number' && action.qty > 0 ? action.qty : 1
       const target = action.target === 'standing' ? 'standing' as const : 'pending' as const
       if (!query) return null
+
+      // re_search: clear old mapping first
+      if (action.action === 're_search') {
+        await deleteMapping(uid, query)
+        if (target === 'standing') await removeFromStanding(uid, [query])
+        else await removePendingItems(uid, [query])
+      }
 
       const storeId = await resolveActionStore(uid, action)
       const store = getStore(storeId)
@@ -151,6 +158,23 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
           catalogId: r.productId, name: r.name, brand: r.brand, price: r.price, unitPrice: r.unitPrice,
         }))
         const { filtered, comment } = await filterSearchResults(query, allResults)
+
+        // Auto-select when exactly 1 result
+        if (filtered.length === 1) {
+          const selected = filtered[0]
+          const item = { name: selected.name, qty, catalogId: selected.catalogId }
+          if (action.store) {
+            if (target === 'standing') await addToStoreStanding(uid, storeId, [item])
+            else await addStorePendingItems(uid, storeId, [item])
+          } else {
+            if (target === 'standing') await addToStanding(uid, [item])
+            else await addPendingItems(uid, [item])
+          }
+          await saveProductMapping(uid, query, selected.catalogId, selected.name)
+          const targetLabel = target === 'standing' ? 'קבועה' : 'הזמנה'
+          return `✅ ${selected.name} (x${qty}) נוסף לרשימה ${targetLabel} ב${store.label}`
+        }
+
         return {
           followUp: comment || null,
           pendingSelections: [{
@@ -160,40 +184,6 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
         }
       } catch (err) {
         console.error(`[ActionExecutor] Search failed for "${query}" (${storeId}):`, err)
-        return `שגיאה בחיפוש "${query}" ב${store.label}.`
-      }
-    }
-
-    case 're_search': {
-      const query = typeof action.query === 'string' ? action.query.trim() : ''
-      const qty = typeof action.qty === 'number' && action.qty > 0 ? action.qty : 1
-      const target = action.target === 'standing' ? 'standing' as const : 'pending' as const
-      if (!query) return null
-
-      await deleteMapping(uid, query)
-      if (target === 'standing') await removeFromStanding(uid, [query])
-      else await removePendingItems(uid, [query])
-
-      const storeId = await resolveActionStore(uid, action)
-      const store = getStore(storeId)
-      if (!store) return `חנות "${storeId}" לא מוכרת.`
-
-      try {
-        const results = await store.search(uid, query)
-        if (results.length === 0) return `לא נמצאו תוצאות עבור "${query}" ב${store.label}.`
-        const allResults = results.slice(0, 12).map(r => ({
-          catalogId: r.productId, name: r.name, brand: r.brand, price: r.price, unitPrice: r.unitPrice,
-        }))
-        const { filtered, comment } = await filterSearchResults(query, allResults)
-        return {
-          followUp: comment || null,
-          pendingSelections: [{
-            query, qty, target, store: storeId,
-            results: filtered.slice(0, 8),
-          }],
-        }
-      } catch (err) {
-        console.error(`[ActionExecutor] Re-search failed for "${query}" (${storeId}):`, err)
         return `שגיאה בחיפוש "${query}" ב${store.label}.`
       }
     }
