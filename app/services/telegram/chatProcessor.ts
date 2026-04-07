@@ -120,8 +120,7 @@ const SYSTEM_PROMPT = `אתה AglamazoBot — עוזר משפחתי לניהול
 - פרטי התחברות רק בצ'אט פרטי! בקבוצה, תגיד שישלחו בפרטי
 - אל תשלח סיסמה/קוד בחזרה בתגובה
 - "תבטל הזמנה" = cancel_order (בקש אישור לפני ביטול!)
-- כשמשתמש מבקש לראות רשימה (show_list) או הזמנות (show_orders) — לעולם אל תפרט פריטים בתגובה שלך! כתוב רק "הנה הרשימה:" או "בודק הזמנות..." — הפירוט מגיע אוטומטית מהמערכת. אל תמציא רשימה משלך
-- כשאתה מציג מוצרים בטקסט (לא דרך show_list), תמיד הצג כרשימה עם תבליטים (•) ועם יחידות (ק"ג, יח' וכו') אם יש
+- כשמשתמש מבקש לראות רשימה — **חובה** להשתמש ב-show_list. **אסור** לרשום פריטים בתגובה — אפילו לא חלקית. הרשימה המפורטת עם כל הפרטים מגיעה אוטומטית מהמערכת אחרי הפעולה. כתוב רק משפט קצר כמו "הנה הרשימה:" ותו לא
 - כשמשתמש שואל על מחיר, השתמש ב-search_product — התוצאות כוללות מחירים
 - אם ההודעה היא שיחה רגילה — תגיב בטבעיות, בלי בלוק action
 - אם לא ברור מה המשתמש רוצה, שאל — אל תנחש`
@@ -178,13 +177,13 @@ function buildContextBlock(ctx: UserContext): string {
       if (store.otpPending) parts.push('ממתין לקוד SMS (otpPending=true)')
       if (store.connected) {
         if (store.standingList?.length) {
-          parts.push(`רשימה קבועה (${store.standingList.length} פריטים): ${store.standingList.map(i => `${i.name}${i.unit ? ` ${i.unit}` : ''}`).join(', ')}`)
+          parts.push(`רשימה קבועה (${store.standingList.length} פריטים): ${store.standingList.map(i => i.name).join(', ')}`)
         } else {
           parts.push('רשימה קבועה: ריקה')
         }
         if (store.pendingChanges) {
           const adds = store.pendingChanges.add?.length
-            ? `הוספות: ${store.pendingChanges.add.map(i => `${i.name}${i.unit ? ` ${i.unit}` : ''}`).join(', ')}`
+            ? `הוספות: ${store.pendingChanges.add.map(i => i.name).join(', ')}`
             : ''
           const removes = store.pendingChanges.remove?.length
             ? `הסרות: ${store.pendingChanges.remove.join(', ')}`
@@ -201,7 +200,7 @@ function buildContextBlock(ctx: UserContext): string {
   } else {
     // Legacy single-store fallback
     if (ctx.standingList?.length) {
-      parts.push(`רשימה קבועה (${ctx.standingList.length} פריטים): ${ctx.standingList.map(i => `${i.name}${i.unit ? ` ${i.unit}` : ''}`).join(', ')}`)
+      parts.push(`רשימה קבועה (${ctx.standingList.length} פריטים): ${ctx.standingList.map(i => i.name).join(', ')}`)
     }
     parts.push(`חשבון שופרסל: ${ctx.hasCredentials ? 'מחובר' : 'לא מחובר'}`)
     if (ctx.schedule) {
