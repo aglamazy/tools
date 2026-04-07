@@ -181,11 +181,21 @@ export async function POST(request: NextRequest) {
         await sendMessage(chatId, result.reply)
       }
 
-      actionResult = await executeActions(link.uid, result.actions)
-      if (actionResult.followUp) {
-        replyText = `${replyText}\n\n${actionResult.followUp}`
+      try {
+        actionResult = await executeActions(link.uid, result.actions)
+        if (actionResult.followUp) {
+          replyText = `${replyText}\n\n${actionResult.followUp}`
+        }
+        pendingSelections = actionResult.pendingSelections
+      } catch (actionErr) {
+        const msg = actionErr instanceof Error ? actionErr.message : String(actionErr)
+        console.error(`[Telegram] Action execution failed:`, msg)
+        const errorFollowUp = 'שגיאה בביצוע הפעולה. נסה שוב.'
+        replyText = `${replyText}\n\n${errorFollowUp}`
+        if (!testMode) {
+          await sendMessage(chatId, errorFollowUp)
+        }
       }
-      pendingSelections = actionResult.pendingSelections
     }
 
     // Store bot reply in history
