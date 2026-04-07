@@ -134,6 +134,12 @@ export async function GET(request: NextRequest) {
   }
 
   console.log(`[Grocery Cron] Processed ${results.length} actions`)
+
+  // Ping healthchecks.io
+  const hasErrors = results.some(r => !r.ok)
+  const hcUrl = process.env.HEALTHCHECK_GROCERY_CRON_URL
+  if (hcUrl) fetch(hasErrors ? `${hcUrl}/fail` : hcUrl).catch(() => {})
+
   return NextResponse.json({ ok: true, results })
 }
 
