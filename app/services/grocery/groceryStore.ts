@@ -13,6 +13,7 @@ export interface GroceryItem {
   name: string
   catalogId?: string   // Shufersal product code (resolved later)
   qty: number
+  unit?: string        // e.g. "ק"ג", "יח'", "מארז"
 }
 
 export interface PendingChanges {

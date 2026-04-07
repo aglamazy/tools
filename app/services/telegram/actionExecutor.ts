@@ -162,7 +162,8 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
         // Auto-select when exactly 1 result
         if (filtered.length === 1) {
           const selected = filtered[0]
-          const item = { name: selected.name, qty, catalogId: selected.catalogId }
+          const unit = selected.unitPrice?.split('/')?.pop()?.trim() || undefined
+          const item = { name: selected.name, qty, catalogId: selected.catalogId, unit }
           if (action.store) {
             if (target === 'standing') await addToStoreStanding(uid, storeId, [item])
             else await addStorePendingItems(uid, storeId, [item])
@@ -243,13 +244,17 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
       if (standing.length > 0) {
         parts.push(`רשימה קבועה (${slStore?.label || slStoreId}):`)
         for (const i of standing) {
-          parts.push(`• ${i.name}${i.qty > 1 ? ` x${i.qty}` : ''}`)
+          const qtyStr = i.qty > 1 ? ` x${i.qty}` : ''
+          const unitStr = i.unit ? ` ${i.unit}` : ''
+          parts.push(`• ${i.name}${qtyStr}${unitStr}`)
         }
       }
       if (pending.add.length > 0) {
         parts.push('\nתוספות השבוע:')
         for (const i of pending.add) {
-          parts.push(`• ${i.name}${i.qty > 1 ? ` x${i.qty}` : ''}`)
+          const qtyStr = i.qty > 1 ? ` x${i.qty}` : ''
+          const unitStr = i.unit ? ` ${i.unit}` : ''
+          parts.push(`• ${i.name}${qtyStr}${unitStr}`)
         }
       }
       if (pending.remove.length > 0) {
