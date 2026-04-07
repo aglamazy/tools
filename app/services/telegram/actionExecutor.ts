@@ -133,7 +133,7 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
         return {
           pendingSelections: [{
             query, qty, target,
-            results: results.slice(0, 5).map(r => ({
+            results: results.slice(0, 8).map(r => ({
               catalogId: r.catalogId, name: r.name, brand: r.brand, price: r.price, unitPrice: r.unitPrice,
             })),
           }],
@@ -164,7 +164,7 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
         return {
           pendingSelections: [{
             query, qty, target,
-            results: results.slice(0, 5).map(r => ({
+            results: results.slice(0, 8).map(r => ({
               catalogId: r.catalogId, name: r.name, brand: r.brand, price: r.price, unitPrice: r.unitPrice,
             })),
           }],
