@@ -30,10 +30,17 @@ FAKE_CHAT_ID=123456789
 UPDATE_ID=1
 LAST_SEARCH_KEYS=()
 
-echo "🤖 AglamazoBot test CLI — type messages, Ctrl+C to quit"
-echo "   Type a number (1-5) after search results to pick a product"
-echo "Target: $API_URL"
-echo "---"
+NON_INTERACTIVE=false
+if [[ ! -t 0 ]]; then
+  NON_INTERACTIVE=true
+fi
+
+if [[ "$NON_INTERACTIVE" == "false" ]]; then
+  echo "🤖 AglamazoBot test CLI — type messages, Ctrl+C to quit"
+  echo "   Type a number (1-5) after search results to pick a product"
+  echo "Target: $API_URL"
+  echo "---"
+fi
 
 send_callback() {
   local callback_data="$1"
@@ -66,8 +73,10 @@ send_callback() {
 }
 
 while true; do
-  printf "\nאתה: "
-  read -r msg
+  if [[ "$NON_INTERACTIVE" == "false" ]]; then
+    printf "\nאתה: "
+  fi
+  read -r msg || break
   [[ -z "$msg" ]] && continue
 
   # If user types a number and we have pending search keys, simulate a callback

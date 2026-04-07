@@ -218,8 +218,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Store bot reply in history
-    history.push({ role: 'assistant', content: replyText })
+    // Store only the LLM's reply in history (not action output) — prevents
+    // the model from learning to reproduce lists it should delegate to actions
+    history.push({ role: 'assistant', content: result.reply })
     await saveHistory(link.uid, history)
 
     // Save pending searches
