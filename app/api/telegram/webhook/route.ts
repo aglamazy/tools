@@ -39,6 +39,8 @@ async function saveHistory(uid: string, messages: ChatMessage[]): Promise<void> 
 
 const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET
 
+export const maxDuration = 30
+
 export async function POST(request: NextRequest) {
   // Validate Telegram secret token
   const secret = request.headers.get('x-telegram-bot-api-secret-token')
@@ -179,7 +181,13 @@ export async function POST(request: NextRequest) {
     let replyText = result.reply
     let pendingSelections: typeof actionResult.pendingSelections | undefined
     let actionResult: Awaited<ReturnType<typeof executeActions>> = { followUp: null }
+
     if (result.actions.length > 0) {
+      // In prod: send the LLM reply immediately, then execute actions and follow up
+      if (!testMode) {
+        await sendMessage(chatId, result.reply)
+      }
+
       actionResult = await executeActions(link.uid, result.actions)
       if (actionResult.followUp) {
         replyText = `${replyText}\n\n${actionResult.followUp}`
@@ -210,7 +218,14 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    await sendMessage(chatId, replyText)
+    // Send follow-up from action (or the reply itself if no actions)
+    if (result.actions.length > 0) {
+      if (actionResult.followUp) {
+        await sendMessage(chatId, actionResult.followUp)
+      }
+    } else {
+      await sendMessage(chatId, replyText)
+    }
 
     // Send product selection keyboards
     if (pendingSelections?.length) {
