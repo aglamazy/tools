@@ -148,11 +148,20 @@ export async function processChat(
     return m
   }).filter(m => m.content)
 
+  console.log('\n========== FULL SYSTEM PROMPT ==========')
+  console.log(fullSystem)
+  console.log('========== MESSAGES ==========')
+  cleanMessages.forEach((m, i) => console.log(`[${i}] ${m.role}: ${m.content}`))
+  console.log('========================================\n')
+
   const result = await gemini.chat({
     system: fullSystem,
     messages: cleanMessages,
     maxTokens: 512,
   })
+
+  console.log('[ChatProcessor] LLM reply:', result.text)
+  console.log('[ChatProcessor] LLM error:', result.error)
 
   if (result.error || !result.text) {
     console.error('[ChatProcessor] LLM error:', result.error)

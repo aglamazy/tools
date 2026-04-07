@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
     const testMode = request.headers.get('x-telegram-test') === 'true'
     try {
       const cbResult = await handleCallbackQuery(update.callback_query, testMode)
-      if (testMode) return NextResponse.json({ ok: true, ...cbResult })
+      if (testMode) return NextResponse.json({ ok: true, response: cbResult.callbackAnswer, ...cbResult })
     } catch (err) {
       console.error('[Telegram] Callback error:', err)
     }
@@ -79,6 +79,8 @@ export async function POST(request: NextRequest) {
   }
 
   // In groups, respond to all messages (bot must be admin with privacy mode off)
+
+  const testMode = request.headers.get('x-telegram-test') === 'true'
 
   try {
     // Handle /link command — registration flow
@@ -95,7 +97,6 @@ export async function POST(request: NextRequest) {
 
     // Handle /reset command — clear chat history
     if (message.text.match(/^\/reset(@\w+)?$/)) {
-      const testMode = request.headers.get('x-telegram-test') === 'true'
       const resetUid = testMode ? 'test-user' : (await resolveLink(message.from.id, message.chat.id))?.uid
       if (resetUid) await saveHistory(resetUid, [])
       const reply = 'היסטוריה נמחקה!'
@@ -106,7 +107,6 @@ export async function POST(request: NextRequest) {
 
     // Handle /clear command — clear standing list and pending changes
     if (message.text.match(/^\/clear(@\w+)?$/)) {
-      const testMode = request.headers.get('x-telegram-test') === 'true'
       const clearUid = testMode ? 'test-user' : (await resolveLink(message.from.id, message.chat.id))?.uid
       if (clearUid) {
         const firestore = getAdminFirestore()
@@ -137,7 +137,6 @@ export async function POST(request: NextRequest) {
     }
 
     // Resolve telegram user → Aglamazo uid
-    const testMode = request.headers.get('x-telegram-test') === 'true'
     const link = testMode
       ? { uid: 'test-user' }
       : await resolveLink(message.from.id, message.chat.id)
@@ -200,17 +199,12 @@ export async function POST(request: NextRequest) {
     const result = await processChat(history, context)
     console.log(`[Telegram] uid=${link.uid} actions=${result.actions.map(a => a.action).join(',') || 'none'}: ${message.text}`)
 
-    // Execute actions against Firestore
+    // Execute actions, then build final reply
     let replyText = result.reply
     let pendingSelections: typeof actionResult.pendingSelections | undefined
     let actionResult: Awaited<ReturnType<typeof executeActions>> = { followUp: null }
 
     if (result.actions.length > 0) {
-      // In prod: send the LLM reply immediately, then execute actions and follow up
-      if (!testMode) {
-        await sendMessage(chatId, result.reply)
-      }
-
       try {
         actionResult = await executeActions(link.uid, result.actions)
         if (actionResult.followUp) {
@@ -220,11 +214,7 @@ export async function POST(request: NextRequest) {
       } catch (actionErr) {
         const msg = actionErr instanceof Error ? actionErr.message : String(actionErr)
         console.error(`[Telegram] Action execution failed:`, msg)
-        const errorFollowUp = 'שגיאה בביצוע הפעולה. נסה שוב.'
-        replyText = `${replyText}\n\n${errorFollowUp}`
-        if (!testMode) {
-          await sendMessage(chatId, errorFollowUp)
-        }
+        replyText = `${replyText}\n\nשגיאה בביצוע הפעולה. נסה שוב.`
       }
     }
 
@@ -232,7 +222,7 @@ export async function POST(request: NextRequest) {
     history.push({ role: 'assistant', content: replyText })
     await saveHistory(link.uid, history)
 
-    // Save pending searches (both test and prod need this for callbacks)
+    // Save pending searches
     const searchKeys: string[] = []
     if (pendingSelections?.length) {
       for (const sel of pendingSelections) {
@@ -241,7 +231,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // In test mode, return response directly
+    // Test mode: return what would be sent, without calling Telegram
     if (testMode) {
       return NextResponse.json({
         ok: true,
@@ -251,14 +241,8 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Send follow-up from action (or the reply itself if no actions)
-    if (result.actions.length > 0) {
-      if (actionResult.followUp) {
-        await sendMessage(chatId, actionResult.followUp)
-      }
-    } else {
-      await sendMessage(chatId, replyText)
-    }
+    // Prod: send combined reply
+    await sendMessage(chatId, replyText)
 
     // Send product selection keyboards
     if (pendingSelections?.length) {
