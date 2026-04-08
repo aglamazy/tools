@@ -22,13 +22,8 @@ const EXCLUDED_DIRS = new Set([
 /** Routes that should not appear in the sitemap (e.g. require query params) */
 const EXCLUDED_ROUTES = new Set(['/invite'])
 
-interface RouteInfo {
-  path: string
-  lastModified: Date
-}
-
-function discoverPublicRoutes(dir: string, basePath = ''): RouteInfo[] {
-  const routes: RouteInfo[] = []
+function discoverPublicRoutes(dir: string, basePath = ''): string[] {
+  const routes: string[] = []
   const entries = fs.readdirSync(dir, { withFileTypes: true })
 
   const pageFile = entries.find(
@@ -37,9 +32,7 @@ function discoverPublicRoutes(dir: string, basePath = ''): RouteInfo[] {
   if (pageFile) {
     const routePath = basePath || '/'
     if (!EXCLUDED_ROUTES.has(routePath)) {
-      const filePath = path.join(dir, pageFile.name)
-      const stat = fs.statSync(filePath)
-      routes.push({ path: routePath, lastModified: stat.mtime })
+      routes.push(routePath)
     }
   }
 
@@ -49,19 +42,14 @@ function discoverPublicRoutes(dir: string, basePath = ''): RouteInfo[] {
     if (basePath === '' && EXCLUDED_DIRS.has(entry.name)) continue
     if (entry.name.startsWith('[')) continue
 
-    routes.push(
-      ...discoverPublicRoutes(
-        path.join(dir, entry.name),
-        `${basePath}/${entry.name}`
-      )
-    )
+    routes.push(...discoverPublicRoutes(path.join(dir, entry.name), `${basePath}/${entry.name}`))
   }
 
   return routes
 }
 
 /** Higher-priority routes that should be crawled first */
-const HIGH_PRIORITY_ROUTES = new Set(['/', '/about', '/pricing', '/guide', '/contact'])
+const HIGH_PRIORITY_ROUTES = new Set(['/', '/about', '/pricing', '/guide', '/contact', '/demo-form', '/form-filler', '/terms'])
 
 /** Routes that should not appear in the sitemap (personalized / requires auth) */
 const NOINDEX_ROUTES = new Set(['/share-invite'])
@@ -69,16 +57,17 @@ const NOINDEX_ROUTES = new Set(['/share-invite'])
 export default function sitemap(): MetadataRoute.Sitemap {
   const appDir = path.join(process.cwd(), 'app')
   const routes = discoverPublicRoutes(appDir)
+  const now = new Date()
 
   return routes
-    .filter(({ path: route }) => !NOINDEX_ROUTES.has(route))
-    .map(({ path: route, lastModified }) => {
+    .filter((route) => !NOINDEX_ROUTES.has(route))
+    .map((route) => {
       const isHome = route === '/'
       const isHighPriority = HIGH_PRIORITY_ROUTES.has(route)
 
       return {
         url: `${normalizedBase}${isHome ? '/' : route}`,
-        lastModified,
+        lastModified: now,
         changeFrequency: isHome ? 'weekly' : isHighPriority ? 'weekly' : 'monthly',
         priority: isHome ? 1.0 : isHighPriority ? 0.8 : 0.6,
       }
