@@ -18,6 +18,7 @@ export const routes = {
   gmail: '/app/gmail',
   taxes: '/app/taxes',
   capital: '/app/capital',
+  chat: '/app/chat',
   marketResearch: '/app/market-research',
   devDb: '/app/dev-db',
   profile: '/app/profile',
