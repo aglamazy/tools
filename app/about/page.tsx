@@ -1,20 +1,5 @@
-import type { Metadata } from 'next'
 import Link from 'next/link'
 import { branding, routes } from '@/app/config'
-
-export const metadata: Metadata = {
-  title: `אודות | ${branding.name}`,
-  description: `${branding.name} - ${branding.tagline}. ניהול פיננסי, תובנות חכמות ועוד.`,
-  robots: { index: true, follow: true },
-  alternates: {
-    canonical: '/about',
-  },
-  openGraph: {
-    title: `אודות | ${branding.name}`,
-    description: `${branding.name} - ${branding.tagline}. ניהול פיננסי, תובנות חכמות ועוד.`,
-    url: '/about',
-  },
-}
 
 const jsonLd = [
   {

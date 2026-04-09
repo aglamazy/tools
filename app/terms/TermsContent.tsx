@@ -1,22 +1,4 @@
-'use client'
-
-import { useState, useEffect } from 'react'
-
 export default function TermsContent() {
-  const [text, setText] = useState<string | null>(null)
-
-  useEffect(() => {
-    fetch('/api/terms')
-      .then(res => res.json())
-      .then(data => { if (data.success && data.text) setText(data.text) })
-      .catch(() => {})
-  }, [])
-
-  if (text) {
-    return <div dangerouslySetInnerHTML={{ __html: text }} />
-  }
-
-  // Static fallback content visible to search engines before JS loads
   return (
     <div>
       <section style={{ marginBottom: '1.5rem' }}>
@@ -24,35 +6,67 @@ export default function TermsContent() {
         <p>
           ברוכים הבאים ל-Aglamazo. השימוש באפליקציה כפוף לתנאי שימוש אלה.
           בשימוש באפליקציה, אתה מסכים לתנאים המפורטים בעמוד זה.
+          תנאים אלה חלים על כל משתמשי האפליקציה, לרבות משתמשים רשומים ומשתמשים שאינם רשומים.
         </p>
       </section>
 
       <section style={{ marginBottom: '1.5rem' }}>
         <h2 style={{ fontSize: '1.25rem', marginBottom: '0.75rem' }}>2. אחסון מידע</h2>
         <p>
-          כל המידע הפיננסי שלך נשמר באופן מקומי בדפדפן שלך בלבד.
+          כל המידע הפיננסי שלך — כולל קבצי בנק, עסקאות, קטגוריות ותקציב — נשמר באופן מקומי בדפדפן שלך בלבד,
+          תוך שימוש ב-IndexedDB (מסד נתונים מובנה בדפדפן).
           אנחנו לא מאחסנים מידע פיננסי בשרתים שלנו.
-          האחריות על גיבוי הנתונים היא שלך.
+          האחריות על גיבוי הנתונים היא שלך; ניתן לייצא את הנתונים בכל עת דרך עמוד ההגדרות.
         </p>
       </section>
 
       <section style={{ marginBottom: '1.5rem' }}>
         <h2 style={{ fontSize: '1.25rem', marginBottom: '0.75rem' }}>3. פרטיות</h2>
         <p>
-          אנו מחויבים לפרטיות שלך. האפליקציה לא משתפת מידע אישי עם צדדים שלישיים.
-          קבצי הבנק והנתונים הפיננסיים שלך נשארים במכשיר שלך.
+          אנו מחויבים לפרטיות שלך. האפליקציה לא משתפת מידע אישי או פיננסי עם צדדים שלישיים.
+          קבצי הבנק והנתונים הפיננסיים שלך נשארים במכשיר שלך בלבד.
+          המידע היחיד שנשמר בשרתינו הוא מידע חשבון (כתובת דוא"ל, סטטוס מנוי) לצרכי אימות וגישה לתכונות מתקדמות.
         </p>
       </section>
 
       <section style={{ marginBottom: '1.5rem' }}>
         <h2 style={{ fontSize: '1.25rem', marginBottom: '0.75rem' }}>4. שימוש</h2>
         <p>
-          האפליקציה מיועדת לניהול פיננסי אישי ועסקי.
-          השימוש בכלי ניתוח התזרים, התקציב ותחזית התשלומים הוא באחריותך.
+          האפליקציה מיועדת לניהול פיננסי אישי ועסקי, כולל ניתוח תזרים מזומנים, ניהול תקציב, ייבוא קבצי בנק וכרטיסי אשראי.
+          השימוש בכלי הניתוח, התקציב ותחזית התשלומים הוא באחריותך.
+          אין לראות בתוצאות האפליקציה ייעוץ פיננסי מקצועי.
         </p>
       </section>
 
-      <p style={{ color: '#94a3b8', fontSize: '0.875rem' }}>טוען תנאי שימוש מעודכנים...</p>
+      <section style={{ marginBottom: '1.5rem' }}>
+        <h2 style={{ fontSize: '1.25rem', marginBottom: '0.75rem' }}>5. סנכרון ענן</h2>
+        <p>
+          משתמשים רשומים יכולים לסנכרן נתונים בין מכשירים באמצעות Google Drive.
+          הסנכרון מוצפן ומתבצע ישירות בין המכשיר שלך לחשבון Google Drive שלך.
+          Aglamazo לא ניגשת לתוכן הגיבויים.
+        </p>
+      </section>
+
+      <section style={{ marginBottom: '1.5rem' }}>
+        <h2 style={{ fontSize: '1.25rem', marginBottom: '0.75rem' }}>6. שינויים בתנאים</h2>
+        <p>
+          אנו שומרים לעצמנו את הזכות לעדכן תנאי שימוש אלה מעת לעת.
+          שינויים מהותיים יופיעו בהתראה בתוך האפליקציה.
+          המשך השימוש לאחר עדכון מהווה הסכמה לתנאים החדשים.
+        </p>
+      </section>
+
+      <section style={{ marginBottom: '1.5rem' }}>
+        <h2 style={{ fontSize: '1.25rem', marginBottom: '0.75rem' }}>7. יצירת קשר</h2>
+        <p>
+          לשאלות בנוגע לתנאי השימוש, ניתן לפנות אלינו בדוא"ל:{' '}
+          <a href="mailto:support@aglamaz.com" style={{ color: '#4338ca' }}>support@aglamaz.com</a>.
+        </p>
+      </section>
+
+      <p style={{ color: '#94a3b8', fontSize: '0.875rem', marginTop: '2rem' }}>
+        עודכן לאחרונה: אפריל 2026
+      </p>
     </div>
   )
 }
