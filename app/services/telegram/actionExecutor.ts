@@ -33,12 +33,13 @@ import { getStore, getAllStores } from '@/app/services/grocery/storeRegistry'
 import { getUserStores, setDefaultStore, addActiveStore, getStoreData, addToStoreStanding, addStorePendingItems, removeFromStoreStanding, removeStorePendingItems, clearStorePending, movePendingToStanding as moveStorePendingToStanding } from '@/app/services/grocery/groceryStoreMulti'
 import type { OtpStorePlugin, CredentialsStorePlugin } from '@/app/services/grocery/storeTypes'
 
+import { listTasks, createTask, updateTask, deleteTask, findTasks } from '@/app/services/taskFirestoreService'
 import { randomBytes } from 'crypto'
 import { getOrderCycle, setOrderCycle, type OrderCycle } from '@/app/services/grocery/groceryStore'
 import { deleteMapping, saveProductMapping } from '@/app/services/grocery/productResolver'
 
 /** Actions that require a connected store */
-const STORE_ACTIONS = new Set(['show_orders', 'trigger_order', 'cancel_order', 'search_product', 're_search'])
+const STORE_ACTIONS = new Set(['show_orders', 'trigger_order', 'cancel_order', 'search_product', 're_search', 'list_slots'])
 
 /** Resolve which store an action targets */
 async function resolveActionStore(uid: string, action: ChatAction): Promise<string> {
@@ -88,7 +89,7 @@ export interface PendingProductSelection {
   qty: number
   target: 'pending' | 'standing'
   store?: string  // which store these results came from
-  results: { catalogId: string; name: string; brand: string; price: string; unitPrice: string }[]
+  results: { catalogId: string; name: string; brand: string; price: string; unitPrice: string; sellingUnitId?: number }[]
 }
 
 export async function executeActions(uid: string, actions: ChatAction[]): Promise<ActionResult> {
@@ -157,6 +158,7 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
         if (results.length === 0) return `לא נמצאו תוצאות עבור "${query}" ב${store.label}.`
         const allResults = results.slice(0, 12).map(r => ({
           catalogId: r.productId, name: r.name, brand: r.brand, price: r.price, unitPrice: r.unitPrice,
+          sellingUnitId: r.sellingUnitId,
         }))
         const { filtered, comment } = await filterSearchResults(query, allResults)
 
@@ -164,7 +166,7 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
         if (filtered.length === 1) {
           const selected = filtered[0]
           const unit = selected.unitPrice?.split('/')?.pop()?.trim() || undefined
-          const item = { name: selected.name, qty, catalogId: selected.catalogId, unit }
+          const item = { name: selected.name, qty, catalogId: selected.catalogId, unit, sellingUnitId: selected.sellingUnitId }
           if (target === 'standing') await addToStoreStanding(uid, storeId, [item])
           else await addStorePendingItems(uid, storeId, [item])
           await saveProductMapping(uid, query, selected.catalogId, selected.name)
@@ -305,7 +307,7 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
         console.log(`[ActionExecutor] Ordering without unlinked: ${withoutId.map(i => i.name).join(', ')}`)
       }
 
-      const items = withId.map(i => ({ code: i.catalogId!, qty: i.qty }))
+      const items = withId.map(i => ({ code: i.catalogId!, qty: i.qty, sellingUnitId: i.sellingUnitId }))
       const actionDay = typeof action.day === 'string' ? action.day : undefined
       const actionTime = typeof action.time === 'string' ? action.time : undefined
       const schedule = data.schedule
@@ -317,6 +319,21 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
         return `הזמנה בוצעה ב${store.label}! #${result.orderId || ''}\nמשלוח: ${result.deliveryWindow?.day} ${result.deliveryWindow?.date} ${result.deliveryWindow?.time}`
       }
       return `שגיאה בהזמנה ב${store.label}: ${result.error}`
+    }
+
+    case 'list_slots': {
+      const storeId = await resolveActionStore(uid, action)
+      const store = getStore(storeId)
+      if (!store) return `חנות "${storeId}" לא מוכרת.`
+      try {
+        const slotDays = await store.listSlots(uid)
+        if (slotDays.length === 0) return `אין משבצות משלוח זמינות ב${store.label}.`
+        const lines = slotDays.map(d => `${d.day} ${d.date}: ${d.slots.map(s => s.time).join(', ')}`)
+        return `משבצות זמינות ב${store.label}:\n${lines.join('\n')}`
+      } catch (err) {
+        console.error(`[ActionExecutor] list_slots failed (${storeId}):`, err)
+        return `שגיאה בקריאת משבצות ב${store.label}.`
+      }
     }
 
     case 'show_orders': {
@@ -455,11 +472,64 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
     }
 
     case 'create_task': {
-      return null
+      const title = typeof action.title === 'string' ? action.title.trim() : ''
+      if (!title) return 'חסר כותרת למשימה.'
+      const task = await createTask(uid, title, {
+        priority: typeof action.priority === 'string' ? action.priority as any : undefined,
+        quadrant: typeof action.quadrant === 'string' ? action.quadrant as any : undefined,
+        deadline: typeof action.deadline === 'string' ? action.deadline : undefined,
+      })
+      const deadlineStr = task.deadline ? ` (עד ${task.deadline})` : ''
+      return `✅ משימה נוצרה: "${task.title}"${deadlineStr}`
     }
 
     case 'list_tasks': {
-      return null
+      const query = typeof action.query === 'string' ? action.query : ''
+      const tasks = query ? await findTasks(uid, query) : await listTasks(uid)
+      if (tasks.length === 0) return query ? `לא נמצאו משימות עם "${query}".` : 'אין משימות.'
+      const lines = tasks.map(t => {
+        const status = t.completed ? '✓' : '○'
+        const deadline = t.deadline ? ` — עד ${t.deadline}` : ''
+        return `${status} [${t.id.slice(-4)}] ${t.title}${deadline}`
+      })
+      return `משימות${query ? ` (חיפוש: "${query}")` : ''}:\n${lines.join('\n')}`
+    }
+
+    case 'complete_task': {
+      const taskId = typeof action.id === 'string' ? action.id : ''
+      if (!taskId) return 'חסר מזהה משימה.'
+      // Support short id (last 4 chars)
+      const tasks = await listTasks(uid)
+      const task = tasks.find(t => t.id === taskId || t.id.endsWith(taskId))
+      if (!task) return `לא נמצאה משימה עם מזהה "${taskId}".`
+      await updateTask(uid, task.id, { completed: true })
+      return `✅ משימה סומנה כהושלמה: "${task.title}"`
+    }
+
+    case 'update_task': {
+      const taskId = typeof action.id === 'string' ? action.id : ''
+      if (!taskId) return 'חסר מזהה משימה.'
+      const tasks = await listTasks(uid)
+      const task = tasks.find(t => t.id === taskId || t.id.endsWith(taskId))
+      if (!task) return `לא נמצאה משימה עם מזהה "${taskId}".`
+      const updates: Record<string, unknown> = {}
+      if (typeof action.title === 'string') updates.title = action.title.trim()
+      if (typeof action.deadline === 'string') updates.deadline = action.deadline
+      if (typeof action.priority === 'string') updates.priority = action.priority
+      if (typeof action.quadrant === 'string') updates.quadrant = action.quadrant
+      if (typeof action.completed === 'boolean') updates.completed = action.completed
+      await updateTask(uid, task.id, updates as any)
+      return `✏️ משימה עודכנה: "${task.title}"`
+    }
+
+    case 'delete_task': {
+      const taskId = typeof action.id === 'string' ? action.id : ''
+      if (!taskId) return 'חסר מזהה משימה.'
+      const tasks = await listTasks(uid)
+      const task = tasks.find(t => t.id === taskId || t.id.endsWith(taskId))
+      if (!task) return `לא נמצאה משימה עם מזהה "${taskId}".`
+      await deleteTask(uid, task.id)
+      return `🗑️ משימה נמחקה: "${task.title}"`
     }
 
     default:

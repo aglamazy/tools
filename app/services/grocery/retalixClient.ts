@@ -303,6 +303,33 @@ export async function searchCatalog(uid: string, query: string): Promise<Retalix
   })
 }
 
+/** Resolve sellingUnitId for a product by its catalog ID. Uses cached catalog. */
+export async function resolveSellingUnitId(uid: string, productId: number): Promise<number> {
+  const products = await loadCatalog(uid)
+  const product = products.find(p => p.id === productId)
+  if (!product) return 0
+  const kgUnit = product.sellingUnits.find(u => u.unitName === 'ק"ג')
+  const bestUnit = product.soldByWeight && kgUnit ? kgUnit : product.sellingUnits[0]
+  return bestUnit?.sellingUnitId || product.sellingUnitId || 0
+}
+
+// --- Day name conversion ---
+
+const HEB_TO_EN: Record<string, string> = {
+  'ראשון': 'sunday', 'שני': 'monday', 'שלישי': 'tuesday',
+  'רביעי': 'wednesday', 'חמישי': 'thursday', 'שישי': 'friday', 'שבת': 'saturday',
+}
+const EN_DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
+
+function toEnglishDay(day: string): string | undefined {
+  const lower = day.trim().toLowerCase()
+  if (lower === 'today' || lower === 'היום') return EN_DAYS[new Date().getDay()]
+  if (lower === 'tomorrow' || lower === 'מחר') return EN_DAYS[(new Date().getDay() + 1) % 7]
+  if (HEB_TO_EN[day.trim()]) return HEB_TO_EN[day.trim()]
+  if (EN_DAYS.includes(lower)) return lower
+  return undefined
+}
+
 // --- Delivery Slots ---
 
 export async function getSlots(uid: string, dayName?: string): Promise<RetalixSlot[]> {
@@ -400,7 +427,7 @@ async function getPaymentMethod(uid: string): Promise<string> {
 export async function checkout(
   uid: string,
   items: { id: number; qty: number; sellingUnitId: number }[],
-  options: { day?: string; hour?: number; dryRun?: boolean } = {},
+  options: { day?: string; hour?: number; dryRun?: boolean; nearest?: boolean } = {},
 ): Promise<RetalixOrderResult> {
   const { config } = await getToken(uid)
 
@@ -408,10 +435,31 @@ export async function checkout(
   await saveDrafts(uid, items)
 
   // 2. Get delivery slot
-  const dayName = options.day || config.preferredDay
+  const rawDay = options.day || (options.nearest ? undefined : config.preferredDay)
   const preferredHour = options.hour || config.preferredHour
-  const slots = await getSlots(uid, dayName)
-  if (slots.length === 0) return { success: false, error: `No delivery slots for ${dayName}` }
+
+  // Check if rawDay is an exact date DD/MM/YYYY — filter by date, not day-of-week
+  const exactDateMatch = rawDay?.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  let slots: RetalixSlot[]
+  let slotErrorSuffix = ''
+  if (exactDateMatch) {
+    const [, d, m, y] = exactDateMatch
+    // Normalize to YYYY-MM-DD for comparison (API may return with/without leading zeros)
+    const targetDate = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
+    const allSlots = await getSlots(uid)
+    console.log(`[retalixClient] checkout exact date: rawDay=${rawDay} targetDate=${targetDate} allSlots[0].date=${allSlots[0]?.date}`)
+    slots = allSlots.filter(s => {
+      const m2 = s.date?.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+      if (m2) return `${m2[3]}-${m2[2].padStart(2, '0')}-${m2[1].padStart(2, '0')}` === targetDate
+      return s.date === targetDate  // already YYYY-MM-DD
+    })
+    slotErrorSuffix = ` לתאריך ${rawDay}`
+  } else {
+    const dayName = rawDay ? (toEnglishDay(rawDay) ?? rawDay) : undefined
+    slots = await getSlots(uid, dayName)
+    slotErrorSuffix = dayName ? ` ליום ${dayName}` : ''
+  }
+  if (slots.length === 0) return { success: false, error: `אין משבצות משלוח${slotErrorSuffix}. נסה list_slots לראות מה זמין.` }
 
   const slot = slots.find(s => s.hour === preferredHour) || slots[0]
   const deliveryWindow = { day: slot.dayHebrew, date: slot.date, time: `${slot.hour}:00` }
@@ -438,6 +486,7 @@ export async function checkout(
     sourceEvent: 'mainPageDesktop',
   }))
 
+  console.log('[retalixClient] placeOrder items:', cartItems.map(c => ({ id: c.storeProduct.id, qty: c.requestedQuantity, sellingUnit: c.requestedSellingUnit.id })))
   const resp = await rexailFetch(config, 'client/orders/new/place-order', {
     body: JSON.stringify({
       paymentMethodType: 'creditCard',
@@ -457,8 +506,9 @@ export async function checkout(
     return { success: false, error: `Place order failed: ${resp.resolvedMessage || resp.message}`, deliveryWindow }
   }
 
-  console.log(`[Retalix] Order placed! ${resp.resolvedMessage}`)
-  return { success: true, deliveryWindow }
+  console.log(`[Retalix] Order placed!`, JSON.stringify(resp.data || resp, null, 2))
+  const orderId = resp.data?.orderId || resp.data?.id || resp.orderId
+  return { success: true, orderId: orderId ? String(orderId) : undefined, deliveryWindow }
 }
 
 // --- Cancel ---
@@ -494,12 +544,17 @@ export const retalixPlugin: OtpStorePlugin = {
   search: async (uid, query): Promise<StoreSearchResult[]> => searchCatalog(uid, query),
 
   checkout: async (uid, items: CheckoutItem[], options: CheckoutOptions): Promise<StoreCheckoutResult> => {
-    const retalixItems = items.map(i => ({
-      id: parseInt(i.code, 10),
-      qty: i.qty,
-      sellingUnitId: i.sellingUnitId || 0,
+    // Resolve missing sellingUnitIds from cached catalog
+    const retalixItems = await Promise.all(items.map(async i => {
+      const id = parseInt(i.code, 10)
+      const stored = i.sellingUnitId
+      const resolved = await resolveSellingUnitId(uid, id)
+      const sellingUnitId = stored || resolved
+      console.log(`[retalixPlugin] checkout item id=${id} stored=${stored} resolved=${resolved} using=${sellingUnitId}`)
+      return { id, qty: i.qty, sellingUnitId }
     }))
-    return checkout(uid, retalixItems, { day: options.day, hour: options.hour, dryRun: options.dryRun })
+    const hour = options.hour || (options.time ? parseInt(options.time, 10) : undefined)
+    return checkout(uid, retalixItems, { day: options.day, hour, dryRun: options.dryRun })
   },
 
   listOrders: async (_uid): Promise<StoreOrder[]> => {

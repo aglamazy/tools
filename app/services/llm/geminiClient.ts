@@ -46,10 +46,10 @@ export class GeminiClient implements LLMClient {
 
       const data = await response.json()
       const candidate = data.candidates?.[0]
-      const text = candidate?.content?.parts
-        ?.filter((p: any) => p.text)
-        .map((p: any) => p.text)
-        .join('') || ''
+      const parts: any[] = candidate?.content?.parts || []
+
+      const thinking = parts.filter(p => p.thought && p.text).map(p => p.text).join('').trim()
+      const text = parts.filter(p => !p.thought && p.text).map(p => p.text).join('') || ''
 
       if (!text) return { text: '', error: 'Gemini לא החזיר תשובה' }
 
@@ -60,7 +60,7 @@ export class GeminiClient implements LLMClient {
           title: chunk.web.title,
         }))
 
-      return { text, groundingSources: groundingSources.length > 0 ? groundingSources : undefined }
+      return { text, thinking: thinking || undefined, groundingSources: groundingSources.length > 0 ? groundingSources : undefined }
     } catch (err: any) {
       console.error('[LLM/Gemini] Error:', err)
       return { text: '', error: 'שגיאת רשת בקריאה ל-Gemini' }

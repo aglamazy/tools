@@ -7,6 +7,7 @@ import { getIdToken } from '@/app/services/firebaseAuthService'
 type Message = {
   role: 'user' | 'assistant'
   content: string
+  thinking?: string
 }
 
 type ProductResult = {
@@ -24,6 +25,21 @@ type PendingSelection = {
   store?: string
   searchKey: string
   results: ProductResult[]
+}
+
+function ThinkingBubble({ text }: { text: string }) {
+  const [open, setOpen] = useState(false)
+  const preview = text.slice(0, 80).replace(/\n/g, ' ') + (text.length > 80 ? '…' : '')
+  return (
+    <div className="app-chat-thinking">
+      <button className="app-chat-thinking-toggle" onClick={() => setOpen(o => !o)}>
+        <span className="app-chat-thinking-icon">💭</span>
+        <span className="app-chat-thinking-preview">{open ? 'מחשבה' : preview}</span>
+        <span className="app-chat-thinking-arrow">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && <div className="app-chat-thinking-body">{text}</div>}
+    </div>
+  )
 }
 
 export default function AppChat() {
@@ -63,7 +79,7 @@ export default function AppChat() {
 
       const data = await res.json()
       if (data.success) {
-        const assistantMsg: Message = { role: 'assistant', content: data.reply }
+        const assistantMsg: Message = { role: 'assistant', content: data.reply, thinking: data.thinking }
         setMessages(prev => [...prev, assistantMsg])
         if (data.pendingSelections?.length) {
           setPendingSelections(data.pendingSelections)
@@ -76,7 +92,7 @@ export default function AppChat() {
       showToast('error', 'שגיאה בחיבור לשרת')
     } finally {
       setLoading(false)
-      inputRef.current?.focus()
+      setTimeout(() => inputRef.current?.focus(), 0)
     }
   }, [input, loading, showToast])
 
@@ -132,11 +148,11 @@ export default function AppChat() {
         )}
 
         {messages.map((msg, i) => (
-          <div
-            key={i}
-            className={`app-chat-bubble ${msg.role === 'user' ? 'app-chat-user' : 'app-chat-assistant'}`}
-          >
-            {msg.content}
+          <div key={i} className="app-chat-message-group">
+            {msg.thinking && <ThinkingBubble text={msg.thinking} />}
+            <div className={`app-chat-bubble ${msg.role === 'user' ? 'app-chat-user' : 'app-chat-assistant'}`}>
+              {msg.content}
+            </div>
           </div>
         ))}
 

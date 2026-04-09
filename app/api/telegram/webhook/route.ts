@@ -421,7 +421,7 @@ async function handleCallbackQuery(query: TelegramCallbackQuery, testMode = fals
 
   const selected = pendingSearch.results[resultIndex]
   const unit = selected.unitPrice?.split('/')?.pop()?.trim() || undefined
-  const item = { name: selected.name, qty: pendingSearch.qty, catalogId: selected.catalogId, unit }
+  const item = { name: selected.name, qty: pendingSearch.qty, catalogId: selected.catalogId, unit, sellingUnitId: selected.sellingUnitId }
 
   // Save to correct target (store-aware if store field present)
   if (pendingSearch.store) {

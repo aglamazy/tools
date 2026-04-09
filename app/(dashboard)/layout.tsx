@@ -2,6 +2,8 @@
 
 import type { ReactNode } from 'react'
 import TcGate from '@/app/components/TcGate'
+import ChatWidget from '@/app/components/ChatWidget'
+import ChatTaskSync from '@/app/components/ChatTaskSync'
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
@@ -9,6 +11,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
       <div className="main-content">
         <TcGate>{children}</TcGate>
       </div>
+      <ChatWidget />
+      <ChatTaskSync />
     </div>
   )
 }

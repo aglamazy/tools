@@ -1,11 +1,11 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useToast } from '@/app/components/ToastContainer'
 import { todoStore, type UserTask, type AutoTask, type EisenhowerQuadrant } from '@/app/stores/todoStore'
 import { getUser } from '@/app/stores/authStore'
 import { getHouseholdInfo } from '@/app/services/householdService'
-import { listBots, createAgentTask, subscribeToAgentTasks, type BotSummary } from '@/app/services/botService'
+import { listBots, createAgentTask, subscribeToAgentTasks, markWebhookTaskClaimed, type BotSummary } from '@/app/services/botService'
 import TaskCard, { type CombinedTask } from '@/app/components/todo/TaskCard'
 import DelegatePickerModal, { type DelegateTarget } from '@/app/components/todo/DelegatePickerModal'
 import ImportTasksModal from '@/app/components/todo/ImportTasksModal'
@@ -60,6 +60,7 @@ export default function TodoPage() {
   const [showImportModal, setShowImportModal] = useState(false)
   const [detailTask, setDetailTask] = useState<CombinedTask | null>(null)
   const [subjectFilter, setSubjectFilter] = useState<string>('')
+  const [searchQuery, setSearchQuery] = useState<string>('')
   const [editingSubject, setEditingSubject] = useState<string | null>(null)
   const [deleteSubjectConfirm, setDeleteSubjectConfirm] = useState<string | null>(null)
 
@@ -77,7 +78,7 @@ export default function TodoPage() {
 
   // Load tasks, household info, and bots on mount
   useEffect(() => {
-    loadTasks()
+    loadTasks(true) // deduplicate on first load
     loadHouseholdPartner()
     loadBots()
   }, [])
@@ -97,9 +98,15 @@ export default function TodoPage() {
           return task
         }))
       },
-      // Auto-import webhook-created tasks into Dexie
+      // Auto-import webhook-created tasks into Dexie (with deduplication)
       async (webhookTask) => {
         console.log('[Todo] Webhook task received:', webhookTask.title)
+        // Check if this webhook task was already imported
+        const existing = await todoStore.findByAgentTaskId(webhookTask.id)
+        if (existing) {
+          console.log('[Todo] Webhook task already imported, skipping:', webhookTask.id)
+          return
+        }
         const newTask = await todoStore.addTask(
           webhookTask.title,
           webhookTask.priority || 'medium',
@@ -115,6 +122,8 @@ export default function TodoPage() {
         if ((webhookTask as any).subject) updates.subject = (webhookTask as any).subject
         if ((webhookTask as any).tags) updates.tags = (webhookTask as any).tags
         await todoStore.updateTask(newTask.id, updates)
+        // Mark as claimed in Firestore so it won't be re-imported after deletion
+        await markWebhookTaskClaimed(webhookTask.id, newTask.id)
         loadTasks()
         showToast('success', `משימה חדשה מ-webhook: ${webhookTask.title}`)
       },
@@ -122,8 +131,11 @@ export default function TodoPage() {
     return () => { unsubscribe?.() }
   }, [])
 
-  const loadTasks = async () => {
+  const loadTasks = async (deduplicate = false) => {
     setLoading(true)
+    if (deduplicate) {
+      await todoStore.deduplicateTasks()
+    }
     const tasks = await todoStore.getAllTasks()
     setUserTasks(tasks)
     const autoTasksData = await todoStore.getAutoTasks()
@@ -342,11 +354,6 @@ export default function TodoPage() {
     showToast('success', 'משימה בוצעה', '✅')
   }
 
-  const isTaskSnoozed = useCallback((task: CombinedTask): boolean => {
-    if (task.taskType !== 'user') return false
-    return !!task.snoozedUntil && task.snoozedUntil > new Date().toISOString()
-  }, [])
-
   // Drag and drop handlers
   const handleDragStart = (task: CombinedTask) => {
     if (task.taskType === 'auto') return
@@ -402,46 +409,73 @@ export default function TodoPage() {
     setDragOverTaskId(null)
   }
 
-  // Combine and group tasks by quadrant
-  const getAllCombinedTasks = (includeSnoozed = false): CombinedTask[] => {
-    const combined: CombinedTask[] = [
-      ...userTasks.map(t => ({ ...t, id: t.id, taskType: 'user' as const, dataType: t.taskType, subject: t.subject, tags: t.tags, ext: t.ext })),
-      ...autoTasks.map(t => ({
-        id: t.id, title: t.title, completed: false, priority: t.priority,
-        quadrant: t.quadrant, deadline: t.deadline, createdAt: t.createdAt,
-        taskType: 'auto' as const, autoType: t.type, link: t.link, month: t.month,
-      })),
-    ]
-    let filtered = combined
+  // Combine user + auto tasks into a single list (memoized)
+  const combinedTasks = useMemo((): CombinedTask[] => [
+    ...userTasks.map(t => ({ ...t, id: t.id, taskType: 'user' as const, dataType: t.taskType, subject: t.subject, tags: t.tags, ext: t.ext })),
+    ...autoTasks.map(t => ({
+      id: t.id, title: t.title, completed: false, priority: t.priority,
+      quadrant: t.quadrant, deadline: t.deadline, createdAt: t.createdAt,
+      taskType: 'auto' as const, autoType: t.type, link: t.link, month: t.month,
+    })),
+  ], [userTasks, autoTasks])
+
+  // Cache "now" per render for snooze comparisons
+  const nowISO = useMemo(() => new Date().toISOString(), [userTasks, autoTasks, showSnoozed, showCompleted])
+
+  const isTaskSnoozedMemo = useCallback((task: CombinedTask): boolean => {
+    if (task.taskType !== 'user') return false
+    return !!task.snoozedUntil && task.snoozedUntil > nowISO
+  }, [nowISO])
+
+  const snoozedCount = useMemo(
+    () => combinedTasks.filter(t => isTaskSnoozedMemo(t)).length,
+    [combinedTasks, isTaskSnoozedMemo]
+  )
+
+  const subjects = useMemo(
+    () => [...new Set(userTasks.map(t => t.subject).filter((s): s is string => !!s))],
+    [userTasks]
+  )
+
+  // Filtered tasks for display (memoized)
+  const filteredTasks = useMemo(() => {
+    let filtered = combinedTasks
     if (!showCompleted) {
       filtered = filtered.filter(t => t.taskType === 'auto' || !t.completed)
     }
-    if (!includeSnoozed) {
-      filtered = filtered.filter(t => !isTaskSnoozed(t))
+    if (!showSnoozed) {
+      filtered = filtered.filter(t => !isTaskSnoozedMemo(t))
     }
     if (subjectFilter) {
       filtered = filtered.filter(t => t.subject === subjectFilter || t.taskType === 'auto')
     }
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase()
+      filtered = filtered.filter(t => t.title.toLowerCase().includes(q))
+    }
     return filtered
-  }
+  }, [combinedTasks, showCompleted, showSnoozed, subjectFilter, searchQuery, isTaskSnoozedMemo])
 
-  const snoozedCount = getAllCombinedTasks(true).filter(t => isTaskSnoozed(t)).length
+  // Per-quadrant sorted tasks (memoized — computed once per render, not 4x)
+  const tasksByQuadrant = useMemo(() => {
+    const sortFn = (a: CombinedTask, b: CombinedTask) => {
+      const pv = (p: Priority) => p === 'high' ? 3 : p === 'medium' ? 2 : 1
+      const pd = pv(b.priority) - pv(a.priority)
+      if (pd !== 0) return pd
+      if (a.deadline && b.deadline) return new Date(a.deadline).getTime() - new Date(b.deadline).getTime()
+      return 0
+    }
+    const result: Record<string, CombinedTask[]> = {}
+    for (const q of QUADRANTS) {
+      result[q.key] = filteredTasks.filter(t => t.quadrant === q.key).sort(sortFn)
+    }
+    return result
+  }, [filteredTasks])
 
-  const subjects = [...new Set(userTasks.map(t => t.subject).filter((s): s is string => !!s))]
-
-  const getTasksForQuadrant = (quadrant: EisenhowerQuadrant): CombinedTask[] => {
-    return getAllCombinedTasks(showSnoozed)
-      .filter(t => t.quadrant === quadrant)
-      .sort((a, b) => {
-        const pv = (p: Priority) => p === 'high' ? 3 : p === 'medium' ? 2 : 1
-        const pd = pv(b.priority) - pv(a.priority)
-        if (pd !== 0) return pd
-        if (a.deadline && b.deadline) return new Date(a.deadline).getTime() - new Date(b.deadline).getTime()
-        return 0
-      })
-  }
-
-  const activeTaskCount = userTasks.filter(t => !t.completed).length + autoTasks.length
+  const activeTaskCount = useMemo(
+    () => userTasks.filter(t => !t.completed).length + autoTasks.length,
+    [userTasks, autoTasks]
+  )
 
 
   return (
@@ -496,6 +530,31 @@ export default function TodoPage() {
 
         {/* Controls */}
         <section style={{ marginTop: '1rem', display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ position: 'relative' }}>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="חיפוש משימות..."
+              style={{
+                padding: '0.375rem 0.75rem', paddingRight: '2rem',
+                borderRadius: '0.375rem', border: `1px solid ${searchQuery ? '#a78bfa' : '#d1d5db'}`,
+                fontSize: '0.85rem', width: '160px',
+                background: searchQuery ? '#ede9fe' : 'white',
+              }}
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                style={{
+                  position: 'absolute', right: '0.5rem', top: '50%', transform: 'translateY(-50%)',
+                  background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: '0.85rem',
+                }}
+              >
+                ✕
+              </button>
+            )}
+          </div>
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#6b7280', cursor: 'pointer' }}>
             <input type="checkbox" checked={showCompleted} onChange={(e) => setShowCompleted(e.target.checked)} style={{ width: '1rem', height: '1rem' }} />
             הצג הושלמו
@@ -573,7 +632,7 @@ export default function TodoPage() {
 
           <div className="eisenhower-grid">
             {QUADRANTS.map(q => {
-              const tasks = getTasksForQuadrant(q.key)
+              const tasks = tasksByQuadrant[q.key] || []
               const isDragOver = dragOverQuadrant === q.key
               return (
                 <div
@@ -641,7 +700,7 @@ export default function TodoPage() {
                               partnerEmail={partnerEmail}
                               draggedTaskId={draggedTask?.id ?? null}
                               isDropTarget={dragOverTaskId === task.id && !!draggedTask && draggedTask.id !== task.id}
-                              isSnoozed={isTaskSnoozed(task)}
+                              isSnoozed={isTaskSnoozedMemo(task)}
                               snoozeMenuOpen={snoozeMenuTaskId === task.id}
                               snoozeMenuRef={snoozeMenuRef}
                               partnerUid={partnerUid}

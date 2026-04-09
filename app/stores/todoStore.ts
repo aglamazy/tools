@@ -85,6 +85,35 @@ export const todoStore = {
     return { ...task, id }
   },
 
+  async findByAgentTaskId(agentTaskId: string): Promise<Task | undefined> {
+    return db.tasks.filter(t => t.agentTaskId === agentTaskId).first()
+  },
+
+  /** Remove duplicate tasks (same title + quadrant + not completed). Keeps the oldest. */
+  async deduplicateTasks(): Promise<number> {
+    const tasks = await db.tasks.filter(t => !t.autoTaskId && !t.completed).toArray()
+    const seen = new Map<string, number>() // key -> oldest task id
+    const toDelete: number[] = []
+
+    // Sort by createdAt ascending so we keep the oldest
+    tasks.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''))
+
+    for (const task of tasks) {
+      const key = `${task.title}||${task.quadrant}`
+      if (seen.has(key)) {
+        toDelete.push(task.id!)
+      } else {
+        seen.set(key, task.id!)
+      }
+    }
+
+    if (toDelete.length > 0) {
+      await db.tasks.bulkDelete(toDelete)
+      console.log(`[TodoStore] Removed ${toDelete.length} duplicate tasks`)
+    }
+    return toDelete.length
+  },
+
   async getAllTasks(): Promise<UserTask[]> {
     const tasks = await db.tasks.filter(t => !t.autoTaskId).toArray()
     return tasks.map(t => ({

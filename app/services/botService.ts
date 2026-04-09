@@ -8,6 +8,8 @@ import { getIdToken } from './firebaseAuthService'
 import {
   collection,
   addDoc,
+  doc,
+  updateDoc,
   onSnapshot,
   query,
   where,
@@ -98,6 +100,18 @@ export async function createAgentTask(params: {
   )
 
   return docRef.id
+}
+
+/**
+ * Mark a webhook-created agent task as claimed (sets localTaskId so it won't be re-imported).
+ */
+export async function markWebhookTaskClaimed(agentTaskId: string, localTaskId: number): Promise<void> {
+  if (!isFirebaseConfigured()) return
+  const user = getUser()
+  if (!user) return
+  const firestore = getFirebaseFirestore()
+  const docRef = doc(firestore, `users/${user.uid}/agentTasks`, agentTaskId)
+  await updateDoc(docRef, { localTaskId })
 }
 
 /**

@@ -12,6 +12,7 @@ import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 export interface GroceryItem {
   name: string
   catalogId?: string   // Shufersal product code (resolved later)
+  sellingUnitId?: number // Retalix selling unit ID (needed for checkout)
   qty: number
   unit?: string        // e.g. "ק"ג", "יח'", "מארז"
 }

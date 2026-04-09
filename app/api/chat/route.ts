@@ -8,6 +8,7 @@ import { getUserStores, getStoreData } from '@/app/services/grocery/groceryStore
 import { getAllStores } from '@/app/services/grocery/storeRegistry'
 import { initStores } from '@/app/services/grocery/initStores'
 import { isCredentialsVerified } from '@/app/services/grocery/shufersalClient'
+import { listTasks } from '@/app/services/taskFirestoreService'
 
 const MAX_HISTORY = 10
 const COLLECTION = 'appChatHistory'
@@ -71,10 +72,11 @@ export async function POST(request: NextRequest) {
     history.push({ role: 'user', content: text })
 
     // Build context (same logic as Telegram webhook)
-    const [groceryData, hasCreds, userStores] = await Promise.all([
+    const [groceryData, hasCreds, userStores, tasks] = await Promise.all([
       getGroceryData(uid).catch(() => null),
       isCredentialsVerified(uid).catch(() => false),
       getUserStores(uid).catch(() => ({ activeStores: [] as string[], defaultStore: 'shufersal' })),
+      listTasks(uid).catch(() => []),
     ])
 
     const storeContexts = await Promise.all(
@@ -100,6 +102,7 @@ export async function POST(request: NextRequest) {
       displayName: guard.claims.email?.split('@')[0],
       stores: storeContexts,
       defaultStore: userStores.defaultStore,
+      tasks,
       hasCredentials: hasCreds,
       standingList: groceryData?.standingList ? Object.values(groceryData.standingList).map(i => ({ name: i.name, qty: i.qty, unit: i.unit })) : undefined,
       pendingChanges: groceryData ? {
@@ -110,29 +113,54 @@ export async function POST(request: NextRequest) {
       schedule: groceryData?.schedule,
     }
 
-    // Process via LLM
-    const result = await processChat(history, context)
-    console.log(`[AppChat] uid=${uid} actions=${result.actions.map(a => a.action).join(',') || 'none'}: ${text}`)
+    // Actions that gather info and should auto-continue to a second LLM round
+    const AUTO_CONTINUE_ACTIONS = new Set(['list_slots', 'show_list', 'show_orders', 'list_tasks'])
+    const MAX_ROUNDS = 2
 
-    // Execute actions
-    let replyText = result.reply
+    let replyText = ''
+    let thinking: string | undefined
     let pendingSelections: Awaited<ReturnType<typeof executeActions>>['pendingSelections']
+    let finalActions: typeof pendingSelections = undefined
 
-    if (result.actions.length > 0) {
-      try {
-        const actionResult = await executeActions(uid, result.actions)
-        if (actionResult.followUp) {
-          replyText = `${replyText}\n\n${actionResult.followUp}`
+    for (let round = 0; round < MAX_ROUNDS; round++) {
+      const result = await processChat(history, context)
+      console.log(`[AppChat] round=${round} uid=${uid} actions=${result.actions.map(a => a.action).join(',') || 'none'}: ${text}`)
+      thinking = thinking ?? result.thinking
+
+      replyText = result.reply
+      let followUp = ''
+
+      if (result.actions.length > 0) {
+        try {
+          const actionResult = await executeActions(uid, result.actions)
+          followUp = actionResult.followUp || ''
+          pendingSelections = actionResult.pendingSelections
+        } catch (actionErr) {
+          console.error('[AppChat] Action execution failed:', actionErr)
+          followUp = 'שגיאה בביצוע הפעולה. נסה שוב.'
         }
-        pendingSelections = actionResult.pendingSelections
-      } catch (actionErr) {
-        console.error('[AppChat] Action execution failed:', actionErr)
-        replyText = `${replyText}\n\nשגיאה בביצוע הפעולה. נסה שוב.`
       }
+
+      const roundText = [replyText, followUp].filter(Boolean).join('\n\n')
+
+      // Auto-continue if this round only did info-gathering (no pending user selection)
+      const didOnlyInfo = result.actions.length > 0
+        && result.actions.every(a => AUTO_CONTINUE_ACTIONS.has(a.action))
+        && !pendingSelections?.length
+        && round < MAX_ROUNDS - 1
+
+      if (didOnlyInfo) {
+        history.push({ role: 'assistant', content: roundText })
+        replyText = '' // second round will set the final reply
+        continue
+      }
+
+      replyText = roundText
+      break
     }
 
-    // Save history (only LLM reply, not action output)
-    history.push({ role: 'assistant', content: result.reply })
+    // Save full reply including action output so the bot sees tool results next turn
+    history.push({ role: 'assistant', content: replyText })
     await saveHistory(uid, history)
 
     // Save pending searches and attach keys
@@ -146,7 +174,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       reply: replyText,
-      actions: result.actions,
+      thinking,
       pendingSelections: selectionsWithKeys,
     })
   } catch (err) {

@@ -20,6 +20,7 @@ export type GroundingSource = {
 
 export type LLMResult = {
   text: string
+  thinking?: string
   error?: string
   groundingSources?: GroundingSource[]
 }

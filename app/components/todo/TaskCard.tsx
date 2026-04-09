@@ -1,5 +1,6 @@
 'use client'
 
+import { memo } from 'react'
 import type { AutoTask } from '@/app/stores/todoStore'
 import type { AgentTaskStatus } from '@/app/types/bot'
 import type { TaskType, TaskExtensions } from '@/app/db/financeDB'
@@ -105,7 +106,7 @@ const getDeadlineColor = (dateString?: string): string => {
   return '#6b7280'
 }
 
-export default function TaskCard({
+function TaskCard({
   task,
   quadrant,
   currentUid,
@@ -413,3 +414,5 @@ export default function TaskCard({
     </div>
   )
 }
+
+export default memo(TaskCard)

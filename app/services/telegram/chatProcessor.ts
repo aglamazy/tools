@@ -34,8 +34,8 @@ export interface UserContext {
   stores?: StoreContext[]
   /** Default store ID */
   defaultStore?: string
-  /** Upcoming tasks */
-  tasks?: { title: string; deadline?: string }[]
+  /** Tasks from Firestore */
+  tasks?: { id: string; title: string; completed: boolean; deadline?: string; priority?: string }[]
 
   // Legacy — kept for backward compat during migration
   /** @deprecated use stores instead */
@@ -56,6 +56,7 @@ export interface UserContext {
 
 export interface ChatResult {
   reply: string
+  thinking?: string
   actions: ChatAction[]
 }
 
@@ -80,6 +81,7 @@ const SYSTEM_PROMPT = `אתה AglamazoBot — עוזר משפחתי לניהול
 
 ## איך לבצע פעולות
 כשהמשתמש מבקש פעולה, הגב בטקסט טבעי וגם הוסף בלוק JSON לכל פעולה בסוף ההודעה.
+**חובה**: השתמש אך ורק בפורמט בלוק action שלנו. אסור להשתמש ב-XML, execute_tool, function_call, או כל פורמט אחר.
 כשיש **מספר פריטים** — הוסף **בלוק נפרד לכל פריט**, כך:
 \`\`\`action
 {"action": "search_product", "query": "חלב", "qty": 2, "target": "pending", "store": "shufersal"}
@@ -99,7 +101,8 @@ const SYSTEM_PROMPT = `אתה AglamazoBot — עוזר משפחתי לניהול
 - {"action":"re_search","query":"קוטג 5%","qty":6,"target":"standing","store":"..."} — חפש מחדש
 - {"action":"show_list","store":"..."} — הצג רשימה של חנות ספציפית
 - {"action":"clear_pending","store":"..."} — נקה שינויים שבועיים
-- {"action":"trigger_order","day":"...","time":"...","store":"..."} — בצע הזמנה
+- {"action":"list_slots","store":"..."} — הצג משבצות משלוח זמינות (בדוק לפני הזמנה אם לא ברור מתי)
+- {"action":"trigger_order","day":"...","time":"...","store":"..."} — בצע הזמנה. day: שם יום בעברית ("היום","מחר","ראשון","שני"...) או תאריך מדויק בפורמט DD/MM/YYYY מרשימת המשבצות
 - {"action":"cancel_order","store":"..."} — בטל הזמנה פעילה
 - {"action":"show_orders","store":"..."} — הצג הזמנות פעילות
 - {"action":"set_credentials","email":"...","password":"...","store":"shufersal"} — חבר חשבון שופרסל
@@ -109,8 +112,11 @@ const SYSTEM_PROMPT = `אתה AglamazoBot — עוזר משפחתי לניהול
 - {"action":"show_schedule","store":"..."} — הצג לוח זמנים
 - {"action":"browse_category","category":"ירקות","store":"..."} — הצג כל המוצרים בקטגוריה (פירות, ירקות, חלב, בשר...). לשאלות כמו "מה יש בירקות?" או "איזה פירות יש?"
 - {"action":"set_default_store","store":"..."} — שנה חנות ברירת מחדל
-- {"action":"create_task","title":"...","deadline":"..."} — צור משימה (לא קשור לחנות)
-- {"action":"list_tasks"} — הצג משימות
+- {"action":"create_task","title":"...","deadline":"YYYY-MM-DD","priority":"low|medium|high","quadrant":"do|schedule|delegate|eliminate"} — צור משימה
+- {"action":"list_tasks","query":"..."} — הצג/חפש משימות. query אופציונלי לסינון לפי כותרת
+- {"action":"complete_task","id":"xxxx"} — סמן משימה כהושלמה. id = 4 ספרות אחרונות של המזהה
+- {"action":"update_task","id":"xxxx","title":"...","deadline":"...","priority":"..."} — ערוך משימה
+- {"action":"delete_task","id":"xxxx"} — מחק משימה
 
 ## חיבור חנויות
 - שופרסל: דורש אימייל וסיסמה → set_credentials
@@ -118,6 +124,7 @@ const SYSTEM_PROMPT = `אתה AglamazoBot — עוזר משפחתי לניהול
 - כשמשתמש שולח קוד מספרי והמצב מראה otpPending=true, זה קוד SMS → verify_otp
 
 ## כללים
+- **התגובה חייבת להיות בעברית בלבד** — אסור לכתוב אנגלית בתגובה, גם לא הסברים או הערות
 - הודעות קצרות ותמציתיות — זו שיחת טלגרם
 - כשמישהו שולח רשימת מוצרים, שלח search_product לכל מוצר בנפרד
 - "בלי X" / "השבוע בלי X" = remove_items
@@ -131,7 +138,20 @@ const SYSTEM_PROMPT = `אתה AglamazoBot — עוזר משפחתי לניהול
 - כשמשתמש מבקש רשימות של מספר חנויות — שלח show_list נפרד לכל חנות (בלוק action נפרד לכל אחת)
 - כשמשתמש שואל על מחיר, השתמש ב-search_product — התוצאות כוללות מחירים
 - אם ההודעה היא שיחה רגילה — תגיב בטבעיות, בלי בלוק action
-- אם לא ברור מה המשתמש רוצה, שאל — אל תנחש`
+- אם לא ברור מה המשתמש רוצה, שאל — אל תנחש
+
+## לאחר קבלת תוצאות list_slots
+כאשר תוצאות משבצות כבר מופיעות בהיסטוריית השיחה (ממשת לסיבוב שני):
+- **אל תרשום את רשימת המשבצות שוב** — כבר נראתה (או תוצג) למשתמש
+- **השתמש אך ורק בתאריכים שמופיעים ממש ברשימה** — אסור להמציא תאריכים שלא קיימים ברשימה
+- נתח את הנתונים: בדוק האם התאריך/יום שביקשו מופיע ברשימה (השווה לתאריך היום שמצוין בהקשר)
+  - **אין לתאריך המבוקש** — ציין זאת בקצרה ושאל אם לזמין לתאריך הקרוב ביותר שכן מופיע ברשימה
+  - **יש** — אם המשתמש כבר ביקש לזמין, בצע trigger_order עם **התאריך המדויק מהרשימה** (DD/MM/YYYY)
+- כשמפעיל trigger_order: כתוב רק "מזמין..." — **אל תודיע על הצלחה לפני שהמערכת אישרה** (התוצאה תוצג אוטומטית)
+- דוגמה: אין להיום, קרוב ביותר שישי 17/04/2026 בשעה 8:00, ומשתמש ביקש לזמין →
+  \`\`\`action
+  {"action":"trigger_order","day":"17/04/2026","time":"8:00","store":"retalix"}
+  \`\`\``
 
 // NO_CREDS_PROMPT is no longer needed — the main SYSTEM_PROMPT handles
 // unconnected stores dynamically via context block showing store.connected=false
@@ -176,12 +196,20 @@ export async function processChat(
     return { reply: 'שגיאה. נסה שוב.', actions: [] }
   }
 
-  return parseResponse(result.text)
+  const parsed = parseResponse(result.text)
+  // Prefer inline THOUGHT: from text; fall back to Gemini thought parts
+  return { ...parsed, thinking: parsed.thinking ?? result.thinking }
 }
 
 function buildContextBlock(ctx: UserContext): string {
   const parts: string[] = []
   const DAY_NAMES = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת']
+
+  // Always include today's date so the bot can reason about "today" / "tomorrow"
+  const now = new Date()
+  const todayStr = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`
+  const todayDayName = DAY_NAMES[now.getDay()]
+  parts.push(`היום: ${todayDayName} ${todayStr}`)
 
   if (ctx.displayName) parts.push(`משתמש: ${ctx.displayName}`)
 
@@ -226,8 +254,15 @@ function buildContextBlock(ctx: UserContext): string {
   }
 
   if (ctx.tasks?.length) {
-    const tasks = ctx.tasks.map(t => `"${t.title}"${t.deadline ? ` (עד ${t.deadline})` : ''}`).join(', ')
-    parts.push(`\nמשימות: ${tasks}`)
+    parts.push('\n## משימות')
+    ctx.tasks.forEach(t => {
+      const status = t.completed ? '✓' : '○'
+      const deadline = t.deadline ? ` עד ${t.deadline}` : ''
+      const priority = t.priority && t.priority !== 'medium' ? ` [${t.priority}]` : ''
+      parts.push(`${status} [${t.id.slice(-4)}] ${t.title}${deadline}${priority}`)
+    })
+  } else {
+    parts.push('\nמשימות: אין')
   }
 
   return parts.join('\n')
@@ -239,6 +274,7 @@ interface SearchResultItem {
   brand: string
   price: string
   unitPrice: string
+  sellingUnitId?: number
 }
 
 /**
@@ -313,8 +349,28 @@ function parseResponse(text: string): ChatResult {
     }
   }
 
-  // Remove action blocks from the reply text
-  const reply = text.replace(/```(?:action|json)\s*\n?[\s\S]*?```/g, '').trim()
+  // Extract inline THOUGHT: ... block (Gemini 2.5 Flash embeds thinking as text)
+  // Format: "THOUGHT: ...\n\n[reply]" — split on the first blank line
+  let thinking: string | undefined
+  let bodyText = text
+  if (/^THOUGHT:/i.test(text)) {
+    const blankLine = text.indexOf('\n\n')
+    if (blankLine !== -1) {
+      thinking = text.slice(0, blankLine).replace(/^THOUGHT:\s*/i, '').trim()
+      bodyText = text.slice(blankLine + 2).trim()
+    } else {
+      // No blank line — entire text is thought, no separate reply
+      thinking = text.replace(/^THOUGHT:\s*/i, '').trim()
+      bodyText = ''
+    }
+  }
 
-  return { reply, actions }
+  // Remove action blocks and any stray XML tool calls from the reply text
+  const reply = bodyText
+    .replace(/```(?:action|json)\s*\n?[\s\S]*?```/g, '')
+    .replace(/<execute_tool>[\s\S]*?<\/execute_tool>/gi, '')
+    .replace(/<execute_tool>[\s\S]*/gi, '') // unclosed tag
+    .trim()
+
+  return { reply, thinking, actions }
 }
