@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import Link from 'next/link'
 import { branding } from '@/app/config'
 
 export const metadata: Metadata = {
@@ -54,6 +55,17 @@ export default function DemoFormLayout({ children }: { children: React.ReactNode
           מתאים לבעלי עסקים שממלאים טפסים רבים — הרשמות, בקשות, דוחות ועוד.
         </p>
       </section>
+      <nav dir="rtl" style={{ maxWidth: '700px', margin: '0 auto', padding: '1rem' }}>
+        <h3 style={{ fontSize: '1rem', marginBottom: '0.5rem', color: '#1e293b' }}>עמודים נוספים</h3>
+        <ul style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', listStyle: 'none', padding: 0, margin: 0 }}>
+          <li><Link href="/about" style={{ color: '#4338ca' }}>אודות</Link></li>
+          <li><Link href="/guide" style={{ color: '#4338ca' }}>מדריך שימוש</Link></li>
+          <li><Link href="/pricing" style={{ color: '#4338ca' }}>מחירים</Link></li>
+          <li><Link href="/form-filler" style={{ color: '#4338ca' }}>מילוי טפסים</Link></li>
+          <li><Link href="/contact" style={{ color: '#4338ca' }}>צור קשר</Link></li>
+          <li><Link href="/terms" style={{ color: '#4338ca' }}>תנאי שימוש</Link></li>
+        </ul>
+      </nav>
       <noscript>
         <div dir="rtl" style={{ maxWidth: '700px', margin: '2rem auto', padding: '2rem' }}>
           <h1>טופס הדגמה | {branding.name}</h1>
