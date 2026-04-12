@@ -105,6 +105,7 @@ export async function executeActions(uid: string, actions: ChatAction[]): Promis
       }
     } catch (err) {
       console.error(`[ActionExecutor] Failed action=${action.action}:`, err)
+      followUps.push(`שגיאה בביצוע ${action.action}. נסה שוב.`)
     }
   }
 

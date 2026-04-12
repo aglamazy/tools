@@ -207,7 +207,7 @@ export async function POST(request: NextRequest) {
 
     if (result.actions.length > 0) {
       // In prod: send the LLM reply immediately, then execute actions and follow up
-      if (!testMode) {
+      if (!testMode && result.reply) {
         await sendMessage(chatId, result.reply)
       }
 
@@ -281,7 +281,11 @@ export async function POST(request: NextRequest) {
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.message : String(err)
     console.error('[Telegram Webhook] Error:', errMsg)
-    // Don't send error details to user in production
+    try {
+      if (message?.chat?.id) {
+        await sendMessage(message.chat.id, 'שגיאה בעיבוד ההודעה. נסה שוב.')
+      }
+    } catch { /* best effort */ }
   }
 
   return NextResponse.json({ ok: true })

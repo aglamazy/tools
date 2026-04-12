@@ -493,12 +493,21 @@ export async function cartRemove(uid: string, entryNumber: string): Promise<void
 // --- Search ---
 
 export async function search(uid: string, query: string): Promise<SearchResult[]> {
-  const cookies = await getAuthenticatedCookies(uid)
-  const { resp } = await shuFetch(`/search?q=${encodeURIComponent(query)}`, cookies, {
-    headers: { 'Accept': 'text/html' },
-  })
-  const html = resp.text()
-  return parseSearchResults(html)
+  const results = await withAuth(
+    uid,
+    async (cookies) => {
+      const { resp } = await shuFetch(`/search?q=${encodeURIComponent(query)}`, cookies, {
+        headers: { 'Accept': 'text/html' },
+      })
+      const html = resp.text()
+      // Expired session returns login page — detect by checking for product elements
+      const parsed = parseSearchResults(html)
+      if (parsed.length === 0 && html.includes('j_username')) return null
+      return parsed
+    },
+    (result) => result === null,
+  )
+  return results ?? []
 }
 
 // --- Delivery slots ---
