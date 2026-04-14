@@ -23,6 +23,7 @@ export async function GET(request: NextRequest) {
     const data = doc.data()!
     return NextResponse.json({
       taxLimits: data.taxLimits || null,
+      exemptLimit: data.exemptLimit || null,
       taxRates: data.taxRates || {},
       incomeTaxBrackets: data.incomeTaxBrackets || {},
     })
@@ -39,18 +40,20 @@ export async function POST(request: NextRequest) {
   try {
     const firestore = getAdminFirestore()
     const body = await request.json()
-    const { taxLimits, taxRates, incomeTaxBrackets } = body as {
+    const { taxLimits, taxRates, incomeTaxBrackets, exemptLimit } = body as {
       taxLimits?: { amount: number; sinceYear: number }
+      exemptLimit?: { amount: number; sinceYear: number }
       taxRates?: Record<string, { reduced: { nationalInsurance: number; healthInsurance: number }; regular: { nationalInsurance: number; healthInsurance: number }; threshold: number; maxIncome: number; minIncome: number }>
       incomeTaxBrackets?: Record<string, { upTo: number; rate: number }[]>
     }
 
-    if (!taxLimits && !taxRates && !incomeTaxBrackets) {
+    if (!taxLimits && !taxRates && !incomeTaxBrackets && !exemptLimit) {
       return NextResponse.json({ success: false, error: 'חסרים נתונים' }, { status: 400 })
     }
 
     const update: Record<string, unknown> = { updatedAt: new Date().toISOString() }
     if (taxLimits) update.taxLimits = taxLimits
+    if (exemptLimit) update.exemptLimit = exemptLimit
     if (taxRates) update.taxRates = taxRates
     if (incomeTaxBrackets) update.incomeTaxBrackets = incomeTaxBrackets
 

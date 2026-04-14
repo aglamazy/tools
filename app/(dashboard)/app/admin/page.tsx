@@ -66,6 +66,10 @@ export default function AdminPage() {
   const [provisionError, setProvisionError] = useState<string | null>(null)
   const [provisionSuccess, setProvisionSuccess] = useState(false)
 
+  const [exemptLimit, setExemptLimit] = useState<{ amount: number; sinceYear: number } | null>(null)
+  const [exemptLimitDraft, setExemptLimitDraft] = useState({ amount: '', sinceYear: '' })
+  const [exemptLimitSaved, setExemptLimitSaved] = useState(false)
+
   const [taxLimit, setTaxLimit] = useState<{ amount: number; sinceYear: number } | null>(null)
   const [taxLimitDraft, setTaxLimitDraft] = useState({ amount: '', sinceYear: '' })
   const [taxLimitSaved, setTaxLimitSaved] = useState(false)
@@ -174,6 +178,12 @@ export default function AdminPage() {
           setTaxLimit(limits)
           if (limits) {
             setTaxLimitDraft({ amount: String(limits.amount), sinceYear: String(limits.sinceYear) })
+          }
+
+          const el = data.exemptLimit || null
+          setExemptLimit(el)
+          if (el) {
+            setExemptLimitDraft({ amount: String(el.amount), sinceYear: String(el.sinceYear) })
           }
 
           const rates = (data.taxRates || {}) as Record<string, TaxRateYear>
@@ -672,6 +682,9 @@ export default function AdminPage() {
 
               {activeTab === 'taxes' && (
                 <TaxSettingsPanel
+                  exemptLimit={exemptLimit} setExemptLimit={setExemptLimit}
+                  exemptLimitDraft={exemptLimitDraft} setExemptLimitDraft={setExemptLimitDraft}
+                  exemptLimitSaved={exemptLimitSaved} setExemptLimitSaved={setExemptLimitSaved}
                   taxLimit={taxLimit} setTaxLimit={setTaxLimit}
                   taxLimitDraft={taxLimitDraft} setTaxLimitDraft={setTaxLimitDraft}
                   taxLimitSaved={taxLimitSaved} setTaxLimitSaved={setTaxLimitSaved}

@@ -9,6 +9,7 @@ import { userTierStore, UserTier } from '@/app/stores/userTierStore'
 import { BUSINESS_TYPE_CONFIG } from '@/app/types/businessColors'
 import { routes } from '@/app/config'
 import type { Business } from '@/app/db/financeDB'
+import { ExemptStatusBadge } from '@/app/components/TaxExemptBadge'
 
 export default function AppLauncher() {
   const [open, setOpen] = useState(false)
@@ -263,6 +264,7 @@ function AppTile({ page, editing, isFavorite, isDefault, onToggleFavorite, onNav
       <span className="app-launcher-tile-icon">{page.icon}</span>
       <span className="app-launcher-tile-label">
         {page.label}{!hasAccess ? ' 🔒' : ''}{isDefault ? ' ★' : ''}
+        {page.id === 'taxes' && <ExemptStatusBadge />}
       </span>
     </Link>
   )

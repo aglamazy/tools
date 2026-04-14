@@ -107,6 +107,26 @@ export const todoStore = {
       }
     }
 
+    // Also dedup by agentTaskId (cross-instance sync duplicates)
+    const allTasks = await db.tasks.filter(t => !!t.agentTaskId).toArray()
+    const agentSeen = new Map<string, Task[]>()
+    for (const task of allTasks) {
+      const existing = agentSeen.get(task.agentTaskId!)
+      if (existing) {
+        existing.push(task)
+      } else {
+        agentSeen.set(task.agentTaskId!, [task])
+      }
+    }
+    for (const [, dupes] of agentSeen) {
+      if (dupes.length <= 1) continue
+      // Keep the one with latest updatedAt
+      dupes.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))
+      for (let i = 1; i < dupes.length; i++) {
+        toDelete.push(dupes[i].id!)
+      }
+    }
+
     if (toDelete.length > 0) {
       await db.tasks.bulkDelete(toDelete)
       console.log(`[TodoStore] Removed ${toDelete.length} duplicate tasks`)

@@ -33,6 +33,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
   const [projects, setProjects] = useState<Project[]>([])
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
   const [editingProjectContact, setEditingProjectContact] = useState<Project | null>(null)
+  const [creatingNewProject, setCreatingNewProject] = useState(false)
   const [linkingDoc, setLinkingDoc] = useState<number | null>(null)
   const [linkForm, setLinkForm] = useState<{ url: string; serialNumber: string }>({ url: '', serialNumber: '' })
   const [ypayDocs, setYpayDocs] = useState<Array<{ serial_number: string; url: string }>>([])
@@ -151,6 +152,24 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
   }
 
   const handleSaveProjectContact = async (project: Project) => {
+    if (creatingNewProject) {
+      // Creating a brand new project
+      const id = await projectStore.add({
+        businessId,
+        name: project.name.trim(),
+        color: project.color,
+        defaultHourlyRate: project.defaultHourlyRate,
+        contactEmail: project.contactEmail,
+        contactBusinessID: project.contactBusinessID,
+        contactPhone: project.contactPhone,
+      })
+      const activeProjects = await projectStore.getActiveByBusinessId(businessId)
+      setProjects(activeProjects)
+      setSelectedProjectId(id as number)
+      setEditingProjectContact(null)
+      setCreatingNewProject(false)
+      return
+    }
     if (!project.id) return
     await projectStore.update(project.id, {
       name: project.name.trim(),
@@ -496,16 +515,34 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
                       </div>
                     ) : selectingProject === t.id ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', minWidth: '200px' }}>
-                        <select
-                          value={selectedProjectId || ''}
-                          onChange={(e) => setSelectedProjectId(e.target.value ? Number(e.target.value) : null)}
-                          style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', border: '1px solid #e2e8f0', borderRadius: '0.25rem', direction: 'rtl' }}
-                        >
-                          <option value="">בחר לקוח...</option>
-                          {projects.map(p => (
-                            <option key={p.id} value={p.id}>{p.name}{!p.contactEmail ? ' (חסר אימייל)' : ''}</option>
-                          ))}
-                        </select>
+                        <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                          <select
+                            value={selectedProjectId || ''}
+                            onChange={(e) => setSelectedProjectId(e.target.value ? Number(e.target.value) : null)}
+                            style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', border: '1px solid #e2e8f0', borderRadius: '0.25rem', direction: 'rtl', flex: 1 }}
+                          >
+                            <option value="">בחר לקוח...</option>
+                            {projects.map(p => (
+                              <option key={p.id} value={p.id}>{p.name}{!p.contactEmail ? ' (חסר אימייל)' : ''}</option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={() => {
+                              setCreatingNewProject(true)
+                              setEditingProjectContact({
+                                businessId,
+                                name: '',
+                                archived: false,
+                                createdAt: new Date().toISOString(),
+                                updatedAt: new Date().toISOString(),
+                              })
+                            }}
+                            title="לקוח חדש"
+                            style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', background: '#eff6ff', border: '1px solid #3b82f6', borderRadius: '0.25rem', cursor: 'pointer', color: '#2563eb', whiteSpace: 'nowrap' }}
+                          >
+                            +
+                          </button>
+                        </div>
                         <div style={{ display: 'flex', gap: '0.3rem', justifyContent: 'center' }}>
                           {(() => {
                             const selected = projects.find(p => p.id === selectedProjectId)
@@ -581,7 +618,8 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
 
       <ProjectEditModal
         project={editingProjectContact}
-        onClose={() => setEditingProjectContact(null)}
+        isNew={creatingNewProject}
+        onClose={() => { setEditingProjectContact(null); setCreatingNewProject(false) }}
         onSave={handleSaveProjectContact}
       />
 

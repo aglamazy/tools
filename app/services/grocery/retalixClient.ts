@@ -511,6 +511,35 @@ export async function checkout(
   return { success: true, orderId: orderId ? String(orderId) : undefined, deliveryWindow }
 }
 
+// --- Orders ---
+
+export async function listOrders(uid: string): Promise<StoreOrder[]> {
+  const { token, config } = await getToken(uid)
+
+  const resp = await rexailFetch(config, 'client/orders/my-orders', { token })
+  if (!resp.success) throw new Error(`List orders failed: ${resp.resolvedMessage}`)
+
+  return (resp.data || [])
+    .filter((o: any) => o.open)
+    .map((o: any) => {
+      const items = (o.items || []).map((i: any) => ({
+        name: i.storeProduct?.name || i.storeProductFullName || '',
+        qty: i.requestedQuantity || 1,
+        price: i.price ? `${i.price}` : '',
+      }))
+      const [time, endTime] = (o.deliveryHour || '').split('-')
+      return {
+        orderId: String(o.nonObfuscatedId),
+        status: o.status?.resolvedName || o.status?.name || '',
+        total: `${o.cartEstimation || 0} ₪`,
+        delivery: { date: o.deliveryDate || '', time: time || '', endTime },
+        itemsCount: items.length,
+        cancelable: !!o.open,
+        items,
+      }
+    })
+}
+
 // --- Cancel ---
 
 export async function cancelOrder(uid: string, orderId: string): Promise<boolean> {
@@ -557,10 +586,7 @@ export const retalixPlugin: OtpStorePlugin = {
     return checkout(uid, retalixItems, { day: options.day, hour, dryRun: options.dryRun })
   },
 
-  listOrders: async (_uid): Promise<StoreOrder[]> => {
-    // TODO: implement when Rexail exposes order listing
-    return []
-  },
+  listOrders,
 
   cancelOrder,
 

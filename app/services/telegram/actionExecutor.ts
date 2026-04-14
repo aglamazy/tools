@@ -39,7 +39,7 @@ import { getOrderCycle, setOrderCycle, type OrderCycle } from '@/app/services/gr
 import { deleteMapping, saveProductMapping } from '@/app/services/grocery/productResolver'
 
 /** Actions that require a connected store */
-const STORE_ACTIONS = new Set(['show_orders', 'trigger_order', 'cancel_order', 'search_product', 're_search', 'list_slots'])
+const STORE_ACTIONS = new Set(['show_orders', 'trigger_order', 'cancel_order', 'search_product', 're_search', 'list_slots', 'product_details'])
 
 /** Resolve which store an action targets */
 async function resolveActionStore(uid: string, action: ChatAction): Promise<string> {
@@ -52,9 +52,11 @@ async function resolveActionStore(uid: string, action: ChatAction): Promise<stri
 
 export async function savePendingSearch(uid: string, selection: PendingProductSelection): Promise<string> {
   const key = randomBytes(3).toString('hex')
+  // Strip undefined values — Firestore rejects them
+  const clean = JSON.parse(JSON.stringify(selection))
   await getAdminFirestore().collection('groceries').doc(uid)
     .collection('private').doc('pendingSearches').set(
-      { [key]: { ...selection, createdAt: new Date().toISOString() } },
+      { [key]: { ...clean, createdAt: new Date().toISOString() } },
       { merge: true },
     )
   return key
@@ -75,6 +77,48 @@ export async function deletePendingSearch(uid: string, key: string): Promise<voi
   const { FieldValue } = await import('firebase-admin/firestore')
   await getAdminFirestore().collection('groceries').doc(uid)
     .collection('private').doc('pendingSearches').update({ [key]: FieldValue.delete() })
+}
+
+/**
+ * Select a product from a pending search and save it to the appropriate list.
+ * Returns a confirmation message. Used by both Telegram callback and app chat select.
+ */
+export async function selectProduct(uid: string, searchKey: string, resultIndex: number): Promise<{ message: string; target: string }> {
+  const pendingSearch = await loadPendingSearch(uid, searchKey)
+  if (!pendingSearch || resultIndex >= pendingSearch.results.length) {
+    throw new Error('החיפוש פג תוקף')
+  }
+
+  const selected = pendingSearch.results[resultIndex]
+  const unit = selected.unitPrice?.split('/')?.pop()?.trim()
+  const item = {
+    name: selected.name, qty: pendingSearch.qty, catalogId: selected.catalogId,
+    ...(unit ? { unit } : {}),
+    ...(selected.sellingUnitId != null ? { sellingUnitId: selected.sellingUnitId } : {}),
+  }
+
+  if (pendingSearch.store) {
+    if (pendingSearch.target === 'standing') {
+      await addToStoreStanding(uid, pendingSearch.store, [item])
+    } else {
+      await addStorePendingItems(uid, pendingSearch.store, [item])
+    }
+  } else {
+    if (pendingSearch.target === 'standing') {
+      await addToStanding(uid, [item])
+    } else {
+      await addPendingItems(uid, [item])
+    }
+  }
+
+  await saveProductMapping(uid, pendingSearch.query, selected.catalogId, selected.name)
+  await deletePendingSearch(uid, searchKey)
+
+  const targetLabel = pendingSearch.target === 'standing' ? 'קבועה' : 'הזמנה'
+  return {
+    message: `✅ ${selected.name} (x${pendingSearch.qty}) נוסף לרשימה ${targetLabel}`,
+    target: targetLabel,
+  }
 }
 
 export interface ActionResult {
@@ -135,6 +179,55 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
   }
 
   switch (action.action) {
+    case 'product_details': {
+      const productName = typeof action.name === 'string' ? action.name.trim() : ''
+      if (!productName) return null
+      const pdStoreId = await resolveActionStore(uid, action)
+      const pdStore = getStore(pdStoreId)
+      if (!pdStore) return `חנות "${pdStoreId}" לא מוכרת.`
+
+      // Look up item in the user's list
+      const pdData = await getStoreData(uid, pdStoreId).catch(() => null)
+      const allItems = [
+        ...Object.values(pdData?.standingList || {}),
+        ...Object.values(pdData?.pendingChanges?.add || {}),
+      ]
+      const lowerName = productName.toLowerCase()
+      const match = allItems.find(i => i.name.toLowerCase().includes(lowerName))
+
+      // Search store for current details
+      try {
+        const searchQuery = match?.name || productName
+        const results = await pdStore.search(uid, searchQuery)
+        // Find best match from search results
+        const bestMatch = match?.catalogId
+          ? results.find(r => r.productId === match.catalogId)
+          : results[0]
+
+        if (bestMatch) {
+          const parts = [`📦 ${bestMatch.name}`]
+          if (bestMatch.brand) parts.push(`מותג: ${bestMatch.brand}`)
+          if (bestMatch.price) parts.push(`מחיר: ${bestMatch.price}₪`)
+          if (bestMatch.unitPrice) parts.push(`מחיר ליחידה: ${bestMatch.unitPrice}`)
+          if (match) {
+            parts.push(`ברשימה: ${match.qty > 1 ? `x${match.qty}` : 'כן'}${match.unit ? ` (${match.unit})` : ''}`)
+          }
+          return parts.join('\n')
+        }
+
+        if (match) {
+          return `📦 ${match.name} — ברשימה (x${match.qty})${match.unit ? `, ${match.unit}` : ''}\nלא נמצאו פרטים נוספים מ${pdStore.label}.`
+        }
+        return `לא נמצאו פרטים על "${productName}" ב${pdStore.label}.`
+      } catch (err) {
+        console.error(`[ActionExecutor] product_details failed:`, err)
+        if (match) {
+          return `📦 ${match.name} — ברשימה (x${match.qty})${match.unit ? `, ${match.unit}` : ''}`
+        }
+        return `שגיאה בקבלת פרטים על "${productName}".`
+      }
+    }
+
     case 'search_product':
     case 're_search': {
       const query = typeof action.query === 'string' ? action.query.trim() : ''

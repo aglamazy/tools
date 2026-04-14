@@ -8,7 +8,7 @@ import { getUser } from '@/app/stores/authStore'
 import { uploadAdvancePaymentReceipt, ensureRootFolder } from '@/app/services/googleDriveService'
 import { getAccessToken } from '@/app/services/googleTokenService'
 import { getHouseholdInfo } from '@/app/services/householdService'
-import { type TaxStatus, type TaxStatusInfo } from '@/app/components/TaxExemptBadge'
+import { type TaxStatus, type TaxStatusInfo, useExemptTaxStatus } from '@/app/components/TaxExemptBadge'
 import RentalSummaryTable from './TaxRentalSummary'
 import { SelfEmployedBTLSection, SelfEmployedIncomeTaxSection, type BTLRates, type IncomeTaxStep } from './TaxSelfEmployedSections'
 import { getTaxProfile, type TaxProfile } from '@/app/components/TaxProfileSection'
@@ -102,6 +102,68 @@ function TaxExemptStatusBanner({ info }: { info: TaxStatusInfo }) {
   )
 }
 
+const EXEMPT_STATUS_LABELS: Record<TaxStatus, string> = {
+  green: 'תקין — הכנסה בטווח תקרת עוסק פטור',
+  yellow: 'זהירות — מתקרב לתקרת עוסק פטור',
+  red: 'חריגה — הכנסה עברה את תקרת עוסק פטור',
+  gray: 'טרם הוגדר',
+}
+
+function ExemptStatusBanner({ info }: { info: TaxStatusInfo }) {
+  const style = TAX_STATUS_STYLES[info.status]
+  const fmt = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
+  const remainingToLimit = Math.max(0, info.limit - info.currentIncome)
+  const pct = info.limit > 0 ? Math.round((info.currentIncome / info.limit) * 100) : 0
+
+  return (
+    <div style={{
+      marginBottom: '1rem',
+      padding: '0.75rem 1rem',
+      background: style.bg,
+      border: `1px solid ${style.border}`,
+      borderRadius: '0.5rem',
+      fontSize: '0.9rem',
+      color: style.text,
+    }}>
+      <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>{EXEMPT_STATUS_LABELS[info.status]}</div>
+      <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap', fontSize: '0.85rem', color: '#475569' }}>
+        <div>
+          <span style={{ color: '#64748b' }}>הכנסה שנתית: </span>
+          <strong>{fmt(info.currentIncome)}</strong>
+        </div>
+        <div>
+          <span style={{ color: '#64748b' }}>תקרה שנתית: </span>
+          <strong>{fmt(info.limit)}</strong>
+        </div>
+        <div>
+          <span style={{ color: '#64748b' }}>נותר: </span>
+          <strong>{fmt(remainingToLimit)}</strong>
+        </div>
+        <div>
+          <span style={{ color: '#64748b' }}>ניצול: </span>
+          <strong>{pct}%</strong>
+        </div>
+      </div>
+      {/* Progress bar */}
+      <div style={{
+        marginTop: '0.5rem',
+        height: 6,
+        background: '#e2e8f0',
+        borderRadius: 3,
+        overflow: 'hidden',
+      }}>
+        <div style={{
+          height: '100%',
+          width: `${Math.min(100, pct)}%`,
+          background: style.text,
+          borderRadius: 3,
+          transition: 'width 0.3s ease',
+        }} />
+      </div>
+    </div>
+  )
+}
+
 export default function TaxesTab() {
   return (
     <div>
@@ -129,6 +191,7 @@ function AnnualSummarySubTab() {
   const [selectedUser, setSelectedUser] = useState<string>('all')
   const [loading, setLoading] = useState(true)
   const [taxExemptInfo, setTaxExemptInfo] = useState<TaxStatusInfo | null>(null)
+  const exemptStatus = useExemptTaxStatus()
   const [btlRates, setBtlRates] = useState<BTLRates | null>(null)
   const [incomeTaxBrackets, setIncomeTaxBrackets] = useState<IncomeTaxStep[] | null>(null)
   const [advancePayments, setAdvancePayments] = useState<AdvancePayment[]>([])
@@ -349,6 +412,9 @@ function AnnualSummarySubTab() {
           ))}
         </div>
       )}
+
+      {/* Exempt status banner */}
+      {exemptStatus && <ExemptStatusBanner info={exemptStatus} />}
 
       {/* Conditional section tabs: שכיר / עצמאי */}
       {(() => {

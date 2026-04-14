@@ -107,6 +107,8 @@ export default function TodoPage() {
           console.log('[Todo] Webhook task already imported, skipping:', webhookTask.id)
           return
         }
+        // Claim in Firestore FIRST to prevent other instances from importing
+        await markWebhookTaskClaimed(webhookTask.id, -1)
         const newTask = await todoStore.addTask(
           webhookTask.title,
           webhookTask.priority || 'medium',
@@ -122,7 +124,7 @@ export default function TodoPage() {
         if ((webhookTask as any).subject) updates.subject = (webhookTask as any).subject
         if ((webhookTask as any).tags) updates.tags = (webhookTask as any).tags
         await todoStore.updateTask(newTask.id, updates)
-        // Mark as claimed in Firestore so it won't be re-imported after deletion
+        // Update Firestore with the real local task ID
         await markWebhookTaskClaimed(webhookTask.id, newTask.id)
         loadTasks()
         showToast('success', `משימה חדשה מ-webhook: ${webhookTask.title}`)

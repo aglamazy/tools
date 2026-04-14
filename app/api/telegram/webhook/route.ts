@@ -4,50 +4,21 @@
  *
  * Auth: validates X-Telegram-Bot-Api-Secret-Token header.
  * Resolves telegramUserId → Aglamazo uid via Firestore telegramLinks collection.
- * Routes messages to intent handler (layer 2) or handles /link command.
+ * Routes messages to shared chat brain, handles /link and callback queries.
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import { sendMessage, sendWithKeyboard, answerCallbackQuery } from '@/app/services/telegram/telegramClient'
-import { processChat, type ChatMessage, type UserContext } from '@/app/services/telegram/chatProcessor'
-import { executeActions, savePendingSearch, loadPendingSearch, deletePendingSearch, type PendingProductSelection } from '@/app/services/telegram/actionExecutor'
-import { getGroceryData } from '@/app/services/grocery/groceryStore'
-import { addPendingItems, addToStanding } from '@/app/services/grocery/groceryStore'
-import { addToStoreStanding, addStorePendingItems, getStoreData } from '@/app/services/grocery/groceryStoreMulti'
-import { initStores } from '@/app/services/grocery/initStores'
-import { getUserStores } from '@/app/services/grocery/groceryStoreMulti'
-import { getAllStores } from '@/app/services/grocery/storeRegistry'
-import { saveProductMapping } from '@/app/services/grocery/productResolver'
-import type { TelegramCallbackQuery } from '@/app/services/telegram/types'
-import { isCredentialsVerified, saveCredentials, setCredentialsVerified, login as shufersalLogin } from '@/app/services/grocery/shufersalClient'
-import type { TelegramUpdate, TelegramMessage } from '@/app/services/telegram/types'
+import { selectProduct } from '@/app/services/telegram/actionExecutor'
+import { processChatMessage, handleReset, handleClear } from '@/app/services/chatBrain'
+import type { TelegramCallbackQuery, TelegramUpdate, TelegramMessage } from '@/app/services/telegram/types'
 
-const MAX_HISTORY = 10
-
-/** Load recent chat messages from Firestore. */
-async function loadHistory(uid: string): Promise<ChatMessage[]> {
-  const doc = await getAdminFirestore().collection('telegramChatHistory').doc(uid).get()
-  if (!doc.exists) return []
-  return (doc.data()?.messages as ChatMessage[]) || []
-}
-
-/** Save chat messages to Firestore. */
-async function saveHistory(uid: string, messages: ChatMessage[]): Promise<void> {
-  // Keep only the last MAX_HISTORY messages
-  const trimmed = messages.slice(-MAX_HISTORY)
-  await getAdminFirestore().collection('telegramChatHistory').doc(uid).set({
-    messages: trimmed,
-    updatedAt: new Date().toISOString(),
-  })
-}
-
+const HISTORY_COLLECTION = 'telegramChatHistory'
 const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET
 
 export const maxDuration = 30
 
 export async function POST(request: NextRequest) {
-  initStores()
-
   // Validate Telegram secret token
   const secret = request.headers.get('x-telegram-bot-api-secret-token')
   if (!WEBHOOK_SECRET || secret !== WEBHOOK_SECRET) {
@@ -78,8 +49,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true })
   }
 
-  // In groups, respond to all messages (bot must be admin with privacy mode off)
-
   const testMode = request.headers.get('x-telegram-test') === 'true'
 
   try {
@@ -95,37 +64,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true })
     }
 
-    // Handle /reset command — clear chat history
-    if (message.text.match(/^\/reset(@\w+)?$/)) {
-      const resetUid = testMode ? 'test-user' : (await resolveLink(message.from.id, message.chat.id))?.uid
-      if (resetUid) await saveHistory(resetUid, [])
-      const reply = 'היסטוריה נמחקה!'
-      if (testMode) return NextResponse.json({ ok: true, response: reply, actions: [] })
-      await sendMessage(message.chat.id, reply)
-      return NextResponse.json({ ok: true })
-    }
-
-    // Handle /clear command — clear standing list and pending changes
-    if (message.text.match(/^\/clear(@\w+)?$/)) {
-      const clearUid = testMode ? 'test-user' : (await resolveLink(message.from.id, message.chat.id))?.uid
-      if (clearUid) {
-        const firestore = getAdminFirestore()
-        const doc = await firestore.collection('groceries').doc(clearUid).get()
-        if (doc.exists) {
-          await firestore.collection('groceries').doc(clearUid).update({
-            standingList: {},
-            pendingChanges: { add: {}, remove: [] },
-            updatedAt: new Date().toISOString(),
-          })
-        }
-      }
-      const reply = 'רשימה קבועה ושינויים שבועיים נמחקו.'
-      if (testMode) return NextResponse.json({ ok: true, response: reply, actions: [] })
-      await sendMessage(message.chat.id, reply)
-      return NextResponse.json({ ok: true })
-    }
-
-    // Handle /start command (Telegram's default on first interaction)
+    // Handle /start command
     if (message.text === '/start') {
       await sendMessage(message.chat.id,
         'שלום! אני העוזר האישי של Aglamazo.\n\n' +
@@ -147,116 +86,56 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true })
     }
 
-    // Load conversation history from Firestore
-    const chatId = message.chat.id
-    const history = await loadHistory(link.uid)
-    history.push({ role: 'user', content: message.text })
+    // Handle /reset command
+    if (message.text.match(/^\/reset(@\w+)?$/)) {
+      await handleReset(HISTORY_COLLECTION, link.uid)
+      const reply = 'היסטוריה נמחקה!'
+      if (testMode) return NextResponse.json({ ok: true, response: reply, actions: [] })
+      await sendMessage(message.chat.id, reply)
+      return NextResponse.json({ ok: true })
+    }
 
-    // Load grocery data and store info for context
-    const [groceryData, hasCreds, userStores] = await Promise.all([
-      getGroceryData(link.uid).catch(() => null),
-      isCredentialsVerified(link.uid).catch(() => false),
-      getUserStores(link.uid).catch(() => ({ activeStores: [] as string[], defaultStore: 'shufersal' })),
-    ])
+    // Handle /clear command
+    if (message.text.match(/^\/clear(@\w+)?$/)) {
+      await handleClear(link.uid)
+      const reply = 'רשימה קבועה ושינויים שבועיים נמחקו.'
+      if (testMode) return NextResponse.json({ ok: true, response: reply, actions: [] })
+      await sendMessage(message.chat.id, reply)
+      return NextResponse.json({ ok: true })
+    }
 
-    // Build per-store context
-    const storeContexts = await Promise.all(
-      getAllStores().map(async (store) => {
-        const connected = await store.isAuthenticated(link.uid).catch(() => false)
-        // Load store-specific data (shufersal falls back to root doc via getStoreData)
-        const storeData = await getStoreData(link.uid, store.id).catch(() => null)
-        return {
-          id: store.id,
-          label: store.label,
-          connected,
-          standingList: storeData?.standingList ? Object.values(storeData.standingList).map(i => ({ name: i.name, qty: i.qty, unit: i.unit })) : undefined,
-          pendingChanges: storeData ? {
-            add: Object.values(storeData.pendingChanges.add).map(i => ({ name: i.name, qty: i.qty, unit: i.unit })),
-            remove: storeData.pendingChanges.remove,
-          } : undefined,
-          orderStatus: storeData?.orderCycle?.status,
-          schedule: storeData?.schedule,
-        }
-      })
-    )
-
-    const context: UserContext = {
+    // Process via shared brain
+    const result = await processChatMessage({
+      uid: link.uid,
+      text: message.text,
       displayName: message.from.first_name,
-      stores: storeContexts,
-      defaultStore: userStores.defaultStore,
-      // Legacy fallback
-      hasCredentials: hasCreds,
-      standingList: groceryData?.standingList ? Object.values(groceryData.standingList).map(i => ({ name: i.name, qty: i.qty, unit: i.unit })) : undefined,
-      pendingChanges: groceryData ? {
-        add: Object.values(groceryData.pendingChanges.add).map(i => ({ name: i.name, qty: i.qty, unit: i.unit })),
-        remove: groceryData.pendingChanges.remove,
-      } : undefined,
-      orderStatus: groceryData?.orderCycle?.status,
-      schedule: groceryData?.schedule,
-    }
+      historyCollection: HISTORY_COLLECTION,
+      includeTasks: true,
+    })
 
-    // Process via LLM
-    const result = await processChat(history, context)
-    console.log(`[Telegram] uid=${link.uid} actions=${result.actions.map(a => a.action).join(',') || 'none'}: ${message.text}`)
-
-    // Execute actions, then build final reply
-    let replyText = result.reply
-    let pendingSelections: typeof actionResult.pendingSelections | undefined
-    let actionResult: Awaited<ReturnType<typeof executeActions>> = { followUp: null }
-
-    if (result.actions.length > 0) {
-      try {
-        actionResult = await executeActions(link.uid, result.actions)
-        if (actionResult.followUp) {
-          replyText = `${replyText}\n\n${actionResult.followUp}`
-        }
-        pendingSelections = actionResult.pendingSelections
-      } catch (actionErr) {
-        const msg = actionErr instanceof Error ? actionErr.message : String(actionErr)
-        console.error(`[Telegram] Action execution failed:`, msg)
-        replyText = `${replyText}\n\nשגיאה בביצוע הפעולה. נסה שוב.`
-      }
-    }
-
-    // Store only the LLM's reply in history (not action output) — prevents
-    // the model from learning to reproduce lists it should delegate to actions
-    history.push({ role: 'assistant', content: result.reply })
-    await saveHistory(link.uid, history)
-
-    // Save pending searches
-    const searchKeys: string[] = []
-    if (pendingSelections?.length) {
-      for (const sel of pendingSelections) {
-        const key = await savePendingSearch(link.uid, sel)
-        searchKeys.push(key)
-      }
-    }
-
-    // Test mode: return what would be sent, without calling Telegram
+    // Test mode: return what would be sent
     if (testMode) {
       return NextResponse.json({
         ok: true,
-        response: replyText,
+        response: result.reply,
         actions: result.actions,
-        pendingSelections: pendingSelections?.map((sel, i) => ({ ...sel, searchKey: searchKeys[i] })),
+        pendingSelections: result.pendingSelections,
       })
     }
 
-    // Prod: send combined reply
-    await sendMessage(chatId, replyText)
+    // Prod: send reply via Telegram
+    await sendMessage(message.chat.id, result.reply)
 
     // Send product selection keyboards
-    if (pendingSelections?.length) {
-      for (let si = 0; si < pendingSelections.length; si++) {
-        const sel = pendingSelections[si]
-        const searchKey = searchKeys[si]
+    if (result.pendingSelections?.length) {
+      for (const sel of result.pendingSelections) {
         const buttons = sel.results.map((r, idx) => [{
           text: `${r.name}${r.brand ? ` | ${r.brand}` : ''} — ${r.price}₪${r.unitPrice ? ` (${r.unitPrice})` : ''}`,
-          callback_data: `p:${searchKey}:${idx}`,
+          callback_data: `p:${sel.searchKey}:${idx}`,
         }])
         const targetLabel = sel.target === 'standing' ? 'רשימה קבועה' : 'הזמנה'
         await sendWithKeyboard(
-          chatId,
+          message.chat.id,
           `בחר "${sel.query}" (${targetLabel}):`,
           { inline_keyboard: buttons },
         )
@@ -266,18 +145,19 @@ export async function POST(request: NextRequest) {
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.message : String(err)
     console.error('[Telegram Webhook] Error:', errMsg)
-    // Don't send error details to user in production
+    try {
+      if (message?.chat?.id) {
+        await sendMessage(message.chat.id, 'שגיאה בעיבוד ההודעה. נסה שוב.')
+      }
+    } catch { /* don't throw from error handler */ }
   }
 
   return NextResponse.json({ ok: true })
 }
 
-/**
- * /link <code> — link Telegram user/group to Aglamazo account.
- * The code is generated in the Aglamazo UI (layer 6).
- */
+// --- Telegram-specific handlers ---
+
 async function handleLinkCommand(message: TelegramMessage) {
-  // In groups Telegram sends "/link@BotName CODE" — strip the @mention from the command
   const parts = message.text!.replace(/^\/link(@\w+)?/, '/link').split(' ')
   if (parts.length < 2) {
     await sendMessage(message.chat.id,
@@ -289,7 +169,6 @@ async function handleLinkCommand(message: TelegramMessage) {
   const code = parts[1].trim()
   const firestore = getAdminFirestore()
 
-  // Look up the link code
   const codeDoc = await firestore.collection('telegramLinkCodes').doc(code).get()
   if (!codeDoc.exists) {
     await sendMessage(message.chat.id, 'קוד לא תקין או שפג תוקפו.')
@@ -309,7 +188,6 @@ async function handleLinkCommand(message: TelegramMessage) {
   const chatId = message.chat.id
   const chatType = message.chat.type
 
-  // Create the link
   const linkData = {
     telegramUserId,
     telegramChatId: chatId,
@@ -319,11 +197,8 @@ async function handleLinkCommand(message: TelegramMessage) {
     displayName: message.from!.first_name || '',
   }
 
-  // Use composite key: {telegramUserId}_{chatId}
   const linkId = `${telegramUserId}_${chatId}`
   await firestore.collection('telegramLinks').doc(linkId).set(linkData)
-
-  // Delete the used code
   await firestore.collection('telegramLinkCodes').doc(code).delete()
 
   const chatLabel = chatType === 'private' ? 'צ\'אט פרטי' : `קבוצה "${message.chat.title}"`
@@ -332,9 +207,6 @@ async function handleLinkCommand(message: TelegramMessage) {
   console.log(`[Telegram] Linked telegram=${telegramUserId} chat=${chatId} → uid=${uid}`)
 }
 
-/**
- * /unlink — remove the link between this Telegram chat and Aglamazo.
- */
 async function handleUnlinkCommand(message: TelegramMessage) {
   if (!message.from) return
 
@@ -353,19 +225,13 @@ async function handleUnlinkCommand(message: TelegramMessage) {
   console.log(`[Telegram] Unlinked telegram=${message.from.id} chat=${message.chat.id}`)
 }
 
-/**
- * Resolve a Telegram user+chat → Aglamazo uid.
- * Checks both direct user link and chat-level link.
- */
 async function resolveLink(telegramUserId: number, chatId: number) {
   const firestore = getAdminFirestore()
 
-  // Try exact match first (user + chat)
   const linkId = `${telegramUserId}_${chatId}`
   const doc = await firestore.collection('telegramLinks').doc(linkId).get()
   if (doc.exists) return doc.data() as { uid: string }
 
-  // For groups: check if any user linked this chat
   const groupQuery = await firestore
     .collection('telegramLinks')
     .where('telegramChatId', '==', chatId)
@@ -376,7 +242,6 @@ async function resolveLink(telegramUserId: number, chatId: number) {
     return groupQuery.docs[0].data() as { uid: string }
   }
 
-  // Fallback: check user's private chat link (in private chats, chatId == userId)
   const privateLinkId = `${telegramUserId}_${telegramUserId}`
   const privateDoc = await firestore.collection('telegramLinks').doc(privateLinkId).get()
   if (privateDoc.exists) return privateDoc.data() as { uid: string }
@@ -384,10 +249,6 @@ async function resolveLink(telegramUserId: number, chatId: number) {
   return null
 }
 
-/**
- * Handle inline keyboard button press (product selection).
- * callback_data format: "p:<searchKey>:<resultIndex>"
- */
 async function handleCallbackQuery(query: TelegramCallbackQuery, testMode = false) {
   const data = query.data || ''
   if (!data.startsWith('p:')) {
@@ -412,44 +273,17 @@ async function handleCallbackQuery(query: TelegramCallbackQuery, testMode = fals
     return { callbackAnswer: 'חשבון לא מחובר' }
   }
 
-  // Load stored search context
-  const pendingSearch = await loadPendingSearch(uid, searchKey)
-  if (!pendingSearch || resultIndex >= pendingSearch.results.length) {
-    if (!testMode) await answerCallbackQuery(query.id, 'החיפוש פג תוקף')
-    return { callbackAnswer: 'החיפוש פג תוקף' }
-  }
-
-  const selected = pendingSearch.results[resultIndex]
-  const unit = selected.unitPrice?.split('/')?.pop()?.trim() || undefined
-  const item = { name: selected.name, qty: pendingSearch.qty, catalogId: selected.catalogId, unit, sellingUnitId: selected.sellingUnitId }
-
-  // Save to correct target (store-aware if store field present)
-  if (pendingSearch.store) {
-    if (pendingSearch.target === 'standing') {
-      await addToStoreStanding(uid, pendingSearch.store, [item])
-    } else {
-      await addStorePendingItems(uid, pendingSearch.store, [item])
+  try {
+    const result = await selectProduct(uid, searchKey, resultIndex)
+    if (!testMode) {
+      await answerCallbackQuery(query.id, `נוסף ל${result.target}`)
+      await sendMessage(chatId, result.message)
     }
-  } else {
-    if (pendingSearch.target === 'standing') {
-      await addToStanding(uid, [item])
-    } else {
-      await addPendingItems(uid, [item])
-    }
+    console.log(`[Telegram] Product picked: searchKey=${searchKey} idx=${resultIndex}`)
+    return { callbackAnswer: result.message }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'שגיאה'
+    if (!testMode) await answerCallbackQuery(query.id, msg)
+    return { callbackAnswer: msg }
   }
-
-  // Save mapping for future use
-  await saveProductMapping(uid, pendingSearch.query, selected.catalogId, selected.name)
-
-  // Cleanup
-  await deletePendingSearch(uid, searchKey)
-
-  const targetLabel = pendingSearch.target === 'standing' ? 'קבועה' : 'הזמנה'
-  const confirmMsg = `✅ ${selected.name} (x${pendingSearch.qty}) נוסף לרשימה ${targetLabel}`
-  if (!testMode) {
-    await answerCallbackQuery(query.id, `נוסף ל${targetLabel}`)
-    await sendMessage(chatId, confirmMsg)
-  }
-  console.log(`[Telegram] Product picked: "${pendingSearch.query}" → ${selected.catalogId} (${pendingSearch.target})`)
-  return { callbackAnswer: confirmMsg }
 }

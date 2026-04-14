@@ -37,6 +37,7 @@ function draftToRateYear(d: TaxRateYearDraft): TaxRateYear {
 }
 
 const TAX_SUB_TABS = [
+  { id: 'exempt', label: 'עוסק פטור' },
   { id: 'rental', label: 'השכרת דירה' },
   { id: 'selfEmployed', label: 'ביטוח לאומי עצמאי' },
   { id: 'incomeTax', label: 'מס הכנסה' },
@@ -45,6 +46,9 @@ const TAX_SUB_TABS = [
 type TaxSubTab = typeof TAX_SUB_TABS[number]['id']
 
 export default function TaxSettingsPanel({
+  exemptLimit, setExemptLimit,
+  exemptLimitDraft, setExemptLimitDraft,
+  exemptLimitSaved, setExemptLimitSaved,
   taxLimit, setTaxLimit,
   taxLimitDraft, setTaxLimitDraft,
   taxLimitSaved, setTaxLimitSaved,
@@ -68,8 +72,12 @@ export default function TaxSettingsPanel({
   incomeTaxDrafts: Record<string, IncomeTaxStepDraft[]>; setIncomeTaxDrafts: React.Dispatch<React.SetStateAction<Record<string, IncomeTaxStepDraft[]>>>
   incomeTaxSaved: string | null; setIncomeTaxSaved: React.Dispatch<React.SetStateAction<string | null>>
   newIncomeTaxYear: string; setNewIncomeTaxYear: React.Dispatch<React.SetStateAction<string>>
+} & {
+  exemptLimit: { amount: number; sinceYear: number } | null; setExemptLimit: React.Dispatch<React.SetStateAction<{ amount: number; sinceYear: number } | null>>
+  exemptLimitDraft: { amount: string; sinceYear: string }; setExemptLimitDraft: React.Dispatch<React.SetStateAction<{ amount: string; sinceYear: string }>>
+  exemptLimitSaved: boolean; setExemptLimitSaved: React.Dispatch<React.SetStateAction<boolean>>
 }) {
-  const [subTab, setSubTab] = useState<TaxSubTab>('rental')
+  const [subTab, setSubTab] = useState<TaxSubTab>('exempt')
 
   return (
     <div>
@@ -94,6 +102,14 @@ export default function TaxSettingsPanel({
           </button>
         ))}
       </div>
+
+      {subTab === 'exempt' && (
+        <ExemptLimitSection
+          exemptLimit={exemptLimit} setExemptLimit={setExemptLimit}
+          exemptLimitDraft={exemptLimitDraft} setExemptLimitDraft={setExemptLimitDraft}
+          exemptLimitSaved={exemptLimitSaved} setExemptLimitSaved={setExemptLimitSaved}
+        />
+      )}
 
       {subTab === 'rental' && (
         <RentalSection
@@ -121,6 +137,70 @@ export default function TaxSettingsPanel({
         />
       )}
     </div>
+  )
+}
+
+function ExemptLimitSection({
+  exemptLimit, setExemptLimit, exemptLimitDraft, setExemptLimitDraft, exemptLimitSaved, setExemptLimitSaved,
+}: {
+  exemptLimit: { amount: number; sinceYear: number } | null; setExemptLimit: React.Dispatch<React.SetStateAction<{ amount: number; sinceYear: number } | null>>
+  exemptLimitDraft: { amount: string; sinceYear: string }; setExemptLimitDraft: React.Dispatch<React.SetStateAction<{ amount: string; sinceYear: string }>>
+  exemptLimitSaved: boolean; setExemptLimitSaved: React.Dispatch<React.SetStateAction<boolean>>
+}) {
+  const unchanged = exemptLimit !== null && String(exemptLimit.amount) === exemptLimitDraft.amount && String(exemptLimit.sinceYear) === exemptLimitDraft.sinceYear
+
+  return (
+    <section>
+      <h2 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.25rem', color: '#2563eb' }}>תקרת הכנסה לעוסק פטור</h2>
+      <a href="https://www.kolzchut.org.il/he/%D7%A2%D7%95%D7%A1%D7%A7_%D7%A4%D7%98%D7%95%D7%A8" target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8rem', color: '#6b7280', marginBottom: '0.75rem', display: 'inline-block' }}>לפרטים מלאים</a>
+      <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <div>
+          <label style={{ display: 'block', fontSize: '0.8rem', color: '#64748b', marginBottom: '0.25rem' }}>תקרה שנתית (₪)</label>
+          <input
+            type="number" dir="ltr" value={exemptLimitDraft.amount}
+            onChange={(e) => { setExemptLimitDraft(prev => ({ ...prev, amount: e.target.value })); setExemptLimitSaved(false) }}
+            style={{ width: '140px', padding: '0.3rem 0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.9rem' }}
+          />
+        </div>
+        <div>
+          <label style={{ display: 'block', fontSize: '0.8rem', color: '#64748b', marginBottom: '0.25rem' }}>משנת</label>
+          <input
+            type="number" dir="ltr" value={exemptLimitDraft.sinceYear}
+            onChange={(e) => { setExemptLimitDraft(prev => ({ ...prev, sinceYear: e.target.value })); setExemptLimitSaved(false) }}
+            style={{ width: '100px', padding: '0.3rem 0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.9rem' }}
+          />
+        </div>
+        <button
+          onClick={async () => {
+            const amount = Number(exemptLimitDraft.amount)
+            const sinceYear = Number(exemptLimitDraft.sinceYear)
+            if (!amount || !sinceYear || !/^\d{4}$/.test(exemptLimitDraft.sinceYear)) return
+            const token = await getIdToken()
+            if (!token) return
+            const updated = { amount, sinceYear }
+            const res = await fetch('/api/admin/tax-settings', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ exemptLimit: updated }),
+            })
+            if (res.ok) {
+              setExemptLimit(updated)
+              setExemptLimitSaved(true)
+              setTimeout(() => setExemptLimitSaved(false), 2000)
+            }
+          }}
+          disabled={unchanged}
+          style={{
+            padding: '0.3rem 0.75rem',
+            background: exemptLimitSaved ? '#10b981' : unchanged ? '#e5e7eb' : '#2563eb',
+            color: unchanged ? '#9ca3af' : '#fff',
+            border: 'none', borderRadius: '0.375rem', fontSize: '0.85rem', cursor: 'pointer',
+          }}
+        >
+          {exemptLimitSaved ? '✓' : 'שמור'}
+        </button>
+      </div>
+    </section>
   )
 }
 

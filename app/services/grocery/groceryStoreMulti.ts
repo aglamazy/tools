@@ -107,7 +107,8 @@ export async function getStoreData(uid: string, store: StoreType): Promise<Groce
 
 async function saveStoreData(uid: string, store: StoreType, data: GroceryData): Promise<void> {
   data.updatedAt = new Date().toISOString()
-  await storeRef(uid, store).set(data)
+  // Strip undefined values — Firestore rejects them
+  await storeRef(uid, store).set(JSON.parse(JSON.stringify(data)))
 }
 
 // --- Standing list ---

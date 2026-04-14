@@ -1,10 +1,10 @@
 /**
- * Chat processor — sends system prompt + conversation history to Gemini.
- * No intent detection. The LLM responds naturally and embeds actions as JSON
- * blocks when needed.
+ * Chat processor — sends system prompt + conversation history to Gemini
+ * with native function calling for actions.
  */
 
 import { GeminiClient } from '@/app/services/llm/geminiClient'
+import { ACTION_DECLARATIONS } from './actionDeclarations'
 
 const gemini = new GeminiClient()
 
@@ -30,14 +30,12 @@ export interface StoreContext {
 
 export interface UserContext {
   displayName?: string
-  /** All configured stores */
   stores?: StoreContext[]
-  /** Default store ID */
   defaultStore?: string
-  /** Tasks from Firestore */
+  session?: { activeStore?: string | null }
   tasks?: { id: string; title: string; completed: boolean; deadline?: string; priority?: string }[]
 
-  // Legacy — kept for backward compat during migration
+  // Legacy
   /** @deprecated use stores instead */
   standingList?: { name: string; qty: number; unit?: string }[]
   /** @deprecated use stores instead */
@@ -74,49 +72,13 @@ const SYSTEM_PROMPT = `אתה AglamazoBot — עוזר משפחתי לניהול
 - מענה על שאלות לגבי הרשימה והמשימות
 
 ## חנויות
-כל פעולת קניות מכוונת לחנות ספציפית. הוסף "store" לכל פעולת חנות.
-- אם המשתמש מזכיר שם חנות (שופרסל, מקור השפע, רמי לוי...) — השתמש בה
-- אם לא מזכיר חנות — השתמש בחנות ברירת המחדל (מצוין במצב הנוכחי)
-- המשתמש יכול לשאול "מה ברשימה של שופרסל?" או "תוסיף ביצים למקור השפע"
+כל פעולת קניות מכוונת לחנות ספציפית. **חובה** לשלוח store בכל קריאה לפונקציה.
+- אם המשתמש מזכיר שם חנות — השתמש בה **וקרא ל-set_session עם activeStore**
+- אם לא מזכיר חנות — השתמש ב-activeStore מהסשן (אם יש), אחרת חנות ברירת המחדל
 
-## איך לבצע פעולות
-כשהמשתמש מבקש פעולה, הגב בטקסט טבעי וגם הוסף בלוק JSON לכל פעולה בסוף ההודעה.
-**חובה**: השתמש אך ורק בפורמט בלוק action שלנו. אסור להשתמש ב-XML, execute_tool, function_call, או כל פורמט אחר.
-כשיש **מספר פריטים** — הוסף **בלוק נפרד לכל פריט**, כך:
-\`\`\`action
-{"action": "search_product", "query": "חלב", "qty": 2, "target": "pending", "store": "shufersal"}
-\`\`\`
-\`\`\`action
-{"action": "search_product", "query": "לחם", "qty": 1, "target": "pending", "store": "shufersal"}
-\`\`\`
-\`\`\`action
-{"action": "search_product", "query": "ביצים", "qty": 1, "target": "pending", "store": "shufersal"}
-\`\`\`
-
-פעולות זמינות (כל פעולה מקבלת שדה "store" אופציונלי):
-- {"action":"search_product","query":"חלב","qty":1,"target":"pending","store":"shufersal"} — חפש מוצר. target: "pending" (להזמנה) או "standing" (לרשימה הקבועה)
-- {"action":"remove_items","items":["ביצים"],"store":"..."} — הסר מההזמנה השבועית
-- {"action":"remove_standing","items":["חלב"],"store":"..."} — הסר מהרשימה קבועה
-- {"action":"move_to_standing","items":["מלפפון","עגבניה"],"store":"..."} — העבר מתוספות השבוע לרשימה הקבועה. items יכול להכיל שם חלקי. להעביר הכל: שלח את כל השמות מתוספות השבוע
-- {"action":"re_search","query":"קוטג 5%","qty":6,"target":"standing","store":"..."} — חפש מחדש
-- {"action":"show_list","store":"..."} — הצג רשימה של חנות ספציפית
-- {"action":"clear_pending","store":"..."} — נקה שינויים שבועיים
-- {"action":"list_slots","store":"..."} — הצג משבצות משלוח זמינות (בדוק לפני הזמנה אם לא ברור מתי)
-- {"action":"trigger_order","day":"...","time":"...","store":"..."} — בצע הזמנה. day: שם יום בעברית ("היום","מחר","ראשון","שני"...) או תאריך מדויק בפורמט DD/MM/YYYY מרשימת המשבצות
-- {"action":"cancel_order","store":"..."} — בטל הזמנה פעילה
-- {"action":"show_orders","store":"..."} — הצג הזמנות פעילות
-- {"action":"set_credentials","email":"...","password":"...","store":"shufersal"} — חבר חשבון שופרסל
-- {"action":"set_otp_phone","phone":"054...","store":"retalix"} — חבר חשבון עם SMS (מקור השפע)
-- {"action":"verify_otp","otp":"1234","store":"retalix"} — אמת קוד SMS
-- {"action":"set_schedule","orderDay":0,"preferredSlot":{"day":"רביעי","time":"14:00-16:00"},"reviewReminderHours":36,"store":"..."} — הגדר לוח זמנים
-- {"action":"show_schedule","store":"..."} — הצג לוח זמנים
-- {"action":"browse_category","category":"ירקות","store":"..."} — הצג כל המוצרים בקטגוריה (פירות, ירקות, חלב, בשר...). לשאלות כמו "מה יש בירקות?" או "איזה פירות יש?"
-- {"action":"set_default_store","store":"..."} — שנה חנות ברירת מחדל
-- {"action":"create_task","title":"...","deadline":"YYYY-MM-DD","priority":"low|medium|high","quadrant":"do|schedule|delegate|eliminate"} — צור משימה
-- {"action":"list_tasks","query":"..."} — הצג/חפש משימות. query אופציונלי לסינון לפי כותרת
-- {"action":"complete_task","id":"xxxx"} — סמן משימה כהושלמה. id = 4 ספרות אחרונות של המזהה
-- {"action":"update_task","id":"xxxx","title":"...","deadline":"...","priority":"..."} — ערוך משימה
-- {"action":"delete_task","id":"xxxx"} — מחק משימה
+## סשן (session state)
+המצב הנוכחי של הסשן מופיע למטה. כשמשהו משתנה, קרא ל-set_session כדי לעדכן.
+- activeStore: החנות הפעילה בשיחה (null = ברירת מחדל)
 
 ## חיבור חנויות
 - שופרסל: דורש אימייל וסיסמה → set_credentials
@@ -124,51 +86,42 @@ const SYSTEM_PROMPT = `אתה AglamazoBot — עוזר משפחתי לניהול
 - כשמשתמש שולח קוד מספרי והמצב מראה otpPending=true, זה קוד SMS → verify_otp
 
 ## כללים
-- **התגובה חייבת להיות בעברית בלבד** — אסור לכתוב אנגלית בתגובה, גם לא הסברים או הערות
+- כשמישהו שולח רשימת מוצרים (חלב, לחם, ביצים), קרא ל-search_product **עבור כל מוצר בנפרד** באותה תגובה
+- **התגובה חייבת להיות בעברית בלבד**
 - הודעות קצרות ותמציתיות — זו שיחת טלגרם
-- כשמישהו שולח רשימת מוצרים, שלח search_product לכל מוצר בנפרד
+- כשמישהו שולח רשימת מוצרים, קרא ל-search_product לכל מוצר בנפרד
 - "בלי X" / "השבוע בלי X" = remove_items
 - "תמיד" / "כל שבוע" / "לקבוע" = search_product עם target:"standing"
-- "תעביר לקבועה" / "הכל לרשימה הקבועה" / "העבר לקבוע" = move_to_standing (העברה מתוספות השבוע לרשימה קבועה, בלי חיפוש מחדש)
-- כשחנות לא מחוברת, הסבר שצריך לחבר ובקש פרטים מתאימים (אימייל/סיסמה או טלפון)
+- "תעביר לקבועה" = move_to_standing (העברה, בלי חיפוש מחדש)
+- כשחנות לא מחוברת, הסבר שצריך לחבר ובקש פרטים מתאימים
 - פרטי התחברות רק בצ'אט פרטי! בקבוצה, תגיד שישלחו בפרטי
 - אל תשלח סיסמה/קוד בחזרה בתגובה
 - "תבטל הזמנה" = cancel_order (בקש אישור לפני ביטול!)
-- כשמשתמש מבקש לראות רשימה — **חובה** להשתמש ב-show_list. **אסור** לרשום פריטים בתגובה — אפילו לא חלקית. הרשימה המפורטת מגיעה אוטומטית מהמערכת. כתוב רק משפט קצר כמו "הנה הרשימה:" ותו לא
-- כשמשתמש מבקש רשימות של מספר חנויות — שלח show_list נפרד לכל חנות (בלוק action נפרד לכל אחת)
-- כשמשתמש שואל על מחיר, השתמש ב-search_product — התוצאות כוללות מחירים
-- אם ההודעה היא שיחה רגילה — תגיב בטבעיות, בלי בלוק action
+- כשמשתמש מבקש לראות רשימה — **חובה** לקרוא ל-show_list. **אסור** לרשום פריטים בתגובה
+- כששואלים על מוצר שכבר נמצא ברשימה — השתמש ב-product_details (לא search_product)
+- כשמשתמש שואל על מחיר מוצר שאינו ברשימה, או רוצה להוסיף מוצר — השתמש ב-search_product
+- אם ההודעה היא שיחה רגילה — תגיב בטבעיות, בלי קריאות לפונקציות
 - אם לא ברור מה המשתמש רוצה, שאל — אל תנחש
 
 ## לאחר קבלת תוצאות list_slots
-כאשר תוצאות משבצות כבר מופיעות בהיסטוריית השיחה (ממשת לסיבוב שני):
-- **אל תרשום את רשימת המשבצות שוב** — כבר נראתה (או תוצג) למשתמש
-- **השתמש אך ורק בתאריכים שמופיעים ממש ברשימה** — אסור להמציא תאריכים שלא קיימים ברשימה
-- נתח את הנתונים: בדוק האם התאריך/יום שביקשו מופיע ברשימה (השווה לתאריך היום שמצוין בהקשר)
-  - **אין לתאריך המבוקש** — ציין זאת בקצרה ושאל אם לזמין לתאריך הקרוב ביותר שכן מופיע ברשימה
-  - **יש** — אם המשתמש כבר ביקש לזמין, בצע trigger_order עם **התאריך המדויק מהרשימה** (DD/MM/YYYY)
-- כשמפעיל trigger_order: כתוב רק "מזמין..." — **אל תודיע על הצלחה לפני שהמערכת אישרה** (התוצאה תוצג אוטומטית)
-- דוגמה: אין להיום, קרוב ביותר שישי 17/04/2026 בשעה 8:00, ומשתמש ביקש לזמין →
-  \`\`\`action
-  {"action":"trigger_order","day":"17/04/2026","time":"8:00","store":"retalix"}
-  \`\`\``
-
-// NO_CREDS_PROMPT is no longer needed — the main SYSTEM_PROMPT handles
-// unconnected stores dynamically via context block showing store.connected=false
+כאשר תוצאות משבצות כבר מופיעות בהיסטוריית השיחה:
+- **אל תרשום את רשימת המשבצות שוב** — כבר נראתה למשתמש
+- **השתמש אך ורק בתאריכים שמופיעים ברשימה** — אסור להמציא תאריכים
+- אם אין לתאריך המבוקש — ציין זאת ושאל אם לזמין לתאריך הקרוב ביותר
+- כשמפעיל trigger_order: כתוב רק "מזמין..." — אל תודיע על הצלחה לפני שהמערכת אישרה`
 
 /**
  * Process a chat message with conversation history.
+ * Uses Gemini function calling — actions come as structured functionCall parts.
  */
 export async function processChat(
   messages: ChatMessage[],
   context: UserContext,
 ): Promise<ChatResult> {
-  const basePrompt = SYSTEM_PROMPT
   const contextBlock = buildContextBlock(context)
-  const fullSystem = `${basePrompt}\n\n## מצב נוכחי\n${contextBlock}`
+  const fullSystem = `${SYSTEM_PROMPT}\n\n## מצב נוכחי\n${contextBlock}`
 
-  // Strip action blocks from assistant messages in history — they're bulky
-  // and the current state already reflects their result
+  // Clean old action blocks from history (backward compat with pre-function-calling history)
   const cleanMessages = messages.map(m => {
     if (m.role === 'assistant') {
       return { ...m, content: m.content.replace(/```action\s*\n?[\s\S]*?```/g, '').trim() }
@@ -176,36 +129,48 @@ export async function processChat(
     return m
   }).filter(m => m.content)
 
-  console.log('\n========== FULL SYSTEM PROMPT ==========')
-  console.log(fullSystem)
+  console.log('\n========== SYSTEM PROMPT ==========')
+  console.log(fullSystem.slice(0, 500) + '...')
   console.log('========== MESSAGES ==========')
-  cleanMessages.forEach((m, i) => console.log(`[${i}] ${m.role}: ${m.content}`))
+  cleanMessages.forEach((m, i) => console.log(`[${i}] ${m.role}: ${m.content.slice(0, 100)}`))
   console.log('========================================\n')
 
-  const result = await gemini.chat({
+  const result = await gemini.chatWithTools({
     system: fullSystem,
     messages: cleanMessages,
     maxTokens: 1024,
+    tools: ACTION_DECLARATIONS,
   })
 
-  console.log('[ChatProcessor] LLM reply:', result.text)
-  console.log('[ChatProcessor] LLM error:', result.error)
+  console.log('[ChatProcessor] text:', result.text?.slice(0, 100))
+  console.log('[ChatProcessor] functionCalls:', result.functionCalls?.map(fc => `${fc.name}(${JSON.stringify(fc.args)})`).join(', ') || 'none')
+  console.log('[ChatProcessor] error:', result.error)
 
-  if (result.error || !result.text) {
+  if (result.error && !result.text && !result.functionCalls?.length) {
     console.error('[ChatProcessor] LLM error:', result.error)
     return { reply: 'שגיאה. נסה שוב.', actions: [] }
   }
 
-  const parsed = parseResponse(result.text)
-  // Prefer inline THOUGHT: from text; fall back to Gemini thought parts
-  return { ...parsed, thinking: parsed.thinking ?? result.thinking }
+  // Map function calls directly to actions — no regex parsing needed
+  const actions: ChatAction[] = (result.functionCalls || []).map(fc => ({
+    action: fc.name,
+    ...fc.args,
+  }))
+
+  // Gemini sometimes returns only function calls with no text — provide a minimal reply
+  const reply = result.text || (actions.length > 0 ? 'בסדר!' : '')
+
+  return {
+    reply,
+    thinking: result.thinking,
+    actions,
+  }
 }
 
 function buildContextBlock(ctx: UserContext): string {
   const parts: string[] = []
   const DAY_NAMES = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת']
 
-  // Always include today's date so the bot can reason about "today" / "tomorrow"
   const now = new Date()
   const todayStr = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`
   const todayDayName = DAY_NAMES[now.getDay()]
@@ -213,9 +178,13 @@ function buildContextBlock(ctx: UserContext): string {
 
   if (ctx.displayName) parts.push(`משתמש: ${ctx.displayName}`)
 
-  // Multi-store context
+  // Session state
+  const activeStore = ctx.session?.activeStore || ctx.defaultStore || null
+  parts.push(`\n## סשן`)
+  parts.push(`activeStore: ${activeStore || 'null'} (${activeStore ? 'חנות פעילה' : 'ברירת מחדל'})`)
+
   if (ctx.stores?.length) {
-    parts.push(`חנות ברירת מחדל: ${ctx.defaultStore || 'לא נבחרה'}`)
+    parts.push(`\nחנות ברירת מחדל: ${ctx.defaultStore || 'לא נבחרה'}`)
     for (const store of ctx.stores) {
       parts.push(`\n### ${store.label} (${store.id})`)
       parts.push(`חיבור: ${store.connected ? 'מחובר' : 'לא מחובר'}`)
@@ -243,7 +212,6 @@ function buildContextBlock(ctx: UserContext): string {
       }
     }
   } else {
-    // Legacy single-store fallback
     if (ctx.standingList?.length) {
       parts.push(`רשימה קבועה (${ctx.standingList.length} פריטים): ${ctx.standingList.map(i => i.name).join(', ')}`)
     }
@@ -278,8 +246,7 @@ interface SearchResultItem {
 }
 
 /**
- * Smart filter: ask LLM to rank/filter Shufersal results based on what the user actually wants.
- * Returns filtered+reordered results and an optional comment.
+ * Smart filter: ask LLM to rank/filter search results by user intent.
  */
 export async function filterSearchResults(
   userQuery: string,
@@ -312,7 +279,6 @@ comment = הערה קצרה אם יש מוצרים שלא נמצאו או הצע
 
     if (!result.text) return { filtered: results, comment: '' }
 
-    // Extract JSON from response (might be wrapped in ```json)
     const jsonMatch = result.text.match(/\{[\s\S]*\}/)
     if (!jsonMatch) return { filtered: results, comment: '' }
 
@@ -327,50 +293,4 @@ comment = הערה קצרה אם יש מוצרים שלא נמצאו או הצע
     console.error('[ChatProcessor] Filter search failed:', err)
     return { filtered: results, comment: '' }
   }
-}
-
-/**
- * Parse LLM response — extract plain text reply and any action blocks.
- */
-function parseResponse(text: string): ChatResult {
-  const actions: ChatAction[] = []
-
-  // Extract ```action/json ... ``` blocks containing {action: ...}
-  const actionRegex = /```(?:action|json)\s*\n?([\s\S]*?)```/g
-  let match
-  while ((match = actionRegex.exec(text)) !== null) {
-    try {
-      const parsed = JSON.parse(match[1].trim())
-      if (parsed.action) {
-        actions.push(parsed as ChatAction)
-      }
-    } catch {
-      console.error('[ChatProcessor] Failed to parse action block:', match[1])
-    }
-  }
-
-  // Extract inline THOUGHT: ... block (Gemini 2.5 Flash embeds thinking as text)
-  // Format: "THOUGHT: ...\n\n[reply]" — split on the first blank line
-  let thinking: string | undefined
-  let bodyText = text
-  if (/^THOUGHT:/i.test(text)) {
-    const blankLine = text.indexOf('\n\n')
-    if (blankLine !== -1) {
-      thinking = text.slice(0, blankLine).replace(/^THOUGHT:\s*/i, '').trim()
-      bodyText = text.slice(blankLine + 2).trim()
-    } else {
-      // No blank line — entire text is thought, no separate reply
-      thinking = text.replace(/^THOUGHT:\s*/i, '').trim()
-      bodyText = ''
-    }
-  }
-
-  // Remove action blocks and any stray XML tool calls from the reply text
-  const reply = bodyText
-    .replace(/```(?:action|json)\s*\n?[\s\S]*?```/g, '')
-    .replace(/<execute_tool>[\s\S]*?<\/execute_tool>/gi, '')
-    .replace(/<execute_tool>[\s\S]*/gi, '') // unclosed tag
-    .trim()
-
-  return { reply, thinking, actions }
 }

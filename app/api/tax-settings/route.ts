@@ -13,12 +13,13 @@ export async function GET() {
     const doc = await firestore.collection('platformSettings').doc('taxConfig').get()
 
     if (!doc.exists) {
-      return NextResponse.json({ taxLimits: null, taxRates: {} })
+      return NextResponse.json({ taxLimits: null, exemptLimit: null, taxRates: {} })
     }
 
     const data = doc.data()!
     return NextResponse.json({
       taxLimits: data.taxLimits || null,
+      exemptLimit: data.exemptLimit || null,
       taxRates: data.taxRates || {},
       incomeTaxBrackets: data.incomeTaxBrackets || {},
     })

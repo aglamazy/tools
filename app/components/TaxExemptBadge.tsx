@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { db } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import type { Category } from '@/app/types/category'
@@ -46,8 +47,8 @@ export function useBusinessTaxStatus(businessId?: number): TaxStatusInfo | null 
         return
       }
 
-      // Only exempt or tax-free businesses get income-vs-limit status
-      if (taxProfile.vatType !== 'exempt' && !taxProfile.isTaxFree) return
+      // Only exempt (or unset, treated as exempt) or tax-free businesses get income-vs-limit status
+      if (taxProfile.vatType && taxProfile.vatType !== 'exempt' && !taxProfile.isTaxFree) return
 
       const currentYear = new Date().getFullYear()
       const token = await getIdToken()
@@ -123,7 +124,7 @@ export function BusinessStatusBadge({ businessId }: { businessId: number }) {
 
   return (
     <span
-      title={`השכרת דירה: ${STATUS_LABELS[info.status]} — הכנסה: ${fmt(info.currentIncome)} / תקרה: ${fmt(info.limit)}`}
+      title={`עוסק פטור: ${STATUS_LABELS[info.status]} — הכנסה: ${fmt(info.currentIncome)} / תקרה: ${fmt(info.limit)}`}
       style={{
         display: 'inline-block',
         width: 8,
@@ -137,7 +138,138 @@ export function BusinessStatusBadge({ businessId }: { businessId: number }) {
   )
 }
 
-/** @deprecated Use BusinessStatusBadge with businessId instead */
+/**
+ * Person-level exempt status: sums income across all exempt businesses
+ * and compares against the annual limit.
+ */
+export function useExemptTaxStatus(): TaxStatusInfo | null {
+  const [info, setInfo] = useState<TaxStatusInfo | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    const load = async () => {
+      const taxProfile = await getTaxProfile()
+
+      // Only relevant for exempt (or unset, treated as exempt)
+      if (taxProfile.vatType && taxProfile.vatType !== 'exempt') return
+
+      const currentYear = new Date().getFullYear()
+      const token = await getIdToken()
+      if (!token) return false // signal: auth not ready
+
+      let annualLimit: number | null = null
+      try {
+        const res = await fetch('/api/tax-settings', { headers: { Authorization: `Bearer ${token}` } })
+        if (res.ok) {
+          const data = await res.json()
+          const el = data.exemptLimit as { amount: number; sinceYear: number } | null
+          annualLimit = el && currentYear >= el.sinceYear ? el.amount : null
+        }
+      } catch { /* ignore */ }
+      if (!annualLimit) return true
+
+      // Sum income only from non-tax-free (exempt) businesses
+      const allBusinesses = await db.businesses.toArray()
+      const exemptBizIds = new Set(allBusinesses.filter(b => !b.isTaxFree).map(b => b.id))
+      const categories = subjectStore.getAll() as Category[]
+      const incomeCategories = categories.filter(c => c.type === 'income' && c.businessId && exemptBizIds.has(c.businessId))
+      const catNames = new Set(incomeCategories.map(c => c.name))
+
+      const allTx = catNames.size > 0 ? await db.transactions.toArray() : []
+      const yearTx = allTx.filter(t => t.category && catNames.has(t.category) && t.amount > 0 && t.month?.endsWith(`/${currentYear}`))
+
+      const currentIncome = yearTx.reduce((s, t) => s + t.amount, 0)
+
+      let status: TaxStatus = 'green'
+      if (currentIncome > annualLimit) status = 'red'
+      else if (currentIncome > annualLimit * 0.8) status = 'yellow'
+
+      console.log(`[TaxBadge] person-level: income=${currentIncome} annualLimit=${annualLimit} → ${status}`)
+      if (!cancelled) setInfo({ status, currentIncome, maxMonthlyIncome: 0, limit: annualLimit })
+      return true
+    }
+
+    // Auth may not be ready on first render — retry once after delay
+    load().then(ready => {
+      if (ready === false && !cancelled) {
+        setTimeout(() => { if (!cancelled) load() }, 1500)
+      }
+    })
+
+    return () => { cancelled = true }
+  }, [])
+
+  return info
+}
+
+/**
+ * Badge for the מסים tile in AppLauncher — person-level exempt status.
+ * Shows a colored dot with a styled tooltip on hover.
+ */
+export function ExemptStatusBadge() {
+  const info = useExemptTaxStatus()
+  const [tooltip, setTooltip] = useState<{ x: number; y: number } | null>(null)
+
+  if (!info) return null
+
+  const colors = STATUS_COLORS[info.status]
+  const fmt = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
+  const pct = info.limit > 0 ? Math.round((info.currentIncome / info.limit) * 100) : 0
+
+  return (
+    <span
+      style={{ display: 'inline-block', marginInlineStart: '0.25rem', padding: '4px', cursor: 'default' }}
+      onMouseEnter={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect()
+        // Clamp X so the tooltip doesn't overflow the viewport
+        const x = Math.min(rect.left + rect.width / 2, window.innerWidth - 160)
+        setTooltip({ x, y: rect.bottom + 6 })
+      }}
+      onMouseLeave={() => setTooltip(null)}
+    >
+      <span
+        style={{
+          display: 'inline-block',
+          width: 10,
+          height: 10,
+          borderRadius: '50%',
+          background: colors.text,
+          border: `1.5px solid ${colors.border}`,
+          verticalAlign: 'middle',
+        }}
+      />
+      {tooltip && createPortal(
+        <div style={{
+          position: 'fixed',
+          top: tooltip.y,
+          left: tooltip.x,
+          transform: 'translateX(-50%)',
+          padding: '0.5rem 0.75rem',
+          background: '#fff',
+          border: `1px solid ${colors.border}`,
+          borderRadius: '0.5rem',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+          whiteSpace: 'nowrap',
+          fontSize: '0.8rem',
+          color: '#1e293b',
+          direction: 'rtl',
+          zIndex: 10000,
+        }}>
+          <div style={{ fontWeight: 600, color: colors.text, marginBottom: 4 }}>
+            עוסק פטור: {STATUS_LABELS[info.status]}
+          </div>
+          <div style={{ color: '#475569' }}>
+            {fmt(info.currentIncome)} / {fmt(info.limit)} ({pct}%)
+          </div>
+        </div>,
+        document.body,
+      )}
+    </span>
+  )
+}
+
+/** @deprecated Use ExemptStatusBadge or BusinessStatusBadge instead */
 export default function TaxExemptBadge() {
   return null
 }

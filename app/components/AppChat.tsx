@@ -92,7 +92,7 @@ export default function AppChat() {
       showToast('error', 'שגיאה בחיבור לשרת')
     } finally {
       setLoading(false)
-      setTimeout(() => inputRef.current?.focus(), 0)
+      setTimeout(() => inputRef.current?.focus(), 100)
     }
   }, [input, loading, showToast])
 
@@ -121,6 +121,7 @@ export default function AppChat() {
       showToast('error', 'שגיאה בחיבור לשרת')
     } finally {
       setSelectingKey(null)
+      setTimeout(() => inputRef.current?.focus(), 100)
     }
   }
 
