@@ -5,7 +5,7 @@ import { branding } from '@/app/config'
 export const metadata: Metadata = {
   title: `מדריך שימוש | ${branding.name}`,
   description: `מדריך מפורט לשימוש ב-${branding.name} - ייבוא קבצים, ניתוח תזרים, ניהול תקציב ותחזית תשלומים. למד כיצד לנהל את הכספים שלך בצורה חכמה.`,
-  robots: { index: true, follow: true },
+  robots: { index: true, follow: true, googleBot: { index: true, follow: true } },
   alternates: {
     canonical: '/guide',
   },

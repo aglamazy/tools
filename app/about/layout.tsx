@@ -5,7 +5,7 @@ import { branding } from '@/app/config'
 export const metadata: Metadata = {
   title: `אודות | ${branding.name}`,
   description: `${branding.name} - ${branding.tagline}. ניהול פיננסי חכם לעסקים קטנים ובינוניים בישראל — תזרים מזומנים, תקציב, ייבוא קבצי בנק ואשראי, הכל בפרטיות מלאה.`,
-  robots: { index: true, follow: true },
+  robots: { index: true, follow: true, googleBot: { index: true, follow: true } },
   alternates: {
     canonical: '/about',
   },
@@ -16,9 +16,32 @@ export const metadata: Metadata = {
   },
 }
 
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'AboutPage',
+    name: `אודות | ${branding.name}`,
+    description: `${branding.name} - ${branding.tagline}. ניהול פיננסי, תובנות חכמות ועוד.`,
+    url: 'https://aglamazo.com/about',
+    inLanguage: 'he',
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: branding.name, item: 'https://aglamazo.com/' },
+      { '@type': 'ListItem', position: 2, name: 'אודות', item: 'https://aglamazo.com/about' },
+    ],
+  },
+]
+
 export default function AboutLayout({ children }: { children: React.ReactNode }) {
   return (
     <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
       {children}
       <section dir="rtl" style={{ maxWidth: '800px', margin: '0 auto', padding: '1.5rem 1rem' }}>
         <h2 style={{ fontSize: '1.25rem', marginBottom: '0.75rem', color: '#1e293b' }}>למה לבחור ב-{branding.name}?</h2>
