@@ -33,6 +33,64 @@ const jsonLd = [
       { '@type': 'ListItem', position: 2, name: 'מחירים', item: 'https://aglamazo.com/pricing' },
     ],
   },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'ItemList',
+    name: `תוכניות ${branding.name}`,
+    url: 'https://aglamazo.com/pricing',
+    itemListElement: [
+      {
+        '@type': 'ListItem',
+        position: 1,
+        item: {
+          '@type': 'SoftwareApplication',
+          name: `${branding.name} חינם`,
+          applicationCategory: 'FinanceApplication',
+          offers: { '@type': 'Offer', price: '0', priceCurrency: 'ILS', availability: 'https://schema.org/InStock' },
+        },
+      },
+      {
+        '@type': 'ListItem',
+        position: 2,
+        item: {
+          '@type': 'SoftwareApplication',
+          name: `${branding.name} מקצועי`,
+          applicationCategory: 'FinanceApplication',
+          offers: { '@type': 'Offer', price: '99', priceCurrency: 'ILS', availability: 'https://schema.org/InStock' },
+        },
+      },
+    ],
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: [
+      {
+        '@type': 'Question',
+        name: 'האם Aglamazo בחינם?',
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: 'כן, התוכנית הבסיסית של Aglamazo חינמית לחלוטין וכוללת תזרים מזומנים, ייבוא קבצי בנק, ניהול תקציב ומשימות — ללא הגבלת זמן.',
+        },
+      },
+      {
+        '@type': 'Question',
+        name: 'האם הנתונים שלי בטוחים?',
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: 'כן. כל הנתונים נשמרים בדפדפן שלך בלבד, ללא שרתים חיצוניים. Aglamazo לא שולחת, מאחסנת או משתפת את הנתונים שלך עם אף גורם חיצוני.',
+        },
+      },
+      {
+        '@type': 'Question',
+        name: 'מה מחיר התוכנית המקצועית?',
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: 'התוכנית המקצועית עולה 99 ש"ח לכל החיים במבצע השקה (מחיר מלא: 199 ש"ח). היא כוללת ניהול עסקים מרובים, מעקב הון, תחזית תשלומים וגיבוי מוצפן.',
+        },
+      },
+    ],
+  },
 ]
 
 export default function PricingLayout({ children }: { children: React.ReactNode }) {

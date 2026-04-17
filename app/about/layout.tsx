@@ -33,6 +33,36 @@ const jsonLd = [
       { '@type': 'ListItem', position: 2, name: 'אודות', item: 'https://aglamazo.com/about' },
     ],
   },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: [
+      {
+        '@type': 'Question',
+        name: `מה זה ${branding.name}?`,
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: `${branding.name} הוא כלי לניהול פיננסי חכם לעסקים קטנים ובינוניים בישראל. הוא מאפשר ייבוא קבצי בנק וכרטיסי אשראי, ניתוח תזרים מזומנים, ניהול תקציב ותחזית תשלומים — הכל בפרטיות מלאה ללא שרתים חיצוניים.`,
+        },
+      },
+      {
+        '@type': 'Question',
+        name: 'אילו בנקים נתמכים?',
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: 'Aglamazo תומך בקבצי תנועות מכל הבנקים הגדולים בישראל: בנק הפועלים, בנק לאומי, בנק דיסקונט ועוד. כמו כן נתמכים כרטיסי אשראי כמו ישראכרט, מקס ולאומי קארד.',
+        },
+      },
+      {
+        '@type': 'Question',
+        name: 'האם ניתן לסנכרן בין מכשירים?',
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: 'סנכרון בין מכשירים זמין בתוכניות הבית והמקצועית, הכוללות גיבוי מוצפן ל-Google Drive. בתוכנית החינמית, הנתונים נשמרים בדפדפן המקומי בלבד.',
+        },
+      },
+    ],
+  },
 ]
 
 export default function AboutLayout({ children }: { children: React.ReactNode }) {

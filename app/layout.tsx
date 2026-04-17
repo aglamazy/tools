@@ -96,6 +96,22 @@ const jsonLd = [
     logo: `${siteUrl}/logo.png`,
     description: branding.tagline,
   },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: branding.name,
+    description: 'ניהול פיננסי חכם לעסקים קטנים ובינוניים — תזרים מזומנים, תקציב, ייבוא קבצי בנק ואשראי, הכל בפרטיות מלאה.',
+    url: siteUrl,
+    applicationCategory: 'FinanceApplication',
+    operatingSystem: 'Web',
+    inLanguage: 'he',
+    offers: {
+      '@type': 'Offer',
+      price: '0',
+      priceCurrency: 'ILS',
+      availability: 'https://schema.org/InStock',
+    },
+  },
 ]
 
 export default function RootLayout({ children }: { children: ReactNode }) {
