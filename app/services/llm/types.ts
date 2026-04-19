@@ -1,8 +1,19 @@
 export type LLMProvider = 'gemini' | 'anthropic'
 
-export type LLMMessage = {
-  role: 'user' | 'assistant'
-  content: string
+/**
+ * A single turn sent to or received from the LLM. Three shapes:
+ * - User text
+ * - Assistant text (optional) + optional tool calls (when the model decided to call tools)
+ * - Tool results (results of the tools the assistant called), fed back for the next model turn
+ */
+export type LLMMessage =
+  | { role: 'user'; content: string }
+  | { role: 'assistant'; content?: string; toolCalls?: LLMFunctionCall[] }
+  | { role: 'tool'; toolResults: LLMToolResult[] }
+
+export type LLMToolResult = {
+  name: string
+  result: unknown
 }
 
 export type LLMChatOptions = {
@@ -10,6 +21,7 @@ export type LLMChatOptions = {
   messages: LLMMessage[]
   enableWebSearch?: boolean
   maxTokens?: number
+  temperature?: number
   apiKey?: string
 }
 

@@ -9,7 +9,7 @@
 
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import { gunzipSync } from 'zlib'
-import type { RetalixStoreConfig, OtpStorePlugin, StoreSearchResult, StoreCheckoutResult, StoreOrder, StoreSlotDay, CheckoutItem, CheckoutOptions } from './storeTypes'
+import type { RetalixStoreConfig, OtpStorePlugin, StoreSearchResult, StoreCheckoutResult, StoreOrder, StoreOrderItem, StoreSlotDay, CheckoutItem, CheckoutOptions, OrderModification, OrderModificationResult } from './storeTypes'
 
 // Default config for Makor Hashefa
 const DEFAULT_CONFIG: RetalixStoreConfig = {
@@ -589,6 +589,14 @@ export const retalixPlugin: OtpStorePlugin = {
   listOrders,
 
   cancelOrder,
+
+  readOrderItems: async (_uid, _orderId): Promise<StoreOrderItem[]> => {
+    throw new Error('Retalix: readOrderItems not implemented')
+  },
+
+  modifyOrder: async (_uid, _orderId, _changes: OrderModification): Promise<OrderModificationResult> => {
+    throw new Error('Retalix: modifyOrder not implemented')
+  },
 
   listSlots: async (uid): Promise<StoreSlotDay[]> => {
     const slots = await getSlots(uid)

@@ -7,15 +7,6 @@ import type { ChatAction } from './chatProcessor'
 import { filterSearchResults } from './chatProcessor'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import {
-  addPendingItems,
-  removePendingItems,
-  addToStanding,
-  removeFromStanding,
-  clearPending,
-  movePendingToStanding,
-  getSchedule,
-  setSchedule,
-  getGroceryData,
   mergeList,
   type GroceryItem,
   type GrocerySchedule,
@@ -24,26 +15,28 @@ import {
   saveCredentials,
   setCredentialsVerified,
   login as shufersalLogin,
+  cartAdd,
   cartRead,
   cartRemove,
   orderLoadToCart,
 } from '@/app/services/grocery/shufersalClient'
 import { sendOtp, verifyOtp, saveRetalixCredentials } from '@/app/services/grocery/retalixClient'
 import { getStore, getAllStores } from '@/app/services/grocery/storeRegistry'
-import { getUserStores, setDefaultStore, addActiveStore, getStoreData, addToStoreStanding, addStorePendingItems, removeFromStoreStanding, removeStorePendingItems, clearStorePending, movePendingToStanding as moveStorePendingToStanding } from '@/app/services/grocery/groceryStoreMulti'
+import { getUserStores, setDefaultStore, addActiveStore, getStoreData, addToStoreStanding, addStorePendingItems, removeFromStoreStanding, removeStorePendingItems, clearStorePending, movePendingToStanding as moveStorePendingToStanding, getStoreOrderCycle, setStoreOrderCycle, getStoreSchedule, setStoreSchedule } from '@/app/services/grocery/groceryStoreMulti'
 import type { OtpStorePlugin, CredentialsStorePlugin } from '@/app/services/grocery/storeTypes'
 
 import { listTasks, createTask, updateTask, deleteTask, findTasks } from '@/app/services/taskFirestoreService'
 import { randomBytes } from 'crypto'
-import { getOrderCycle, setOrderCycle, type OrderCycle } from '@/app/services/grocery/groceryStore'
-import { deleteMapping, saveProductMapping } from '@/app/services/grocery/productResolver'
+import { type OrderCycle } from '@/app/services/grocery/groceryStore'
+import { deleteMapping, lookupMapping, saveProductMapping } from '@/app/services/grocery/productResolver'
 
 /** Actions that require a connected store */
 const STORE_ACTIONS = new Set(['show_orders', 'trigger_order', 'cancel_order', 'search_product', 're_search', 'list_slots', 'product_details'])
 
 /** Resolve which store an action targets */
-async function resolveActionStore(uid: string, action: ChatAction): Promise<string> {
+async function resolveActionStore(uid: string, action: ChatAction, sessionStore?: string | null): Promise<string> {
   if (typeof action.store === 'string') return action.store
+  if (sessionStore) return sessionStore
   const meta = await getUserStores(uid)
   return meta.defaultStore
 }
@@ -97,22 +90,20 @@ export async function selectProduct(uid: string, searchKey: string, resultIndex:
     ...(selected.sellingUnitId != null ? { sellingUnitId: selected.sellingUnitId } : {}),
   }
 
-  if (pendingSearch.store) {
-    if (pendingSearch.target === 'standing') {
-      await addToStoreStanding(uid, pendingSearch.store, [item])
-    } else {
-      await addStorePendingItems(uid, pendingSearch.store, [item])
-    }
+  const selStoreId = pendingSearch.store || 'shufersal'
+  if (pendingSearch.target === 'standing') {
+    await addToStoreStanding(uid, selStoreId, [item])
   } else {
-    if (pendingSearch.target === 'standing') {
-      await addToStanding(uid, [item])
-    } else {
-      await addPendingItems(uid, [item])
-    }
+    await addStorePendingItems(uid, selStoreId, [item])
   }
 
   await saveProductMapping(uid, pendingSearch.query, selected.catalogId, selected.name)
   await deletePendingSearch(uid, searchKey)
+
+  // If adding to pending and there's an active Shufersal order, also push to live cart
+  if (pendingSearch.target === 'pending' && selStoreId === 'shufersal' && item.catalogId) {
+    await pushToActiveCart(uid, item.catalogId, item.qty)
+  }
 
   const targetLabel = pendingSearch.target === 'standing' ? 'קבועה' : 'הזמנה'
   return {
@@ -121,10 +112,25 @@ export async function selectProduct(uid: string, searchKey: string, resultIndex:
   }
 }
 
+async function pushToActiveCart(uid: string, catalogId: string, qty: number): Promise<void> {
+  try {
+    // Live query — Shufersal API is source of truth, not cached orderCycle
+    const shufersal = getStore('shufersal')
+    const orders = shufersal ? await shufersal.listOrders(uid).catch(() => []) : []
+    const active = orders.find(o => o.cancelable)
+    if (active) {
+      await orderLoadToCart(uid, active.orderId)
+      await cartAdd(uid, catalogId, qty)
+    }
+  } catch (err) {
+    console.error('[ActionExecutor] Failed to push to active cart:', err)
+  }
+}
+
 export interface ActionResult {
-  /** Extra text to append to the bot's reply (e.g. the list). Null = nothing to add. */
-  followUp: string | null
-  /** Pending product searches that need user selection. */
+  /** Per-action results, in the same order as the input `actions` array — used to feed tool responses back to the LLM. */
+  results: { name: string; result: string }[]
+  /** Pending product searches that need user selection (stops the agentic loop — requires a callback). */
   pendingSelections?: PendingProductSelection[]
 }
 
@@ -136,26 +142,32 @@ export interface PendingProductSelection {
   results: { catalogId: string; name: string; brand: string; price: string; unitPrice: string; sellingUnitId?: number }[]
 }
 
-export async function executeActions(uid: string, actions: ChatAction[]): Promise<ActionResult> {
-  const followUps: string[] = []
+export async function executeActions(uid: string, actions: ChatAction[], sessionStore?: string | null): Promise<ActionResult> {
+  const results: { name: string; result: string }[] = []
   const allPending: PendingProductSelection[] = []
 
   for (const action of actions) {
     try {
-      const result = await executeOne(uid, action)
-      if (typeof result === 'string') {
-        followUps.push(result)
-      } else if (result) {
-        if (result.followUp) followUps.push(result.followUp)
-        if (result.pendingSelections) allPending.push(...result.pendingSelections)
+      const r = await executeOne(uid, action, sessionStore)
+      if (typeof r === 'string') {
+        results.push({ name: action.action, result: r })
+      } else if (r) {
+        // Collect per-action text for feedback; attach pendingSelections separately.
+        if (r.followUp) results.push({ name: action.action, result: r.followUp })
+        else results.push({ name: action.action, result: 'ok' })
+        if (r.pendingSelections) allPending.push(...r.pendingSelections)
+      } else {
+        results.push({ name: action.action, result: 'ok' })
       }
     } catch (err) {
-      console.error(`[ActionExecutor] Failed action=${action.action}:`, err)
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`[ActionExecutor] Failed action=${action.action}:`, msg)
+      results.push({ name: action.action, result: `error: ${msg}` })
     }
   }
 
   return {
-    followUp: followUps.length > 0 ? followUps.join('\n\n') : null,
+    results,
     pendingSelections: allPending.length > 0 ? allPending : undefined,
   }
 }
@@ -165,10 +177,10 @@ interface ExecuteOneResult {
   pendingSelections?: PendingProductSelection[]
 }
 
-async function executeOne(uid: string, action: ChatAction): Promise<string | ExecuteOneResult | null> {
+async function executeOne(uid: string, action: ChatAction, sessionStore?: string | null): Promise<string | ExecuteOneResult | null> {
   // Guard: store actions require authenticated store
   if (STORE_ACTIONS.has(action.action)) {
-    const storeId = await resolveActionStore(uid, action)
+    const storeId = await resolveActionStore(uid, action, sessionStore)
     const store = getStore(storeId)
     if (!store) return `חנות "${storeId}" לא מוכרת.`
     const authenticated = await store.isAuthenticated(uid)
@@ -182,7 +194,7 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
     case 'product_details': {
       const productName = typeof action.name === 'string' ? action.name.trim() : ''
       if (!productName) return null
-      const pdStoreId = await resolveActionStore(uid, action)
+      const pdStoreId = await resolveActionStore(uid, action, sessionStore)
       const pdStore = getStore(pdStoreId)
       if (!pdStore) return `חנות "${pdStoreId}" לא מוכרת.`
 
@@ -238,13 +250,29 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
       // re_search: clear old mapping first
       if (action.action === 're_search') {
         await deleteMapping(uid, query)
-        if (target === 'standing') await removeFromStanding(uid, [query])
-        else await removePendingItems(uid, [query])
+        const reStoreId = await resolveActionStore(uid, action, sessionStore)
+        if (target === 'standing') await removeFromStoreStanding(uid, reStoreId, [query])
+        else await removeStorePendingItems(uid, reStoreId, [query])
       }
 
-      const storeId = await resolveActionStore(uid, action)
+      const storeId = await resolveActionStore(uid, action, sessionStore)
       const store = getStore(storeId)
       if (!store) return `חנות "${storeId}" לא מוכרת.`
+
+      // Cache-first: reuse a previous product mapping without searching
+      if (action.action !== 're_search') {
+        const cached = await lookupMapping(uid, query)
+        if (cached) {
+          const item = { name: cached.shufersalName, qty, catalogId: cached.catalogId }
+          if (target === 'standing') await addToStoreStanding(uid, storeId, [item])
+          else {
+            await addStorePendingItems(uid, storeId, [item])
+            if (storeId === 'shufersal') await pushToActiveCart(uid, cached.catalogId, qty)
+          }
+          const targetLabel = target === 'standing' ? 'קבועה' : 'הזמנה'
+          return `✅ ${cached.shufersalName} (x${qty}) נוסף לרשימה ${targetLabel} ב${store.label}`
+        }
+      }
 
       try {
         const results = await store.search(uid, query)
@@ -261,7 +289,10 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
           const unit = selected.unitPrice?.split('/')?.pop()?.trim() || undefined
           const item = { name: selected.name, qty, catalogId: selected.catalogId, unit, sellingUnitId: selected.sellingUnitId }
           if (target === 'standing') await addToStoreStanding(uid, storeId, [item])
-          else await addStorePendingItems(uid, storeId, [item])
+          else {
+            await addStorePendingItems(uid, storeId, [item])
+            if (storeId === 'shufersal' && selected.catalogId) await pushToActiveCart(uid, selected.catalogId, qty)
+          }
           await saveProductMapping(uid, query, selected.catalogId, selected.name)
           const targetLabel = target === 'standing' ? 'קבועה' : 'הזמנה'
           return `✅ ${selected.name} (x${qty}) נוסף לרשימה ${targetLabel} ב${store.label}`
@@ -283,29 +314,27 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
     case 'remove_items': {
       const names = normalizeNames(action.items)
       if (names.length === 0) return null
-      const rmStoreId = await resolveActionStore(uid, action)
-      // Use multi-store if store specified, otherwise legacy
-      if (action.store) {
-        await removeStorePendingItems(uid, rmStoreId, names)
-      } else {
-        await removePendingItems(uid, names)
-      }
+      const rmStoreId = await resolveActionStore(uid, action, sessionStore)
+      await removeStorePendingItems(uid, rmStoreId, names)
 
-      // If Shufersal and active order, also remove from live cart
+      // If Shufersal has an active (cancelable) order, also remove from it.
+      // Live query — no caching.
       if (rmStoreId === 'shufersal') {
-        const removeCycle = await getOrderCycle(uid)
-        if (removeCycle?.status === 'active' || removeCycle?.status === 'review') {
-          try {
-            if (removeCycle.orderId) await orderLoadToCart(uid, removeCycle.orderId)
+        try {
+          const shufersal = getStore('shufersal')
+          const orders = shufersal ? await shufersal.listOrders(uid).catch(() => []) : []
+          const active = orders.find(o => o.cancelable)
+          if (active) {
+            await orderLoadToCart(uid, active.orderId)
             const cart = await cartRead(uid)
             for (const name of names) {
               const lowerName = name.toLowerCase()
               const match = cart.find((c: any) => c.name.toLowerCase().includes(lowerName))
               if (match?.entryNumber) await cartRemove(uid, match.entryNumber)
             }
-          } catch (err) {
-            console.error(`[ActionExecutor] Failed to remove from live cart:`, err)
           }
+        } catch (err) {
+          console.error(`[ActionExecutor] Failed to remove from live cart:`, err)
         }
       }
       return null
@@ -314,37 +343,23 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
     case 'remove_standing': {
       const names = normalizeNames(action.items)
       if (names.length === 0) return null
-      if (action.store) {
-        await removeFromStoreStanding(uid, await resolveActionStore(uid, action), names)
-      } else {
-        await removeFromStanding(uid, names)
-      }
+      await removeFromStoreStanding(uid, await resolveActionStore(uid, action, sessionStore), names)
       return null
     }
 
     case 'move_to_standing': {
       const names = normalizeNames(action.items)
       if (names.length === 0) return null
-      const storeId = await resolveActionStore(uid, action)
-      let moved: GroceryItem[]
-      if (action.store) {
-        const result = await moveStorePendingToStanding(uid, storeId, names)
-        moved = result.moved
-      } else {
-        const result = await movePendingToStanding(uid, names)
-        moved = result.moved
-      }
+      const storeId = await resolveActionStore(uid, action, sessionStore)
+      const { moved } = await moveStorePendingToStanding(uid, storeId, names)
       if (moved.length === 0) return 'לא נמצאו פריטים תואמים ברשימה השבועית.'
-      const movedNames = moved.map(i => i.name).join(', ')
-      return `✅ הועבר לרשימה הקבועה: ${movedNames}`
+      return `✅ הועבר לרשימה הקבועה: ${moved.map(i => i.name).join(', ')}`
     }
 
     case 'show_list': {
-      const slStoreId = await resolveActionStore(uid, action)
+      const slStoreId = await resolveActionStore(uid, action, sessionStore)
       const slStore = getStore(slStoreId)
-      const data = action.store
-        ? await getStoreData(uid, slStoreId)
-        : await getGroceryData(uid)
+      const data = await getStoreData(uid, slStoreId)
       const standingItems = Object.values(data.standingList)
       const pendingAddItems = Object.values(data.pendingChanges.add)
       if (standingItems.length === 0 && pendingAddItems.length === 0) return `הרשימה של ${slStore?.label || slStoreId} ריקה.`
@@ -372,22 +387,16 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
     }
 
     case 'clear_pending': {
-      if (action.store) {
-        await clearStorePending(uid, await resolveActionStore(uid, action))
-      } else {
-        await clearPending(uid)
-      }
+      await clearStorePending(uid, await resolveActionStore(uid, action, sessionStore))
       return null
     }
 
     case 'trigger_order': {
-      const storeId = await resolveActionStore(uid, action)
+      const storeId = await resolveActionStore(uid, action, sessionStore)
       const store = getStore(storeId)
       if (!store) return `חנות "${storeId}" לא מוכרת.`
 
-      const data = action.store
-        ? await getStoreData(uid, storeId)
-        : await getGroceryData(uid)
+      const data = await getStoreData(uid, storeId)
       const merged = Object.values(mergeList(data.standingList, data.pendingChanges))
       if (merged.length === 0) return 'הרשימה ריקה — אין מה להזמין.'
 
@@ -409,13 +418,17 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
 
       const result = await store.checkout(uid, items, { day, time, nearest: !day })
       if (result.success) {
+        await clearStorePending(uid, storeId)
+        if (result.orderId) {
+          await setStoreOrderCycle(uid, storeId, { status: 'active', orderId: result.orderId, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() })
+        }
         return `הזמנה בוצעה ב${store.label}! #${result.orderId || ''}\nמשלוח: ${result.deliveryWindow?.day} ${result.deliveryWindow?.date} ${result.deliveryWindow?.time}`
       }
       return `שגיאה בהזמנה ב${store.label}: ${result.error}`
     }
 
     case 'list_slots': {
-      const storeId = await resolveActionStore(uid, action)
+      const storeId = await resolveActionStore(uid, action, sessionStore)
       const store = getStore(storeId)
       if (!store) return `חנות "${storeId}" לא מוכרת.`
       try {
@@ -429,8 +442,30 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
       }
     }
 
+    case 'show_cart': {
+      // Live query — no cached cycle, Shufersal API is source of truth.
+      try {
+        const shufersal = getStore('shufersal')
+        if (!shufersal) return 'חנות שופרסל לא מוגדרת.'
+        const orders = await shufersal.listOrders(uid).catch(() => [])
+        const active = orders.find(o => o.cancelable)
+        if (!active) return 'אין הזמנה פתוחה בשופרסל.'
+        await orderLoadToCart(uid, active.orderId)
+        const cart = await cartRead(uid)
+        if (cart.length === 0) return `הזמנה #${active.orderId}: העגלה ריקה.`
+        const lines = cart.map((item: any) => {
+          const qtyStr = item.qty > 1 ? ` x${item.qty}` : ''
+          return `• ${item.name}${qtyStr}`
+        })
+        return `הזמנה #${active.orderId} (${cart.length} פריטים):\n${lines.join('\n')}`
+      } catch (err) {
+        console.error('[ActionExecutor] show_cart failed:', err)
+        return 'שגיאה בקריאת ההזמנה.'
+      }
+    }
+
     case 'show_orders': {
-      const storeId = await resolveActionStore(uid, action)
+      const storeId = await resolveActionStore(uid, action, sessionStore)
       const store = getStore(storeId)
       if (!store) return `חנות "${storeId}" לא מוכרת.`
 
@@ -449,26 +484,28 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
     }
 
     case 'cancel_order': {
-      const storeId = await resolveActionStore(uid, action)
+      const storeId = await resolveActionStore(uid, action, sessionStore)
       const store = getStore(storeId)
       if (!store) return `חנות "${storeId}" לא מוכרת.`
 
-      const data = await getGroceryData(uid)
-      const cancelCycle = data.orderCycle
-      if (!cancelCycle || cancelCycle.status === 'delivered') {
-        return `אין הזמנה פעילה לביטול ב${store.label}.`
-      }
-      if (cancelCycle.orderId) {
-        try {
-          const ok = await store.cancelOrder(uid, cancelCycle.orderId)
-          if (!ok) return `${store.label} לא אישר את הביטול.`
-        } catch (err) {
-          console.error(`[ActionExecutor] Cancel order failed (${storeId}):`, err)
-          return `שגיאה בביטול ההזמנה ב${store.label}.`
-        }
-      }
-      await setOrderCycle(uid, { ...cancelCycle, status: 'delivered', updatedAt: new Date().toISOString() })
-      return null
+      const liveOrders = await store.listOrders(uid).catch(() => [])
+      const targetId = (action.orderId as string | undefined) || liveOrders[0]?.orderId
+      if (!targetId) return `אין הזמנה פעילה לביטול ב${store.label}.`
+
+      // TEMPORARY DRY-RUN: log what WOULD be cancelled without actually cancelling.
+      // Remove this block and restore the real call once verified.
+      const liveSummary = liveOrders.map(o => `#${o.orderId}(${o.itemsCount}p/${o.total})`).join(', ')
+      console.log(`[ActionExecutor] CANCEL DRY-RUN uid=${uid} store=${storeId} chosenTarget=#${targetId} actionOrderId=${action.orderId ?? 'null'} liveOrders=[${liveSummary}]`)
+      return `🧪 DRY-RUN: הייתי מבטל #${targetId} ב${store.label} (לא ביטלתי בפועל).`
+
+      // try {
+      //   const ok = await store.cancelOrder(uid, targetId)
+      //   if (!ok) return `${store.label} לא אישר את הביטול.`
+      // } catch (err) {
+      //   console.error(`[ActionExecutor] Cancel order failed (${storeId}):`, err)
+      //   return `שגיאה בביטול ההזמנה ב${store.label}.`
+      // }
+      // return `ההזמנה #${targetId} בוטלה ב${store.label}.`
     }
 
     case 'set_schedule': {
@@ -480,13 +517,14 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
         },
         reviewReminderHours: typeof action.reviewReminderHours === 'number' ? action.reviewReminderHours : 36,
       }
-      await setSchedule(uid, schedule)
+      const schedStoreId = await resolveActionStore(uid, action, sessionStore)
+      await setStoreSchedule(uid, schedStoreId, schedule)
       return null
     }
 
     case 'browse_category': {
       const category = typeof action.category === 'string' ? action.category.trim() : ''
-      const storeId = await resolveActionStore(uid, action)
+      const storeId = await resolveActionStore(uid, action, sessionStore)
       const store = getStore(storeId)
       if (!store) return `חנות "${storeId}" לא מוכרת.`
       try {
@@ -502,7 +540,8 @@ async function executeOne(uid: string, action: ChatAction): Promise<string | Exe
     }
 
     case 'show_schedule': {
-      const schedule = await getSchedule(uid)
+      const showSchedStoreId = await resolveActionStore(uid, action, sessionStore)
+      const schedule = await getStoreSchedule(uid, showSchedStoreId)
       if (!schedule) return 'לא הוגדר לוח זמנים. תגיד לי מתי לפתוח הזמנה ומתי המשלוח.'
       const DAY_NAMES = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת']
       return [

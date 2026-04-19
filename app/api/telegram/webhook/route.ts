@@ -34,10 +34,8 @@ export async function POST(request: NextRequest) {
 
   // Handle callback queries (inline keyboard presses)
   if (update.callback_query) {
-    const testMode = request.headers.get('x-telegram-test') === 'true'
     try {
-      const cbResult = await handleCallbackQuery(update.callback_query, testMode)
-      if (testMode) return NextResponse.json({ ok: true, response: cbResult.callbackAnswer, ...cbResult })
+      await handleCallbackQuery(update.callback_query)
     } catch (err) {
       console.error('[Telegram] Callback error:', err)
     }
@@ -48,8 +46,6 @@ export async function POST(request: NextRequest) {
   if (!message?.text || !message.from) {
     return NextResponse.json({ ok: true })
   }
-
-  const testMode = request.headers.get('x-telegram-test') === 'true'
 
   try {
     // Handle /link command — registration flow
@@ -76,9 +72,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Resolve telegram user → Aglamazo uid
-    const link = testMode
-      ? { uid: 'test-user' }
-      : await resolveLink(message.from.id, message.chat.id)
+    const link = await resolveLink(message.from.id, message.chat.id)
     if (!link) {
       await sendMessage(message.chat.id,
         'החשבון לא מחובר. שלח /link <קוד> כדי לחבר.'
@@ -89,18 +83,14 @@ export async function POST(request: NextRequest) {
     // Handle /reset command
     if (message.text.match(/^\/reset(@\w+)?$/)) {
       await handleReset(HISTORY_COLLECTION, link.uid)
-      const reply = 'היסטוריה נמחקה!'
-      if (testMode) return NextResponse.json({ ok: true, response: reply, actions: [] })
-      await sendMessage(message.chat.id, reply)
+      await sendMessage(message.chat.id, 'היסטוריה נמחקה!')
       return NextResponse.json({ ok: true })
     }
 
     // Handle /clear command
     if (message.text.match(/^\/clear(@\w+)?$/)) {
       await handleClear(link.uid)
-      const reply = 'רשימה קבועה ושינויים שבועיים נמחקו.'
-      if (testMode) return NextResponse.json({ ok: true, response: reply, actions: [] })
-      await sendMessage(message.chat.id, reply)
+      await sendMessage(message.chat.id, 'רשימה קבועה ושינויים שבועיים נמחקו.')
       return NextResponse.json({ ok: true })
     }
 
@@ -113,17 +103,6 @@ export async function POST(request: NextRequest) {
       includeTasks: true,
     })
 
-    // Test mode: return what would be sent
-    if (testMode) {
-      return NextResponse.json({
-        ok: true,
-        response: result.reply,
-        actions: result.actions,
-        pendingSelections: result.pendingSelections,
-      })
-    }
-
-    // Prod: send reply via Telegram
     await sendMessage(message.chat.id, result.reply)
 
     // Send product selection keyboards
@@ -249,41 +228,37 @@ async function resolveLink(telegramUserId: number, chatId: number) {
   return null
 }
 
-async function handleCallbackQuery(query: TelegramCallbackQuery, testMode = false) {
+async function handleCallbackQuery(query: TelegramCallbackQuery) {
   const data = query.data || ''
   if (!data.startsWith('p:')) {
-    if (!testMode) await answerCallbackQuery(query.id)
-    return { callbackAnswer: 'unknown' }
+    await answerCallbackQuery(query.id)
+    return
   }
 
   const parts = data.split(':')
   if (parts.length !== 3) {
-    if (!testMode) await answerCallbackQuery(query.id, 'שגיאה')
-    return { callbackAnswer: 'שגיאה' }
+    await answerCallbackQuery(query.id, 'שגיאה')
+    return
   }
 
   const searchKey = parts[1]
   const resultIndex = parseInt(parts[2], 10)
   const chatId = query.message?.chat.id
-  if (!chatId) return { callbackAnswer: 'שגיאה' }
+  if (!chatId) return
 
-  const uid = testMode ? 'test-user' : (await resolveLink(query.from.id, chatId))?.uid
+  const uid = (await resolveLink(query.from.id, chatId))?.uid
   if (!uid) {
-    if (!testMode) await answerCallbackQuery(query.id, 'חשבון לא מחובר')
-    return { callbackAnswer: 'חשבון לא מחובר' }
+    await answerCallbackQuery(query.id, 'חשבון לא מחובר')
+    return
   }
 
   try {
     const result = await selectProduct(uid, searchKey, resultIndex)
-    if (!testMode) {
-      await answerCallbackQuery(query.id, `נוסף ל${result.target}`)
-      await sendMessage(chatId, result.message)
-    }
+    await answerCallbackQuery(query.id, `נוסף ל${result.target}`)
+    await sendMessage(chatId, result.message)
     console.log(`[Telegram] Product picked: searchKey=${searchKey} idx=${resultIndex}`)
-    return { callbackAnswer: result.message }
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'שגיאה'
-    if (!testMode) await answerCallbackQuery(query.id, msg)
-    return { callbackAnswer: msg }
+    await answerCallbackQuery(query.id, msg)
   }
 }

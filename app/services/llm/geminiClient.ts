@@ -9,25 +9,46 @@ export class GeminiClient implements LLMClient {
     return result
   }
 
-  async chatWithTools(options: LLMChatWithToolsOptions): Promise<LLMResultWithTools> {
+  async chatWithTools(options: LLMChatWithToolsOptions & { temperature?: number }): Promise<LLMResultWithTools> {
     if (!GEMINI_API_KEY) {
       return { text: '', error: 'חסר מפתח Gemini API' }
     }
 
-    const { system, messages, enableWebSearch, maxTokens = 4096, tools: fnTools } = options
+    const { system, messages, enableWebSearch, maxTokens = 4096, tools: fnTools, temperature = 0.7 } = options
 
-    const contents = messages.map(m => ({
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }],
-    }))
-
-    if (contents.length > 0 && contents[0].role === 'user') {
-      contents[0].parts[0].text = `${system}\n\n${contents[0].parts[0].text}`
-    }
+    // Map messages to Gemini wire format.
+    //  - user text:        {role:'user',  parts:[{text}]}
+    //  - assistant text:   {role:'model', parts:[{text}]}
+    //  - assistant calls:  {role:'model', parts:[{functionCall:{name,args}}, ...]}
+    //  - tool results:     {role:'user',  parts:[{functionResponse:{name,response:{result}}}, ...]}
+    //    (Gemini uses role=user for function responses — there's no separate tool role.)
+    const contents = messages.map(m => {
+      if (m.role === 'tool') {
+        return {
+          role: 'user',
+          parts: m.toolResults.map(tr => ({
+            functionResponse: { name: tr.name, response: { result: tr.result } },
+          })),
+        }
+      }
+      if (m.role === 'assistant' && m.toolCalls?.length) {
+        const parts: Record<string, unknown>[] = []
+        if (m.content) parts.push({ text: m.content })
+        for (const tc of m.toolCalls) {
+          parts.push({ functionCall: { name: tc.name, args: tc.args } })
+        }
+        return { role: 'model', parts }
+      }
+      return {
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: m.content || '' }],
+      }
+    })
 
     const body: Record<string, unknown> = {
+      systemInstruction: { parts: [{ text: system }] },
       contents,
-      generationConfig: { temperature: 0.7, maxOutputTokens: maxTokens },
+      generationConfig: { temperature, maxOutputTokens: maxTokens },
     }
 
     // Build tools array: function declarations + optional google search

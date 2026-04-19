@@ -85,12 +85,6 @@ export async function getStoreData(uid: string, store: StoreType): Promise<Groce
   const storeDoc = await storeRef(uid, store).get()
   let raw = storeDoc.exists ? storeDoc.data()! : null
 
-  // Shufersal fallback: read from root doc (pre-migration data)
-  if (!raw && store === 'shufersal') {
-    const rootDoc = await getAdminFirestore().collection(COLLECTION).doc(uid).get()
-    if (rootDoc.exists) raw = rootDoc.data()!
-  }
-
   if (!raw) return defaultData()
 
   return {

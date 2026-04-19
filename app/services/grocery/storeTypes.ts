@@ -29,6 +29,10 @@ export interface GroceryStorePlugin {
   listOrders(uid: string): Promise<StoreOrder[]>
   cancelOrder(uid: string, orderId: string): Promise<boolean>
 
+  // --- Existing-order editing (before cutoff) ---
+  readOrderItems(uid: string, orderId: string): Promise<StoreOrderItem[]>
+  modifyOrder(uid: string, orderId: string, changes: OrderModification): Promise<OrderModificationResult>
+
   // --- Slots ---
   listSlots(uid: string): Promise<StoreSlotDay[]>
 }
@@ -88,6 +92,27 @@ export interface StoreOrder {
   itemsCount: number
   cancelable: boolean
   items: { name: string; qty: number; price: string }[]
+}
+
+export interface StoreOrderItem {
+  entryRef: string      // opaque ref used by modifyOrder.remove (e.g. Shufersal entryNumber)
+  productId: string
+  name: string
+  qty: number
+  price: string
+}
+
+export interface OrderModification {
+  add?: { productId: string; qty: number }[]
+  remove?: string[]     // entryRef or productId
+  /** Change the delivery slot. Looked up via listSlots (day name + time). */
+  slot?: { day: string; time: string }
+}
+
+export interface OrderModificationResult {
+  added: number
+  removed: number
+  failed: { ref: string; error: string }[]
 }
 
 export interface StoreSlot {

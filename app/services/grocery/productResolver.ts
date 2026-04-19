@@ -123,14 +123,21 @@ export async function resolveProducts(
   return { resolved, unresolved }
 }
 
-/** Find a mapping by partial match on the item name. */
+/** Find a mapping by match on the item name. */
 function findMapping(name: string, mappings: ProductMapping) {
   const lower = name.toLowerCase()
   // Exact match first
   if (mappings[lower]) return mappings[lower]
-  // Partial: check if any stored key is contained in the name or vice versa
+  // Word-level match: all words of the shorter must appear in the longer,
+  // and the word-count difference must be at most 1 (avoids "צ'יפס" matching "צ'יפס קלאסי סבא שמעון")
+  const queryWords = lower.split(/\s+/)
   for (const [key, value] of Object.entries(mappings)) {
-    if (lower.includes(key) || key.includes(lower)) return value
+    const keyWords = key.split(/\s+/)
+    const shorter = queryWords.length <= keyWords.length ? queryWords : keyWords
+    const longer = queryWords.length <= keyWords.length ? keyWords : queryWords
+    if (longer.length - shorter.length <= 1 && shorter.every(w => longer.includes(w))) {
+      return value
+    }
   }
   return null
 }

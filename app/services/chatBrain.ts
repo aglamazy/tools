@@ -9,12 +9,12 @@
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import { processChat, type ChatMessage, type UserContext } from '@/app/services/telegram/chatProcessor'
 import { executeActions, savePendingSearch, type PendingProductSelection } from '@/app/services/telegram/actionExecutor'
-import { getGroceryData } from '@/app/services/grocery/groceryStore'
 import { getUserStores, getStoreData } from '@/app/services/grocery/groceryStoreMulti'
 import { getAllStores } from '@/app/services/grocery/storeRegistry'
 import { initStores } from '@/app/services/grocery/initStores'
 import { isCredentialsVerified } from '@/app/services/grocery/shufersalClient'
 import { listTasks } from '@/app/services/taskFirestoreService'
+import type { LLMMessage } from '@/app/services/llm/types'
 
 const MAX_HISTORY = 10
 
@@ -66,8 +66,7 @@ async function saveChat(collection: string, uid: string, messages: ChatMessage[]
 // --- Context builder ---
 
 async function buildContext(uid: string, displayName?: string, includeTasks = false, session?: SessionState): Promise<UserContext> {
-  const [groceryData, hasCreds, userStores, tasks] = await Promise.all([
-    getGroceryData(uid).catch(() => null),
+  const [hasCreds, userStores, tasks] = await Promise.all([
     isCredentialsVerified(uid).catch(() => false),
     getUserStores(uid).catch(() => ({ activeStores: [] as string[], defaultStore: 'shufersal' })),
     includeTasks ? listTasks(uid).catch(() => []) : Promise.resolve(undefined),
@@ -86,7 +85,6 @@ async function buildContext(uid: string, displayName?: string, includeTasks = fa
           add: Object.values(storeData.pendingChanges.add).map(i => ({ name: i.name, qty: i.qty, unit: i.unit })),
           remove: storeData.pendingChanges.remove,
         } : undefined,
-        orderStatus: storeData?.orderCycle?.status,
         schedule: storeData?.schedule,
       }
     })
@@ -98,22 +96,14 @@ async function buildContext(uid: string, displayName?: string, includeTasks = fa
     defaultStore: userStores.defaultStore,
     session,
     tasks: tasks || undefined,
-    // Legacy fallback
     hasCredentials: hasCreds,
-    standingList: groceryData?.standingList ? Object.values(groceryData.standingList).map(i => ({ name: i.name, qty: i.qty, unit: i.unit })) : undefined,
-    pendingChanges: groceryData ? {
-      add: Object.values(groceryData.pendingChanges.add).map(i => ({ name: i.name, qty: i.qty, unit: i.unit })),
-      remove: groceryData.pendingChanges.remove,
-    } : undefined,
-    orderStatus: groceryData?.orderCycle?.status,
-    schedule: groceryData?.schedule,
   }
 }
 
 // --- Main brain ---
 
-const AUTO_CONTINUE_ACTIONS = new Set(['list_slots', 'show_orders', 'list_tasks'])
-const MAX_ROUNDS = 2
+/** Safety cap on the agentic loop — prevents infinite tool loops. */
+const MAX_AGENTIC_STEPS = 5
 
 export async function handleReset(collection: string, uid: string): Promise<void> {
   await saveChat(collection, uid, [], {})
@@ -137,76 +127,90 @@ export async function processChatMessage(input: ChatBrainInput): Promise<ChatBra
   const { uid, text, displayName, historyCollection, includeTasks } = input
 
   const loaded = await loadChat(historyCollection, uid)
-  const history = loaded.messages
+  const persistedHistory = loaded.messages
   const session: SessionState = loaded.session || {}
-  history.push({ role: 'user', content: text })
 
   const context = await buildContext(uid, displayName, includeTasks, session)
+
+  // Working conversation for this turn. Starts with persisted text history,
+  // adds the new user message, and — during the agentic loop — accumulates
+  // assistant tool-call and tool-result messages that the LLM will see on
+  // subsequent iterations. Only user/assistant text is persisted back to Firestore.
+  const working: LLMMessage[] = [...persistedHistory, { role: 'user', content: text }]
 
   let replyText = ''
   let thinking: string | undefined
   let allActions: ChatBrainResult['actions'] = []
   let pendingSelections: PendingProductSelection[] | undefined
 
-  for (let round = 0; round < MAX_ROUNDS; round++) {
-    const result = await processChat(history, context)
-    console.log(`[ChatBrain] round=${round} uid=${uid} actions=${result.actions.map(a => a.action).join(',') || 'none'}: ${text}`)
+  for (let step = 0; step < MAX_AGENTIC_STEPS; step++) {
+    const result = await processChat(working, context)
     thinking = thinking ?? result.thinking
-    allActions = result.actions
 
-    // Handle set_session from LLM
+    // set_session is a sentinel hint, not a real tool call — update session and exclude it from tool execution.
     for (const action of result.actions) {
-      if (action.action === 'set_session') {
-        if (action.activeStore !== undefined) session.activeStore = action.activeStore as string | null
-      }
-    }
-
-    // Auto-track activeStore: if any action specifies a store, remember it
-    for (const action of result.actions) {
-      if (action.action !== 'set_session' && typeof action.store === 'string') {
+      if (action.action === 'set_session' && action.activeStore !== undefined) {
+        session.activeStore = action.activeStore as string | null
+      } else if (typeof action.store === 'string') {
         session.activeStore = action.store
       }
     }
-    console.log(`[ChatBrain] session:`, JSON.stringify(session))
-
-    // Filter out set_session before executing
     const executableActions = result.actions.filter(a => a.action !== 'set_session')
+    allActions = [...allActions, ...executableActions]
 
-    replyText = result.reply
-    let followUp = ''
+    console.log(`[ChatBrain] step=${step} uid=${uid} text=${(result.reply || '').slice(0, 40)} calls=${executableActions.map(a => a.action).join(',') || 'none'} session=${JSON.stringify(session)}`)
 
-    if (executableActions.length > 0) {
-      try {
-        const actionResult = await executeActions(uid, executableActions)
-        followUp = actionResult.followUp || ''
-        pendingSelections = actionResult.pendingSelections
-      } catch (actionErr) {
-        const msg = actionErr instanceof Error ? actionErr.message : String(actionErr)
-        console.error('[ChatBrain] Action execution failed:', msg)
-        followUp = 'שגיאה בביצוע הפעולה. נסה שוב.'
-      }
+    // LLM returned only text (or set_session hints) — that's the final reply.
+    if (executableActions.length === 0) {
+      replyText = result.reply
+      break
     }
 
-    const roundText = [replyText, followUp].filter(Boolean).join('\n\n')
+    // Record the assistant's tool-call turn on the working history so the next LLM call sees it.
+    working.push({
+      role: 'assistant',
+      content: result.reply || undefined,
+      toolCalls: executableActions.map(a => ({
+        name: a.action,
+        args: Object.fromEntries(Object.entries(a).filter(([k]) => k !== 'action')),
+      })),
+    })
 
-    const didOnlyInfo = executableActions.length > 0
-      && executableActions.every(a => AUTO_CONTINUE_ACTIONS.has(a.action))
-      && !pendingSelections?.length
-      && round < MAX_ROUNDS - 1
-
-    if (didOnlyInfo) {
-      history.push({ role: 'assistant', content: roundText })
-      replyText = ''
-      continue
+    // Execute tools.
+    let actionResult
+    try {
+      actionResult = await executeActions(uid, executableActions, session.activeStore)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[ChatBrain] Action execution threw:', msg)
+      actionResult = { results: executableActions.map(a => ({ name: a.action, result: `error: ${msg}` })), pendingSelections: undefined }
     }
 
-    replyText = roundText
-    break
+    // Record the tool responses so the next LLM iteration can reason over them.
+    working.push({
+      role: 'tool',
+      toolResults: actionResult.results,
+    })
+
+    // Product picker requires a user button press — stop the agentic loop here.
+    // The reply is whatever the LLM already said plus the search prompt text.
+    if (actionResult.pendingSelections?.length) {
+      pendingSelections = actionResult.pendingSelections
+      const extraText = actionResult.results.map(r => r.result).filter(Boolean).join('\n\n')
+      replyText = [result.reply, extraText].filter(Boolean).join('\n\n') || '...'
+      break
+    }
   }
 
-  // Save history + session
-  history.push({ role: 'assistant', content: replyText })
-  await saveChat(historyCollection, uid, history, session)
+  if (!replyText) {
+    // Hit the safety cap with no text response — surface a generic acknowledgment.
+    replyText = allActions.length > 0 ? '✓' : 'לא הבנתי, נסה שוב.'
+  }
+
+  // Persist only user + final-assistant text (tool calls/results are transient).
+  persistedHistory.push({ role: 'user', content: text })
+  persistedHistory.push({ role: 'assistant', content: replyText })
+  await saveChat(historyCollection, uid, persistedHistory, session)
 
   // Persist pending searches
   let selectionsWithKeys: ChatBrainResult['pendingSelections']

@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- single-purpose Shufersal HTTP client: auth, cart, search, slots, checkout (incl. edit-order), and order ops. Splitting would force exporting internal helpers (shuFetch, getCsrf, findMatchingSlot, etc.) for no reader benefit. */
 /**
  * Shufersal HTTP client — ported from Python (~/develop/claw/projects/shufersal/v2).
  * Pure HTTP, no browser automation.
@@ -351,7 +352,7 @@ async function withAuth<T>(
 export async function checkSession(cookies: Record<string, string>): Promise<boolean> {
   try {
     const { resp } = await shuFetch('/authentication/get-status-includes-otp', cookies)
-    const text = resp.text()
+    const text = await resp.text()
     console.log(`[Shufersal] checkSession: status=${resp.status} bodyLen=${text.length} isHtml=${text.trimStart().startsWith('<')}`)
     // Invalid session returns HTML (login page) or contains "anonymous"
     if (text.trimStart().startsWith('<')) return false
@@ -368,8 +369,44 @@ export async function checkSession(cookies: Record<string, string>): Promise<boo
 export async function cartRead(uid: string): Promise<CartItem[]> {
   const cookies = await getAuthenticatedCookies(uid)
   const { resp } = await shuFetch('/cart/load?restoreCart=true', cookies)
-  const html = resp.text()
+  const html = await resp.text()
   return parseCart(html)
+}
+
+/** Debug helper — fetch raw HTML of any Shufersal path using authenticated cookies. */
+export async function _debugFetchHtml(uid: string, path: string): Promise<{ status: number; html: string }> {
+  const cookies = await getAuthenticatedCookies(uid)
+  const { resp } = await shuFetch(path, cookies)
+  return { status: resp.status, html: await resp.text() }
+}
+
+/**
+ * Enter edit-order mode. After orderLoadToCart, call this with toMerge=false so
+ * Shufersal drops the user's existing cart and keeps only the order's items.
+ * Subsequent /cart/update and /cart/add calls then modify the order-edit cart.
+ */
+export async function cartMerge(uid: string, toMerge = false): Promise<void> {
+  const cookies = await getAuthenticatedCookies(uid)
+  const { resp } = await shuFetch(`/cart/merge?toMerge=${toMerge}`, cookies)
+  console.log(`[Shufersal] cartMerge toMerge=${toMerge}: status=${resp.status}`)
+}
+
+/** Find slot by day (Hebrew) + time, set it as the preselected delivery slot. */
+export async function preselectSlot(uid: string, day: string, time: string): Promise<{ success: boolean; slot?: DeliverySlot; error?: string }> {
+  const cookies = await getAuthenticatedCookies(uid)
+  const { resp } = await shuFetch('/timeSlot/preselection/getHomeDeliverySlots?amount=1.0', cookies)
+  if (!resp.ok) return { success: false, error: `slots fetch ${resp.status}` }
+  const rawSlots = await resp.json() as Record<string, any[]>
+  const slot = findMatchingSlot(rawSlots, day, time, false)
+  if (!slot) return { success: false, error: `no slot matches day=${day} time=${time}` }
+
+  await shuFetch('/timeSlot/preselection/postHomeDeliverySlot', cookies, {
+    method: 'POST',
+    body: JSON.stringify({ homeDeliveryTimeSlot: { code: slot.code, sourceOfSupply: 'DIRECT' } }),
+    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+  })
+  console.log(`[Shufersal] preselectSlot: ${slot.day} ${slot.date} ${slot.time} code=${slot.code}`)
+  return { success: true, slot }
 }
 
 export async function cartClear(uid: string): Promise<number> {
@@ -471,7 +508,7 @@ export async function cartRemove(uid: string, entryNumber: string): Promise<void
   // Get fresh CSRF from page
   const { resp: page, cookies: c1 } = await shuFetch('/cart/cartsummary', cookies)
   Object.assign(cookies, c1)
-  const pageHtml = page.text()
+  const pageHtml = await page.text()
   const csrf = extractCsrfToken(pageHtml) || getCsrf(cookies)
 
   const params = new URLSearchParams({
@@ -483,11 +520,14 @@ export async function cartRemove(uid: string, entryNumber: string): Promise<void
     'cartContext[action]': 'remove',
   })
 
-  await shuFetch(`/cart/update?${params}`, cookies, {
+  const { resp } = await shuFetch(`/cart/update?${params}`, cookies, {
     method: 'POST',
     body: `quantity=0&CSRFToken=${csrf}`,
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
   })
+  const body = await resp.text()
+  const parsed = parseCart(body)
+  console.log(`[Shufersal] cartRemove entry=${entryNumber} status=${resp.status} responseItems=${parsed.length} codes=${parsed.slice(0,5).map(p => p.catalogId).join(',')}`)
 }
 
 // --- Search ---
@@ -497,7 +537,7 @@ export async function search(uid: string, query: string): Promise<SearchResult[]
   const { resp } = await shuFetch(`/search?q=${encodeURIComponent(query)}`, cookies, {
     headers: { 'Accept': 'text/html' },
   })
-  const html = resp.text()
+  const html = await resp.text()
   return parseSearchResults(html)
 }
 
@@ -508,7 +548,7 @@ export async function listSlots(uid: string): Promise<DeliveryDay[]> {
   const { resp } = await shuFetch('/timeSlot/preselection/getHomeDeliverySlots?amount=1.0', cookies)
   if (!resp.ok) throw new Error(`Failed to fetch slots: ${resp.status}`)
 
-  const raw = resp.json() as Record<string, any[]>
+  const raw = await resp.json() as Record<string, any[]>
   return parseSlotsResponse(raw)
 }
 
@@ -534,7 +574,6 @@ export async function checkout(
 
   // Reload cookies after cart build (cartAddMany saves updated session)
   const cookies = await getAuthenticatedCookies(uid)
-  const csrf = getCsrf(cookies)
 
   // === GET SLOTS ===
   const { resp: slotsResp } = await shuFetch(
@@ -542,7 +581,7 @@ export async function checkout(
   )
   if (!slotsResp.ok) return { success: false, error: `Failed to fetch slots: ${slotsResp.status}` }
 
-  const rawSlots = slotsResp.json() as Record<string, any[]>
+  const rawSlots = await slotsResp.json() as Record<string, any[]>
   console.log(`[Shufersal] Slots: ${Object.keys(rawSlots).length} days, day=${options.day || 'any'} nearest=${options.nearest}`)
   let slot = findMatchingSlot(rawSlots, options.day, options.time, options.nearest)
   // Fallback to nearest if preferred day not available
@@ -554,7 +593,7 @@ export async function checkout(
 
   console.log(`[Shufersal] Selected slot: ${slot.day} ${slot.date} ${slot.time}`)
 
-  // === SET SLOT ===
+  // === SET SLOT (preselection) ===
   await shuFetch('/timeSlot/preselection/postHomeDeliverySlot', cookies, {
     method: 'POST',
     body: JSON.stringify({
@@ -569,29 +608,124 @@ export async function checkout(
     return { success: false, dryRun: true, deliveryWindow }
   }
 
-  // === CHECKOUT AUTH (Spring Security form post) ===
-  const { resp: authResp, cookies: authCookies } = await shuFetch('/checkout/j_spring_security_check', cookies, {
-    method: 'POST',
-    body: new URLSearchParams({
+  return commitCheckout(uid, { slot, deliveryWindow })
+}
+
+/**
+ * Run the post-cart commit flow: auth → SSO → optional slot-set → JWT → placeOrder.
+ * Used by both new-order checkout and edit-order commit. Assumes the cart is
+ * already populated (either built from items or loaded from an order via cartMerge).
+ */
+export async function commitCheckout(
+  uid: string,
+  options: {
+    slot?: DeliverySlot | null
+    deliveryWindow?: { day: string; date: string; time: string }
+    isEdit?: boolean
+  } = {},
+): Promise<CheckoutResult> {
+  const creds = await loadCredentials(uid)
+  if (!creds) return { success: false, error: 'Credentials not configured' }
+
+  const cookies = await getAuthenticatedCookies(uid)
+  const csrf = getCsrf(cookies)
+  const slot = options.slot
+  const deliveryWindow = options.deliveryWindow
+  // Edit mode is declared explicitly by the caller when there's no NEW slot,
+  // OR when committing a slot change on an existing order.
+  const isEdit = options.isEdit ?? !slot
+
+  if (isEdit) {
+    // Edit flow observed via MCP DevTools capture:
+    // 1. cart-order-updatable check
+    // 2. POST cart/checkout/auth (XHR) — password validation
+    // 3. POST checkout/j_spring_security_check (form, not XHR) — session upgrade + redirect to /checkout
+    // 4. Follow redirect chain to /miglog-checkout
+    const { resp: updResp } = await shuFetch('/checkout/cart-order-updatable', cookies)
+    console.log(`[Shufersal] cart-order-updatable: status=${updResp.status}`)
+
+    const editCsrf = getCsrf(cookies)
+    const pwForm = new URLSearchParams({
+      redirect_url: '/checkout',
       j_username: creds.email,
       j_password: creds.password,
-      redirect_url: `${BASE_URL}/miglog-checkout`,
-      fail_url: '/login/?error=true',
-      CSRFToken: csrf,
-    }).toString(),
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-  })
-  Object.assign(cookies, authCookies)
-  console.log(`[Shufersal] Checkout auth: status=${authResp.status}`)
+      recaptcha_token: '',
+      strongAuth: 'false',
+      CSRFToken: editCsrf,
+    }).toString()
 
-  // Follow redirect chain: /checkout → /miglog-checkout
-  if (authResp.status === 302) {
-    let loc = authResp.headers.get('location')
-    for (let i = 0; i < 5 && loc; i++) {
-      const { resp: r, cookies: c } = await shuFetch(loc, cookies)
+    // Step 2: XHR password validation
+    const { resp: pwXhr, cookies: pwXhrCookies } = await shuFetch('/cart/checkout/auth', cookies, {
+      method: 'POST',
+      body: pwForm,
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+    })
+    Object.assign(cookies, pwXhrCookies)
+    const pwXhrBody = await pwXhr.text()
+    console.log(`[Shufersal] Edit XHR auth: status=${pwXhr.status} body=${pwXhrBody.slice(0, 120)}`)
+    if (pwXhr.status !== 200 || !pwXhrBody.includes('"success":true')) {
+      return { success: false, error: `Edit auth (XHR) failed: ${pwXhr.status} ${pwXhrBody.slice(0, 200)}`, deliveryWindow }
+    }
+
+    // Step 3: form POST — upgrades the session. Returns 405 if session is
+    // already in checkout context (e.g. subsequent edit round), in which case
+    // we skip straight to navigation.
+    const accjwtBefore = cookies.accjwt?.slice(0, 30) || 'none'
+    const { resp: springResp, cookies: springCookies } = await shuFetch('/checkout/j_spring_security_check', cookies, {
+      method: 'POST',
+      body: pwForm,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    })
+    Object.assign(cookies, springCookies)
+    const accjwtAfter = cookies.accjwt?.slice(0, 30) || 'none'
+    console.log(`[Shufersal] Edit spring auth: status=${springResp.status} loc=${springResp.headers.get('location') || '-'} accjwtChanged=${accjwtBefore !== accjwtAfter}`)
+
+    // Step 4: navigate to /miglog-checkout to verify we're in checkout context.
+    // If spring returned 302, follow its location; otherwise go direct.
+    let mloc: string | null = springResp.status === 302
+      ? springResp.headers.get('location')
+      : '/miglog-checkout'
+    let landedOnCheckout = false
+    for (let i = 0; i < 6 && mloc; i++) {
+      const { resp: r, cookies: c } = await shuFetch(mloc, cookies)
       Object.assign(cookies, c)
-      console.log(`[Shufersal] Auth redirect ${i + 1}: ${r.status} → ${loc.slice(0, 60)}`)
-      loc = r.status === 302 ? r.headers.get('location') : null
+      console.log(`[Shufersal] Edit nav ${i}: ${r.status} → ${mloc.slice(0, 80)}`)
+      if (r.status === 200 && mloc.includes('miglog-checkout')) landedOnCheckout = true
+      mloc = r.status === 302 ? r.headers.get('location') : null
+    }
+    if (!landedOnCheckout) {
+      return { success: false, error: 'Failed to enter checkout context — session not authenticated', deliveryWindow }
+    }
+    await saveSession(uid, { cookies, updatedAt: new Date().toISOString() })
+    console.log(`[Shufersal] Edit cookies after: ${Object.keys(cookies).join(',')}`)
+  } else {
+    // New-order flow: Spring Security form post
+    const { resp: authResp, cookies: authCookies } = await shuFetch('/checkout/j_spring_security_check', cookies, {
+      method: 'POST',
+      body: new URLSearchParams({
+        j_username: creds.email,
+        j_password: creds.password,
+        redirect_url: `${BASE_URL}/miglog-checkout`,
+        fail_url: '/login/?error=true',
+        CSRFToken: csrf,
+      }).toString(),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    })
+    Object.assign(cookies, authCookies)
+    console.log(`[Shufersal] Checkout auth: status=${authResp.status}`)
+
+    // Follow redirect chain: /checkout → /miglog-checkout
+    if (authResp.status === 302) {
+      let loc = authResp.headers.get('location')
+      for (let i = 0; i < 5 && loc; i++) {
+        const { resp: r, cookies: c } = await shuFetch(loc, cookies)
+        Object.assign(cookies, c)
+        console.log(`[Shufersal] Auth redirect ${i + 1}: ${r.status} → ${loc.slice(0, 60)}`)
+        loc = r.status === 302 ? r.headers.get('location') : null
+      }
     }
   }
 
@@ -600,23 +734,24 @@ export async function checkout(
   Object.assign(cookies, ssoCookies)
   console.log(`[Shufersal] SSO token: status=${ssoResp.status}`)
 
-  // === SET SLOT (checkout context) ===
-  // Refresh CSRF after checkout auth — it may have rotated
-  const checkoutCsrf = getCsrf(cookies)
-  const { resp: slotSetResp, cookies: slotCookies } = await shuFetch('/checkout/timeSlot/postHomeDeliverySlot', cookies, {
-    method: 'POST',
-    body: JSON.stringify({
-      homeDeliveryTimeSlot: { code: slot.code, sourceOfSupply: 'DIRECT' },
-    }),
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Requested-With': 'XMLHttpRequest',
-      'csrftoken': checkoutCsrf,
-    },
-  })
-  Object.assign(cookies, slotCookies)
-  const slotBody = slotSetResp.text()
-  console.log(`[Shufersal] Checkout slot set: status=${slotSetResp.status} body=${slotBody.slice(0, 300)}`)
+  // === SET SLOT (checkout context) — only for new orders. Edits keep existing slot. ===
+  if (slot) {
+    const checkoutCsrf = getCsrf(cookies)
+    const { resp: slotSetResp, cookies: slotCookies } = await shuFetch('/checkout/timeSlot/postHomeDeliverySlot', cookies, {
+      method: 'POST',
+      body: JSON.stringify({
+        homeDeliveryTimeSlot: { code: slot.code, sourceOfSupply: 'DIRECT' },
+      }),
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        'csrftoken': checkoutCsrf,
+      },
+    })
+    Object.assign(cookies, slotCookies)
+    const slotBody = await slotSetResp.text()
+    console.log(`[Shufersal] Checkout slot set: status=${slotSetResp.status} body=${slotBody.slice(0, 300)}`)
+  }
 
   // === GET PAYMENT JWT from Payme ===
   const jwtResp = await fetch('https://hf.payme.io/client-data', {
@@ -640,13 +775,15 @@ export async function checkout(
   if (!jwtPayme) return { success: false, error: 'Failed to get payment token', deliveryWindow }
   console.log(`[Shufersal] Got Payme JWT (${jwtPayme.length} chars)`)
 
+  console.log(`[Shufersal] Pre-placeOrder cookies: ${Object.keys(cookies).join(',')}`)
+
   // === PLACE ORDER ===
   const { resp: orderResp, cookies: orderCookies } = await shuFetch(
     `/checkout/placeOrder?jwtPayme=${encodeURIComponent(jwtPayme)}&after3ds=false`, cookies,
   )
   Object.assign(cookies, orderCookies)
-  const orderBody = orderResp.text()
-  console.log(`[Shufersal] Place order: status=${orderResp.status} body=${orderBody.slice(0, 500)}`)
+  const orderBody = await orderResp.text()
+  console.log(`[Shufersal] Place order: status=${orderResp.status} location=${orderResp.headers.get('location') || '-'} body=${orderBody.slice(0, 500)}`)
 
   if (orderResp.status !== 200) {
     return { success: false, error: `Place order failed: ${orderResp.status} — ${orderBody.slice(0, 200)}`, deliveryWindow }
@@ -656,6 +793,17 @@ export async function checkout(
   if (orderBody.includes('ERROR') || orderBody.includes('TIMESLOT_UNAVAILABLE')) {
     return { success: false, error: `Place order error: ${orderBody.slice(0, 300)}`, deliveryWindow }
   }
+  try {
+    const orderJson = JSON.parse(orderBody)
+    if (orderJson.success === false) {
+      const reason = orderJson.directCreditCardError ? 'שגיאת כרטיס אשראי'
+        : orderJson.otherCreditCardError ? 'שגיאת אמצעי תשלום אחר'
+        : 'הזמנה נדחתה'
+      return { success: false, error: `Place order failed: ${reason}`, deliveryWindow }
+    }
+  } catch {
+    // not JSON — continue
+  }
 
   // === GET ORDER ID ===
   let orderId: string | null = null
@@ -663,7 +811,7 @@ export async function checkout(
     const { resp: ordersResp } = await shuFetch('/my-account/orders', cookies, {
       headers: { 'X-Requested-With': 'XMLHttpRequest' },
     })
-    const rawText = ordersResp.text()
+    const rawText = await ordersResp.text()
     const orders = JSON.parse(rawText) as any
     const active = orders.activeOrders || []
     if (active.length > 0) {
@@ -716,7 +864,7 @@ export async function ordersList(uid: string): Promise<ActiveOrder[]> {
       const { resp } = await shuFetch('/my-account/orders', cookies, {
         headers: { 'X-Requested-With': 'XMLHttpRequest' },
       })
-      const rawText = resp.text()
+      const rawText = await resp.text()
       try {
         return JSON.parse(rawText) as any
       } catch {
@@ -771,14 +919,14 @@ export async function ordersList(uid: string): Promise<ActiveOrder[]> {
 export async function orderIsUpdatable(uid: string, orderId: string): Promise<boolean> {
   const cookies = await getAuthenticatedCookies(uid)
   const { resp } = await shuFetch(`/my-account/orders/${orderId}/is-timeslot-updatable`, cookies)
-  const text = resp.text()
+  const text = await resp.text()
   return text.trim().toLowerCase() === 'true'
 }
 
 export async function orderLoadToCart(uid: string, orderId: string): Promise<CartItem[]> {
   const cookies = await getAuthenticatedCookies(uid)
   const { resp } = await shuFetch(`/cart/cartFromOrder/${orderId}`, cookies)
-  return parseCart(resp.text())
+  return parseCart(await resp.text())
 }
 
 export async function cancelOrder(uid: string, orderId: string): Promise<boolean> {
@@ -795,14 +943,24 @@ export async function cancelOrder(uid: string, orderId: string): Promise<boolean
 function parseCart(html: string): CartItem[] {
   const $ = cheerio.load(html)
   const items: CartItem[] = []
+  const seen = new Set<string>()
   $('article.miglog-prod[data-product-code]').each((_, el) => {
     const $el = $(el)
+    const catalogId = $el.attr('data-product-code') || ''
+    const entryNumber = $el.attr('data-entry-number') || null
+    const key = `${catalogId}|${entryNumber ?? ''}`
+    if (seen.has(key)) return
+    seen.add(key)
+    const entryQty = parseFloat($el.attr('data-entry-qty') || '')
+    const qty = Number.isFinite(entryQty)
+      ? entryQty
+      : parseInt($el.find('input.js-qty-selector-input').attr('value') || '1', 10)
     items.push({
-      catalogId: $el.attr('data-product-code') || '',
-      name: $el.find('.miglog-prod-name').text().trim(),
-      price: $el.find('.miglog-prod-totalPrize').text().trim(),
-      qty: parseInt($el.find('input.js-qty-selector-input').attr('value') || '1', 10),
-      entryNumber: $el.find('[data-entry-number]').attr('data-entry-number') || null,
+      catalogId,
+      name: $el.find('.miglog-prod-name').first().text().trim(),
+      price: $el.find('.miglog-prod-totalPrize').first().text().trim(),
+      qty,
+      entryNumber,
     })
   })
   return items
@@ -890,6 +1048,21 @@ function parseSlotsResponse(raw: Record<string, any[]>): DeliveryDay[] {
   return days
 }
 
+/** Resolve "מחר"/"היום" to DD/MM, or extract DD/MM from DD/MM/YYYY. */
+function resolveDayToDate(day: string): string | null {
+  const now = new Date()
+  if (day === 'מחר' || day === 'tomorrow') {
+    const d = new Date(now); d.setDate(now.getDate() + 1)
+    return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`
+  }
+  if (day === 'היום' || day === 'today') {
+    return `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}`
+  }
+  const ddmm = day.match(/^(\d{1,2})\/(\d{1,2})(?:\/\d{4})?$/)
+  if (ddmm) return `${ddmm[1].padStart(2, '0')}/${ddmm[2].padStart(2, '0')}`
+  return null
+}
+
 function findMatchingSlot(
   raw: Record<string, any[]>,
   day?: string,
@@ -897,9 +1070,14 @@ function findMatchingSlot(
   nearest?: boolean,
 ): DeliverySlot | null {
   const allDays = parseSlotsResponse(raw)
+  const resolvedDate = day ? resolveDayToDate(day) : null
 
   for (const d of allDays) {
-    if (day && !d.day.includes(day) && !nearest) continue
+    if (day && !nearest) {
+      const matchByDate = resolvedDate ? d.date === resolvedDate : false
+      const matchByName = d.day.includes(day)
+      if (!matchByDate && !matchByName) continue
+    }
     for (const s of d.slots) {
       if (time && s.time !== time && !nearest) continue
       return s

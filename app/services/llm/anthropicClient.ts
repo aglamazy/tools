@@ -21,11 +21,28 @@ export class AnthropicClient implements LLMClient {
         })
       }
 
+      // Anthropic path here is used for plain text chats only — tool calls are
+      // not supported in this client. Collapse tool-call / tool-result messages
+      // to plain text so we don't break simple flows that use Claude.
+      const anthropicMessages = messages
+        .map(m => {
+          if (m.role === 'tool') {
+            const text = m.toolResults.map(r => `${r.name}: ${typeof r.result === 'string' ? r.result : JSON.stringify(r.result)}`).join('\n')
+            return { role: 'user' as const, content: text }
+          }
+          if (m.role === 'assistant') {
+            const text = m.content ?? (m.toolCalls?.length ? m.toolCalls.map(c => `[called ${c.name}]`).join(' ') : '')
+            return { role: 'assistant' as const, content: text }
+          }
+          return { role: 'user' as const, content: m.content }
+        })
+        .filter(m => m.content)
+
       const response = await client.messages.create({
         model: 'claude-sonnet-4-20250514',
         max_tokens: maxTokens,
         system,
-        messages: messages.map(m => ({ role: m.role, content: m.content })),
+        messages: anthropicMessages,
         ...(tools.length > 0 && { tools }),
       })
 

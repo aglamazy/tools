@@ -5,9 +5,11 @@
 
 import { GeminiClient } from '@/app/services/llm/geminiClient'
 import { ACTION_DECLARATIONS } from './actionDeclarations'
+import type { LLMMessage } from '@/app/services/llm/types'
 
 const gemini = new GeminiClient()
 
+/** Persisted chat history shape — plain user/assistant text. Tool calls/results live only in the working in-turn conversation. */
 export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
@@ -20,6 +22,7 @@ export interface StoreContext {
   standingList?: { name: string; qty: number; unit?: string }[]
   pendingChanges?: { add: { name: string; qty: number; unit?: string }[]; remove: string[] }
   orderStatus?: string
+  orderId?: string
   schedule?: {
     orderDay: number
     preferredSlot: { day: string; time: string }
@@ -75,6 +78,7 @@ const SYSTEM_PROMPT = `אתה AglamazoBot — עוזר משפחתי לניהול
 כל פעולת קניות מכוונת לחנות ספציפית. **חובה** לשלוח store בכל קריאה לפונקציה.
 - אם המשתמש מזכיר שם חנות — השתמש בה **וקרא ל-set_session עם activeStore**
 - אם לא מזכיר חנות — השתמש ב-activeStore מהסשן (אם יש), אחרת חנות ברירת המחדל
+- מיפוי שמות: "שופרסל" → store="shufersal", "מקור השפע" / "רמי לוי" → store="retalix"
 
 ## סשן (session state)
 המצב הנוכחי של הסשן מופיע למטה. כשמשהו משתנה, קרא ל-set_session כדי לעדכן.
@@ -103,44 +107,115 @@ const SYSTEM_PROMPT = `אתה AglamazoBot — עוזר משפחתי לניהול
 - אם ההודעה היא שיחה רגילה — תגיב בטבעיות, בלי קריאות לפונקציות
 - אם לא ברור מה המשתמש רוצה, שאל — אל תנחש
 
+## הזמנה פתוחה (orderStatus: active/review)
+כשיש הזמנה פתוחה בחנות:
+- הוספת מוצר → search_product עם target:"pending" — המוצר יתווסף גם לעגלה הפתוחה אוטומטית
+- הסרת מוצר → remove_items — מוסיר גם מהעגלה הפתוחה
+- "מה בהזמנה?" / "תראה לי ההזמנה" → show_cart (לא show_list) — מציג תוכן עגלה בפועל
+- אל תפתח הזמנה חדשה כשיש כבר הזמנה פתוחה
+
 ## לאחר קבלת תוצאות list_slots
 כאשר תוצאות משבצות כבר מופיעות בהיסטוריית השיחה:
 - **אל תרשום את רשימת המשבצות שוב** — כבר נראתה למשתמש
 - **השתמש אך ורק בתאריכים שמופיעים ברשימה** — אסור להמציא תאריכים
 - אם אין לתאריך המבוקש — ציין זאת ושאל אם לזמין לתאריך הקרוב ביותר
-- כשמפעיל trigger_order: כתוב רק "מזמין..." — אל תודיע על הצלחה לפני שהמערכת אישרה`
+- כשמפעיל trigger_order: כתוב רק "מזמין..." — אל תודיע על הצלחה לפני שהמערכת אישרה
+
+## כלל יסוד — אל תמציא נתונים
+אסור להמציא מספרי הזמנה, שמות מוצרים, מחירים, כמויות או תאריכים. אם צריך ערך כזה — תקרא לכלי שמחזיר אותו. אם כלי כבר החזיר ערך בשיחה הזו — תצטט אותו כפי שהוא, אל תייצר אותו מחדש.`
+
+const MAX_HISTORY_CHARS = 12000
+
+/** Drop oldest messages until total content size is under the cap. Never trim the tail (in-flight messages). */
+function capBySize(messages: LLMMessage[], maxChars = MAX_HISTORY_CHARS): LLMMessage[] {
+  const sizeOf = (m: LLMMessage): number => {
+    if (m.role === 'tool') return m.toolResults.reduce((n, r) => n + (typeof r.result === 'string' ? r.result.length : JSON.stringify(r.result).length) + r.name.length, 0)
+    if (m.role === 'assistant') return (m.content?.length || 0) + (m.toolCalls?.reduce((n, c) => n + c.name.length + JSON.stringify(c.args).length, 0) || 0)
+    return m.content.length
+  }
+  let total = messages.reduce((n, m) => n + sizeOf(m), 0)
+  let start = 0
+  while (total > maxChars && start < messages.length - 1) {
+    total -= sizeOf(messages[start])
+    start++
+  }
+  return messages.slice(start)
+}
+
+/** Keep only the last `keep` messages. Used as a recovery step when Gemini returns empty. */
+function compactHistory(messages: LLMMessage[], keep: number): LLMMessage[] {
+  if (messages.length <= keep) return messages
+  return messages.slice(-keep)
+}
+
+function isEmptyResponse(r: { text: string; functionCalls?: unknown[]; error?: string }): boolean {
+  return !r.text && !r.functionCalls?.length && !!r.error
+}
 
 /**
- * Process a chat message with conversation history.
- * Uses Gemini function calling — actions come as structured functionCall parts.
+ * Call Gemini for one turn. Takes an LLMMessage[] that can include tool-call
+ * and tool-result messages so the model sees the full agentic trace.
+ * Strips any legacy ```action``` blocks from old persisted assistant text.
+ * Proactively caps history by size; on empty response, compacts and retries.
  */
 export async function processChat(
-  messages: ChatMessage[],
+  messages: LLMMessage[],
   context: UserContext,
 ): Promise<ChatResult> {
   const contextBlock = buildContextBlock(context)
   const fullSystem = `${SYSTEM_PROMPT}\n\n## מצב נוכחי\n${contextBlock}`
 
-  // Clean old action blocks from history (backward compat with pre-function-calling history)
-  const cleanMessages = messages.map(m => {
-    if (m.role === 'assistant') {
-      return { ...m, content: m.content.replace(/```action\s*\n?[\s\S]*?```/g, '').trim() }
-    }
-    return m
-  }).filter(m => m.content)
+  const cleanMessages: LLMMessage[] = capBySize(messages
+    .map(m => {
+      if (m.role === 'assistant' && typeof m.content === 'string' && m.content) {
+        return { ...m, content: m.content.replace(/```action\s*\n?[\s\S]*?```/g, '').trim() }
+      }
+      return m
+    })
+    // Drop only text-only assistant messages that are now empty; keep tool-call messages.
+    .filter(m => !(m.role === 'assistant' && !m.toolCalls?.length && !m.content))
+    .filter(m => !(m.role === 'user' && !m.content)))
 
   console.log('\n========== SYSTEM PROMPT ==========')
   console.log(fullSystem.slice(0, 500) + '...')
   console.log('========== MESSAGES ==========')
-  cleanMessages.forEach((m, i) => console.log(`[${i}] ${m.role}: ${m.content.slice(0, 100)}`))
+  cleanMessages.forEach((m, i) => {
+    if (m.role === 'tool') {
+      console.log(`[${i}] tool: ${m.toolResults.map(r => r.name).join(',')}`)
+    } else if (m.role === 'assistant' && m.toolCalls?.length) {
+      console.log(`[${i}] assistant calls: ${m.toolCalls.map(c => c.name).join(',')}`)
+    } else {
+      console.log(`[${i}] ${m.role}: ${(m.content || '').slice(0, 100)}`)
+    }
+  })
   console.log('========================================\n')
 
-  const result = await gemini.chatWithTools({
-    system: fullSystem,
-    messages: cleanMessages,
-    maxTokens: 1024,
-    tools: ACTION_DECLARATIONS,
-  })
+  // Gemini occasionally returns an empty response (finishReason: STOP, 0 parts).
+  // Recovery ladder:
+  //   1. Retry with compacted history (drops old tokens).
+  //   2. Retry with compacted history AND temperature=0 (deterministic — helps
+  //      on short ambiguous turns like "אתה בטוח?" → "כן" where 0.7 sampling
+  //      seems to return 0 parts).
+  let result = await callWithTools(cleanMessages, 0.7)
+  if (isEmptyResponse(result)) {
+    const compacted = compactHistory(cleanMessages, 6)
+    console.warn(`[ChatProcessor] Empty Gemini response (${result.error}). Retrying with compacted history: ${cleanMessages.length} → ${compacted.length} messages`)
+    result = await callWithTools(compacted, 0.7)
+  }
+  if (isEmptyResponse(result)) {
+    console.warn(`[ChatProcessor] Still empty. Retrying with temperature=0 (deterministic).`)
+    result = await callWithTools(compactHistory(cleanMessages, 6), 0)
+  }
+
+  async function callWithTools(msgs: LLMMessage[], temperature: number) {
+    return gemini.chatWithTools({
+      system: fullSystem,
+      messages: msgs,
+      maxTokens: 1024,
+      tools: ACTION_DECLARATIONS,
+      temperature,
+    })
+  }
 
   console.log('[ChatProcessor] text:', result.text?.slice(0, 100))
   console.log('[ChatProcessor] functionCalls:', result.functionCalls?.map(fc => `${fc.name}(${JSON.stringify(fc.args)})`).join(', ') || 'none')
@@ -157,8 +232,8 @@ export async function processChat(
     ...fc.args,
   }))
 
-  // Gemini sometimes returns only function calls with no text — provide a minimal reply
-  const reply = result.text || (actions.length > 0 ? 'בסדר!' : '')
+  // Gemini sometimes returns only function calls with no text
+  const reply = result.text || ''
 
   return {
     reply,
@@ -205,7 +280,12 @@ function buildContextBlock(ctx: UserContext): string {
           const pending = [adds, removes].filter(Boolean).join(' | ')
           if (pending) parts.push(`שינויים השבוע: ${pending}`)
         }
-        if (store.orderStatus) parts.push(`סטטוס הזמנה: ${store.orderStatus}`)
+        if (store.orderStatus) {
+          const orderLine = store.orderId
+            ? `סטטוס הזמנה: ${store.orderStatus} (#${store.orderId})`
+            : `סטטוס הזמנה: ${store.orderStatus}`
+          parts.push(orderLine)
+        }
         if (store.schedule) {
           parts.push(`לוח זמנים: הזמנה ביום ${DAY_NAMES[store.schedule.orderDay]}, משלוח ${store.schedule.preferredSlot.day} ${store.schedule.preferredSlot.time}, תזכורת ${store.schedule.reviewReminderHours} שעות לפני`)
         }

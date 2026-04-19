@@ -129,7 +129,7 @@ export const ACTION_DECLARATIONS: FunctionDeclaration[] = [
       properties: {
         day: { type: 'string', description: 'יום: "היום","מחר","ראשון"... או DD/MM/YYYY' },
         time: { type: 'string', description: 'שעה מרשימת המשבצות' },
-        store: { type: 'string' },
+        store: { type: 'string', description: 'מזהה חנות (shufersal, retalix)' },
       },
     },
   },
@@ -139,8 +139,16 @@ export const ACTION_DECLARATIONS: FunctionDeclaration[] = [
     parameters: {
       type: 'object',
       properties: {
-        store: { type: 'string' },
+        store: { type: 'string', description: 'מזהה חנות (shufersal, retalix)' },
       },
+    },
+  },
+  {
+    name: 'show_cart',
+    description: 'הצג את תוכן העגלה / ההזמנה הפתוחה בשופרסל (פריטים בפועל, לא הרשימה)',
+    parameters: {
+      type: 'object',
+      properties: {},
     },
   },
   {
