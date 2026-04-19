@@ -1,21 +1,17 @@
 'use client'
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect } from 'react'
 import type { Category, CategoryType } from '@/app/types/category'
 import { generateDistinctColors } from '@/app/utils/colorGenerator'
 import { db, type Business } from '@/app/db/financeDB'
 import { BusinessType } from '@/app/types/business'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { businessStore } from '@/app/stores/businessStore'
-import { getHouseholdInfo } from '@/app/services/householdService'
-import { getUser } from '@/app/stores/authStore'
 import YesNoModal from '../YesNoModal'
 import Modal from '../Modal'
 
-type HouseholdMember = { uid: string; label: string }
 type Scope =
   | { kind: 'household' }
-  | { kind: 'member'; uid: string }
   | { kind: 'business'; id: number }
 
 const DEFAULT_CATEGORIES: Category[] = []
@@ -31,46 +27,18 @@ export default function CategoriesTab() {
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
   const [businesses, setBusinesses] = useState<Business[]>([])
-  const [members, setMembers] = useState<HouseholdMember[]>([])
   const [scope, setScope] = useState<Scope>({ kind: 'household' })
 
   useEffect(() => {
     loadCategories()
     loadCategoryUsage()
     loadBusinesses()
-    void loadMembers()
   }, [])
 
   const loadBusinesses = async () => {
     const all = await businessStore.getAll()
     setBusinesses(all.filter(b => (b.type === BusinessType.Business || b.type === BusinessType.Teacher) && !b.sharedWithMe))
   }
-
-  const loadMembers = useCallback(async () => {
-    const current = getUser()
-    const result: HouseholdMember[] = []
-    try {
-      const info = await getHouseholdInfo()
-      if (info.household) {
-        const emails = (info.household as any).memberEmails || {}
-        const names = (info.household as any).memberNames || {}
-        for (const uid of info.household.members) {
-          result.push({ uid, label: names[uid] || emails[uid] || uid })
-        }
-      }
-    } catch {/* no household */}
-    if (result.length === 0 && current) {
-      result.push({ uid: current.uid, label: current.displayName || current.email || current.uid })
-    }
-    setMembers(result)
-
-    // Idempotently seed system tax categories for every member.
-    for (const m of result) {
-      subjectStore.seedSystemCategoriesForUser(m.uid)
-    }
-    // Refresh local state in case seeding added rows.
-    setCategories(subjectStore.getAll())
-  }, [])
 
   const loadCategories = () => {
     try {
@@ -118,23 +86,17 @@ export default function CategoriesTab() {
   const moveCategoryToScope = (categoryId: string, target: Scope) => {
     const cat = categories.find(c => c.id === categoryId)
     if (!cat) return
-    if (cat.system) {
-      setAlertModal({ isOpen: true, message: 'לא ניתן להעביר נושא מערכת' })
-      return
-    }
     if (cat.parentId) {
       setAlertModal({ isOpen: true, message: 'לא ניתן להעביר תת-נושא — גרור את נושא-העל' })
       return
     }
     const targetBusinessId = target.kind === 'business' ? target.id : undefined
-    const targetUserId = target.kind === 'member' ? target.uid : undefined
-    // Same-scope drop: no-op
-    if ((cat.businessId ?? undefined) === targetBusinessId && (cat.userId ?? undefined) === targetUserId) return
+    if ((cat.businessId ?? undefined) === targetBusinessId) return
 
     const subIds = new Set(cat.subCategories || [])
     const updated = categories.map(c => {
       if (c.id === categoryId || subIds.has(c.id)) {
-        return { ...c, businessId: targetBusinessId, userId: targetUserId }
+        return { ...c, businessId: targetBusinessId }
       }
       return c
     })
@@ -196,7 +158,6 @@ export default function CategoriesTab() {
       createdAt: new Date().toISOString(),
       isFixed: false,
       ...(scope.kind === 'business' ? { businessId: scope.id } : {}),
-      ...(scope.kind === 'member' ? { userId: scope.uid } : {}),
     }
     setEditingCategory(newCategory)
     setIsAddingNew(true)
@@ -249,11 +210,6 @@ export default function CategoriesTab() {
   }
 
   const handleDeleteCategory = (categoryId: string) => {
-    const cat = categories.find(c => c.id === categoryId)
-    if (cat?.system) {
-      setAlertModal({ isOpen: true, message: 'לא ניתן למחוק נושא מערכת' })
-      return
-    }
     setDeleteConfirm({ isOpen: true, categoryId })
   }
 
@@ -393,7 +349,7 @@ export default function CategoriesTab() {
               ({categoryUsage[category.name]?.bank || 0} בנק / {categoryUsage[category.name]?.credit || 0} אשראי)
             </span>
           </div>
-          {!isSubCategory && !category.system && (
+          {!isSubCategory && (
             <button
               onClick={() => handleAddSubCategory(category.id)}
               style={{
@@ -410,47 +366,38 @@ export default function CategoriesTab() {
               +
             </button>
           )}
-          {!category.system && (
-            <button
-              onClick={() => {
-                setEditingCategory({ ...category, isFixed: category.isFixed ?? false })
-                setIsAddingNew(false)
-                setAddingSubCategoryFor(null)
-              }}
-              style={{
-                padding: '0.35rem 0.75rem',
-                fontSize: '0.85rem',
-                background: 'transparent',
-                border: '1px solid #cbd5e1',
-                borderRadius: '0.375rem',
-                cursor: 'pointer',
-                color: '#475569',
-              }}
-            >
-              ערוך
-            </button>
-          )}
-          {!category.system && (
-            <button
-              onClick={() => handleDeleteCategory(category.id)}
-              style={{
-                padding: '0.35rem 0.75rem',
-                fontSize: '0.85rem',
-                background: 'transparent',
-                border: '1px solid #fecaca',
-                borderRadius: '0.375rem',
-                cursor: 'pointer',
-                color: '#dc2626',
-              }}
-            >
-              מחק
-            </button>
-          )}
-          {category.system && (
-            <span style={{ fontSize: '0.75rem', color: '#64748b', padding: '0.2rem 0.5rem', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: '0.25rem' }}>
-              מערכת
-            </span>
-          )}
+          <button
+            onClick={() => {
+              setEditingCategory({ ...category, isFixed: category.isFixed ?? false })
+              setIsAddingNew(false)
+              setAddingSubCategoryFor(null)
+            }}
+            style={{
+              padding: '0.35rem 0.75rem',
+              fontSize: '0.85rem',
+              background: 'transparent',
+              border: '1px solid #cbd5e1',
+              borderRadius: '0.375rem',
+              cursor: 'pointer',
+              color: '#475569',
+            }}
+          >
+            ערוך
+          </button>
+          <button
+            onClick={() => handleDeleteCategory(category.id)}
+            style={{
+              padding: '0.35rem 0.75rem',
+              fontSize: '0.85rem',
+              background: 'transparent',
+              border: '1px solid #fecaca',
+              borderRadius: '0.375rem',
+              cursor: 'pointer',
+              color: '#dc2626',
+            }}
+          >
+            מחק
+          </button>
         </div>
         {category.subCategories && category.subCategories.length > 0 && (
           <div style={{ marginTop: '0.25rem', marginBottom: '0.25rem' }}>
@@ -478,19 +425,16 @@ export default function CategoriesTab() {
     <>
       {(() => {
         const inScope = (cat: Category): boolean => {
-          if (scope.kind === 'household') return !cat.businessId && !cat.userId
-          if (scope.kind === 'member') return cat.userId === scope.uid
+          if (scope.kind === 'household') return !cat.businessId
           return cat.businessId === scope.id
         }
 
         const subTabs: { id: string; label: string; scope: Scope }[] = [
           { id: 'household', label: '🏠 משק בית', scope: { kind: 'household' } },
-          ...members.map(m => ({ id: `m-${m.uid}`, label: `👤 ${m.label}`, scope: { kind: 'member' as const, uid: m.uid } })),
           ...businesses.map(b => ({ id: `b-${b.id}`, label: `🏢 ${b.name}`, scope: { kind: 'business' as const, id: b.id! } })),
         ]
         const activeId =
           scope.kind === 'household' ? 'household'
-          : scope.kind === 'member' ? `m-${scope.uid}`
           : `b-${scope.id}`
 
         return (
@@ -702,14 +646,9 @@ export default function CategoriesTab() {
                   <label htmlFor="isExternal" style={{ fontWeight: 600, cursor: 'pointer' }}>חיצוני</label>
                   <span style={{ fontSize: '0.8rem', color: '#64748b' }}>(מתנות, ירושה, העברות חד-פעמיות - לא יספר כהכנסה שוטפת)</span>
                 </div>
-                {(editingCategory.businessId || editingCategory.userId) && (
+                {editingCategory.businessId && (
                   <div style={{ fontSize: '0.8rem', color: '#64748b', padding: '0.5rem 0.75rem', background: '#f8fafc', borderRadius: '0.375rem', border: '1px solid #e2e8f0' }}>
-                    {editingCategory.businessId && (
-                      <>שיוך: עסק — <strong>{businesses.find(b => b.id === editingCategory.businessId)?.name || editingCategory.businessId}</strong></>
-                    )}
-                    {editingCategory.userId && (
-                      <>שיוך: חבר/ה — <strong>{members.find(m => m.uid === editingCategory.userId)?.label || editingCategory.userId}</strong></>
-                    )}
+                    שיוך: עסק — <strong>{businesses.find(b => b.id === editingCategory.businessId)?.name || editingCategory.businessId}</strong>
                   </div>
                 )}
                 <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>

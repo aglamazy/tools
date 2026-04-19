@@ -460,9 +460,17 @@ export default function TodoPage() {
 
   // Per-quadrant sorted tasks (memoized — computed once per render, not 4x)
   const tasksByQuadrant = useMemo(() => {
+    // Three tiers, top to bottom:
+    //   4 = payment obligations (BTL / income-tax etc.) — always on top
+    //   3/2/1 = regular high / medium / low
+    //   0 = "hygiene" auto-tasks (missing files, uncategorized classification)
+    const pv = (t: CombinedTask): number => {
+      if (t.taskType === 'auto' && t.autoType === 'expected-payment') return 4
+      if (t.taskType === 'auto' && (t.autoType === 'missing-file' || t.autoType === 'uncategorized')) return 0
+      return t.priority === 'high' ? 3 : t.priority === 'medium' ? 2 : 1
+    }
     const sortFn = (a: CombinedTask, b: CombinedTask) => {
-      const pv = (p: Priority) => p === 'high' ? 3 : p === 'medium' ? 2 : 1
-      const pd = pv(b.priority) - pv(a.priority)
+      const pd = pv(b) - pv(a)
       if (pd !== 0) return pd
       if (a.deadline && b.deadline) return new Date(a.deadline).getTime() - new Date(b.deadline).getTime()
       return 0

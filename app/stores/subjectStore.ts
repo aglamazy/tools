@@ -145,46 +145,13 @@ export const subjectStore = {
     }
   },
 
-  // --- Scope helpers (household | business | person) ---
+  // --- Scope helpers (household | business) ---
 
-  /** Categories with no business or person scope. */
+  /** Categories with no business scope. */
   getHousehold: (): Category[] =>
-    subjectStore.getAll().filter((c) => !c.businessId && !c.userId),
+    subjectStore.getAll().filter((c) => !c.businessId),
 
   /** Categories scoped to a specific business. */
   getForBusiness: (businessId: number): Category[] =>
     subjectStore.getAll().filter((c) => c.businessId === businessId),
-
-  /** Categories scoped to a specific household member (person). */
-  getForUser: (uid: string): Category[] =>
-    subjectStore.getAll().filter((c) => c.userId === uid),
-
-  /**
-   * Idempotently seed the per-person tax system categories for a member.
-   * Safe to call every time the member's tab is opened.
-   */
-  seedSystemCategoriesForUser: (uid: string): void => {
-    const seeds: Array<{ name: string; color: string }> = [
-      { name: 'ביטוח לאומי', color: '#60a5fa' },
-      { name: 'מקדמות מס הכנסה', color: '#fbbf24' },
-    ]
-    const all = subjectStore.getAll()
-    const existing = new Set(
-      all.filter((c) => c.userId === uid && c.system).map((c) => c.name),
-    )
-    const missing = seeds.filter((s) => !existing.has(s.name))
-    if (missing.length === 0) return
-
-    const now = new Date().toISOString()
-    const additions: Category[] = missing.map((s) => ({
-      id: `system-${uid}-${s.name}`,
-      name: s.name,
-      type: 'expense',
-      color: s.color,
-      createdAt: now,
-      userId: uid,
-      system: true,
-    }))
-    subjectStore.saveAll([...all, ...additions])
-  },
 }

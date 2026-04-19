@@ -4,6 +4,8 @@ import { getUser } from './authStore'
 import { appSettingsStore, AccountOwners } from './appSettingsStore'
 import { routes } from '@/app/config'
 import type { AgentTaskStatus } from '@/app/types/bot'
+import { getTaxProfile } from '@/app/components/TaxProfileSection'
+import { MONTH_NAMES_HE } from '@/app/lib/dateUtils'
 
 type Priority = 'low' | 'medium' | 'high'
 
@@ -366,6 +368,10 @@ export const todoStore = {
     const recurringTasks = await checkRecurringBusinessTasks()
     autoTasks.push(...recurringTasks)
 
+    // Check upcoming/overdue BTL advance payments (person-level, for logged-in user)
+    const btlTasks = await checkBtlPaymentReminders()
+    autoTasks.push(...btlTasks)
+
     // Filter out auto-tasks that are currently snoozed (via Task records with autoTaskId)
     const now = new Date().toISOString()
     const autoTaskRecords = await db.tasks.where('autoTaskId').above('').toArray()
@@ -492,7 +498,7 @@ async function checkMissingFiles(owners: AccountOwners, currentUid: string | und
       title: `[${currentMonth}] לא נמצאו קבצים מיובאים`,
       description: 'יש להתחיל לייבא קבצי בנק וכרטיסי אשראי',
       type: 'missing-file',
-      priority: 'high',
+      priority: 'low',
       quadrant: computeAutoTaskQuadrant(deadline),
       deadline: deadline.toISOString(),
       link: routes.import,
@@ -512,8 +518,7 @@ async function checkMissingFiles(owners: AccountOwners, currentUid: string | und
       )
 
       if (!hasFile) {
-        // Priority: high for latest month, medium for older months
-        const priority: Priority = month === latestMonthInRange ? 'high' : 'medium'
+        const priority: Priority = 'low'
         const deadline = getAutoTaskDeadline(month)
         tasks.push({
           id: `missing-bank-${account}-${month}`,
@@ -539,8 +544,7 @@ async function checkMissingFiles(owners: AccountOwners, currentUid: string | und
       )
 
       if (!hasFile) {
-        // Priority: high for latest month, medium for older months
-        const priority: Priority = month === latestMonthInRange ? 'high' : 'medium'
+        const priority: Priority = 'low'
         const deadline = getAutoTaskDeadline(month)
         tasks.push({
           id: `missing-credit-${card}-${month}`,
@@ -597,7 +601,7 @@ async function checkUncategorizedTransactions(currentMonth: string, owners: Acco
       title: `[${currentMonth}] יש ${uncategorized.length} עסקאות לא מסווגות`,
       description: `נמצאו עסקאות בחודש ${currentMonth} שטרם סווגו לנושאים`,
       type: 'uncategorized',
-      priority: uncategorized.length > 20 ? 'high' : 'medium',
+      priority: 'low',
       quadrant: computeAutoTaskQuadrant(deadline),
       deadline: deadline.toISOString(),
       link: `${routes.budget}?filter=unclassified&month=${encodeURIComponent(currentMonth)}`,
@@ -685,6 +689,102 @@ async function checkRecurringBusinessTasks(): Promise<AutoTask[]> {
       link: `${routes.business(bt.businessId)}?tab=tasks`,
       createdAt: bt.createdAt,
       month: currentMonth,
+    })
+  }
+
+  return tasks
+}
+
+/**
+ * Generate auto-tasks for the logged-in user's BTL advance payments.
+ *
+ * Status rules (same as the TaxesTab BTL section):
+ * - A transaction classified under "ביטוח לאומי*" in the payment month (i+1)
+ *   counts as paid → no task.
+ * - Deadline = schedule.dueDate (when a BTL notice is uploaded and extracted),
+ *   else the 15th of the payment month.
+ * - Today > deadline → overdue → high priority, Q1 (עשה עכשיו).
+ * - Deadline within 5 days (10-15 of payment month) → due-soon → medium, Q2.
+ * - Earlier than that → skip (no task yet).
+ *
+ * Only runs when the person has a downpayment configured — either a schedule
+ * in `taxProfile.btlNotices[year]` or a flat `btlAdvancePayment`.
+ */
+async function checkBtlPaymentReminders(): Promise<AutoTask[]> {
+  const uid = getUser()?.uid
+  if (!uid) return []
+
+  const profile = await getTaxProfile(uid)
+  const year = new Date().getFullYear()
+  const currentMonthIdx = new Date().getMonth()
+
+  const schedule = profile.btlNotices?.find((n) => n.year === year)?.schedule || []
+  const scheduleByMonth = new Map(schedule.map((s) => [s.month, s]))
+  const fallbackAmount = profile.btlAdvancePayment || 0
+
+  if (schedule.length === 0 && fallbackAmount === 0) return []
+
+  const allTx = await db.transactions.toArray()
+  const btlTx = allTx.filter(
+    (t) => t.category?.startsWith('ביטוח לאומי') && t.month?.endsWith(`/${year}`),
+  )
+
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+
+  const tasks: AutoTask[] = []
+
+  for (let i = 0; i <= currentMonthIdx; i++) {
+    const monthStr = `${String(i + 1).padStart(2, '0')}/${year}`
+    const scheduled = scheduleByMonth.get(monthStr)
+    const expected = scheduled?.amount ?? fallbackAmount
+    if (expected === 0) continue
+
+    // Payment for month i is recorded in month i+1.
+    const nextIdx = i + 1
+    const payMonth = nextIdx >= 12 ? `01/${year + 1}` : `${String(nextIdx + 1).padStart(2, '0')}/${year}`
+
+    const paid = btlTx.some((t) => t.month === payMonth)
+    if (paid) continue
+
+    let deadline: Date
+    if (scheduled?.dueDate) {
+      deadline = new Date(scheduled.dueDate)
+    } else {
+      const [pm, py] = payMonth.split('/').map(Number)
+      deadline = new Date(py, pm - 1, 15)
+    }
+    deadline.setHours(0, 0, 0, 0)
+
+    const windowStart = new Date(deadline)
+    windowStart.setDate(windowStart.getDate() - 5)
+
+    let priority: Priority
+    let quadrant: EisenhowerQuadrant
+    let titlePrefix: string
+    if (today > deadline) {
+      priority = 'high'
+      quadrant = 'do'
+      titlePrefix = '🚨 באיחור — ביטוח לאומי'
+    } else if (today >= windowStart) {
+      priority = 'medium'
+      quadrant = 'schedule'
+      titlePrefix = '⏰ לתשלום — ביטוח לאומי'
+    } else {
+      continue
+    }
+
+    tasks.push({
+      id: `btl-${uid}-${year}-${String(i + 1).padStart(2, '0')}`,
+      title: `${titlePrefix} ${MONTH_NAMES_HE[i]} ${year}`,
+      description: `${expected.toLocaleString('he-IL')} ₪ · עד ${deadline.toLocaleDateString('he-IL')}`,
+      type: 'expected-payment',
+      priority,
+      quadrant,
+      deadline: deadline.toISOString(),
+      link: '/app/taxes',
+      createdAt: new Date().toISOString(),
+      month: monthStr,
     })
   }
 

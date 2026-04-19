@@ -786,6 +786,16 @@ function BudgetPageContent() {
                             }}
                           >
                             <option value="">בחר נושא</option>
+                            {/* Dynamic tax categories — per household member. Not stored; emitted on render. */}
+                            {transaction.amount < 0 && householdMembers.map((m) => {
+                              const tag = (m.label || '').split('@')[0].split(/[\s.]+/)[0] || m.uid.slice(-4)
+                              return (
+                                <React.Fragment key={`tax-${m.uid}`}>
+                                  <option value={`ביטוח לאומי (${tag})`}>{`ביטוח לאומי (${tag})`}</option>
+                                  <option value={`מקדמות מס הכנסה (${tag})`}>{`מקדמות מס הכנסה (${tag})`}</option>
+                                </React.Fragment>
+                              )
+                            })}
                             {categories
                               .filter((cat) =>
                                 transaction.amount > 0 ? cat.type === 'income' : cat.type === 'expense'

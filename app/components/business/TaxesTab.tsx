@@ -365,6 +365,7 @@ function AnnualSummarySubTab() {
             advancePayments={advancePayments}
             onUploadReceipt={handleUploadReceipt}
             taxProfile={taxProfile}
+            personUid={selectedUser === 'all' ? getUser()?.uid : selectedUser}
           />
         )
       })()}
@@ -388,9 +389,10 @@ type SummarySectionsProps = {
   advancePayments: AdvancePayment[]
   onUploadReceipt: (month: string, file: File) => Promise<void>
   taxProfile?: TaxProfile
+  personUid?: string
 }
 
-function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBusinesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, taxExemptInfo, btlRates, incomeTaxBrackets, advancePayments, onUploadReceipt, taxProfile }: SummarySectionsProps) {
+function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBusinesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, taxExemptInfo, btlRates, incomeTaxBrackets, advancePayments, onUploadReceipt, taxProfile, personUid }: SummarySectionsProps) {
   const [activeSection, setActiveSection] = useState(sections[0].id)
 
   return (
@@ -443,6 +445,7 @@ function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBu
               currentMonth={currentMonth}
               rates={btlRates}
               taxProfile={taxProfile}
+              personUid={personUid}
             />
           )}
           {incomeTaxBrackets && incomeTaxBrackets.length > 0 && (

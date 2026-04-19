@@ -1,4 +1,5 @@
-import React, { useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
+import { db } from '@/app/db/financeDB'
 import type { Business, TaxDocument, Transaction, AdvancePayment } from '@/app/db/financeDB'
 import type { TaxProfile } from '@/app/components/TaxProfileSection'
 
@@ -36,9 +37,9 @@ function computeMonthlyBTL(monthlyIncome: number, rates: BTLRates) {
   return { nationalInsurance, healthInsurance, total: nationalInsurance + healthInsurance }
 }
 
-export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, rates, taxProfile }: {
+export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, rates, taxProfile, personUid }: {
   businesses: Business[]; transactions: Transaction[]; bizCategoryMap: Map<number, string[]>
-  expCategoryMap: Map<number, string[]>; currentYear: number; currentMonth: number; rates: BTLRates; taxProfile?: TaxProfile
+  expCategoryMap: Map<number, string[]>; currentYear: number; currentMonth: number; rates: BTLRates; taxProfile?: TaxProfile; personUid?: string
 }) {
   const seBiz = businesses.filter(b => !b.isTaxFree)
   if (seBiz.length === 0) return null
@@ -50,8 +51,36 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
     ;(expCategoryMap.get(biz.id!) || []).forEach(n => seExpCatNames.add(n))
   }
 
-  const monthlyAdvance = taxProfile?.btlAdvancePayment || 0
-  const hasAdvance = monthlyAdvance > 0
+  // A BTL payment is any transaction whose category starts with "ביטוח לאומי".
+  // personUid (the selected tab's uid) is passed in so we can still scope per
+  // tab when classifications are tagged like "ביטוח לאומי (yaakov)".
+  const [btlTx, setBtlTx] = useState<Transaction[]>([])
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const all = await db.transactions.toArray()
+      const yearTx = all.filter(
+        (t) => t.category?.startsWith('ביטוח לאומי') && t.month?.endsWith(`/${currentYear}`),
+      )
+      if (!cancelled) setBtlTx(yearTx)
+    })()
+    return () => { cancelled = true }
+  }, [currentYear])
+
+  const paymentMonthStr = (i: number): string => {
+    // Payment for month index i (0 = Jan) is made in the following calendar month.
+    const nextIdx = i + 1
+    if (nextIdx >= 12) return `01/${currentYear + 1}`
+    return `${String(nextIdx + 1).padStart(2, '0')}/${currentYear}`
+  }
+
+  // Expected BTL amount and due date from the uploaded notice schedule, if any.
+  const schedule = (taxProfile?.btlNotices || []).find(n => n.year === currentYear)?.schedule || []
+  const scheduleByMonth = new Map(schedule.map(s => [s.month, s]))
+  const fallbackAmount = taxProfile?.btlAdvancePayment || 0
+
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
 
   const monthlyRows = Array.from({ length: currentMonth + 1 }, (_, i) => {
     const monthStr = `${String(i + 1).padStart(2, '0')}/${currentYear}`
@@ -59,13 +88,45 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
     const expenses = transactions.filter(t => t.month === monthStr && t.category && seExpCatNames.has(t.category)).reduce((s, t) => s + Math.abs(t.amount || 0), 0)
     const netIncome = Math.max(0, income - expenses)
     const btl = computeMonthlyBTL(netIncome, rates)
-    // Payment for month i is due on 1st of month i+1
-    const today = new Date()
-    const paymentDue = new Date(currentYear, i + 1, 1)
-    const paid = today >= paymentDue
-    const advance = paid ? monthlyAdvance : 0
-    const diff = paid && hasAdvance ? monthlyAdvance - btl.total : 0
-    return { month: i, label: HEBREW_MONTHS[i], income, expenses, netIncome, ...btl, advance, diff, paid }
+    // A BTL payment for calendar month i shows up as a transaction in month i+1.
+    const payMonth = paymentMonthStr(i)
+    const actualPaid = btlTx
+      .filter((t) => t.month === payMonth)
+      .reduce((s, t) => s + Math.abs(t.amount || 0), 0)
+    const paid = actualPaid > 0
+
+    // Expected amount: prefer schedule entry for this month, else the flat fallback.
+    const scheduled = scheduleByMonth.get(monthStr)
+    const expected = scheduled?.amount ?? fallbackAmount
+
+    // Deadline: from schedule dueDate, else 15th of payment month.
+    let deadline: Date
+    if (scheduled?.dueDate) {
+      deadline = new Date(scheduled.dueDate)
+    } else {
+      const [pm, py] = payMonth.split('/').map(Number)
+      deadline = new Date(py, pm - 1, 15)
+    }
+    deadline.setHours(0, 0, 0, 0)
+
+    // 5-day "due soon" window leading up to the deadline (10th-15th of the
+    // payment month if deadline is the 15th).
+    const windowStart = new Date(deadline)
+    windowStart.setDate(windowStart.getDate() - 5)
+
+    const status: 'paid' | 'overdue' | 'due-soon' | 'upcoming' =
+      paid ? 'paid'
+      : today > deadline ? 'overdue'
+      : today >= windowStart ? 'due-soon'
+      : 'upcoming'
+    const diff = expected > 0 ? expected - btl.total : 0
+    return {
+      month: i,
+      label: HEBREW_MONTHS[i],
+      income, expenses, netIncome, ...btl,
+      expected, actualPaid, status, diff,
+      deadline, windowStart,
+    }
   })
 
   const totals = {
@@ -75,9 +136,14 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
     nationalInsurance: monthlyRows.reduce((s, r) => s + r.nationalInsurance, 0),
     healthInsurance: monthlyRows.reduce((s, r) => s + r.healthInsurance, 0),
     total: monthlyRows.reduce((s, r) => s + r.total, 0),
-    advance: monthlyRows.reduce((s, r) => s + r.advance, 0),
+    expected: monthlyRows.reduce((s, r) => s + r.expected, 0),
     diff: monthlyRows.reduce((s, r) => s + r.diff, 0),
   }
+
+  // Only show the advance/status/diff columns when the person actually has a
+  // configured downpayment (schedule or flat amount). Otherwise this section
+  // is showing Suzi's (or any empty-profile) view and the status would be noise.
+  const hasDownpayment = monthlyRows.some(r => r.expected > 0)
 
   const hStyle: React.CSSProperties = { ...cellStyle, fontWeight: 600, background: '#faf5ff', color: '#6b21a8', borderBottom: '2px solid #e2e8f0' }
 
@@ -102,8 +168,9 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
             <th style={hStyle}>ביטוח לאומי</th>
             <th style={hStyle}>ביטוח בריאות</th>
             <th style={{ ...hStyle, background: '#f3e8ff' }}>סה&quot;כ</th>
-            {hasAdvance && <th style={hStyle}>מקדמות</th>}
-            {hasAdvance && <th style={hStyle}>הפרש</th>}
+            {hasDownpayment && <th style={hStyle}>מקדמות</th>}
+            {hasDownpayment && <th style={hStyle}>סטטוס</th>}
+            {hasDownpayment && <th style={hStyle}>הפרש</th>}
           </tr>
         </thead>
         <tbody>
@@ -116,8 +183,49 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
               <td style={cellStyle}>{row.nationalInsurance ? fmt(row.nationalInsurance) : '—'}</td>
               <td style={cellStyle}>{row.healthInsurance ? fmt(row.healthInsurance) : '—'}</td>
               <td style={{ ...cellStyle, background: '#faf5ff', fontWeight: 500 }}>{row.total ? fmt(row.total) : '—'}</td>
-              {hasAdvance && <td style={cellStyle}>{row.paid ? fmt(row.advance) : '—'}</td>}
-              {hasAdvance && <td style={{ ...cellStyle, fontWeight: 500, color: row.diff > 0 ? '#b45309' : row.diff < 0 ? '#dc2626' : undefined }}>{row.paid ? fmt(row.diff) : '—'}</td>}
+              {hasDownpayment && <td style={cellStyle}>{row.expected ? fmt(row.expected) : '—'}</td>}
+              {hasDownpayment && (
+                <td style={{ ...cellStyle, fontSize: '1rem', textAlign: 'center' }} title={
+                  row.status === 'paid' ? `שולם ✓ · סכום שנמצא: ${fmt(row.actualPaid)}`
+                  : row.status === 'overdue' ? `באיחור — לא נמצא תשלום לאחר ${row.deadline.toLocaleDateString('he-IL')}`
+                  : row.status === 'due-soon' ? `פעולה נדרשת — עד ${row.deadline.toLocaleDateString('he-IL')}`
+                  : `יופיע לפעולה ב-${row.windowStart.toLocaleDateString('he-IL')}`
+                }>
+                  {row.status === 'paid' && (
+                    <span style={{ color: '#16a34a', fontWeight: 700 }}>✓</span>
+                  )}
+                  {row.status === 'overdue' && (
+                    <span style={{
+                      display: 'inline-block',
+                      padding: '0.1rem 0.4rem',
+                      background: '#fef2f2',
+                      border: '1px solid #fecaca',
+                      borderRadius: '0.375rem',
+                      color: '#b91c1c',
+                      fontSize: '0.85rem',
+                      fontWeight: 600,
+                    }}>🚨 באיחור</span>
+                  )}
+                  {row.status === 'due-soon' && (
+                    <span style={{
+                      display: 'inline-block',
+                      padding: '0.1rem 0.4rem',
+                      background: '#fefce8',
+                      border: '1px solid #fde68a',
+                      borderRadius: '0.375rem',
+                      color: '#a16207',
+                      fontSize: '0.85rem',
+                      fontWeight: 600,
+                    }}>⏰ לתשלום</span>
+                  )}
+                  {row.status === 'upcoming' && (
+                    <span style={{ color: '#cbd5e1' }}>·</span>
+                  )}
+                </td>
+              )}
+              {hasDownpayment && (
+                <td style={{ ...cellStyle, fontWeight: 500, color: row.diff > 0 ? '#b45309' : row.diff < 0 ? '#dc2626' : undefined }}>{row.expected ? fmt(row.diff) : '—'}</td>
+              )}
             </tr>
           ))}
         </tbody>
@@ -130,8 +238,11 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
             <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.nationalInsurance)}</td>
             <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.healthInsurance)}</td>
             <td style={{ ...cellStyle, fontWeight: 700, background: '#f3e8ff', color: '#6b21a8' }}>{fmt(totals.total)}</td>
-            {hasAdvance && <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.advance)}</td>}
-            {hasAdvance && <td style={{ ...cellStyle, fontWeight: 700, color: totals.diff > 0 ? '#b45309' : totals.diff < 0 ? '#dc2626' : '#16a34a' }}>{fmt(totals.diff)}</td>}
+            {hasDownpayment && <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.expected)}</td>}
+            {hasDownpayment && <td style={cellStyle} />}
+            {hasDownpayment && (
+              <td style={{ ...cellStyle, fontWeight: 700, color: totals.diff > 0 ? '#b45309' : totals.diff < 0 ? '#dc2626' : '#16a34a' }}>{fmt(totals.diff)}</td>
+            )}
           </tr>
         </tfoot>
       </table>
