@@ -40,7 +40,7 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
   businesses: Business[]; transactions: Transaction[]; bizCategoryMap: Map<number, string[]>
   expCategoryMap: Map<number, string[]>; currentYear: number; currentMonth: number; rates: BTLRates; taxProfile?: TaxProfile
 }) {
-  const seBiz = businesses.filter(b => !(taxProfile?.isTaxFree))
+  const seBiz = businesses.filter(b => !b.isTaxFree)
   if (seBiz.length === 0) return null
 
   const seCatNames = new Set<string>()
@@ -177,7 +177,7 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploadMonth, setUploadMonth] = React.useState<string | null>(null)
-  const seBiz = businesses.filter(b => !(taxProfile?.isTaxFree))
+  const seBiz = businesses.filter(b => !b.isTaxFree)
   if (seBiz.length === 0) return null
 
   const seCatNames = new Set<string>()

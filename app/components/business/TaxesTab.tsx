@@ -1,10 +1,11 @@
 'use client'
 
 import React, { useEffect, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { db, type TaxDocument, type Business, type Transaction, type AdvancePayment } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import type { Category } from '@/app/types/category'
-import { getUser } from '@/app/stores/authStore'
+import { getUser, subscribeToAuth } from '@/app/stores/authStore'
 import { uploadAdvancePaymentReceipt, ensureRootFolder } from '@/app/services/googleDriveService'
 import { getAccessToken } from '@/app/services/googleTokenService'
 import { getHouseholdInfo } from '@/app/services/householdService'
@@ -17,152 +18,35 @@ import BusinessForm from '@/app/components/settings/BusinessForm'
 import type { BusinessUI } from '@/app/types/business'
 import { businessStore } from '@/app/stores/businessStore'
 
-type HouseholdMember = { uid: string; label: string }
+import TaxesDebugPanel, { type HouseholdMember, type HouseholdDebug } from './TaxesDebugPanel'
 
-async function loadHouseholdMembers(): Promise<HouseholdMember[]> {
+async function loadHouseholdMembers(): Promise<{ members: HouseholdMember[]; debug: HouseholdDebug }> {
   const currentUser = getUser()
   const members: HouseholdMember[] = []
+  const debug: HouseholdDebug = { apiResult: null, apiError: null, fellBackToCurrentUser: false }
   try {
     const info = await getHouseholdInfo()
+    debug.apiResult = info
     if (info.household) {
       const emails = (info.household as any).memberEmails || {}
       const names = (info.household as any).memberNames || {}
       for (const uid of info.household.members) {
         members.push({ uid, label: names[uid] || emails[uid] || uid })
       }
-      return members
+      return { members, debug }
     }
-  } catch { /* no household */ }
+  } catch (err: any) {
+    debug.apiError = err?.message ? String(err.message) : String(err)
+  }
   // Fallback: just current user
   if (currentUser) {
+    debug.fellBackToCurrentUser = true
     members.push({ uid: currentUser.uid, label: currentUser.displayName || currentUser.email || currentUser.uid })
   }
-  return members
+  return { members, debug }
 }
 
-const TAX_STATUS_STYLES: Record<TaxStatus, { bg: string; border: string; text: string; label: string }> = {
-  green: { bg: '#f0fdf4', border: '#86efac', text: '#16a34a', label: 'תקין — הכנסה מהשכרה בטווח הפטור' },
-  yellow: { bg: '#fefce8', border: '#fde047', text: '#a16207', label: 'זהירות — מתקרב לתקרת השכרת דירה' },
-  red: { bg: '#fef2f2', border: '#fca5a5', text: '#dc2626', label: 'חריגה — הכנסה מהשכרה עברה את התקרה' },
-  gray: { bg: '#f9fafb', border: '#d1d5db', text: '#9ca3af', label: 'טרם הוגדר' },
-}
-
-function TaxExemptStatusBanner({ info }: { info: TaxStatusInfo }) {
-
-  const style = TAX_STATUS_STYLES[info.status]
-  const fmt = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
-  const remainingToLimit = Math.max(0, info.limit - info.currentIncome)
-
-  return (
-    <div style={{
-      marginBottom: '1rem',
-      padding: '0.75rem 1rem',
-      background: style.bg,
-      border: `1px solid ${style.border}`,
-      borderRadius: '0.5rem',
-      fontSize: '0.9rem',
-      color: style.text,
-    }}>
-      <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>{style.label}</div>
-      <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap', fontSize: '0.85rem', color: '#475569' }}>
-        <div>
-          <span style={{ color: '#64748b' }}>הכנסה שנתית נוכחית: </span>
-          <strong>{fmt(info.currentIncome)}</strong>
-        </div>
-        <div>
-          <span style={{ color: '#64748b' }}>תקרת השכרה:</span>
-          <strong>{fmt(info.limit)}</strong>
-        </div>
-        <div>
-          <span style={{ color: '#64748b' }}>נותר עד לתקרה: </span>
-          <strong>{fmt(remainingToLimit)}</strong>
-        </div>
-        <div>
-          <span style={{ color: '#64748b' }}>הכנסה חודשית מקסימלית: </span>
-          <strong>{fmt(info.maxMonthlyIncome)}</strong>
-        </div>
-      </div>
-      {/* Progress bar */}
-      <div style={{
-        marginTop: '0.5rem',
-        height: 6,
-        background: '#e2e8f0',
-        borderRadius: 3,
-        overflow: 'hidden',
-      }}>
-        <div style={{
-          height: '100%',
-          width: `${Math.min(100, (info.currentIncome / info.limit) * 100)}%`,
-          background: style.text,
-          borderRadius: 3,
-          transition: 'width 0.3s ease',
-        }} />
-      </div>
-    </div>
-  )
-}
-
-const EXEMPT_STATUS_LABELS: Record<TaxStatus, string> = {
-  green: 'תקין — הכנסה בטווח תקרת עוסק פטור',
-  yellow: 'זהירות — מתקרב לתקרת עוסק פטור',
-  red: 'חריגה — הכנסה עברה את תקרת עוסק פטור',
-  gray: 'טרם הוגדר',
-}
-
-function ExemptStatusBanner({ info }: { info: TaxStatusInfo }) {
-  const style = TAX_STATUS_STYLES[info.status]
-  const fmt = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
-  const remainingToLimit = Math.max(0, info.limit - info.currentIncome)
-  const pct = info.limit > 0 ? Math.round((info.currentIncome / info.limit) * 100) : 0
-
-  return (
-    <div style={{
-      marginBottom: '1rem',
-      padding: '0.75rem 1rem',
-      background: style.bg,
-      border: `1px solid ${style.border}`,
-      borderRadius: '0.5rem',
-      fontSize: '0.9rem',
-      color: style.text,
-    }}>
-      <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>{EXEMPT_STATUS_LABELS[info.status]}</div>
-      <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap', fontSize: '0.85rem', color: '#475569' }}>
-        <div>
-          <span style={{ color: '#64748b' }}>הכנסה שנתית: </span>
-          <strong>{fmt(info.currentIncome)}</strong>
-        </div>
-        <div>
-          <span style={{ color: '#64748b' }}>תקרה שנתית: </span>
-          <strong>{fmt(info.limit)}</strong>
-        </div>
-        <div>
-          <span style={{ color: '#64748b' }}>נותר: </span>
-          <strong>{fmt(remainingToLimit)}</strong>
-        </div>
-        <div>
-          <span style={{ color: '#64748b' }}>ניצול: </span>
-          <strong>{pct}%</strong>
-        </div>
-      </div>
-      {/* Progress bar */}
-      <div style={{
-        marginTop: '0.5rem',
-        height: 6,
-        background: '#e2e8f0',
-        borderRadius: 3,
-        overflow: 'hidden',
-      }}>
-        <div style={{
-          height: '100%',
-          width: `${Math.min(100, pct)}%`,
-          background: style.text,
-          borderRadius: 3,
-          transition: 'width 0.3s ease',
-        }} />
-      </div>
-    </div>
-  )
-}
+import { TaxExemptStatusBanner, ExemptStatusBanner } from './TaxStatusBanners'
 
 export default function TaxesTab() {
   return (
@@ -171,6 +55,7 @@ export default function TaxesTab() {
     </div>
   )
 }
+
 
 // ---------------------------------------------------------------------------
 // Annual Summary Sub-Tab
@@ -188,8 +73,18 @@ function AnnualSummarySubTab() {
   const [bizCategoryMap, setBizCategoryMap] = useState<Map<number, string[]>>(new Map())
   const [expCategoryMap, setExpCategoryMap] = useState<Map<number, string[]>>(new Map())
   const [members, setMembers] = useState<HouseholdMember[]>([])
+  const [householdDebug, setHouseholdDebug] = useState<HouseholdDebug | null>(null)
   const [selectedUser, setSelectedUser] = useState<string>('all')
   const [loading, setLoading] = useState(true)
+  const searchParams = useSearchParams()
+  const debugMode = searchParams?.get('debug') === '1'
+  const [authReady, setAuthReady] = useState(false)
+
+  useEffect(() => {
+    return subscribeToAuth(s => {
+      if (s.initialized && s.user) setAuthReady(true)
+    })
+  }, [])
   const [taxExemptInfo, setTaxExemptInfo] = useState<TaxStatusInfo | null>(null)
   const exemptStatus = useExemptTaxStatus()
   const [btlRates, setBtlRates] = useState<BTLRates | null>(null)
@@ -200,13 +95,14 @@ function AnnualSummarySubTab() {
   const currentMonth = new Date().getMonth() // 0-based
 
   useEffect(() => {
+    if (!authReady) return
     const load = async () => {
       const [allDocs, biz, m, advPay, profile] = await Promise.all([
         db.taxDocuments.filter(d => d.year === currentYear).toArray(),
         db.businesses.toArray(),
         loadHouseholdMembers(),
         db.advancePayments.filter(p => p.month.endsWith(`/${currentYear}`)).toArray(),
-        getTaxProfile(),
+        getTaxProfile(getUser()?.uid),
       ])
 
       // Build business → category names map from subjectStore (income + expense)
@@ -245,13 +141,21 @@ function AnnualSummarySubTab() {
       setTransactions(bizTransactions)
       setBizCategoryMap(catMap)
       setExpCategoryMap(expCatMap)
-      setMembers(m)
+      setMembers(m.members)
+      setHouseholdDebug(m.debug)
       setAdvancePayments(advPay)
       setTaxProfile(profile)
       setLoading(false)
     }
     load()
-  }, [currentYear])
+  }, [currentYear, authReady])
+
+  // Reload tax profile when the user selects a different household member tab.
+  useEffect(() => {
+    if (!authReady) return
+    const uid = selectedUser === 'all' ? getUser()?.uid : selectedUser
+    getTaxProfile(uid).then(setTaxProfile)
+  }, [selectedUser, authReady])
 
   // Build derived data (needed before useEffect for tax exempt)
   const filteredDocs = selectedUser === 'all' ? docs : docs.filter(d => d.userId === selectedUser)
@@ -382,6 +286,23 @@ function AnnualSummarySubTab() {
 
   return (
     <div>
+      {debugMode && (
+        <TaxesDebugPanel
+          currentUser={getUser()}
+          householdDebug={householdDebug}
+          members={members}
+          userTabs={userTabs}
+          selectedUser={selectedUser}
+          ownBusinesses={ownBusinesses}
+          relevantBusinesses={relevantBusinesses}
+          bizCategoryMap={bizCategoryMap}
+          expCategoryMap={expCategoryMap}
+          userBizIdsFromDocs={userBizIdsFromDocs}
+          transactions={transactions}
+          taxProfile={taxProfile}
+        />
+      )}
+
       {/* User tabs */}
       {userTabs.length > 1 && (
         <div style={{
@@ -419,8 +340,8 @@ function AnnualSummarySubTab() {
       {/* Conditional section tabs: שכיר / עצמאי */}
       {(() => {
         const hasDocs = filteredDocs.length > 0
-        const nonRentalBiz = taxProfile.isTaxFree ? [] : relevantBusinesses
-        const rentalBiz = taxProfile.isTaxFree ? relevantBusinesses : []
+        const nonRentalBiz = relevantBusinesses.filter(b => !b.isTaxFree)
+        const rentalBiz = relevantBusinesses.filter(b => b.isTaxFree)
         const sections: { id: string; label: string }[] = []
         if (hasDocs) sections.push({ id: 'employee', label: 'שכיר' })
         if (nonRentalBiz.length > 0) sections.push({ id: 'selfEmployed', label: 'עצמאי' })

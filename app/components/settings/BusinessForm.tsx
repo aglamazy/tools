@@ -92,6 +92,19 @@ export default function BusinessForm({ business, onChange, onSave, onCancel, isN
               </label>
             </div>
           </div>
+          <div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontWeight: 600 }}>
+              <input
+                type="checkbox"
+                checked={!!business.isTaxFree}
+                onChange={(e) => onChange({ ...business, isTaxFree: e.target.checked })}
+              />
+              <span>🏠 השכרת דירה למגורים — פטור ממס עד לתקרה</span>
+            </label>
+            <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.25rem' }}>
+              סמן אם העסק הוא השכרת דירת מגורים. הכנסה ממנה מחושבת מול תקרת השכרה ולא מול תקרת עוסק פטור.
+            </div>
+          </div>
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
             <button onClick={onCancel} className="upload-another-btn">
               ביטול

@@ -1,14 +1,22 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import type { Category, CategoryType } from '@/app/types/category'
 import { generateDistinctColors } from '@/app/utils/colorGenerator'
 import { db, type Business } from '@/app/db/financeDB'
 import { BusinessType } from '@/app/types/business'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { businessStore } from '@/app/stores/businessStore'
+import { getHouseholdInfo } from '@/app/services/householdService'
+import { getUser } from '@/app/stores/authStore'
 import YesNoModal from '../YesNoModal'
 import Modal from '../Modal'
+
+type HouseholdMember = { uid: string; label: string }
+type Scope =
+  | { kind: 'household' }
+  | { kind: 'member'; uid: string }
+  | { kind: 'business'; id: number }
 
 const DEFAULT_CATEGORIES: Category[] = []
 
@@ -23,17 +31,46 @@ export default function CategoriesTab() {
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
   const [businesses, setBusinesses] = useState<Business[]>([])
+  const [members, setMembers] = useState<HouseholdMember[]>([])
+  const [scope, setScope] = useState<Scope>({ kind: 'household' })
 
   useEffect(() => {
     loadCategories()
     loadCategoryUsage()
     loadBusinesses()
+    void loadMembers()
   }, [])
 
   const loadBusinesses = async () => {
     const all = await businessStore.getAll()
-    setBusinesses(all.filter(b => b.type === BusinessType.Business || b.type === BusinessType.Teacher))
+    setBusinesses(all.filter(b => (b.type === BusinessType.Business || b.type === BusinessType.Teacher) && !b.sharedWithMe))
   }
+
+  const loadMembers = useCallback(async () => {
+    const current = getUser()
+    const result: HouseholdMember[] = []
+    try {
+      const info = await getHouseholdInfo()
+      if (info.household) {
+        const emails = (info.household as any).memberEmails || {}
+        const names = (info.household as any).memberNames || {}
+        for (const uid of info.household.members) {
+          result.push({ uid, label: names[uid] || emails[uid] || uid })
+        }
+      }
+    } catch {/* no household */}
+    if (result.length === 0 && current) {
+      result.push({ uid: current.uid, label: current.displayName || current.email || current.uid })
+    }
+    setMembers(result)
+
+    // Idempotently seed system tax categories for every member.
+    for (const m of result) {
+      subjectStore.seedSystemCategoriesForUser(m.uid)
+    }
+    // Refresh local state in case seeding added rows.
+    setCategories(subjectStore.getAll())
+  }, [])
 
   const loadCategories = () => {
     try {
@@ -76,6 +113,33 @@ export default function CategoriesTab() {
 
   const saveCategories = (cats: Category[]) => {
     subjectStore.saveAll(cats)
+  }
+
+  const moveCategoryToScope = (categoryId: string, target: Scope) => {
+    const cat = categories.find(c => c.id === categoryId)
+    if (!cat) return
+    if (cat.system) {
+      setAlertModal({ isOpen: true, message: 'לא ניתן להעביר נושא מערכת' })
+      return
+    }
+    if (cat.parentId) {
+      setAlertModal({ isOpen: true, message: 'לא ניתן להעביר תת-נושא — גרור את נושא-העל' })
+      return
+    }
+    const targetBusinessId = target.kind === 'business' ? target.id : undefined
+    const targetUserId = target.kind === 'member' ? target.uid : undefined
+    // Same-scope drop: no-op
+    if ((cat.businessId ?? undefined) === targetBusinessId && (cat.userId ?? undefined) === targetUserId) return
+
+    const subIds = new Set(cat.subCategories || [])
+    const updated = categories.map(c => {
+      if (c.id === categoryId || subIds.has(c.id)) {
+        return { ...c, businessId: targetBusinessId, userId: targetUserId }
+      }
+      return c
+    })
+    setCategories(updated)
+    saveCategories(updated)
   }
 
   const getNextColor = (type: CategoryType): string => {
@@ -131,6 +195,8 @@ export default function CategoriesTab() {
       color: getNextColor(type),
       createdAt: new Date().toISOString(),
       isFixed: false,
+      ...(scope.kind === 'business' ? { businessId: scope.id } : {}),
+      ...(scope.kind === 'member' ? { userId: scope.uid } : {}),
     }
     setEditingCategory(newCategory)
     setIsAddingNew(true)
@@ -183,6 +249,11 @@ export default function CategoriesTab() {
   }
 
   const handleDeleteCategory = (categoryId: string) => {
+    const cat = categories.find(c => c.id === categoryId)
+    if (cat?.system) {
+      setAlertModal({ isOpen: true, message: 'לא ניתן למחוק נושא מערכת' })
+      return
+    }
     setDeleteConfirm({ isOpen: true, categoryId })
   }
 
@@ -322,7 +393,7 @@ export default function CategoriesTab() {
               ({categoryUsage[category.name]?.bank || 0} בנק / {categoryUsage[category.name]?.credit || 0} אשראי)
             </span>
           </div>
-          {!isSubCategory && (
+          {!isSubCategory && !category.system && (
             <button
               onClick={() => handleAddSubCategory(category.id)}
               style={{
@@ -339,38 +410,47 @@ export default function CategoriesTab() {
               +
             </button>
           )}
-          <button
-            onClick={() => {
-              setEditingCategory({ ...category, isFixed: category.isFixed ?? false })
-              setIsAddingNew(false)
-              setAddingSubCategoryFor(null)
-            }}
-            style={{
-              padding: '0.35rem 0.75rem',
-              fontSize: '0.85rem',
-              background: 'transparent',
-              border: '1px solid #cbd5e1',
-              borderRadius: '0.375rem',
-              cursor: 'pointer',
-              color: '#475569',
-            }}
-          >
-            ערוך
-          </button>
-          <button
-            onClick={() => handleDeleteCategory(category.id)}
-            style={{
-              padding: '0.35rem 0.75rem',
-              fontSize: '0.85rem',
-              background: 'transparent',
-              border: '1px solid #fecaca',
-              borderRadius: '0.375rem',
-              cursor: 'pointer',
-              color: '#dc2626',
-            }}
-          >
-            מחק
-          </button>
+          {!category.system && (
+            <button
+              onClick={() => {
+                setEditingCategory({ ...category, isFixed: category.isFixed ?? false })
+                setIsAddingNew(false)
+                setAddingSubCategoryFor(null)
+              }}
+              style={{
+                padding: '0.35rem 0.75rem',
+                fontSize: '0.85rem',
+                background: 'transparent',
+                border: '1px solid #cbd5e1',
+                borderRadius: '0.375rem',
+                cursor: 'pointer',
+                color: '#475569',
+              }}
+            >
+              ערוך
+            </button>
+          )}
+          {!category.system && (
+            <button
+              onClick={() => handleDeleteCategory(category.id)}
+              style={{
+                padding: '0.35rem 0.75rem',
+                fontSize: '0.85rem',
+                background: 'transparent',
+                border: '1px solid #fecaca',
+                borderRadius: '0.375rem',
+                cursor: 'pointer',
+                color: '#dc2626',
+              }}
+            >
+              מחק
+            </button>
+          )}
+          {category.system && (
+            <span style={{ fontSize: '0.75rem', color: '#64748b', padding: '0.2rem 0.5rem', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: '0.25rem' }}>
+              מערכת
+            </span>
+          )}
         </div>
         {category.subCategories && category.subCategories.length > 0 && (
           <div style={{ marginTop: '0.25rem', marginBottom: '0.25rem' }}>
@@ -384,74 +464,168 @@ export default function CategoriesTab() {
     )
   }
 
+  const smallBtnStyle: React.CSSProperties = {
+    padding: '0.25rem 0.6rem',
+    fontSize: '0.75rem',
+    background: '#f8fafc',
+    color: '#475569',
+    border: '1px solid #e2e8f0',
+    borderRadius: '0.3rem',
+    cursor: 'pointer',
+  }
+
   return (
     <>
-      <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.5rem' }}>
-        <button onClick={handleReorganizeColors} className="file-picker">
-          צבעים ברורים
-        </button>
-        <button onClick={handleExport} className="upload-another-btn">
-          ייצא הגדרות
-        </button>
-        <label className="upload-another-btn" style={{ cursor: 'pointer' }}>
-          ייבא הגדרות
-          <input type="file" accept=".json" onChange={handleImport} style={{ display: 'none' }} />
-        </label>
-      </div>
+      {(() => {
+        const inScope = (cat: Category): boolean => {
+          if (scope.kind === 'household') return !cat.businessId && !cat.userId
+          if (scope.kind === 'member') return cat.userId === scope.uid
+          return cat.businessId === scope.id
+        }
 
-      <section style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
-        <div>
-          <h2 style={{ fontSize: '1.1rem', marginBottom: '0.75rem', color: '#10b981' }}>נושאי הכנסה</h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {categories
-              .filter((cat) => cat.type === 'income' && !cat.parentId)
-              .sort((a, b) => a.name.localeCompare(b.name, 'he'))
-              .map((category) => renderCategoryRow(category))}
-            <button
-              onClick={() => handleAddCategory('income')}
-              style={{
-                padding: '0.5rem',
-                fontSize: '0.9rem',
-                background: '#f0fdf4',
-                border: '1px dashed #10b981',
-                borderRadius: '0.5rem',
-                cursor: 'pointer',
-                color: '#059669',
-                fontWeight: 500,
-                marginTop: '0.25rem',
-              }}
-            >
-              + הוסף נושא הכנסה
-            </button>
-          </div>
-        </div>
+        const subTabs: { id: string; label: string; scope: Scope }[] = [
+          { id: 'household', label: '🏠 משק בית', scope: { kind: 'household' } },
+          ...members.map(m => ({ id: `m-${m.uid}`, label: `👤 ${m.label}`, scope: { kind: 'member' as const, uid: m.uid } })),
+          ...businesses.map(b => ({ id: `b-${b.id}`, label: `🏢 ${b.name}`, scope: { kind: 'business' as const, id: b.id! } })),
+        ]
+        const activeId =
+          scope.kind === 'household' ? 'household'
+          : scope.kind === 'member' ? `m-${scope.uid}`
+          : `b-${scope.id}`
 
-        <div>
-          <h2 style={{ fontSize: '1.1rem', marginBottom: '0.75rem', color: '#ef4444' }}>נושאי הוצאה</h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {categories
-              .filter((cat) => cat.type === 'expense' && !cat.parentId)
-              .sort((a, b) => a.name.localeCompare(b.name, 'he'))
-              .map((category) => renderCategoryRow(category))}
-            <button
-              onClick={() => handleAddCategory('expense')}
-              style={{
-                padding: '0.5rem',
-                fontSize: '0.9rem',
-                background: '#fef2f2',
-                border: '1px dashed #ef4444',
-                borderRadius: '0.5rem',
-                cursor: 'pointer',
-                color: '#dc2626',
-                fontWeight: 500,
-                marginTop: '0.25rem',
-              }}
-            >
-              + הוסף נושא הוצאה
-            </button>
-          </div>
-        </div>
-      </section>
+        return (
+          <>
+            <div style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: '0.4rem',
+              alignItems: 'center',
+              marginBottom: '1.5rem',
+              borderBottom: '1px solid #e2e8f0',
+              paddingTop: '0.5rem',
+              paddingBottom: '0.5rem',
+              position: 'sticky',
+              top: '56px', // page-header height
+              background: '#fff',
+              zIndex: 5,
+            }}>
+              {subTabs.map(t => {
+                const active = activeId === t.id
+                const isDropTarget = !!draggingId && !active
+                const showDropHint = isDropTarget && dropTargetId === `scope-${t.id}`
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => setScope(t.scope)}
+                    onDragOver={(e) => {
+                      if (!draggingId) return
+                      e.preventDefault()
+                      e.dataTransfer.dropEffect = 'move'
+                      setDropTargetId(`scope-${t.id}`)
+                    }}
+                    onDragLeave={() => {
+                      if (dropTargetId === `scope-${t.id}`) setDropTargetId(null)
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      if (draggingId) moveCategoryToScope(draggingId, t.scope)
+                      setDraggingId(null)
+                      setDropTargetId(null)
+                    }}
+                    style={{
+                      padding: '0.4rem 0.85rem',
+                      fontSize: '0.85rem',
+                      background: showDropHint ? '#e0f2fe' : active ? '#3b82f6' : '#f8fafc',
+                      color: showDropHint ? '#0369a1' : active ? '#fff' : '#475569',
+                      border: `${showDropHint ? '2px dashed #0ea5e9' : '1px solid ' + (active ? '#3b82f6' : '#e2e8f0')}`,
+                      borderRadius: '0.375rem',
+                      cursor: isDropTarget ? 'copy' : 'pointer',
+                      fontWeight: active ? 600 : 400,
+                    }}
+                    title={isDropTarget ? 'שחרר כאן כדי להעביר את הנושא לתחום זה' : undefined}
+                  >
+                    {t.label}
+                  </button>
+                )
+              })}
+              <div style={{ marginInlineStart: 'auto', display: 'flex', gap: '0.4rem' }}>
+                <button
+                  onClick={handleReorganizeColors}
+                  style={smallBtnStyle}
+                  title="הקצאת צבעים מובחנים מחדש לכל הנושאים"
+                >
+                  🎨 צבעים
+                </button>
+                <button
+                  onClick={handleExport}
+                  style={smallBtnStyle}
+                  title="הורדת קובץ JSON עם כל הנושאים והסיווגים (גיבוי מקומי חד-פעמי — הסנכרון הרגיל נעשה בלשונית סנכרון)"
+                >
+                  ⬇ ייצוא נושאים
+                </button>
+                <label style={{ ...smallBtnStyle, cursor: 'pointer' }} title="טעינת קובץ גיבוי של נושאים וסיווגים">
+                  ⬆ ייבוא נושאים
+                  <input type="file" accept=".json" onChange={handleImport} style={{ display: 'none' }} />
+                </label>
+              </div>
+            </div>
+
+            <section style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
+              <div>
+                <h2 style={{ fontSize: '1.1rem', marginBottom: '0.75rem', color: '#10b981' }}>נושאי הכנסה</h2>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {categories
+                    .filter((cat) => cat.type === 'income' && !cat.parentId && inScope(cat))
+                    .sort((a, b) => a.name.localeCompare(b.name, 'he'))
+                    .map((category) => renderCategoryRow(category))}
+                  <button
+                    onClick={() => handleAddCategory('income')}
+                    style={{
+                      padding: '0.5rem',
+                      fontSize: '0.9rem',
+                      background: '#f0fdf4',
+                      border: '1px dashed #10b981',
+                      borderRadius: '0.5rem',
+                      cursor: 'pointer',
+                      color: '#059669',
+                      fontWeight: 500,
+                      marginTop: '0.25rem',
+                    }}
+                  >
+                    + הוסף נושא הכנסה
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <h2 style={{ fontSize: '1.1rem', marginBottom: '0.75rem', color: '#ef4444' }}>נושאי הוצאה</h2>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {categories
+                    .filter((cat) => cat.type === 'expense' && !cat.parentId && inScope(cat))
+                    .sort((a, b) => a.name.localeCompare(b.name, 'he'))
+                    .map((category) => renderCategoryRow(category))}
+                  <button
+                    onClick={() => handleAddCategory('expense')}
+                    style={{
+                      padding: '0.5rem',
+                      fontSize: '0.9rem',
+                      background: '#fef2f2',
+                      border: '1px dashed #ef4444',
+                      borderRadius: '0.5rem',
+                      cursor: 'pointer',
+                      color: '#dc2626',
+                      fontWeight: 500,
+                      marginTop: '0.25rem',
+                    }}
+                  >
+                    + הוסף נושא הוצאה
+                  </button>
+                </div>
+              </div>
+            </section>
+          </>
+        )
+      })()}
 
       {/* Edit Category Modal */}
       {editingCategory && (
@@ -528,30 +702,14 @@ export default function CategoriesTab() {
                   <label htmlFor="isExternal" style={{ fontWeight: 600, cursor: 'pointer' }}>חיצוני</label>
                   <span style={{ fontSize: '0.8rem', color: '#64748b' }}>(מתנות, ירושה, העברות חד-פעמיות - לא יספר כהכנסה שוטפת)</span>
                 </div>
-                {businesses.length > 0 && (
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>עסק משויך</label>
-                    <select
-                      value={editingCategory.businessId ?? ''}
-                      onChange={(e) => setEditingCategory({ ...editingCategory, businessId: e.target.value ? Number(e.target.value) : undefined })}
-                      style={{
-                        width: '100%',
-                        padding: '0.75rem',
-                        borderRadius: '0.5rem',
-                        border: '1px solid #e2e8f0',
-                        fontSize: '1rem',
-                        direction: 'rtl',
-                        background: '#fff',
-                      }}
-                    >
-                      <option value="">ללא שיוך</option>
-                      {businesses.map((b) => (
-                        <option key={b.id} value={b.id}>{b.name}</option>
-                      ))}
-                    </select>
-                    <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
-                      {editingCategory.type === 'income' ? 'שייך נושא הכנסה זה לעסק ליצירת קבלות' : 'שייך נושא הוצאה זה לעסק למעקב הוצאות'}
-                    </span>
+                {(editingCategory.businessId || editingCategory.userId) && (
+                  <div style={{ fontSize: '0.8rem', color: '#64748b', padding: '0.5rem 0.75rem', background: '#f8fafc', borderRadius: '0.375rem', border: '1px solid #e2e8f0' }}>
+                    {editingCategory.businessId && (
+                      <>שיוך: עסק — <strong>{businesses.find(b => b.id === editingCategory.businessId)?.name || editingCategory.businessId}</strong></>
+                    )}
+                    {editingCategory.userId && (
+                      <>שיוך: חבר/ה — <strong>{members.find(m => m.uid === editingCategory.userId)?.label || editingCategory.userId}</strong></>
+                    )}
                   </div>
                 )}
                 <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>

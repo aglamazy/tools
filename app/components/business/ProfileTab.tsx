@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef } from 'react'
 import { profileQAStore } from '@/app/stores/profileQAStore'
 import type { ProfileQA, ProfileQAAnswerType } from '@/app/types/profileQA'
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage'
+import { LocaleDateInput } from '@/app/components/LocaleInputs'
 
 type ProfileTabProps = {
   businessId: number
@@ -290,7 +291,7 @@ export default function ProfileTab({ businessId }: ProfileTabProps) {
         )
       case 'date':
         return (
-          <input type="date" value={value} onChange={(e) => onChange(e.target.value)} style={inputStyle} />
+          <LocaleDateInput value={value} onChange={onChange} style={inputStyle} />
         )
       case 'paragraph':
         return (

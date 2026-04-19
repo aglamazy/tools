@@ -15,7 +15,7 @@ import { userTierStore, UserTier } from '@/app/stores/userTierStore'
 type TabItemWithTier = TabItem & { requiredTier?: UserTier }
 
 const ALL_TABS: TabItemWithTier[] = [
-  { id: 'categories', label: 'נושאים', icon: '🏷️', requiredTier: UserTier.FREE },
+  { id: 'categories', label: 'תקציב ונושאים', icon: '🏷️', requiredTier: UserTier.FREE },
   { id: 'businesses', label: 'עסקים', icon: '🏢', requiredTier: UserTier.PRO },
   { id: 'household', label: 'משק בית', icon: '🏠', requiredTier: UserTier.HOME },
   { id: 'sync', label: 'סנכרון', icon: '☁️', requiredTier: UserTier.FREE },

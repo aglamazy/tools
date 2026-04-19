@@ -21,7 +21,6 @@ import BusinessTasksTab from './BusinessTasksTab'
 import FilesSubTab from './TaxFilesSubTab'
 import { getUser } from '@/app/stores/authStore'
 import { getHouseholdInfo } from '@/app/services/householdService'
-import { getTaxProfile } from '@/app/components/TaxProfileSection'
 
 async function loadHouseholdMembers() {
   const currentUser = getUser()
@@ -96,12 +95,9 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
 
   useEffect(() => {
     const load = async () => {
-      const [b, profile] = await Promise.all([
-        businessStore.getById(businessId),
-        getTaxProfile(),
-      ])
+      const b = await businessStore.getById(businessId)
       setBusiness(b || null)
-      setIsTaxFree(!!profile.isTaxFree)
+      setIsTaxFree(!!b?.isTaxFree)
       setLoading(false)
     }
     void load()

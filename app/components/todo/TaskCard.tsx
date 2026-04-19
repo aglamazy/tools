@@ -5,6 +5,7 @@ import type { AutoTask } from '@/app/stores/todoStore'
 import type { AgentTaskStatus } from '@/app/types/bot'
 import type { TaskType, TaskExtensions } from '@/app/db/financeDB'
 import AgentStatusBadge from './AgentStatusBadge'
+import { LocaleDateInput } from '@/app/components/LocaleInputs'
 
 type Priority = 'low' | 'medium' | 'high'
 
@@ -327,12 +328,13 @@ function TaskCard({
                     </button>
                   ))}
                   <div style={{ padding: '0.375rem 0.75rem', borderTop: '1px solid #e5e7eb' }}>
-                    <input
-                      type="date"
-                      min={new Date(Date.now() + 86400000).toISOString().split('T')[0]}
-                      onChange={e => {
-                        if (!e.target.value) return
-                        const d = new Date(e.target.value)
+                    <LocaleDateInput
+                      value=""
+                      onChange={v => {
+                        if (!v) return
+                        const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0]
+                        if (v < tomorrow) return
+                        const d = new Date(v)
                         const formatted = d.toLocaleDateString('he-IL', { year: 'numeric', month: '2-digit', day: '2-digit' })
                         onSnoozeUntil(task, d, formatted)
                       }}

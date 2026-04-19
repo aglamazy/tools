@@ -8,6 +8,7 @@ import type { SubjectData } from '@/app/types/subject'
 import type { CombinedTask } from './TaskCard'
 import SubjectEditorModal from './SubjectEditorModal'
 import ComposeApplicationModal from './ComposeApplicationModal'
+import { LocaleDateInput } from '@/app/components/LocaleInputs'
 
 type Props = {
   task: CombinedTask | null
@@ -116,12 +117,11 @@ export default function TaskDetailModal({ task, onClose, onUpdate }: Props) {
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                 {isUserTask ? (
                   <>
-                    <input
-                      type="date"
+                    <LocaleDateInput
                       value={deadline}
-                      onChange={e => {
-                        setDeadline(e.target.value)
-                        saveField('deadline', e.target.value)
+                      onChange={v => {
+                        setDeadline(v)
+                        saveField('deadline', v)
                       }}
                       style={inputStyle}
                     />
@@ -148,13 +148,11 @@ export default function TaskDetailModal({ task, onClose, onUpdate }: Props) {
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                 {isUserTask ? (
                   <>
-                    <input
-                      type="date"
+                    <LocaleDateInput
                       value={snoozedUntil}
-                      min={new Date().toISOString().split('T')[0]}
-                      onChange={e => {
-                        setSnoozedUntil(e.target.value)
-                        saveField('snoozedUntil', e.target.value)
+                      onChange={v => {
+                        setSnoozedUntil(v)
+                        saveField('snoozedUntil', v)
                       }}
                       style={inputStyle}
                     />

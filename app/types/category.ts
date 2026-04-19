@@ -9,7 +9,9 @@ export type Category = {
   isFixed?: boolean
   isCapital?: boolean
   isExternal?: boolean
-  businessId?: number // Maps income category to a business
+  businessId?: number // Maps category to a business (business scope)
+  userId?: string // Maps category to a household member (person scope; used for tax categories)
+  system?: boolean // Auto-seeded, non-renamable, non-deletable
   parentId?: string // If this is a sub-category, reference to parent category
   subCategories?: string[] // IDs of sub-categories (for parent categories)
 }

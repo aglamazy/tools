@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { subscribeToAuthState, getIdToken, type AuthUser } from '@/app/services/firebaseAuthService'
-import TaxProfileSection from '@/app/components/TaxProfileSection'
 
 interface ProfileEntry {
   id: string
@@ -127,8 +126,6 @@ export default function ProfilePage() {
   return (
     <div className="tool-page" dir="rtl">
       <h1 style={{ fontSize: '1.5rem', marginBottom: '1.5rem' }}>הפרופיל שלי</h1>
-      {/* Tax settings section */}
-      <TaxProfileSection />
 
       <p style={{ color: '#64748b', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
         עובדות שנשמרו ישמשו למילוי אוטומטי של טפסים דרך התוסף.

@@ -6,6 +6,7 @@ import { db } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import type { Category } from '@/app/types/category'
 import { getIdToken } from '@/app/services/firebaseAuthService'
+import { getUser } from '@/app/stores/authStore'
 import { getTaxProfile } from '@/app/components/TaxProfileSection'
 
 export type TaxStatus = 'green' | 'yellow' | 'red' | 'gray'
@@ -38,8 +39,8 @@ export function useBusinessTaxStatus(businessId?: number): TaxStatusInfo | null 
       const business = await db.businesses.get(businessId)
       if (!business) return
 
-      // Read tax settings from person-level profile
-      const taxProfile = await getTaxProfile()
+      // Read tax settings from the business owner's person-level profile
+      const taxProfile = await getTaxProfile(business.userId)
 
       // Authorized businesses: gray placeholder (logic TBD)
       if (taxProfile.vatType === 'authorized') {
@@ -48,7 +49,7 @@ export function useBusinessTaxStatus(businessId?: number): TaxStatusInfo | null 
       }
 
       // Only exempt (or unset, treated as exempt) or tax-free businesses get income-vs-limit status
-      if (taxProfile.vatType && taxProfile.vatType !== 'exempt' && !taxProfile.isTaxFree) return
+      if (taxProfile.vatType && taxProfile.vatType !== 'exempt' && !business.isTaxFree) return
 
       const currentYear = new Date().getFullYear()
       const token = await getIdToken()
@@ -90,7 +91,7 @@ export function useBusinessTaxStatus(businessId?: number): TaxStatusInfo | null 
       const maxMonthlyIncome = monthlyIncomes.length > 0 ? Math.max(...monthlyIncomes) : 0
       const status = computeStatus(maxMonthlyIncome, limit)
 
-      console.log(`[TaxBadge] biz=${businessId} "${business.name}" vatType=${taxProfile.vatType} isTaxFree=${taxProfile.isTaxFree} income=${currentIncome} maxMonthly=${maxMonthlyIncome} limit=${limit} → ${status}`)
+      console.log(`[TaxBadge] biz=${businessId} "${business.name}" vatType=${taxProfile.vatType} isTaxFree=${business.isTaxFree} income=${currentIncome} maxMonthly=${maxMonthlyIncome} limit=${limit} → ${status}`)
       setInfo({ status, currentIncome, maxMonthlyIncome, limit })
     }
 
@@ -149,7 +150,7 @@ export function useExemptTaxStatus(): TaxStatusInfo | null {
     let cancelled = false
 
     const load = async () => {
-      const taxProfile = await getTaxProfile()
+      const taxProfile = await getTaxProfile(getUser()?.uid)
 
       // Only relevant for exempt (or unset, treated as exempt)
       if (taxProfile.vatType && taxProfile.vatType !== 'exempt') return

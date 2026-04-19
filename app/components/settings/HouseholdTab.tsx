@@ -16,6 +16,7 @@ import { appSettingsStore, AccountOwners } from '@/app/stores/appSettingsStore'
 import { getUser } from '@/app/stores/authStore'
 import { db } from '@/app/db/financeDB'
 import type { Household, HouseholdInvitation, HouseholdRole } from '@/app/types/household'
+import TaxProfileSection from '@/app/components/TaxProfileSection'
 
 type HouseholdWithEmails = Household & { memberEmails?: Record<string, string> }
 
@@ -37,6 +38,7 @@ export default function HouseholdTab() {
   })
   const [confirmLeave, setConfirmLeave] = useState(false)
   const [cancelInviteId, setCancelInviteId] = useState<string | null>(null)
+  const [memberSettings, setMemberSettings] = useState<{ uid: string; label: string } | null>(null)
 
   useEffect(() => {
     loadHouseholdInfo()
@@ -318,8 +320,10 @@ export default function HouseholdTab() {
             const memberIsOwner = memberId === household.ownerId
 
             return (
-              <div
+              <button
                 key={memberId}
+                type="button"
+                onClick={() => setMemberSettings({ uid: memberId, label: memberEmail })}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -328,7 +332,13 @@ export default function HouseholdTab() {
                   background: '#fff',
                   borderRadius: '0.5rem',
                   border: '1px solid #e2e8f0',
+                  cursor: 'pointer',
+                  textAlign: 'inherit',
+                  font: 'inherit',
+                  color: 'inherit',
+                  width: '100%',
                 }}
+                title="פתח הגדרות של חבר/ה זה/ו"
               >
                 <span style={{ fontSize: '1.25rem' }}>{memberIsOwner ? '👑' : '👤'}</span>
                 <span style={{ flex: 1 }}>
@@ -346,7 +356,7 @@ export default function HouseholdTab() {
                 >
                   {memberIsOwner ? 'בעלים' : 'חבר/ה'}
                 </span>
-              </div>
+              </button>
             )
           })}
         </div>
@@ -596,6 +606,17 @@ export default function HouseholdTab() {
         onYes={handleCancelInvite}
         onNo={() => setCancelInviteId(null)}
       />
+
+      <Modal isOpen={!!memberSettings} onClose={() => setMemberSettings(null)} maxWidth="640px">
+        <div className="modal-header">
+          <h2>הגדרות חבר/ה</h2>
+        </div>
+        <div className="modal-body">
+          {memberSettings && (
+            <TaxProfileSection userId={memberSettings.uid} memberLabel={memberSettings.label} />
+          )}
+        </div>
+      </Modal>
 
       <Modal isOpen={alertModal.isOpen} onClose={() => setAlertModal({ isOpen: false, message: '' })} maxWidth="450px">
         <div className="modal-body" style={{ textAlign: 'center', padding: '2rem' }}>

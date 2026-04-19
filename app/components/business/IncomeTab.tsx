@@ -46,7 +46,9 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
 
   useEffect(() => {
     loadBusiness()
-    getTaxProfile().then(p => setProfileVatType(p.vatType))
+    businessStore.getById(businessId)
+      .then(b => getTaxProfile(b?.userId))
+      .then(p => setProfileVatType(p.vatType))
   }, [businessId])
 
   useEffect(() => {

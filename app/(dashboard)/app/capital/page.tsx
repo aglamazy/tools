@@ -5,6 +5,7 @@ import { capitalStore } from '@/app/stores/capitalStore'
 import type { CapitalEntry } from '@/app/db/financeDB'
 import type { PortfolioSnapshot } from '@/app/types/capital'
 import { formatCurrency } from '@/app/utils/formatters'
+import { LocaleDateInput } from '@/app/components/LocaleInputs'
 
 export default function CapitalPage() {
   const [asOfDate, setAsOfDate] = useState<string>('')
@@ -99,11 +100,13 @@ export default function CapitalPage() {
                 <label htmlFor="asOfDate" style={{ marginLeft: '0.5rem' }}>
                   הצג נכסים נכון ל:
                 </label>
-                <input
-                  type="date"
-                  id="asOfDate"
+                <LocaleDateInput
                   value={dateForInput}
-                  onChange={handleDateChange}
+                  onChange={(v) => {
+                    if (!v) return
+                    const [year, month, day] = v.split('-')
+                    setAsOfDate(`${day}/${month}/${year}`)
+                  }}
                   style={{ padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
                 />
               </div>
