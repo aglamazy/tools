@@ -458,6 +458,26 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     const startTime = `${startDate.getHours().toString().padStart(2, '0')}:${startDate.getMinutes().toString().padStart(2, '0')}`
     const endTime = `${endDate.getHours().toString().padStart(2, '0')}:${endDate.getMinutes().toString().padStart(2, '0')}`
 
+    // If timer ran more than 12h, it was likely left running by mistake — open form for review
+    if (hours > 12) {
+      const task = await harvestTaskStore.getById(stoppedTimer.taskId)
+      if (task) {
+        const projectTasks = await harvestTaskStore.getActiveByProjectId(task.projectId)
+        setFormTasks(projectTasks)
+      }
+      setEditingEntry(null)
+      setFormData({
+        projectId: task?.projectId ?? null,
+        taskId: stoppedTimer.taskId,
+        date: today,
+        startTime,
+        endTime,
+        endNextDay: endTime < startTime,
+      })
+      await loadWeekEntries()
+      return
+    }
+
     await timeEntryStore.add({
       taskId: stoppedTimer.taskId,
       date: today,
@@ -552,14 +572,10 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     const projectTasks = await harvestTaskStore.getActiveByProjectId(task.projectId)
     setFormTasks(projectTasks)
 
-    // Calculate if entry spans midnight from stored hours
     const startTime = entry.startTime || '09:00'
     const endTime = entry.endTime || '10:00'
-    const [startH, startM] = startTime.split(':').map(Number)
-    const [endH, endM] = endTime.split(':').map(Number)
-    const sameDayHours = ((endH * 60 + endM) - (startH * 60 + startM)) / 60
-    // If stored hours > same-day calculation, it spans midnight
-    const endNextDay = entry.hours > sameDayHours + 0.01 // small epsilon for float comparison
+    // Entry crosses midnight only when endTime string is earlier than startTime string (HH:MM comparison)
+    const endNextDay = endTime < startTime
 
     setFormData({
       projectId: task.projectId,
