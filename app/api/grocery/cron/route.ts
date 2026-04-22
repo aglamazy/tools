@@ -34,6 +34,9 @@ import {
   finalizeOrderFailure,
 } from '@/app/services/grocery/orderSafety'
 import { sendMessage } from '@/app/services/telegram/telegramClient'
+import { withTimeout } from '@/app/services/grocery/timeoutUtil'
+
+export const maxDuration = 60
 
 // Vercel cron auth
 const CRON_SECRET = process.env.CRON_SECRET
@@ -92,9 +95,13 @@ export async function GET(request: NextRequest) {
     const chatId = await getTelegramChatId(uid)
 
     for (const storeId of storeIds) {
-      try {
+      // Per-iteration body as an async IIFE so we can wrap it in a 25s
+      // timeout. The outer timeout is a belt — the inner locks/safety-gate
+      // are the suspenders. If the body throws, the outer try/catch below
+      // records the error and the loop continues to the next iteration.
+      const iteration = (async (): Promise<void> => {
         const data = await getStoreData(uid, storeId)
-        if (!data.schedule) continue // user hasn't configured this store
+        if (!data.schedule) return // user hasn't configured this store
 
         const { orderDay, preferredSlot, reviewReminderHours } = data.schedule
 
@@ -103,7 +110,7 @@ export async function GET(request: NextRequest) {
           const plugin = getStore(storeId)
           if (!plugin) {
             results.push({ uid, storeId, action: 'unknown_store', ok: false, error: `plugin "${storeId}" not registered` })
-            continue
+            return
           }
 
           // Only consider pending entries whose validTo has not yet expired.
@@ -123,7 +130,7 @@ export async function GET(request: NextRequest) {
             console.warn(`[Grocery Cron] Safety: uid=${uid} store=${storeId} decision=size-skip`)
             await notify(chatId, `⚠️ דילגתי על הזמנה אוטומטית ב${plugin.label}: ${reason}. אפשר להוסיף פריטים ולהריץ ידנית.`)
             results.push({ uid, storeId, action: 'skip_tiny', ok: true })
-            continue
+            return
           }
 
           // --- Safety gate: idempotency + lock + pre-flight live check ---
@@ -138,7 +145,7 @@ export async function GET(request: NextRequest) {
             } else {
               results.push({ uid, storeId, action: 'locked_by_other_run', ok: true })
             }
-            continue
+            return
           }
 
           const items = withId.map(i => ({
@@ -188,7 +195,7 @@ export async function GET(request: NextRequest) {
             })
             throw checkoutErr
           }
-          continue
+          return
         }
 
         // --- REVIEW REMINDER & POST-DELIVERY ---
@@ -227,11 +234,22 @@ export async function GET(request: NextRequest) {
             }
           }
         }
+      })()
 
+      try {
+        await withTimeout(iteration, 25_000, `cron uid=${uid} store=${storeId}`)
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err)
-        console.error(`[Grocery Cron] Error for uid=${uid} store=${storeId}:`, errMsg)
-        results.push({ uid, storeId, action: 'error', ok: false, error: errMsg })
+        if (/timeout after /.test(errMsg)) {
+          console.error(`[Grocery Cron] Iteration timeout uid=${uid} store=${storeId}`)
+          // Do NOT clear lockedAt here — orderSafety.finalizeOrderFailure (when
+          // the underlying call eventually settles) is the lock suspender; this
+          // outer timeout is only the belt that lets the run as a whole finish.
+          results.push({ uid, storeId, action: 'timeout', ok: false, error: 'iteration timeout' })
+        } else {
+          console.error(`[Grocery Cron] Error for uid=${uid} store=${storeId}:`, errMsg)
+          results.push({ uid, storeId, action: 'error', ok: false, error: errMsg })
+        }
       }
     }
   }

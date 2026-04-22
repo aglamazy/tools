@@ -20,9 +20,11 @@ import {
   addStorePendingItems,
   removeStorePendingItems,
   clearStorePending,
+  setStoreOrderCycle,
 } from '@/app/services/grocery/groceryStoreMulti'
 import type { GroceryItem } from '@/app/services/grocery/groceryStore'
 import type { StoreOrder } from '@/app/services/grocery/storeTypes'
+import { withTimeout } from '@/app/services/grocery/timeoutUtil'
 
 export const maxDuration = 60
 
@@ -69,20 +71,38 @@ async function buildHistory(
     const { getStore } = await import('@/app/services/grocery/storeRegistry')
     const plugin = getStore(storeId)
     if (plugin) {
-      const authed = await plugin.isAuthenticated(uid).catch(() => false)
+      // 5s timeout — isAuthenticated should be quick. On timeout, treat as unauthed.
+      const authed = await withTimeout(
+        plugin.isAuthenticated(uid),
+        5_000,
+        `isAuthenticated store=${storeId}`,
+      ).catch(() => false)
       if (authed) {
-        activeOrders = await plugin.listOrders(uid)
-        for (const o of activeOrders) {
-          for (const it of o.items) {
-            const k = key(it.name)
-            if (!byKey.has(k)) {
-              byKey.set(k, {
-                name: it.name,
-                source: 'order',
-                lastSeen: o.delivery?.date || undefined,
-              })
+        try {
+          // 15s API-layer budget — Shufersal's internal socket timeout is 30s, and
+          // two stores in parallel can tip the 60s maxDuration.
+          activeOrders = await withTimeout(
+            plugin.listOrders(uid),
+            15_000,
+            `listOrders store=${storeId}`,
+          )
+          for (const o of activeOrders) {
+            for (const it of o.items) {
+              const k = key(it.name)
+              if (!byKey.has(k)) {
+                byKey.set(k, {
+                  name: it.name,
+                  source: 'order',
+                  lastSeen: o.delivery?.date || undefined,
+                })
+              }
             }
           }
+        } catch (listErr) {
+          const msg = listErr instanceof Error ? listErr.message : String(listErr)
+          error = /timeout after /.test(msg) ? 'timeout' : msg
+          activeOrders = []
+          console.log(`[grocery/stores] listOrders failed for ${storeId}:`, msg)
         }
       }
     }

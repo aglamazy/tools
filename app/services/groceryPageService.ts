@@ -55,11 +55,45 @@ async function authFetch(url: string, options: RequestInit = {}) {
   })
 }
 
+/**
+ * Transient HTTP statuses worth one retry. 401/403/400 are NOT retried —
+ * those are auth/validation errors and retrying can't help. This predicate
+ * is intentionally named for easy grep — search for `isTransientStatus`.
+ */
+function isTransientStatus(status: number): boolean {
+  return status === 408 || status === 502 || status === 503 || status === 504
+}
+
 export async function fetchStores(): Promise<StorePanelData[]> {
-  const res = await authFetch('/api/grocery/stores')
-  const data = await res.json()
-  if (!data.success) throw new Error(data.error || 'Failed to load stores')
-  return data.stores as StorePanelData[]
+  // Single retry for flaky networks / transient upstream errors.
+  // Mutations are deliberately NOT retried — double-adding is worse than a toast.
+  const MAX_ATTEMPTS = 2
+  const RETRY_DELAY_MS = 2000
+  let lastErr: unknown
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await authFetch('/api/grocery/stores')
+      if (!res.ok && isTransientStatus(res.status) && attempt < MAX_ATTEMPTS) {
+        lastErr = new Error(`transient HTTP ${res.status}`)
+        await new Promise(r => setTimeout(r, RETRY_DELAY_MS))
+        continue
+      }
+      const data = await res.json()
+      if (!data.success) throw new Error(data.error || 'Failed to load stores')
+      return data.stores as StorePanelData[]
+    } catch (err) {
+      lastErr = err
+      // Network-level failure (fetch throws). Retry once.
+      if (attempt < MAX_ATTEMPTS) {
+        await new Promise(r => setTimeout(r, RETRY_DELAY_MS))
+        continue
+      }
+      throw err
+    }
+  }
+  // Unreachable, but satisfies the type system: the loop either returns or throws.
+  throw lastErr instanceof Error ? lastErr : new Error('Failed to load stores')
 }
 
 type MutationResponse = {

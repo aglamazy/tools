@@ -303,7 +303,7 @@ export default function StoresPage() {
               <h2 style={panelHeaderStyle}>לוח זמנים</h2>
               <TimeTablePanel
                 schedule={active.data.schedule}
-                orderCycle={active.data.orderCycle}
+                activeOrder={active.activeOrders?.[0] || null}
                 onOrderClick={(orderId) =>
                   setSelectedOrder({ storeId: active.id, orderId })
                 }

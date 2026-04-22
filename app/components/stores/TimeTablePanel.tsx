@@ -1,14 +1,20 @@
 'use client'
 
 /**
- * Read-only view of the store's cycle: schedule (orderDay / preferredSlot /
- * reviewReminderHours) plus the current order cycle status if one is active.
+ * Read-only view of the store's schedule + the live "current order" card.
  *
- * Editing the schedule itself is not in scope of this page — that's done via
- * the chat assistant. This panel visualises what's already configured.
+ * Source of truth for "current order" is the store itself — the activeOrder
+ * prop is derived by the caller from plugin.listOrders (the store API), NOT
+ * from orderCycle in Firestore. orderCycle is internal orchestration state
+ * (locks, idempotency keys) and can drift when an order is cancelled
+ * externally; reading it here would mean the stale state leaks into the UI.
+ *
+ * Editing the schedule is not in scope of this panel — that's done via the
+ * chat assistant. This panel is display-only.
  */
 
-import type { GrocerySchedule, OrderCycle } from '@/app/services/grocery/groceryTypes'
+import type { GrocerySchedule } from '@/app/services/grocery/groceryTypes'
+import type { StoreOrder } from '@/app/services/grocery/storeTypes'
 
 const HEBREW_DAYS = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת']
 
@@ -17,22 +23,15 @@ function formatOrderDay(day: number | undefined): string {
   return HEBREW_DAYS[day] ?? '—'
 }
 
-const CYCLE_STATUS: Record<OrderCycle['status'], { label: string; color: string; bg: string }> = {
-  draft: { label: 'טיוטה', color: '#6b7280', bg: '#f3f4f6' },
-  active: { label: 'פעילה', color: '#047857', bg: '#d1fae5' },
-  review: { label: 'תזכורת סופית', color: '#b45309', bg: '#fef3c7' },
-  locked: { label: 'נעולה', color: '#b91c1c', bg: '#fee2e2' },
-  delivered: { label: 'סופקה', color: '#1e40af', bg: '#dbeafe' },
-  failed: { label: 'נכשלה', color: '#b91c1c', bg: '#fee2e2' },
-}
+const ACTIVE_BADGE = { label: 'פעילה', color: '#047857', bg: '#d1fae5' }
 
 export default function TimeTablePanel({
   schedule,
-  orderCycle,
+  activeOrder,
   onOrderClick,
 }: {
   schedule: GrocerySchedule | null
-  orderCycle: OrderCycle | null
+  activeOrder: StoreOrder | null
   onOrderClick?: (orderId: string) => void
 }) {
   const rows: { label: string; value: string }[] = []
@@ -49,7 +48,7 @@ export default function TimeTablePanel({
     })
   }
 
-  const cycleInfo = orderCycle ? CYCLE_STATUS[orderCycle.status] : null
+  const cycleInfo = activeOrder ? ACTIVE_BADGE : null
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
@@ -72,10 +71,10 @@ export default function TimeTablePanel({
         </div>
       )}
 
-      {orderCycle && cycleInfo && (() => {
-        const clickable = !!(onOrderClick && orderCycle.orderId)
+      {activeOrder && cycleInfo && (() => {
+        const clickable = !!(onOrderClick && activeOrder.orderId)
         const handleClick = () => {
-          if (clickable && orderCycle.orderId) onOrderClick!(orderCycle.orderId)
+          if (clickable && activeOrder.orderId) onOrderClick!(activeOrder.orderId)
         }
         const cardStyle: React.CSSProperties = {
           marginTop: '0.25rem',
@@ -122,14 +121,15 @@ export default function TimeTablePanel({
               >
                 {cycleInfo.label}
               </span>
-              {orderCycle.orderId && (
+              {activeOrder.orderId && (
                 <span style={{ fontSize: '0.8rem', color: '#374151' }}>
-                  #{orderCycle.orderId}
+                  #{activeOrder.orderId}
                 </span>
               )}
-              {orderCycle.slot && (
+              {activeOrder.delivery?.date && (
                 <span style={{ fontSize: '0.8rem', color: '#374151' }}>
-                  {orderCycle.slot.day} {orderCycle.slot.date} {orderCycle.slot.time}
+                  {activeOrder.delivery.date} {activeOrder.delivery.time}
+                  {activeOrder.delivery.endTime ? `-${activeOrder.delivery.endTime}` : ''}
                 </span>
               )}
             </div>
@@ -139,7 +139,7 @@ export default function TimeTablePanel({
           <button
             type="button"
             onClick={handleClick}
-            aria-label={`פרטי הזמנה ${orderCycle.orderId}`}
+            aria-label={`פרטי הזמנה ${activeOrder.orderId}`}
             style={cardStyle}
             onMouseEnter={(e) => {
               e.currentTarget.style.transform = 'translateY(-1px)'
