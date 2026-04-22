@@ -4,19 +4,43 @@
  * Called by Vercel cron. Checks all users with a grocery schedule
  * and performs the appropriate action for the current day/time.
  *
- * Flow per user:
- *   Order day morning  → merge list, checkout on Shufersal, notify via Telegram
+ * Iterates per-user × per-store using the multi-store layer
+ * (groceries/{uid}/stores/{storeId}). The legacy single-store doc
+ * (groceries/{uid} root) is no longer read by this cron.
+ *
+ * Flow per (user, store):
+ *   Order day morning  → merge list, plugin.checkout(), notify via Telegram
  *   Review time        → send list summary, ask for last changes
  *   Post-delivery      → notify, reset cycle
+ *
+ * NOTE: The legacy root doc fields (standingList/pendingChanges/orderCycle)
+ * are no longer read or written. A manual cleanup is required to purge
+ * stale fields from `groceries/{uid}`; the cron will not do it.
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
-import { getGroceryData, mergeList, setOrderCycle, clearPending, type OrderCycle } from '@/app/services/grocery/groceryStore'
-import { checkout, listSlots } from '@/app/services/grocery/shufersalClient'
+import {
+  getStoreData,
+  mergeStoreList,
+  setStoreOrderCycle,
+  clearStorePending,
+} from '@/app/services/grocery/groceryStoreMulti'
+import type { OrderCycle } from '@/app/services/grocery/groceryStore'
+import { getStore, getAllStores } from '@/app/services/grocery/storeRegistry'
+import { initStores } from '@/app/services/grocery/initStores'
 import { sendMessage } from '@/app/services/telegram/telegramClient'
 
 // Vercel cron auth
 const CRON_SECRET = process.env.CRON_SECRET
+
+/**
+ * Minimum number of lines before we'll place an automatic order.
+ * The 2026-04-21 11:01 incident placed a 1-line Shufersal order from a
+ * stale legacy doc; this is the defensive floor to prevent recurrence.
+ * If the merged list has fewer than MIN_ORDER_LINES entries (or no items
+ * with catalogId), the cron skips and notifies the user instead.
+ */
+const MIN_ORDER_LINES = 2
 
 /**
  * Best-effort Telegram notification. A stale chatId ("chat not found", user
@@ -41,104 +65,138 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  initStores()
+
   const firestore = getAdminFirestore()
   const groceryDocs = await firestore.collection('groceries').get()
 
-  const results: { uid: string; action: string; ok: boolean; error?: string }[] = []
+  const results: { uid: string; storeId: string; action: string; ok: boolean; error?: string }[] = []
 
   const now = new Date()
   const currentDay = now.getDay() // 0=Sun
+  // NOTE: getHours() uses the server's local time. On Vercel that's UTC, which
+  // is 2-3h behind Israel time. The 08:00-10:00 window is therefore effectively
+  // 10:00/11:00 local on cron days. Fragile if the deployment region changes;
+  // left as-is per task scope.
   const currentHour = now.getHours()
+
+  const storeIds = getAllStores().map(s => s.id)
 
   for (const doc of groceryDocs.docs) {
     const uid = doc.id
-    try {
-      const data = await getGroceryData(uid)
-      if (!data.schedule) continue
+    const chatId = await getTelegramChatId(uid)
 
-      const chatId = await getTelegramChatId(uid)
-      const { orderDay, preferredSlot, reviewReminderHours } = data.schedule
+    for (const storeId of storeIds) {
+      try {
+        const data = await getStoreData(uid, storeId)
+        if (!data.schedule) continue // user hasn't configured this store
 
-      // --- ORDER DAY: open order + checkout ---
-      if (currentDay === orderDay && currentHour >= 8 && currentHour < 10) {
-        if (data.orderCycle?.status === 'active') continue // already ordered this week
+        const { orderDay, preferredSlot, reviewReminderHours } = data.schedule
 
-        const mergedMap = mergeList(data.standingList, data.pendingChanges)
-        const merged = Object.values(mergedMap)
-        if (merged.length === 0) {
-          await notify(chatId, 'הרשימה ריקה — לא פותח הזמנה השבוע.')
-          results.push({ uid, action: 'skip_empty', ok: true })
+        // --- ORDER DAY: open order + checkout ---
+        if (currentDay === orderDay && currentHour >= 8 && currentHour < 10) {
+          if (data.orderCycle?.status === 'active') continue // already ordered this week
+
+          const plugin = getStore(storeId)
+          if (!plugin) {
+            results.push({ uid, storeId, action: 'unknown_store', ok: false, error: `plugin "${storeId}" not registered` })
+            continue
+          }
+
+          const mergedMap = mergeStoreList(data.standingList, data.pendingChanges)
+          const merged = Object.values(mergedMap)
+          const withId = merged.filter(i => i.catalogId)
+
+          // Defensive guard: never place a tiny auto-order. The 2026-04-21
+          // incident delivered a single-item order from a stale doc.
+          if (merged.length < MIN_ORDER_LINES || withId.length < MIN_ORDER_LINES) {
+            const reason = merged.length < MIN_ORDER_LINES
+              ? `רשימה קצרה מדי (${merged.length} פריטים, מינימום ${MIN_ORDER_LINES})`
+              : `מעט מדי פריטים מקושרים (${withId.length}/${merged.length}, מינימום ${MIN_ORDER_LINES})`
+            console.warn(`[Grocery Cron] Skip tiny order uid=${uid} store=${storeId}: ${reason}`)
+            await notify(chatId, `⚠️ דילגתי על הזמנה אוטומטית ב${plugin.label}: ${reason}. אפשר להוסיף פריטים ולהריץ ידנית.`)
+            results.push({ uid, storeId, action: 'skip_tiny', ok: true })
+            continue
+          }
+
+          const items = withId.map(i => ({
+            code: i.catalogId!,
+            qty: i.qty,
+            sellingUnitId: i.sellingUnitId,
+          }))
+
+          const result = await plugin.checkout(uid, items, {
+            day: preferredSlot.day,
+            time: preferredSlot.time?.split('-')[0],
+          })
+
+          if (result.success) {
+            const cycle: OrderCycle = {
+              status: 'active',
+              orderId: result.orderId,
+              slot: result.deliveryWindow,
+              createdAt: now.toISOString(),
+              updatedAt: now.toISOString(),
+            }
+            await setStoreOrderCycle(uid, storeId, cycle)
+
+            const itemList = merged.map(i => `• ${i.name}${i.qty > 1 ? ` x${i.qty}` : ''}`).join('\n')
+            await notify(chatId,
+              `🛒 הזמנה נפתחה ב${plugin.label}!\n` +
+              `משלוח: ${result.deliveryWindow?.day} ${result.deliveryWindow?.date} ${result.deliveryWindow?.time}\n` +
+              `מספר הזמנה: #${result.orderId || '---'}\n\n` +
+              `${itemList}\n\n` +
+              `אפשר לשנות עד שהזמנה ננעלת.`
+            )
+            results.push({ uid, storeId, action: 'checkout', ok: true })
+          } else {
+            await notify(chatId, `⚠️ שגיאה בפתיחת הזמנה ב${plugin.label}: ${result.error}`)
+            results.push({ uid, storeId, action: 'checkout', ok: false, error: result.error })
+          }
           continue
         }
 
-        const items = merged
-          .filter(i => i.catalogId)
-          .map(i => ({ code: i.catalogId!, qty: i.qty }))
+        // --- REVIEW REMINDER & POST-DELIVERY ---
+        const cycle = data.orderCycle
+        if (cycle && (cycle.status === 'active' || cycle.status === 'review') && cycle.slot) {
+          const deliveryDate = parseDeliveryDate(cycle.slot.date, cycle.slot.time)
+          if (deliveryDate) {
+            const hoursUntilDelivery = (deliveryDate.getTime() - now.getTime()) / (1000 * 60 * 60)
+            const plugin = getStore(storeId)
+            const storeLabel = plugin?.label || storeId
 
-        const result = await checkout(uid, items, {
-          day: preferredSlot.day,
-          time: preferredSlot.time?.split('-')[0],
-        })
+            // Send review reminder at the configured time
+            if (
+              cycle.status === 'active' &&
+              hoursUntilDelivery > 0 &&
+              hoursUntilDelivery <= reviewReminderHours &&
+              hoursUntilDelivery > reviewReminderHours - 2
+            ) {
+              await setStoreOrderCycle(uid, storeId, { ...cycle, status: 'review', updatedAt: now.toISOString() })
 
-        if (result.success) {
-          const cycle: OrderCycle = {
-            status: 'active',
-            orderId: result.orderId,
-            slot: result.deliveryWindow,
-            createdAt: now.toISOString(),
-            updatedAt: now.toISOString(),
-          }
-          await setOrderCycle(uid, cycle)
+              await notify(chatId,
+                `📋 תזכורת (${storeLabel}) — משלוח מגיע ${cycle.slot.day} ${cycle.slot.time}.\n` +
+                `שינויים אחרונים? כתבו כאן.`
+              )
+              results.push({ uid, storeId, action: 'review_reminder', ok: true })
+            }
 
-          const itemList = merged.map(i => `• ${i.name}${i.qty > 1 ? ` x${i.qty}` : ''}`).join('\n')
-          await notify(chatId,
-            `🛒 הזמנה נפתחה!\n` +
-            `משלוח: ${result.deliveryWindow?.day} ${result.deliveryWindow?.date} ${result.deliveryWindow?.time}\n` +
-            `מספר הזמנה: #${result.orderId || '---'}\n\n` +
-            `${itemList}\n\n` +
-            `אפשר לשנות עד שהזמנה ננעלת בשופרסל.`
-          )
-          results.push({ uid, action: 'checkout', ok: true })
-        } else {
-          await notify(chatId, `⚠️ שגיאה בפתיחת הזמנה: ${result.error}`)
-          results.push({ uid, action: 'checkout', ok: false, error: result.error })
-        }
-        continue
-      }
+            // Post-delivery: reset cycle
+            if (hoursUntilDelivery < -2) {
+              await setStoreOrderCycle(uid, storeId, { ...cycle, status: 'delivered', updatedAt: now.toISOString() })
+              await clearStorePending(uid, storeId)
 
-      // --- REVIEW REMINDER & POST-DELIVERY ---
-      const cycle = data.orderCycle
-      if (cycle && (cycle.status === 'active' || cycle.status === 'review') && cycle.slot) {
-        const deliveryDate = parseDeliveryDate(cycle.slot.date, cycle.slot.time)
-        if (deliveryDate) {
-          const hoursUntilDelivery = (deliveryDate.getTime() - now.getTime()) / (1000 * 60 * 60)
-
-          // Send review reminder at the configured time
-          if (cycle.status === 'active' && hoursUntilDelivery > 0 && hoursUntilDelivery <= reviewReminderHours && hoursUntilDelivery > reviewReminderHours - 2) {
-            await setOrderCycle(uid, { ...cycle, status: 'review', updatedAt: now.toISOString() })
-
-            await notify(chatId,
-              `📋 תזכורת — משלוח מגיע ${cycle.slot.day} ${cycle.slot.time}.\n` +
-              `שינויים אחרונים? כתבו כאן.`
-            )
-            results.push({ uid, action: 'review_reminder', ok: true })
-          }
-
-          // Post-delivery: reset cycle
-          if (hoursUntilDelivery < -2) {
-            await setOrderCycle(uid, { ...cycle, status: 'delivered', updatedAt: now.toISOString() })
-            await clearPending(uid)
-
-            await notify(chatId, '📦 ההזמנה הגיעה? מקווה שהכל בסדר!')
-            results.push({ uid, action: 'post_delivery', ok: true })
+              await notify(chatId, `📦 ההזמנה מ${storeLabel} הגיעה? מקווה שהכל בסדר!`)
+              results.push({ uid, storeId, action: 'post_delivery', ok: true })
+            }
           }
         }
-      }
 
-    } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : String(err)
-      console.error(`[Grocery Cron] Error for uid=${uid}:`, errMsg)
-      results.push({ uid, action: 'error', ok: false, error: errMsg })
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err)
+        console.error(`[Grocery Cron] Error for uid=${uid} store=${storeId}:`, errMsg)
+        results.push({ uid, storeId, action: 'error', ok: false, error: errMsg })
+      }
     }
   }
 
