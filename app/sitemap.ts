@@ -1,12 +1,16 @@
 import fs from 'fs'
 import path from 'path'
 import type { MetadataRoute } from 'next'
+import routeLastmod from './route-lastmod.json'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://aglamazo.com'
 const normalizedBase = siteUrl.endsWith('/') ? siteUrl.slice(0, -1) : siteUrl
+
+const lastmodMap = routeLastmod as Record<string, string>
+const fallbackLastmodIso = lastmodMap.__fallback__ ?? new Date().toISOString()
 
 /** Directories under app/ that are NOT public pages */
 const EXCLUDED_DIRS = new Set([
@@ -30,16 +34,27 @@ interface DiscoveredRoute {
   lastModified: Date
 }
 
-function latestMtime(dir: string): Date {
-  const entries = fs.readdirSync(dir, { withFileTypes: true })
-  let latest = fs.statSync(dir).mtime
-  for (const entry of entries) {
-    if (!entry.isFile()) continue
-    if (!/^(page|layout)\.(tsx?|jsx?)$/.test(entry.name)) continue
-    const stat = fs.statSync(path.join(dir, entry.name))
-    if (stat.mtime > latest) latest = stat.mtime
+function resolveLastmod(routePath: string, dir: string): Date {
+  const mapped = lastmodMap[routePath]
+  if (mapped) {
+    const d = new Date(mapped)
+    if (!Number.isNaN(d.getTime())) return d
   }
-  return latest
+  // Fallback to filesystem mtime (less stable across deploys, but better than nothing)
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true })
+    let latest: Date | null = null
+    for (const entry of entries) {
+      if (!entry.isFile()) continue
+      if (!/^(page|layout)\.(tsx?|jsx?)$/.test(entry.name)) continue
+      const stat = fs.statSync(path.join(dir, entry.name))
+      if (!latest || stat.mtime > latest) latest = stat.mtime
+    }
+    if (latest) return latest
+  } catch {
+    // ignore
+  }
+  return new Date(fallbackLastmodIso)
 }
 
 function discoverPublicRoutes(dir: string, basePath = ''): DiscoveredRoute[] {
@@ -52,7 +67,7 @@ function discoverPublicRoutes(dir: string, basePath = ''): DiscoveredRoute[] {
   if (pageFile) {
     const routePath = basePath || '/'
     if (!EXCLUDED_ROUTES.has(routePath)) {
-      routes.push({ routePath, lastModified: latestMtime(dir) })
+      routes.push({ routePath, lastModified: resolveLastmod(routePath, dir) })
     }
   }
 
