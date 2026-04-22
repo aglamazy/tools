@@ -29,6 +29,8 @@ export const SYNCED_DB_TABLES = [
   'taxDocuments',
   'advancePayments',
   'businessTasks',
+  'chats',
+  'chatMessages',
 ] as const
 
 export type SyncedTableName = (typeof SYNCED_DB_TABLES)[number]

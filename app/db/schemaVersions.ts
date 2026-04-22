@@ -509,4 +509,33 @@ export function defineSchemaVersions(db: Dexie): void {
     businessTasks: '++id, syncId, businessId, recurrence, archived',
     advancePayments: '++id, syncId, businessId, month, type, [businessId+month+type]',
   })
+
+  // v26: add multi-thread chat persistence (chats + chatMessages).
+  // Replaces the old single-thread localStorage key (aglamazo_chat_history_v1_{uid}),
+  // which chatHistoryStore.migrateFromLocalStorageV1() imports lazily on first load.
+  db.version(26).stores({
+    transactions: '++id, syncId, type, month, accountNumber, cardNumber, date, chargingDate, [type+month], [cardNumber+month], [accountNumber+month], fileId',
+    importedFiles: '++id, syncId, fileName, fileType, processingMonth, [fileType+processingMonth], [cardNumber+processingMonth]',
+    categories: '++id, syncId, name, type',
+    businessCategories: '++id, syncId, &business',
+    tasks: '++id, syncId, createdAt, priority, quadrant, deadline, delegatedTo, autoTaskId, botId, taskType, subject',
+    appSettings: '++id, syncId, &key',
+    businesses: '++id, syncId, &name, type, userId',
+    projects: '++id, syncId, businessId, name, archived',
+    harvestTasks: '++id, syncId, projectId, name, archived',
+    timeEntries: '++id, syncId, taskId, date, startTime, endTime, [taskId+date]',
+    capitalEntries: '++id, syncId, date, institution, accountNumber, description, assetType, currency, employer, investmentTrack, agent, soldDate, [institution+accountNumber+description], fileId',
+    financialInstitutions: '++id, syncId, name, type',
+    ypayDocuments: '++id, syncId, &transactionId, docType',
+    students: '++id, syncId, businessId, name, archived',
+    profileQAs: '++id, syncId, businessId, [businessId+answerType]',
+    scoutResults: '++id, syncId, businessId, status, [businessId+status]',
+    scoutConfigs: '++id, syncId, &businessId',
+    taxDocuments: '++id, syncId, businessId, userId, month, year, [businessId+year]',
+    expenseDocuments: '++id, syncId, transactionId, date, vendor, category, sourceType',
+    businessTasks: '++id, syncId, businessId, recurrence, archived',
+    advancePayments: '++id, syncId, businessId, month, type, [businessId+month+type]',
+    chats: '&id, syncId, uid, updatedAt, [uid+updatedAt]',
+    chatMessages: '&id, syncId, chatId, uid, createdAt, [chatId+createdAt]',
+  })
 }

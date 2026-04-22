@@ -283,6 +283,31 @@ export interface AdvancePayment {
   updatedAt?: string
 }
 
+// Chat persistence (v26) — multi-thread chat with per-message rows.
+// Replaces the old localStorage-only single-thread store. Both tables
+// participate in encrypted sync via SYNCED_DB_TABLES.
+export interface Chat {
+  id: string          // uuid (string PK — not auto-increment)
+  syncId?: string
+  uid: string         // owner Firebase UID
+  title: string       // user-editable; default "שיחה חדשה" until first user msg
+  createdAt: string   // ISO
+  updatedAt: string   // ISO
+  msgCount: number    // cached message count for sorting without scanning messages
+}
+
+export interface ChatMessageRow {
+  id: string          // uuid
+  syncId?: string
+  chatId: string      // FK → Chat.id
+  uid: string
+  role: 'user' | 'assistant'
+  content: string
+  thinking?: string
+  createdAt: string   // ISO
+  updatedAt?: string
+}
+
 class FinanceDB extends Dexie {
   transactions!: Table<Transaction, number>
   importedFiles!: Table<ImportedFile, number>
@@ -305,6 +330,8 @@ class FinanceDB extends Dexie {
   expenseDocuments!: Table<ExpenseDocument, number>
   businessTasks!: Table<BusinessTask, number>
   advancePayments!: Table<AdvancePayment, number>
+  chats!: Table<Chat, string>
+  chatMessages!: Table<ChatMessageRow, string>
 
   constructor() {
     super('FinanceDB')
@@ -317,6 +344,7 @@ class FinanceDB extends Dexie {
       'importedFiles', 'transactions', 'tasks', 'financialInstitutions',
       'capitalEntries', 'ypayDocuments', 'projects', 'harvestTasks',
       'timeEntries', 'taxDocuments', 'advancePayments', 'businessTasks',
+      'chats', 'chatMessages',
     ])
 
     // Auto-inject syncId/updatedAt on create/update, and record deletions

@@ -4,9 +4,9 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useToast } from '@/app/components/ToastContainer'
 import { getIdToken } from '@/app/services/firebaseAuthService'
 import { subscribeToAuth } from '@/app/stores/authStore'
-import { chatHistoryStore, type ChatMessage, type ChatPendingSelection } from '@/app/stores/chatHistoryStore'
+import { chatHistoryStore, type ChatMessage } from '@/app/stores/chatHistoryStore'
 
-type Message = ChatMessage
+type Message = { role: 'user' | 'assistant'; content: string; thinking?: string }
 
 type ProductResult = {
   catalogId: string
@@ -16,7 +16,14 @@ type ProductResult = {
   unitPrice: string
 }
 
-type PendingSelection = ChatPendingSelection
+type PendingSelection = {
+  query: string
+  qty: number
+  target: 'pending' | 'standing'
+  store?: string
+  searchKey: string
+  results: ProductResult[]
+}
 
 function ThinkingBubble({ text }: { text: string }) {
   const [open, setOpen] = useState(false)
@@ -33,6 +40,10 @@ function ThinkingBubble({ text }: { text: string }) {
   )
 }
 
+function toUIMessage(row: ChatMessage): Message {
+  return { role: row.role, content: row.content, thinking: row.thinking }
+}
+
 export default function AppChat() {
   const { showToast } = useToast()
   const [messages, setMessages] = useState<Message[]>([])
@@ -41,6 +52,7 @@ export default function AppChat() {
   const [loading, setLoading] = useState(false)
   const [selectingKey, setSelectingKey] = useState<string | null>(null)
   const [uid, setUid] = useState<string | null>(null)
+  const [activeChatId, setActiveChatId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -48,34 +60,83 @@ export default function AppChat() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, pendingSelections])
 
-  // Hydrate from localStorage once we know who the user is.
+  // Hydrate from Dexie once we know who the user is. We only migrate + pick
+  // an active chat once per auth user per mount.
   useEffect(() => {
-    const unsubscribe = subscribeToAuth(({ user, initialized }) => {
+    const unsubscribe = subscribeToAuth(async ({ user, initialized }) => {
       if (!initialized) return
       if (!user) {
         setUid(null)
+        setActiveChatId(null)
+        setMessages([])
+        setPendingSelections([])
         return
       }
       if (uid === user.uid) return // already hydrated for this user
+
       setUid(user.uid)
-      const restored = chatHistoryStore.load(user.uid)
-      if (restored) {
-        setMessages(restored.messages)
-        setPendingSelections(restored.pendingSelections)
+
+      // One-time migration from the old single-thread localStorage key.
+      await chatHistoryStore.migrateFromLocalStorageV1(user.uid)
+
+      let chatId = chatHistoryStore.getActiveChatId(user.uid)
+      if (chatId) {
+        const chat = await chatHistoryStore.getChat(user.uid, chatId)
+        if (!chat) chatId = null
       }
+      if (!chatId) {
+        const chats = await chatHistoryStore.listChats(user.uid)
+        if (chats.length > 0) {
+          chatId = chats[0].id
+          chatHistoryStore.setActiveChatId(user.uid, chatId)
+        } else {
+          const fresh = await chatHistoryStore.createChat(user.uid)
+          chatId = fresh.id
+          chatHistoryStore.setActiveChatId(user.uid, chatId)
+        }
+      }
+      setActiveChatId(chatId)
+
+      const rows = await chatHistoryStore.listMessages(user.uid, chatId)
+      setMessages(rows.map(toUIMessage))
+      setPendingSelections([])
     })
     return () => unsubscribe()
   }, [uid])
 
-  // Persist on every message/selection change.
+  // React to active-chat changes driven by the header dropdown (new chat,
+  // switch chat, or delete-of-current). The store is the single source of
+  // truth; we just re-read when it tells us to.
   useEffect(() => {
     if (!uid) return
-    chatHistoryStore.save(uid, { messages, pendingSelections })
-  }, [uid, messages, pendingSelections])
+    const unsub = chatHistoryStore.subscribeActive(async (listenerUid, nextId) => {
+      if (listenerUid !== uid) return
+      if (!nextId) {
+        // Active chat got cleared (e.g. its chat was deleted). Pick the
+        // next-newest or create a fresh one.
+        const chats = await chatHistoryStore.listChats(uid)
+        let targetId: string
+        if (chats.length > 0) {
+          targetId = chats[0].id
+        } else {
+          const fresh = await chatHistoryStore.createChat(uid)
+          targetId = fresh.id
+        }
+        chatHistoryStore.setActiveChatId(uid, targetId)
+        return
+      }
+      setActiveChatId(nextId)
+      const rows = await chatHistoryStore.listMessages(uid, nextId)
+      setMessages(rows.map(toUIMessage))
+      setPendingSelections([])
+      setTimeout(() => inputRef.current?.focus(), 100)
+    })
+    return unsub
+  }, [uid])
 
   const sendMessage = useCallback(async () => {
     const text = input.trim()
-    if (!text || loading) return
+    if (!text || loading || !uid || !activeChatId) return
 
     const userMsg: Message = { role: 'user', content: text }
     setMessages(prev => [...prev, userMsg])
@@ -84,6 +145,8 @@ export default function AppChat() {
     setPendingSelections([])
 
     try {
+      await chatHistoryStore.appendMessage(uid, activeChatId, userMsg)
+
       const token = await getIdToken()
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -98,6 +161,7 @@ export default function AppChat() {
       if (data.success) {
         const assistantMsg: Message = { role: 'assistant', content: data.reply, thinking: data.thinking }
         setMessages(prev => [...prev, assistantMsg])
+        await chatHistoryStore.appendMessage(uid, activeChatId, assistantMsg)
         if (data.pendingSelections?.length) {
           setPendingSelections(data.pendingSelections)
         }
@@ -111,7 +175,7 @@ export default function AppChat() {
       setLoading(false)
       setTimeout(() => inputRef.current?.focus(), 100)
     }
-  }, [input, loading, showToast])
+  }, [input, loading, uid, activeChatId, showToast])
 
   const handleSelect = async (searchKey: string, resultIndex: number) => {
     setSelectingKey(searchKey)
@@ -128,7 +192,11 @@ export default function AppChat() {
 
       const data = await res.json()
       if (data.success) {
-        setMessages(prev => [...prev, { role: 'assistant', content: data.message }])
+        const assistantMsg: Message = { role: 'assistant', content: data.message }
+        setMessages(prev => [...prev, assistantMsg])
+        if (uid && activeChatId) {
+          await chatHistoryStore.appendMessage(uid, activeChatId, assistantMsg)
+        }
         setPendingSelections(prev => prev.filter(s => s.searchKey !== searchKey))
       } else {
         showToast('error', data.error || 'שגיאה בבחירת המוצר')

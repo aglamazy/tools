@@ -12,7 +12,7 @@ const KNOWN_TABLE_NAMES = new Set([
   'businesses', 'categories', 'appSettings', 'businessCategories',
   'importedFiles', 'transactions', 'tasks', 'financialInstitutions',
   'capitalEntries', 'ypayDocuments', 'projects', 'harvestTasks',
-  'timeEntries', 'taxDocuments',
+  'timeEntries', 'taxDocuments', 'chats', 'chatMessages',
 ])
 
 const THRESHOLD = 3 // flag arrays with 3+ known table names

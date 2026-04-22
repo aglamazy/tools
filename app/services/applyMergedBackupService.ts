@@ -218,10 +218,17 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
               }
             }
 
-            // New record — insert without id (get auto-increment)
-            const { id: _dropId, ...withoutId } = cloudRec
-            const newId = await table.add(withoutId)
-            tableIdMap.set(cloudRec.syncId, newId as number)
+            // New record — for auto-increment tables, drop id and let Dexie
+            // assign a new one; for string-PK tables (e.g. chats, chatMessages)
+            // the id IS the sync key, so preserve it via put().
+            if (typeof cloudRec.id === 'string') {
+              await table.put(cloudRec)
+              tableIdMap.set(cloudRec.syncId, cloudRec.id as unknown as number)
+            } else {
+              const { id: _dropId, ...withoutId } = cloudRec
+              const newId = await table.add(withoutId)
+              tableIdMap.set(cloudRec.syncId, newId as number)
+            }
             inserted++
           }
         }
