@@ -23,6 +23,7 @@ const CYCLE_STATUS: Record<OrderCycle['status'], { label: string; color: string;
   review: { label: 'תזכורת סופית', color: '#b45309', bg: '#fef3c7' },
   locked: { label: 'נעולה', color: '#b91c1c', bg: '#fee2e2' },
   delivered: { label: 'סופקה', color: '#1e40af', bg: '#dbeafe' },
+  failed: { label: 'נכשלה', color: '#b91c1c', bg: '#fee2e2' },
 }
 
 export default function TimeTablePanel({

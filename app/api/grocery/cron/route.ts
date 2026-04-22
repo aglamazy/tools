@@ -25,9 +25,13 @@ import {
   setStoreOrderCycle,
   clearStorePending,
 } from '@/app/services/grocery/groceryStoreMulti'
-import type { OrderCycle } from '@/app/services/grocery/groceryStore'
 import { getStore, getAllStores } from '@/app/services/grocery/storeRegistry'
 import { initStores } from '@/app/services/grocery/initStores'
+import {
+  preflightOrderSafety,
+  finalizeOrderSuccess,
+  finalizeOrderFailure,
+} from '@/app/services/grocery/orderSafety'
 import { sendMessage } from '@/app/services/telegram/telegramClient'
 
 // Vercel cron auth
@@ -95,8 +99,6 @@ export async function GET(request: NextRequest) {
 
         // --- ORDER DAY: open order + checkout ---
         if (currentDay === orderDay && currentHour >= 8 && currentHour < 10) {
-          if (data.orderCycle?.status === 'active') continue // already ordered this week
-
           const plugin = getStore(storeId)
           if (!plugin) {
             results.push({ uid, storeId, action: 'unknown_store', ok: false, error: `plugin "${storeId}" not registered` })
@@ -109,13 +111,30 @@ export async function GET(request: NextRequest) {
 
           // Defensive guard: never place a tiny auto-order. The 2026-04-21
           // incident delivered a single-item order from a stale doc.
+          // This intentionally runs BEFORE the safety gate — no point taking
+          // a lock and probing the store for an order we'd skip anyway.
           if (merged.length < MIN_ORDER_LINES || withId.length < MIN_ORDER_LINES) {
             const reason = merged.length < MIN_ORDER_LINES
               ? `רשימה קצרה מדי (${merged.length} פריטים, מינימום ${MIN_ORDER_LINES})`
               : `מעט מדי פריטים מקושרים (${withId.length}/${merged.length}, מינימום ${MIN_ORDER_LINES})`
-            console.warn(`[Grocery Cron] Skip tiny order uid=${uid} store=${storeId}: ${reason}`)
+            console.warn(`[Grocery Cron] Safety: uid=${uid} store=${storeId} decision=size-skip`)
             await notify(chatId, `⚠️ דילגתי על הזמנה אוטומטית ב${plugin.label}: ${reason}. אפשר להוסיף פריטים ולהריץ ידנית.`)
             results.push({ uid, storeId, action: 'skip_tiny', ok: true })
+            continue
+          }
+
+          // --- Safety gate: idempotency + lock + pre-flight live check ---
+          const gate = await preflightOrderSafety({ uid, storeId, plugin, now })
+          console.log(`[Grocery Cron] Safety: uid=${uid} store=${storeId} decision=${gate.decision}`)
+          if (gate.skipped) {
+            if (gate.decision === 'linked-existing') {
+              await notify(chatId, `🔗 מצאתי הזמנה קיימת ב${plugin.label} (#${gate.orderId}), סימנתי אותה כהזמנה של השבוע.`)
+              results.push({ uid, storeId, action: 'linked_existing', ok: true })
+            } else if (gate.decision === 'already-placed') {
+              results.push({ uid, storeId, action: 'already_placed', ok: true })
+            } else {
+              results.push({ uid, storeId, action: 'locked_by_other_run', ok: true })
+            }
             continue
           }
 
@@ -125,33 +144,43 @@ export async function GET(request: NextRequest) {
             sellingUnitId: i.sellingUnitId,
           }))
 
-          const result = await plugin.checkout(uid, items, {
-            day: preferredSlot.day,
-            time: preferredSlot.time?.split('-')[0],
-          })
+          try {
+            const result = await plugin.checkout(uid, items, {
+              day: preferredSlot.day,
+              time: preferredSlot.time?.split('-')[0],
+            })
 
-          if (result.success) {
-            const cycle: OrderCycle = {
-              status: 'active',
-              orderId: result.orderId,
-              slot: result.deliveryWindow,
-              createdAt: now.toISOString(),
-              updatedAt: now.toISOString(),
+            if (result.success) {
+              await finalizeOrderSuccess({
+                uid, storeId, idempotencyKey: gate.idempotencyKey, cycle: gate.cycle, now,
+                orderId: result.orderId,
+                slot: result.deliveryWindow,
+              })
+
+              const itemList = merged.map(i => `• ${i.name}${i.qty > 1 ? ` x${i.qty}` : ''}`).join('\n')
+              await notify(chatId,
+                `🛒 הזמנה נפתחה ב${plugin.label}!\n` +
+                `משלוח: ${result.deliveryWindow?.day} ${result.deliveryWindow?.date} ${result.deliveryWindow?.time}\n` +
+                `מספר הזמנה: #${result.orderId || '---'}\n\n` +
+                `${itemList}\n\n` +
+                `אפשר לשנות עד שהזמנה ננעלת.`
+              )
+              results.push({ uid, storeId, action: 'checkout', ok: true })
+            } else {
+              await finalizeOrderFailure({
+                uid, storeId, idempotencyKey: gate.idempotencyKey, cycle: gate.cycle, now,
+                error: result.error || 'unknown',
+              })
+              await notify(chatId, `⚠️ שגיאה בפתיחת הזמנה ב${plugin.label}: ${result.error}`)
+              results.push({ uid, storeId, action: 'checkout', ok: false, error: result.error })
             }
-            await setStoreOrderCycle(uid, storeId, cycle)
-
-            const itemList = merged.map(i => `• ${i.name}${i.qty > 1 ? ` x${i.qty}` : ''}`).join('\n')
-            await notify(chatId,
-              `🛒 הזמנה נפתחה ב${plugin.label}!\n` +
-              `משלוח: ${result.deliveryWindow?.day} ${result.deliveryWindow?.date} ${result.deliveryWindow?.time}\n` +
-              `מספר הזמנה: #${result.orderId || '---'}\n\n` +
-              `${itemList}\n\n` +
-              `אפשר לשנות עד שהזמנה ננעלת.`
-            )
-            results.push({ uid, storeId, action: 'checkout', ok: true })
-          } else {
-            await notify(chatId, `⚠️ שגיאה בפתיחת הזמנה ב${plugin.label}: ${result.error}`)
-            results.push({ uid, storeId, action: 'checkout', ok: false, error: result.error })
+          } catch (checkoutErr) {
+            const msg = checkoutErr instanceof Error ? checkoutErr.message : String(checkoutErr)
+            await finalizeOrderFailure({
+              uid, storeId, idempotencyKey: gate.idempotencyKey, cycle: gate.cycle, now,
+              error: msg,
+            })
+            throw checkoutErr
           }
           continue
         }

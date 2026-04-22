@@ -22,12 +22,12 @@ import {
 } from '@/app/services/grocery/shufersalClient'
 import { sendOtp, verifyOtp, saveRetalixCredentials } from '@/app/services/grocery/retalixClient'
 import { getStore, getAllStores } from '@/app/services/grocery/storeRegistry'
-import { getUserStores, setDefaultStore, addActiveStore, getStoreData, addToStoreStanding, addStorePendingItems, removeFromStoreStanding, removeStorePendingItems, clearStorePending, movePendingToStanding as moveStorePendingToStanding, getStoreOrderCycle, setStoreOrderCycle, getStoreSchedule, setStoreSchedule } from '@/app/services/grocery/groceryStoreMulti'
+import { getUserStores, setDefaultStore, addActiveStore, getStoreData, addToStoreStanding, addStorePendingItems, removeFromStoreStanding, removeStorePendingItems, clearStorePending, movePendingToStanding as moveStorePendingToStanding, getStoreSchedule, setStoreSchedule } from '@/app/services/grocery/groceryStoreMulti'
 import type { OtpStorePlugin, CredentialsStorePlugin, StoreOrder } from '@/app/services/grocery/storeTypes'
+import { preflightOrderSafety, finalizeOrderSuccess, finalizeOrderFailure } from '@/app/services/grocery/orderSafety'
 
 import { listTasks, createTask, updateTask, deleteTask, findTasks } from '@/app/services/taskFirestoreService'
 import { randomBytes } from 'crypto'
-import { type OrderCycle } from '@/app/services/grocery/groceryStore'
 import { deleteMapping, lookupMapping, saveProductMapping } from '@/app/services/grocery/productResolver'
 
 /** Actions that require a connected store */
@@ -411,6 +411,22 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
         console.log(`[ActionExecutor] Ordering without unlinked: ${withoutId.map(i => i.name).join(', ')}`)
       }
 
+      // Safety gate — same contract as grocery cron. Prevents duplicate
+      // orders from a stale cycle doc, mid-flight race, or existing live
+      // order that upstream logic missed.
+      const safetyNow = new Date()
+      const gate = await preflightOrderSafety({ uid, storeId, plugin: store, now: safetyNow })
+      console.log(`[ActionExecutor] Safety: uid=${uid} store=${storeId} decision=${gate.decision}`)
+      if (gate.skipped) {
+        if (gate.decision === 'already-placed') {
+          return `הזמנה כבר פתוחה השבוע ב${store.label} (#${gate.orderId}).`
+        }
+        if (gate.decision === 'linked-existing') {
+          return `מצאתי הזמנה קיימת ב${store.label} (#${gate.orderId}), סימנתי אותה.`
+        }
+        return `ריצה אחרת עובדת על ההזמנה ברגע זה. נסה שוב בעוד דקה.`
+      }
+
       const items = withId.map(i => ({ code: i.catalogId!, qty: i.qty, sellingUnitId: i.sellingUnitId }))
       const actionDay = typeof action.day === 'string' ? action.day : undefined
       const actionTime = typeof action.time === 'string' ? action.time : undefined
@@ -418,15 +434,30 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
       const day = actionDay || schedule?.preferredSlot.day
       const time = actionTime || schedule?.preferredSlot.time?.split('-')[0]
 
-      const result = await store.checkout(uid, items, { day, time, nearest: !day })
-      if (result.success) {
-        await clearStorePending(uid, storeId)
-        if (result.orderId) {
-          await setStoreOrderCycle(uid, storeId, { status: 'active', orderId: result.orderId, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() })
+      try {
+        const result = await store.checkout(uid, items, { day, time, nearest: !day })
+        if (result.success) {
+          await finalizeOrderSuccess({
+            uid, storeId, idempotencyKey: gate.idempotencyKey, cycle: gate.cycle, now: safetyNow,
+            orderId: result.orderId,
+            slot: result.deliveryWindow,
+          })
+          await clearStorePending(uid, storeId)
+          return `הזמנה בוצעה ב${store.label}! #${result.orderId || ''}\nמשלוח: ${result.deliveryWindow?.day} ${result.deliveryWindow?.date} ${result.deliveryWindow?.time}`
         }
-        return `הזמנה בוצעה ב${store.label}! #${result.orderId || ''}\nמשלוח: ${result.deliveryWindow?.day} ${result.deliveryWindow?.date} ${result.deliveryWindow?.time}`
+        await finalizeOrderFailure({
+          uid, storeId, idempotencyKey: gate.idempotencyKey, cycle: gate.cycle, now: safetyNow,
+          error: result.error || 'unknown',
+        })
+        return `שגיאה בהזמנה ב${store.label}: ${result.error}`
+      } catch (checkoutErr) {
+        const msg = checkoutErr instanceof Error ? checkoutErr.message : String(checkoutErr)
+        await finalizeOrderFailure({
+          uid, storeId, idempotencyKey: gate.idempotencyKey, cycle: gate.cycle, now: safetyNow,
+          error: msg,
+        })
+        throw checkoutErr
       }
-      return `שגיאה בהזמנה ב${store.label}: ${result.error}`
     }
 
     case 'list_slots': {

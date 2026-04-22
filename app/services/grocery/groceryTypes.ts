@@ -27,11 +27,19 @@ export interface PendingChanges {
 }
 
 export interface OrderCycle {
-  status: 'draft' | 'active' | 'review' | 'locked' | 'delivered'
+  status: 'draft' | 'active' | 'review' | 'locked' | 'delivered' | 'failed'
   orderId?: string
   slot?: { day: string; date: string; time: string }
   createdAt: string
   updatedAt: string
+  /** `${uid}|${storeId}|${cycleDate}` — set after successful checkout to block duplicate runs. */
+  idempotencyKey?: string
+  /** ISO timestamp of the currently-running checkout. Cleared on success/failure. 10-min TTL. */
+  lockedAt?: string
+  /** Short error message from the last failed attempt. */
+  lastError?: string
+  /** Number of checkout attempts within the current cycle. */
+  attempts?: number
 }
 
 export interface DeliverySlot {
