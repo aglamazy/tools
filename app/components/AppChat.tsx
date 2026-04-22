@@ -3,12 +3,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useToast } from '@/app/components/ToastContainer'
 import { getIdToken } from '@/app/services/firebaseAuthService'
+import { subscribeToAuth } from '@/app/stores/authStore'
+import { chatHistoryStore, type ChatMessage, type ChatPendingSelection } from '@/app/stores/chatHistoryStore'
 
-type Message = {
-  role: 'user' | 'assistant'
-  content: string
-  thinking?: string
-}
+type Message = ChatMessage
 
 type ProductResult = {
   catalogId: string
@@ -18,14 +16,7 @@ type ProductResult = {
   unitPrice: string
 }
 
-type PendingSelection = {
-  query: string
-  qty: number
-  target: 'pending' | 'standing'
-  store?: string
-  searchKey: string
-  results: ProductResult[]
-}
+type PendingSelection = ChatPendingSelection
 
 function ThinkingBubble({ text }: { text: string }) {
   const [open, setOpen] = useState(false)
@@ -49,12 +40,38 @@ export default function AppChat() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [selectingKey, setSelectingKey] = useState<string | null>(null)
+  const [uid, setUid] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, pendingSelections])
+
+  // Hydrate from localStorage once we know who the user is.
+  useEffect(() => {
+    const unsubscribe = subscribeToAuth(({ user, initialized }) => {
+      if (!initialized) return
+      if (!user) {
+        setUid(null)
+        return
+      }
+      if (uid === user.uid) return // already hydrated for this user
+      setUid(user.uid)
+      const restored = chatHistoryStore.load(user.uid)
+      if (restored) {
+        setMessages(restored.messages)
+        setPendingSelections(restored.pendingSelections)
+      }
+    })
+    return () => unsubscribe()
+  }, [uid])
+
+  // Persist on every message/selection change.
+  useEffect(() => {
+    if (!uid) return
+    chatHistoryStore.save(uid, { messages, pendingSelections })
+  }, [uid, messages, pendingSelections])
 
   const sendMessage = useCallback(async () => {
     const text = input.trim()
