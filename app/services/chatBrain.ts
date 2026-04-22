@@ -82,8 +82,16 @@ async function buildContext(uid: string, displayName?: string, includeTasks = fa
         connected,
         standingList: storeData?.standingList ? Object.values(storeData.standingList).map(i => ({ name: i.name, qty: i.qty, unit: i.unit })) : undefined,
         pendingChanges: storeData ? {
-          add: Object.values(storeData.pendingChanges.add).map(i => ({ name: i.name, qty: i.qty, unit: i.unit })),
-          remove: storeData.pendingChanges.remove,
+          add: Object.values(storeData.pendingChanges.add).map(e => ({
+            name: e.item.name,
+            qty: e.item.qty,
+            unit: e.item.unit,
+            ...(e.validTo ? { validTo: e.validTo } : {}),
+          })),
+          remove: Object.values(storeData.pendingChanges.remove).map(e => ({
+            name: e.name,
+            ...(e.validTo ? { validTo: e.validTo } : {}),
+          })),
         } : undefined,
         schedule: storeData?.schedule,
       }
@@ -115,7 +123,7 @@ export async function handleClear(uid: string): Promise<void> {
   if (doc.exists) {
     await firestore.collection('groceries').doc(uid).update({
       standingList: {},
-      pendingChanges: { add: {}, remove: [] },
+      pendingChanges: { add: {}, remove: {} },
       updatedAt: new Date().toISOString(),
     })
   }

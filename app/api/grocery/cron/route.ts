@@ -23,7 +23,8 @@ import {
   getStoreData,
   mergeStoreList,
   setStoreOrderCycle,
-  clearStorePending,
+  filterActivePending,
+  sweepStorePending,
 } from '@/app/services/grocery/groceryStoreMulti'
 import { getStore, getAllStores } from '@/app/services/grocery/storeRegistry'
 import { initStores } from '@/app/services/grocery/initStores'
@@ -105,7 +106,9 @@ export async function GET(request: NextRequest) {
             continue
           }
 
-          const mergedMap = mergeStoreList(data.standingList, data.pendingChanges)
+          // Only consider pending entries whose validTo has not yet expired.
+          const activePending = filterActivePending(data.pendingChanges, now)
+          const mergedMap = mergeStoreList(data.standingList, activePending)
           const merged = Object.values(mergedMap)
           const withId = merged.filter(i => i.catalogId)
 
@@ -156,6 +159,9 @@ export async function GET(request: NextRequest) {
                 orderId: result.orderId,
                 slot: result.deliveryWindow,
               })
+              // Single-shot pending entries (no validTo) belonged to this order and
+              // are done. Dated entries still in the future are preserved.
+              await sweepStorePending(uid, storeId, now)
 
               const itemList = merged.map(i => `• ${i.name}${i.qty > 1 ? ` x${i.qty}` : ''}`).join('\n')
               await notify(chatId,
@@ -210,10 +216,11 @@ export async function GET(request: NextRequest) {
               results.push({ uid, storeId, action: 'review_reminder', ok: true })
             }
 
-            // Post-delivery: reset cycle
+            // Post-delivery: reset cycle. Sweep (not clear) so future-dated
+            // standing instructions survive across deliveries.
             if (hoursUntilDelivery < -2) {
               await setStoreOrderCycle(uid, storeId, { ...cycle, status: 'delivered', updatedAt: now.toISOString() })
-              await clearStorePending(uid, storeId)
+              await sweepStorePending(uid, storeId, now)
 
               await notify(chatId, `📦 ההזמנה מ${storeLabel} הגיעה? מקווה שהכל בסדר!`)
               results.push({ uid, storeId, action: 'post_delivery', ok: true })

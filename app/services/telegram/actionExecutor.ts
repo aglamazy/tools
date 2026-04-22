@@ -11,6 +11,7 @@ import {
   type GroceryItem,
   type GrocerySchedule,
 } from '@/app/services/grocery/groceryStore'
+import { filterActivePending, sweepStorePending, normalizeValidTo } from '@/app/services/grocery/groceryStoreMulti'
 import {
   saveCredentials,
   setCredentialsVerified,
@@ -96,7 +97,7 @@ export async function selectProduct(uid: string, searchKey: string, resultIndex:
   if (pendingSearch.target === 'standing') {
     await addToStoreStanding(uid, selStoreId, [item])
   } else {
-    await addStorePendingItems(uid, selStoreId, [item])
+    await addStorePendingItems(uid, selStoreId, [item], { validTo: pendingSearch.validTo })
   }
 
   await saveProductMapping(uid, pendingSearch.query, selected.catalogId, selected.name)
@@ -141,6 +142,8 @@ export interface PendingProductSelection {
   qty: number
   target: 'pending' | 'standing'
   store?: string  // which store these results came from
+  /** ISO date/datetime — only meaningful for target='pending'. Absent = single-shot. */
+  validTo?: string
   results: { catalogId: string; name: string; brand: string; price: string; unitPrice: string; sellingUnitId?: number }[]
 }
 
@@ -202,9 +205,9 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
 
       // Look up item in the user's list
       const pdData = await getStoreData(uid, pdStoreId).catch(() => null)
-      const allItems = [
+      const allItems: GroceryItem[] = [
         ...Object.values(pdData?.standingList || {}),
-        ...Object.values(pdData?.pendingChanges?.add || {}),
+        ...Object.values(pdData?.pendingChanges?.add || {}).map(e => e.item),
       ]
       const lowerName = productName.toLowerCase()
       const match = allItems.find(i => i.name.toLowerCase().includes(lowerName))
@@ -247,6 +250,7 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
       const query = typeof action.query === 'string' ? action.query.trim() : ''
       const qty = typeof action.qty === 'number' && action.qty > 0 ? action.qty : 1
       const target = action.target === 'standing' ? 'standing' as const : 'pending' as const
+      const validTo = target === 'pending' ? normalizeValidTo(action.validTo) : undefined
       if (!query) return null
 
       // re_search: clear old mapping first
@@ -268,7 +272,7 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
           const item = { name: cached.shufersalName, qty, catalogId: cached.catalogId }
           if (target === 'standing') await addToStoreStanding(uid, storeId, [item])
           else {
-            await addStorePendingItems(uid, storeId, [item])
+            await addStorePendingItems(uid, storeId, [item], { validTo })
             if (storeId === 'shufersal') await pushToActiveCart(uid, cached.catalogId, qty)
           }
           const targetLabel = target === 'standing' ? 'קבועה' : 'הזמנה'
@@ -292,7 +296,7 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
           const item = { name: selected.name, qty, catalogId: selected.catalogId, unit, sellingUnitId: selected.sellingUnitId }
           if (target === 'standing') await addToStoreStanding(uid, storeId, [item])
           else {
-            await addStorePendingItems(uid, storeId, [item])
+            await addStorePendingItems(uid, storeId, [item], { validTo })
             if (storeId === 'shufersal' && selected.catalogId) await pushToActiveCart(uid, selected.catalogId, qty)
           }
           await saveProductMapping(uid, query, selected.catalogId, selected.name)
@@ -304,6 +308,7 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
           followUp: comment || null,
           pendingSelections: [{
             query, qty, target, store: storeId,
+            ...(validTo ? { validTo } : {}),
             results: filtered.slice(0, 8),
           }],
         }
@@ -317,7 +322,8 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
       const names = normalizeNames(action.items)
       if (names.length === 0) return null
       const rmStoreId = await resolveActionStore(uid, action, sessionStore)
-      await removeStorePendingItems(uid, rmStoreId, names)
+      const rmValidTo = normalizeValidTo(action.validTo)
+      await removeStorePendingItems(uid, rmStoreId, names, { validTo: rmValidTo })
 
       // If Shufersal has an active (cancelable) order, also remove from it.
       // Live query — no caching.
@@ -363,9 +369,20 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
       const slStore = getStore(slStoreId)
       const data = await getStoreData(uid, slStoreId)
       const standingItems = Object.values(data.standingList)
-      const pendingAddItems = Object.values(data.pendingChanges.add)
-      if (standingItems.length === 0 && pendingAddItems.length === 0) return `הרשימה של ${slStore?.label || slStoreId} ריקה.`
+      const pendingAddEntries = Object.values(data.pendingChanges.add)
+      const pendingRemoveEntries = Object.values(data.pendingChanges.remove)
+      if (standingItems.length === 0 && pendingAddEntries.length === 0 && pendingRemoveEntries.length === 0) {
+        return `הרשימה של ${slStore?.label || slStoreId} ריקה.`
+      }
       const parts: string[] = []
+      const fmtValidTo = (iso?: string): string => {
+        if (!iso) return ''
+        const d = new Date(iso)
+        if (Number.isNaN(d.getTime())) return ''
+        const dd = String(d.getDate()).padStart(2, '0')
+        const mm = String(d.getMonth() + 1).padStart(2, '0')
+        return ` (עד ${dd}/${mm})`
+      }
       if (standingItems.length > 0) {
         parts.push(`רשימה קבועה (${slStore?.label || slStoreId}):`)
         for (const i of standingItems) {
@@ -374,16 +391,18 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
           parts.push(`• ${i.name}${qtyStr}${unitStr}`)
         }
       }
-      if (pendingAddItems.length > 0) {
+      if (pendingAddEntries.length > 0) {
         parts.push('\nתוספות השבוע:')
-        for (const i of pendingAddItems) {
+        for (const e of pendingAddEntries) {
+          const i = e.item
           const qtyStr = i.qty > 1 ? ` x${i.qty}` : ''
           const unitStr = i.unit ? ` ${i.unit}` : ''
-          parts.push(`• ${i.name}${qtyStr}${unitStr}`)
+          parts.push(`• ${i.name}${qtyStr}${unitStr}${fmtValidTo(e.validTo)}`)
         }
       }
-      if (data.pendingChanges.remove.length > 0) {
-        parts.push(`\nהסרות השבוע: ${data.pendingChanges.remove.join(', ')}`)
+      if (pendingRemoveEntries.length > 0) {
+        const removesStr = pendingRemoveEntries.map(e => `${e.name}${fmtValidTo(e.validTo)}`).join(', ')
+        parts.push(`\nהסרות השבוע: ${removesStr}`)
       }
       return parts.join('\n')
     }
@@ -399,7 +418,9 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
       if (!store) return `חנות "${storeId}" לא מוכרת.`
 
       const data = await getStoreData(uid, storeId)
-      const merged = Object.values(mergeList(data.standingList, data.pendingChanges))
+      const orderNow = new Date()
+      const activePending = filterActivePending(data.pendingChanges, orderNow)
+      const merged = Object.values(mergeList(data.standingList, activePending))
       if (merged.length === 0) return 'הרשימה ריקה — אין מה להזמין.'
 
       const withId = merged.filter(i => i.catalogId)
@@ -442,7 +463,9 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
             orderId: result.orderId,
             slot: result.deliveryWindow,
           })
-          await clearStorePending(uid, storeId)
+          // Drop single-shot pending entries that applied to this order;
+          // preserve still-future-dated standing instructions.
+          await sweepStorePending(uid, storeId, safetyNow)
           return `הזמנה בוצעה ב${store.label}! #${result.orderId || ''}\nמשלוח: ${result.deliveryWindow?.day} ${result.deliveryWindow?.date} ${result.deliveryWindow?.time}`
         }
         await finalizeOrderFailure({

@@ -11,6 +11,8 @@ import type {
   GroceryItem,
   GroceryItemMap,
   PendingChanges,
+  PendingAddEntry,
+  PendingRemoveEntry,
   OrderCycle,
   DeliverySlot,
   GrocerySchedule,
@@ -22,6 +24,8 @@ export type {
   GroceryItem,
   GroceryItemMap,
   PendingChanges,
+  PendingAddEntry,
+  PendingRemoveEntry,
   OrderCycle,
   DeliverySlot,
   GrocerySchedule,
@@ -45,6 +49,52 @@ function migrateToMap(raw: GroceryItem[] | GroceryItemMap | undefined): GroceryI
   return raw
 }
 
+/** Read-time migration of legacy pendingChanges shape → validTo shape. */
+function migratePendingChanges(raw: unknown): PendingChanges {
+  const now = new Date().toISOString()
+  const out: PendingChanges = { add: {}, remove: {} }
+  if (!raw || typeof raw !== 'object') return out
+  const rawObj = raw as { add?: unknown; remove?: unknown }
+
+  if (rawObj.add && typeof rawObj.add === 'object') {
+    for (const [key, value] of Object.entries(rawObj.add as Record<string, unknown>)) {
+      if (!value || typeof value !== 'object') continue
+      const v = value as Record<string, unknown>
+      if (v.item && typeof v.item === 'object') {
+        out.add[key] = {
+          item: v.item as GroceryItem,
+          requestedAt: typeof v.requestedAt === 'string' ? v.requestedAt : now,
+          ...(typeof v.validTo === 'string' ? { validTo: v.validTo } : {}),
+        }
+        continue
+      }
+      if (typeof v.name === 'string' && typeof v.qty === 'number') {
+        out.add[key] = { item: v as unknown as GroceryItem, requestedAt: now }
+      }
+    }
+  }
+
+  if (Array.isArray(rawObj.remove)) {
+    for (const name of rawObj.remove) {
+      if (typeof name !== 'string' || !name.trim()) continue
+      out.remove[name.toLowerCase()] = { name, requestedAt: now }
+    }
+  } else if (rawObj.remove && typeof rawObj.remove === 'object') {
+    for (const [key, value] of Object.entries(rawObj.remove as Record<string, unknown>)) {
+      if (!value || typeof value !== 'object') continue
+      const v = value as Record<string, unknown>
+      const name = typeof v.name === 'string' ? v.name : key
+      out.remove[key] = {
+        name,
+        requestedAt: typeof v.requestedAt === 'string' ? v.requestedAt : now,
+        ...(typeof v.validTo === 'string' ? { validTo: v.validTo } : {}),
+      }
+    }
+  }
+
+  return out
+}
+
 // --- Read ---
 
 export async function getGroceryData(uid: string): Promise<GroceryData> {
@@ -54,10 +104,7 @@ export async function getGroceryData(uid: string): Promise<GroceryData> {
   return {
     ...raw,
     standingList: migrateToMap(raw.standingList),
-    pendingChanges: {
-      add: migrateToMap(raw.pendingChanges?.add),
-      remove: raw.pendingChanges?.remove || [],
-    },
+    pendingChanges: migratePendingChanges(raw.pendingChanges),
     orderCycle: raw.orderCycle || null,
     schedule: raw.schedule || null,
   } as GroceryData
@@ -106,39 +153,52 @@ export async function removeFromStanding(uid: string, names: string[]): Promise<
 
 // --- Pending changes (this week) ---
 
-export async function addPendingItems(uid: string, items: GroceryItem[]): Promise<PendingChanges> {
+export async function addPendingItems(uid: string, items: GroceryItem[], options: { validTo?: string } = {}): Promise<PendingChanges> {
   const data = await getGroceryData(uid)
+  const nowIso = now()
+  const validTo = validateValidTo(options.validTo)
   for (const item of items) {
     // If it was in remove list, take it out
-    data.pendingChanges.remove = data.pendingChanges.remove.filter(
-      n => !n.toLowerCase().includes(item.name.toLowerCase())
-    )
-    data.pendingChanges.add[itemKey(item)] = item
+    for (const [rkey, rentry] of Object.entries(data.pendingChanges.remove)) {
+      if (rentry.name.toLowerCase().includes(item.name.toLowerCase())) {
+        delete data.pendingChanges.remove[rkey]
+      }
+    }
+    data.pendingChanges.add[itemKey(item)] = {
+      item,
+      requestedAt: nowIso,
+      ...(validTo ? { validTo } : {}),
+    }
   }
-  data.updatedAt = now()
+  data.updatedAt = nowIso
   await docRef(uid).set(data)
   return data.pendingChanges
 }
 
-export async function removePendingItems(uid: string, names: string[]): Promise<PendingChanges> {
+export async function removePendingItems(uid: string, names: string[], options: { validTo?: string } = {}): Promise<PendingChanges> {
   const data = await getGroceryData(uid)
   const lowerNames = names.map(n => n.toLowerCase())
+  const nowIso = now()
+  const validTo = validateValidTo(options.validTo)
 
   // Remove from pending adds if there
-  for (const [key, item] of Object.entries(data.pendingChanges.add)) {
-    if (lowerNames.some(n => item.name.toLowerCase().includes(n) || key.toLowerCase().includes(n))) {
+  for (const [key, entry] of Object.entries(data.pendingChanges.add)) {
+    if (lowerNames.some(n => entry.item.name.toLowerCase().includes(n) || key.toLowerCase().includes(n))) {
       delete data.pendingChanges.add[key]
     }
   }
 
   // Add to remove list (to remove from standing on merge)
   for (const name of names) {
-    if (!data.pendingChanges.remove.includes(name)) {
-      data.pendingChanges.remove.push(name)
+    const key = name.toLowerCase()
+    data.pendingChanges.remove[key] = {
+      name,
+      requestedAt: nowIso,
+      ...(validTo ? { validTo } : {}),
     }
   }
 
-  data.updatedAt = now()
+  data.updatedAt = nowIso
   await docRef(uid).set(data)
   return data.pendingChanges
 }
@@ -148,11 +208,11 @@ export async function movePendingToStanding(uid: string, names: string[]): Promi
   const lowerNames = names.map(n => n.toLowerCase())
   const moved: GroceryItem[] = []
 
-  for (const [key, item] of Object.entries(data.pendingChanges.add)) {
-    if (lowerNames.some(n => item.name.toLowerCase().includes(n) || key.toLowerCase().includes(n))) {
-      data.standingList[itemKey(item)] = item
+  for (const [key, entry] of Object.entries(data.pendingChanges.add)) {
+    if (lowerNames.some(n => entry.item.name.toLowerCase().includes(n) || key.toLowerCase().includes(n))) {
+      data.standingList[itemKey(entry.item)] = entry.item
       delete data.pendingChanges.add[key]
-      moved.push(item)
+      moved.push(entry.item)
     }
   }
 
@@ -165,7 +225,7 @@ export async function movePendingToStanding(uid: string, names: string[]): Promi
 
 export async function clearPending(uid: string): Promise<void> {
   const data = await getGroceryData(uid)
-  data.pendingChanges = { add: {}, remove: [] }
+  data.pendingChanges = { add: {}, remove: {} }
   data.updatedAt = now()
   await docRef(uid).set(data)
 }
@@ -203,7 +263,7 @@ export async function setSchedule(uid: string, schedule: GrocerySchedule): Promi
 function defaultData(): GroceryData {
   return {
     standingList: {},
-    pendingChanges: { add: {}, remove: [] },
+    pendingChanges: { add: {}, remove: {} },
     orderCycle: null,
     schedule: null,
     updatedAt: now(),
@@ -214,8 +274,16 @@ function now(): string {
   return new Date().toISOString()
 }
 
+function validateValidTo(raw: string | undefined): string | undefined {
+  if (!raw) return undefined
+  const d = new Date(raw)
+  if (Number.isNaN(d.getTime())) return undefined
+  if (d.getTime() <= Date.now()) return undefined
+  return raw
+}
+
 export function mergeList(standing: GroceryItemMap, pending: PendingChanges): GroceryItemMap {
-  const lowerRemoves = pending.remove.map(n => n.toLowerCase())
+  const lowerRemoves = Object.values(pending.remove).map(r => r.name.toLowerCase())
   const merged: GroceryItemMap = {}
 
   // Standing minus removes
@@ -226,8 +294,8 @@ export function mergeList(standing: GroceryItemMap, pending: PendingChanges): Gr
   }
 
   // Plus pending adds (overwrites by key = no duplicates)
-  for (const [key, item] of Object.entries(pending.add)) {
-    merged[key] = { ...item }
+  for (const [key, entry] of Object.entries(pending.add)) {
+    merged[key] = { ...entry.item }
   }
 
   return merged

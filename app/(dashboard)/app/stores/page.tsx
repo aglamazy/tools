@@ -191,7 +191,7 @@ export default function StoresPage() {
     try {
       const res = await clearPending(active.id)
       updateActiveStore({
-        pendingChanges: res.pendingChanges || { add: {}, remove: [] },
+        pendingChanges: res.pendingChanges || { add: {}, remove: {} },
       })
       showToast('success', 'רשימת השינויים נוקתה', '🧹')
     } catch (err) {
@@ -233,7 +233,8 @@ export default function StoresPage() {
 
   const standingItems = active?.data.standingList || {}
   const pendingAdds = active?.data.pendingChanges?.add || {}
-  const pendingRemoves = active?.data.pendingChanges?.remove || []
+  const pendingRemoves = active?.data.pendingChanges?.remove || {}
+  const pendingRemoveEntries = Object.values(pendingRemoves)
 
   return (
     <main className="app" dir="rtl">
@@ -332,7 +333,7 @@ export default function StoresPage() {
               <h2 style={panelHeaderStyle}>
                 רשימה לשבוע
                 <span style={badgeStyle('#d97706')}>{Object.keys(pendingAdds).length}</span>
-                {(Object.keys(pendingAdds).length > 0 || pendingRemoves.length > 0) && (
+                {(Object.keys(pendingAdds).length > 0 || pendingRemoveEntries.length > 0) && (
                   <button
                     onClick={handleClearPending}
                     title="נקה את כל השינויים שאינם קבועים"
@@ -353,7 +354,8 @@ export default function StoresPage() {
                 )}
               </h2>
               <ItemListPanel
-                items={pendingAdds}
+                items={Object.fromEntries(Object.entries(pendingAdds).map(([k, e]) => [k, e.item]))}
+                validTo={Object.fromEntries(Object.entries(pendingAdds).map(([k, e]) => [k, e.validTo]))}
                 emptyText="אין פריטים לשבוע. גרור מההיסטוריה."
                 dropAccentColor="#d97706"
                 isDragOver={dropTarget === 'pending'}
@@ -362,7 +364,7 @@ export default function StoresPage() {
                 onDrop={handleDropToPending}
                 onRemove={handleRemovePending}
                 footer={
-                  pendingRemoves.length > 0 ? (
+                  pendingRemoveEntries.length > 0 ? (
                     <div
                       style={{
                         marginTop: '0.4rem',
@@ -374,7 +376,7 @@ export default function StoresPage() {
                         color: '#991b1b',
                       }}
                     >
-                      דילוג השבוע: {pendingRemoves.join(', ')}
+                      דילוג השבוע: {pendingRemoveEntries.map(e => e.validTo ? `${e.name} (עד ${formatValidToShort(e.validTo)})` : e.name).join(', ')}
                     </div>
                   ) : null
                 }
@@ -456,4 +458,13 @@ function badgeStyle(color: string): React.CSSProperties {
     borderRadius: '1rem',
     fontWeight: 600,
   }
+}
+
+/** "2026-05-05" or ISO datetime → "05/05" for compact display. */
+function formatValidToShort(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  const dd = String(d.getDate()).padStart(2, '0')
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  return `${dd}/${mm}`
 }

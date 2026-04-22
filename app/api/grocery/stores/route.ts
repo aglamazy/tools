@@ -56,7 +56,8 @@ async function buildHistory(
     if (!byKey.has(k)) byKey.set(k, { name: item.name, catalogId: item.catalogId, unit: item.unit, source: 'standing' })
   }
   // Pending-add items
-  for (const item of Object.values(data.pendingChanges.add)) {
+  for (const entry of Object.values(data.pendingChanges.add)) {
+    const item = entry.item
     const k = key(item.name, item.catalogId)
     if (!byKey.has(k)) byKey.set(k, { name: item.name, catalogId: item.catalogId, unit: item.unit, source: 'pending' })
   }

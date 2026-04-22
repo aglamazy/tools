@@ -11,6 +11,13 @@ import { itemKey } from '@/app/services/grocery/groceryTypes'
 
 export interface ItemListPanelProps {
   items: GroceryItemMap
+  /**
+   * Optional per-item `validTo` (keyed the same as `items`). When present and
+   * in the future, the row renders a small "עד DD/MM" badge. The presence of
+   * this map is how the pending-list panel shows which entries are standing
+   * instructions (survive across orders) vs. single-shot.
+   */
+  validTo?: Record<string, string | undefined>
   emptyText: string
   dropAccentColor: string
   isDragOver: boolean
@@ -23,7 +30,7 @@ export interface ItemListPanelProps {
 }
 
 export default function ItemListPanel(props: ItemListPanelProps) {
-  const entries = Object.values(props.items)
+  const entries = Object.entries(props.items)
 
   return (
     <div
@@ -61,7 +68,14 @@ export default function ItemListPanel(props: ItemListPanelProps) {
           {props.isDragOver ? 'שחרר כאן' : props.emptyText}
         </div>
       ) : (
-        entries.map((item) => <Row key={itemKey(item)} item={item} onRemove={props.onRemove} />)
+        entries.map(([key, item]) => (
+          <Row
+            key={itemKey(item) || key}
+            item={item}
+            validTo={props.validTo?.[key]}
+            onRemove={props.onRemove}
+          />
+        ))
       )}
 
       {props.footer}
@@ -69,7 +83,16 @@ export default function ItemListPanel(props: ItemListPanelProps) {
   )
 }
 
-function Row({ item, onRemove }: { item: GroceryItem; onRemove: (name: string) => void }) {
+function Row({
+  item,
+  validTo,
+  onRemove,
+}: {
+  item: GroceryItem
+  validTo?: string
+  onRemove: (name: string) => void
+}) {
+  const validToLabel = formatValidToShort(validTo)
   return (
     <div
       style={{
@@ -90,6 +113,23 @@ function Row({ item, onRemove }: { item: GroceryItem; onRemove: (name: string) =
             {item.unit ? ` ${item.unit}` : ''}
           </span>
         )}
+        {validToLabel && (
+          <span
+            title={`תוקף: ${validTo}`}
+            style={{
+              fontSize: '0.68rem',
+              fontWeight: 600,
+              padding: '0.1rem 0.4rem',
+              background: '#eef2ff',
+              color: '#4338ca',
+              border: '1px solid #c7d2fe',
+              borderRadius: '0.75rem',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            עד {validToLabel}
+          </span>
+        )}
       </div>
       <button
         onClick={() => onRemove(item.name)}
@@ -108,4 +148,16 @@ function Row({ item, onRemove }: { item: GroceryItem; onRemove: (name: string) =
       </button>
     </div>
   )
+}
+
+function formatValidToShort(iso?: string): string | null {
+  if (!iso) return null
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return null
+  // Don't show expired badges — they shouldn't normally be in the list, but
+  // if they linger (e.g. before a sweep) we hide the badge to avoid confusion.
+  if (d.getTime() <= Date.now()) return null
+  const dd = String(d.getDate()).padStart(2, '0')
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  return `${dd}/${mm}`
 }

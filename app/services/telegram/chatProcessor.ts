@@ -20,7 +20,10 @@ export interface StoreContext {
   label: string
   connected: boolean
   standingList?: { name: string; qty: number; unit?: string }[]
-  pendingChanges?: { add: { name: string; qty: number; unit?: string }[]; remove: string[] }
+  pendingChanges?: {
+    add: { name: string; qty: number; unit?: string; validTo?: string }[]
+    remove: { name: string; validTo?: string }[]
+  }
   orderStatus?: string
   orderId?: string
   schedule?: {
@@ -42,7 +45,7 @@ export interface UserContext {
   /** @deprecated use stores instead */
   standingList?: { name: string; qty: number; unit?: string }[]
   /** @deprecated use stores instead */
-  pendingChanges?: { add: { name: string; qty: number; unit?: string }[]; remove: string[] }
+  pendingChanges?: { add: { name: string; qty: number; unit?: string; validTo?: string }[]; remove: { name: string; validTo?: string }[] }
   /** @deprecated use stores instead */
   orderStatus?: string
   /** @deprecated use stores instead */
@@ -117,6 +120,18 @@ const SYSTEM_PROMPT = `אתה AglamazoBot — עוזר משפחתי לניהול
 - הסרת מוצר → remove_items — מוסיר גם מהעגלה הפתוחה
 - "מה בהזמנה?" / "תראה לי ההזמנה" → show_cart (לא show_list) — מציג תוכן עגלה בפועל
 - אל תפתח הזמנה חדשה כשיש כבר הזמנה פתוחה
+
+## תוקף שינויים ברשימה השבועית
+שינויים לפנינג (add/remove להזמנה השבועית) יכולים לכלול תוקף דרך השדה validTo:
+- ללא validTo = רק להזמנה הקרובה, נמחק אחרי.
+- עם validTo (פורמט YYYY-MM-DD) = פעיל עד אותו תאריך, חל על כל הזמנה עד אז.
+המרת ביטויים לתאריך (חשב ידנית מתוך "היום" שבהקשר):
+- "השבוע" / "הזמנה הקרובה" = ללא validTo
+- "לשבועיים" / "שבועיים הקרובים" = היום + 14 ימים
+- "לחודש" / "חודש הקרוב" = היום + 30 ימים
+- "עד <תאריך>" = אותו תאריך
+- "תמיד" / "לקבוע" / "כל שבוע" = זה לא pending — השתמש ב-target=standing (search_product) או ב-remove_standing במקום
+חשוב: התאריך של היום מופיע בהקשר למטה תחת "היום". חשב ממנו.
 
 ## לאחר קבלת תוצאות list_slots
 כאשר תוצאות משבצות כבר מופיעות בהיסטוריית השיחה:
@@ -275,11 +290,12 @@ function buildContextBlock(ctx: UserContext): string {
           parts.push('רשימה קבועה: ריקה')
         }
         if (store.pendingChanges) {
+          const fmt = (name: string, validTo?: string) => validTo ? `${name} (עד ${validTo})` : name
           const adds = store.pendingChanges.add?.length
-            ? `הוספות: ${store.pendingChanges.add.map(i => i.name).join(', ')}`
+            ? `הוספות: ${store.pendingChanges.add.map(i => fmt(i.name, i.validTo)).join(', ')}`
             : ''
           const removes = store.pendingChanges.remove?.length
-            ? `הסרות: ${store.pendingChanges.remove.join(', ')}`
+            ? `הסרות: ${store.pendingChanges.remove.map(r => fmt(r.name, r.validTo)).join(', ')}`
             : ''
           const pending = [adds, removes].filter(Boolean).join(' | ')
           if (pending) parts.push(`שינויים השבוע: ${pending}`)
