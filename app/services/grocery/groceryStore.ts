@@ -6,57 +6,26 @@
  */
 
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
+import { itemKey } from './groceryTypes'
+import type {
+  GroceryItem,
+  GroceryItemMap,
+  PendingChanges,
+  OrderCycle,
+  DeliverySlot,
+  GrocerySchedule,
+  GroceryData,
+} from './groceryTypes'
 
-// --- Types ---
-
-export interface GroceryItem {
-  name: string
-  catalogId?: string   // Shufersal product code (resolved later)
-  sellingUnitId?: number // Retalix selling unit ID (needed for checkout)
-  qty: number
-  unit?: string        // e.g. "ק"ג", "יח'", "מארז"
-}
-
-/** Key for dedup: catalogId when available, else name. */
-export function itemKey(item: GroceryItem): string {
-  return item.catalogId || item.name
-}
-
-export type GroceryItemMap = Record<string, GroceryItem>
-
-export interface PendingChanges {
-  add: GroceryItemMap
-  remove: string[]     // item keys or names to remove
-}
-
-export interface OrderCycle {
-  status: 'draft' | 'active' | 'review' | 'locked' | 'delivered'
-  orderId?: string     // Shufersal order ID
-  slot?: { day: string; date: string; time: string }
-  createdAt: string
-  updatedAt: string
-}
-
-export interface DeliverySlot {
-  day: string           // Hebrew day name: "ראשון", "שני", etc.
-  time: string          // e.g. "14:00-16:00"
-}
-
-export interface GrocerySchedule {
-  /** Day of week to open order + checkout (0=Sun .. 6=Sat) */
-  orderDay: number
-  /** Preferred delivery slot */
-  preferredSlot: DeliverySlot
-  /** Hours before delivery to send review reminder */
-  reviewReminderHours: number
-}
-
-export interface GroceryData {
-  standingList: GroceryItemMap
-  pendingChanges: PendingChanges
-  orderCycle: OrderCycle | null
-  schedule: GrocerySchedule | null
-  updatedAt: string
+export { itemKey }
+export type {
+  GroceryItem,
+  GroceryItemMap,
+  PendingChanges,
+  OrderCycle,
+  DeliverySlot,
+  GrocerySchedule,
+  GroceryData,
 }
 
 const COLLECTION = 'groceries'

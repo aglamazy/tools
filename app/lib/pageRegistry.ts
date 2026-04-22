@@ -22,6 +22,7 @@ export const ALL_PAGES: NavigablePage[] = [
   { id: 'market-research', label: 'מחקר שוק', icon: '🔍', href: routes.marketResearch, requiredTier: UserTier.PRO },
   { id: 'gmail', label: 'Gmail', icon: '📧', href: routes.gmail, requiredTier: UserTier.PRO },
   { id: 'business-categories', label: 'עסקים', icon: '🏛️', href: routes.businessCategories, requiredTier: UserTier.PRO },
+  { id: 'stores', label: 'חנויות', icon: '🛒', href: routes.stores, requiredTier: UserTier.FREE },
   { id: 'form-filler', label: 'מילוי טפסים', icon: '📋', href: '/form-filler', requiredTier: UserTier.FREE },
   { id: 'settings', label: 'הגדרות', icon: '⚙️', href: routes.settings, requiredTier: UserTier.FREE },
 ]

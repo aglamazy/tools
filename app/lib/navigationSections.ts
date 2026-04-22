@@ -25,6 +25,7 @@ export const sectionTabs: Record<SectionId, SectionTab[]> = {
   tools: [
     { id: 'import', label: 'ייבוא', href: routes.import, requiredTier: UserTier.FREE },
     { id: 'todo', label: 'משימות', href: routes.todo, requiredTier: UserTier.FREE },
+    { id: 'stores', label: 'חנויות', href: routes.stores, requiredTier: UserTier.FREE },
     { id: 'market-research', label: 'מחקר שוק', href: routes.marketResearch, requiredTier: UserTier.PRO },
     { id: 'gmail', label: 'Gmail', href: routes.gmail, requiredTier: UserTier.PRO },
   ],
@@ -52,6 +53,7 @@ export function getActiveSection(pathname: string): SectionId | null {
   if (
     pathname.startsWith('/app/import') ||
     pathname.startsWith('/app/todo') ||
+    pathname.startsWith('/app/stores') ||
     pathname.startsWith('/app/market-research') ||
     pathname.startsWith('/app/gmail')
   ) return 'tools'
