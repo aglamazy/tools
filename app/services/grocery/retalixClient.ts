@@ -507,7 +507,15 @@ export async function checkout(
   }
 
   console.log(`[Retalix] Order placed!`, JSON.stringify(resp.data || resp, null, 2))
-  const orderId = resp.data?.orderId || resp.data?.id || resp.orderId
+  // Retalix returns both `nonObfuscatedId` (human-readable order number, same
+  // as what listOrders exposes) and `id`/`orderId` (an opaque base64url token).
+  // Prefer the readable number — the token leaks into Telegram messages etc.
+  const orderId =
+    resp.data?.nonObfuscatedId ||
+    resp.data?.orderId ||
+    resp.data?.id ||
+    resp.nonObfuscatedId ||
+    resp.orderId
   return { success: true, orderId: orderId ? String(orderId) : undefined, deliveryWindow }
 }
 
