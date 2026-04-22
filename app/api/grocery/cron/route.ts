@@ -18,6 +18,22 @@ import { sendMessage } from '@/app/services/telegram/telegramClient'
 // Vercel cron auth
 const CRON_SECRET = process.env.CRON_SECRET
 
+/**
+ * Best-effort Telegram notification. A stale chatId ("chat not found", user
+ * blocked bot, etc.) is a per-user state issue, not a cron infrastructure
+ * failure — log it, but don't let it propagate into `results` and trip the
+ * /fail healthcheck ping for every run until the user relinks.
+ */
+async function notify(chatId: number | null, text: string): Promise<void> {
+  if (!chatId) return
+  try {
+    await sendMessage(chatId, text)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[Grocery Cron] Telegram notify failed chat=${chatId}: ${msg}`)
+  }
+}
+
 export async function GET(request: NextRequest) {
   // Verify cron secret (Vercel sends this header)
   const authHeader = request.headers.get('authorization')
@@ -50,7 +66,7 @@ export async function GET(request: NextRequest) {
         const mergedMap = mergeList(data.standingList, data.pendingChanges)
         const merged = Object.values(mergedMap)
         if (merged.length === 0) {
-          if (chatId) await sendMessage(chatId, 'הרשימה ריקה — לא פותח הזמנה השבוע.')
+          await notify(chatId, 'הרשימה ריקה — לא פותח הזמנה השבוע.')
           results.push({ uid, action: 'skip_empty', ok: true })
           continue
         }
@@ -74,21 +90,17 @@ export async function GET(request: NextRequest) {
           }
           await setOrderCycle(uid, cycle)
 
-          if (chatId) {
-            const itemList = merged.map(i => `• ${i.name}${i.qty > 1 ? ` x${i.qty}` : ''}`).join('\n')
-            await sendMessage(chatId,
-              `🛒 הזמנה נפתחה!\n` +
-              `משלוח: ${result.deliveryWindow?.day} ${result.deliveryWindow?.date} ${result.deliveryWindow?.time}\n` +
-              `מספר הזמנה: #${result.orderId || '---'}\n\n` +
-              `${itemList}\n\n` +
-              `אפשר לשנות עד שהזמנה ננעלת בשופרסל.`
-            )
-          }
+          const itemList = merged.map(i => `• ${i.name}${i.qty > 1 ? ` x${i.qty}` : ''}`).join('\n')
+          await notify(chatId,
+            `🛒 הזמנה נפתחה!\n` +
+            `משלוח: ${result.deliveryWindow?.day} ${result.deliveryWindow?.date} ${result.deliveryWindow?.time}\n` +
+            `מספר הזמנה: #${result.orderId || '---'}\n\n` +
+            `${itemList}\n\n` +
+            `אפשר לשנות עד שהזמנה ננעלת בשופרסל.`
+          )
           results.push({ uid, action: 'checkout', ok: true })
         } else {
-          if (chatId) {
-            await sendMessage(chatId, `⚠️ שגיאה בפתיחת הזמנה: ${result.error}`)
-          }
+          await notify(chatId, `⚠️ שגיאה בפתיחת הזמנה: ${result.error}`)
           results.push({ uid, action: 'checkout', ok: false, error: result.error })
         }
         continue
@@ -105,12 +117,10 @@ export async function GET(request: NextRequest) {
           if (cycle.status === 'active' && hoursUntilDelivery > 0 && hoursUntilDelivery <= reviewReminderHours && hoursUntilDelivery > reviewReminderHours - 2) {
             await setOrderCycle(uid, { ...cycle, status: 'review', updatedAt: now.toISOString() })
 
-            if (chatId) {
-              await sendMessage(chatId,
-                `📋 תזכורת — משלוח מגיע ${cycle.slot.day} ${cycle.slot.time}.\n` +
-                `שינויים אחרונים? כתבו כאן.`
-              )
-            }
+            await notify(chatId,
+              `📋 תזכורת — משלוח מגיע ${cycle.slot.day} ${cycle.slot.time}.\n` +
+              `שינויים אחרונים? כתבו כאן.`
+            )
             results.push({ uid, action: 'review_reminder', ok: true })
           }
 
@@ -119,9 +129,7 @@ export async function GET(request: NextRequest) {
             await setOrderCycle(uid, { ...cycle, status: 'delivered', updatedAt: now.toISOString() })
             await clearPending(uid)
 
-            if (chatId) {
-              await sendMessage(chatId, '📦 ההזמנה הגיעה? מקווה שהכל בסדר!')
-            }
+            await notify(chatId, '📦 ההזמנה הגיעה? מקווה שהכל בסדר!')
             results.push({ uid, action: 'post_delivery', ok: true })
           }
         }
