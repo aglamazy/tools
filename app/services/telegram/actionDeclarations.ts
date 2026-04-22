@@ -153,11 +153,11 @@ export const ACTION_DECLARATIONS: FunctionDeclaration[] = [
   },
   {
     name: 'show_orders',
-    description: 'הצג הזמנות פעילות',
+    description: 'הצג הזמנות פעילות. אם המשתמש שאל באופן כללי ("יש הזמנות פתוחות?") בלי לציין חנות — אל תעביר store כלל, והמערכת תבדוק את כל החנויות המחוברות. אם המשתמש ציין חנות ("יש הזמנות בשופרסל?") — העבר store.',
     parameters: {
       type: 'object',
       properties: {
-        store: { type: 'string' },
+        store: { type: 'string', description: 'מזהה חנות. השמט כדי לבדוק את כל החנויות המחוברות.' },
       },
     },
   },

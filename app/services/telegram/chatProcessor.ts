@@ -80,6 +80,10 @@ const SYSTEM_PROMPT = `אתה AglamazoBot — עוזר משפחתי לניהול
 - אם לא מזכיר חנות — השתמש ב-activeStore מהסשן (אם יש), אחרת חנות ברירת המחדל
 - מיפוי שמות: "שופרסל" → store="shufersal", "מקור השפע" / "רמי לוי" → store="retalix"
 
+## שאלות חוצות חנויות (show_orders)
+כאשר המשתמש שואל על הזמנות באופן כללי בלי לציין חנות — למשל "יש הזמנות פתוחות?", "יש לי הזמנות?", "מה פתוח אצלי?" — קרא ל-show_orders **בלי להעביר store**. המערכת תבדוק את כל החנויות המחוברות ותחזיר תשובה משולבת. אל תסתמך על activeStore/ברירת מחדל לשאלה כזו.
+כאשר המשתמש מציין חנות מפורשות ("יש הזמנות בשופרסל?") — העבר store כרגיל.
+
 ## סשן (session state)
 המצב הנוכחי של הסשן מופיע למטה. כשמשהו משתנה, קרא ל-set_session כדי לעדכן.
 - activeStore: החנות הפעילה בשיחה (null = ברירת מחדל)
@@ -211,7 +215,7 @@ export async function processChat(
     return gemini.chatWithTools({
       system: fullSystem,
       messages: msgs,
-      maxTokens: 1024,
+      maxTokens: 2048,
       tools: ACTION_DECLARATIONS,
       temperature,
     })

@@ -23,7 +23,7 @@ import {
 import { sendOtp, verifyOtp, saveRetalixCredentials } from '@/app/services/grocery/retalixClient'
 import { getStore, getAllStores } from '@/app/services/grocery/storeRegistry'
 import { getUserStores, setDefaultStore, addActiveStore, getStoreData, addToStoreStanding, addStorePendingItems, removeFromStoreStanding, removeStorePendingItems, clearStorePending, movePendingToStanding as moveStorePendingToStanding, getStoreOrderCycle, setStoreOrderCycle, getStoreSchedule, setStoreSchedule } from '@/app/services/grocery/groceryStoreMulti'
-import type { OtpStorePlugin, CredentialsStorePlugin } from '@/app/services/grocery/storeTypes'
+import type { OtpStorePlugin, CredentialsStorePlugin, StoreOrder } from '@/app/services/grocery/storeTypes'
 
 import { listTasks, createTask, updateTask, deleteTask, findTasks } from '@/app/services/taskFirestoreService'
 import { randomBytes } from 'crypto'
@@ -31,7 +31,9 @@ import { type OrderCycle } from '@/app/services/grocery/groceryStore'
 import { deleteMapping, lookupMapping, saveProductMapping } from '@/app/services/grocery/productResolver'
 
 /** Actions that require a connected store */
-const STORE_ACTIONS = new Set(['show_orders', 'trigger_order', 'cancel_order', 'search_product', 're_search', 'list_slots', 'product_details'])
+const STORE_ACTIONS = new Set(['trigger_order', 'cancel_order', 'search_product', 're_search', 'list_slots', 'product_details'])
+// Note: `show_orders` handles its own auth check because it iterates all
+// authenticated stores when no store is specified.
 
 /** Resolve which store an action targets */
 async function resolveActionStore(uid: string, action: ChatAction, sessionStore?: string | null): Promise<string> {
@@ -465,22 +467,73 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
     }
 
     case 'show_orders': {
-      const storeId = await resolveActionStore(uid, action, sessionStore)
-      const store = getStore(storeId)
-      if (!store) return `חנות "${storeId}" לא מוכרת.`
+      // Store-specific path: user named a store OR the session has one active.
+      // Store-agnostic path ("יש הזמנות פתוחות?"): iterate all registered stores,
+      // check each one that is authenticated, and skip the rest with a footer note.
+      const explicitStore = typeof action.store === 'string' ? action.store : (sessionStore || null)
 
-      try {
-        const orders = await store.listOrders(uid)
-        if (orders.length === 0) return `אין הזמנות פעילות ב${store.label}.`
+      const formatOrders = (label: string, orders: StoreOrder[]): string => {
         const lines = orders.map(o => {
           const deliveryStr = o.delivery.date ? `${o.delivery.date} ${o.delivery.time}${o.delivery.endTime ? `-${o.delivery.endTime}` : ''}` : 'לא נקבע'
           return `#${o.orderId} — ${o.total}\n  משלוח: ${deliveryStr}\n  ${o.cancelable ? 'ניתן לבטל' : ''}\n  ${o.itemsCount} פריטים`
         })
-        return `הזמנות פעילות ב${store.label}:\n\n${lines.join('\n\n')}`
-      } catch (err) {
-        console.error(`[ActionExecutor] Failed to list orders (${storeId}):`, err)
-        return `שגיאה בקריאת הזמנות מ${store.label}.`
+        return `הזמנות פעילות ב${label}:\n\n${lines.join('\n\n')}`
       }
+
+      if (explicitStore) {
+        const store = getStore(explicitStore)
+        if (!store) return `חנות "${explicitStore}" לא מוכרת.`
+        const authed = await store.isAuthenticated(uid)
+        if (!authed) {
+          if (store.authType === 'otp') return `${store.label} לא מחובר. שלח מספר טלפון כדי לחבר.`
+          return `${store.label} לא מחובר. שלח אימייל וסיסמה כדי לחבר.`
+        }
+        try {
+          const orders = await store.listOrders(uid)
+          if (orders.length === 0) return `אין הזמנות פעילות ב${store.label}.`
+          return formatOrders(store.label, orders)
+        } catch (err) {
+          console.error(`[ActionExecutor] Failed to list orders (${explicitStore}):`, err)
+          return `שגיאה בקריאת הזמנות מ${store.label}.`
+        }
+      }
+
+      // Store-agnostic: iterate all registered stores.
+      const allStores = getAllStores()
+      const sections: string[] = []
+      const skipped: string[] = []
+      let totalActiveStoresChecked = 0
+
+      for (const store of allStores) {
+        const authed = await store.isAuthenticated(uid).catch(() => false)
+        if (!authed) {
+          skipped.push(store.label)
+          continue
+        }
+        totalActiveStoresChecked++
+        try {
+          const orders = await store.listOrders(uid)
+          if (orders.length === 0) {
+            sections.push(`אין הזמנות פעילות ב${store.label}.`)
+          } else {
+            sections.push(formatOrders(store.label, orders))
+          }
+        } catch (err) {
+          console.error(`[ActionExecutor] Failed to list orders (${store.id}):`, err)
+          sections.push(`שגיאה בקריאת הזמנות מ${store.label}.`)
+        }
+      }
+
+      if (totalActiveStoresChecked === 0) {
+        // Nothing connected — tell the user plainly; no misleading "no active orders".
+        return 'אף חנות לא מחוברת. חבר חשבון כדי לראות הזמנות.'
+      }
+
+      const body = sections.join('\n\n')
+      const footer = skipped.length > 0
+        ? `\n\nלא בדקתי ${skipped.join(', ')} — לא מחובר.`
+        : ''
+      return body + footer
     }
 
     case 'cancel_order': {
@@ -492,20 +545,14 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
       const targetId = (action.orderId as string | undefined) || liveOrders[0]?.orderId
       if (!targetId) return `אין הזמנה פעילה לביטול ב${store.label}.`
 
-      // TEMPORARY DRY-RUN: log what WOULD be cancelled without actually cancelling.
-      // Remove this block and restore the real call once verified.
-      const liveSummary = liveOrders.map(o => `#${o.orderId}(${o.itemsCount}p/${o.total})`).join(', ')
-      console.log(`[ActionExecutor] CANCEL DRY-RUN uid=${uid} store=${storeId} chosenTarget=#${targetId} actionOrderId=${action.orderId ?? 'null'} liveOrders=[${liveSummary}]`)
-      return `🧪 DRY-RUN: הייתי מבטל #${targetId} ב${store.label} (לא ביטלתי בפועל).`
-
-      // try {
-      //   const ok = await store.cancelOrder(uid, targetId)
-      //   if (!ok) return `${store.label} לא אישר את הביטול.`
-      // } catch (err) {
-      //   console.error(`[ActionExecutor] Cancel order failed (${storeId}):`, err)
-      //   return `שגיאה בביטול ההזמנה ב${store.label}.`
-      // }
-      // return `ההזמנה #${targetId} בוטלה ב${store.label}.`
+      try {
+        const ok = await store.cancelOrder(uid, targetId)
+        if (!ok) return `${store.label} לא אישר את הביטול.`
+      } catch (err) {
+        console.error(`[ActionExecutor] Cancel order failed (${storeId}):`, err)
+        return `שגיאה בביטול ההזמנה ב${store.label}.`
+      }
+      return `ההזמנה #${targetId} בוטלה ב${store.label}.`
     }
 
     case 'set_schedule': {

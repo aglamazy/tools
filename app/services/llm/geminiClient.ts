@@ -83,7 +83,19 @@ export class GeminiClient implements LLMClient {
       const parts: any[] = candidate?.content?.parts || []
 
       if (!parts.length) {
-        console.log('[LLM/Gemini] Raw candidate:', JSON.stringify(candidate).slice(0, 500))
+        const finishReason = candidate?.finishReason
+        const safetyRatings = candidate?.safetyRatings
+        const blockedCategory = safetyRatings?.find((r: any) => r.blocked || r.probability === 'HIGH' || r.probability === 'MEDIUM')
+        const promptFeedback = data?.promptFeedback
+        const usage = data?.usageMetadata
+        console.log('[LLM/Gemini] EMPTY response diagnostics:', JSON.stringify({
+          finishReason,
+          blockedCategory,
+          safetyRatings,
+          promptFeedback,
+          usage,
+        }))
+        console.log('[LLM/Gemini] Full candidate:', JSON.stringify(candidate))
       }
 
       const thinking = parts.filter(p => p.thought && p.text).map(p => p.text).join('').trim()
@@ -95,7 +107,10 @@ export class GeminiClient implements LLMClient {
       console.log('[LLM/Gemini] parts:', parts.length, 'text:', text.length, 'functionCalls:', functionCalls.length,
         functionCalls.length ? functionCalls.map(fc => fc.name).join(',') : '')
 
-      if (!text && !functionCalls.length) return { text: '', error: 'Gemini לא החזיר תשובה' }
+      if (!text && !functionCalls.length) {
+        const finishReason = candidate?.finishReason || 'UNKNOWN'
+        return { text: '', error: `Gemini לא החזיר תשובה (finishReason=${finishReason})` }
+      }
 
       const groundingSources = (candidate?.groundingMetadata?.groundingChunks || [])
         .filter((chunk: any) => chunk.web?.uri)
