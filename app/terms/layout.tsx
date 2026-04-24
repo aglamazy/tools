@@ -5,7 +5,7 @@ import { branding } from '@/app/config'
 export const metadata: Metadata = {
   title: `תנאי שימוש | ${branding.name}`,
   description: `תנאי השימוש של ${branding.name}. קראו את התנאים וההגבלות לפני השימוש בשירות.`,
-  robots: { index: true, follow: true, googleBot: { index: true, follow: true } },
+  robots: { index: true, follow: true, googleBot: { index: true, follow: true, 'max-video-preview': -1, 'max-image-preview': 'large', 'max-snippet': -1 } },
   alternates: {
     canonical: '/terms',
   },

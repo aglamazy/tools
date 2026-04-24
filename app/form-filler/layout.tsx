@@ -5,7 +5,7 @@ import { branding } from '@/app/config'
 export const metadata: Metadata = {
   title: `מילוי טפסים | ${branding.name}`,
   description: `כלי מילוי טפסים אוטומטי של ${branding.name}. חסכו זמן במילוי טפסים מקוונים עבור העסק שלכם.`,
-  robots: { index: true, follow: true, googleBot: { index: true, follow: true } },
+  robots: { index: true, follow: true, googleBot: { index: true, follow: true, 'max-video-preview': -1, 'max-image-preview': 'large', 'max-snippet': -1 } },
   alternates: {
     canonical: '/form-filler',
   },
