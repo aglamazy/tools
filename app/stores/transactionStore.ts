@@ -6,9 +6,13 @@ import { addMonths } from '@/app/utils/formatters'
 
 /**
  * Extract MM/YYYY month from a date string.
- * Handles DD/MM/YYYY, DD.MM.YY, DD.MM.YYYY formats.
+ * Handles YYYY-MM-DD (canonical), DD/MM/YYYY, DD.MM.YY, DD.MM.YYYY formats.
  */
 function extractMonth(dateStr: string): string {
+  // Canonical YYYY-MM-DD
+  const isoMatch = dateStr.match(/^(\d{4})-(\d{2})-\d{2}$/)
+  if (isoMatch) return `${isoMatch[2]}/${isoMatch[1]}`
+
   // Try DD/MM/YYYY first (standard format)
   const slashMatch = dateStr.match(/^\d{2}\/(\d{2}\/\d{4})$/)
   if (slashMatch) return slashMatch[1]
@@ -184,17 +188,17 @@ export const transactionStore = {
     fileNameHint?: string
   ): Promise<boolean> => {
     try {
+      // Scope-down chain: prefer the most precise key first.
+      // The legacy type+month fallback is destructive (wipes ALL transactions
+      // for the month, including categorized ones from other files), so it
+      // only runs when no file-specific identifier is available.
       if (fileKey) {
         await db.transactions.where('fileId').equals(fileKey).delete()
-      }
-
-      if (fileNameHint) {
+      } else if (fileNameHint) {
         await db.transactions
           .filter((t) => typeof t.fileId === 'string' && t.fileId.includes(fileNameHint))
           .delete()
-      }
-
-      if (fileType === 'bank') {
+      } else if (fileType === 'bank') {
         await db.transactions
           .where('[type+month]')
           .equals(['bank', month])

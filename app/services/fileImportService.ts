@@ -3,6 +3,7 @@ import { parseCreditWithRegistry } from '@/app/utils/creditCardParser'
 import { parseBankWithRegistry } from '@/app/utils/bankParser'
 import { transactionStore } from '@/app/stores/transactionStore'
 import { getCardTypeIndicators } from '@/app/services/appSettingsService'
+import { normalizeDate } from '@/app/utils/parsers/shared'
 
 export const fileImportService = {
   // Import credit card file
@@ -26,9 +27,11 @@ export const fileImportService = {
     // This is critical: ALL transactions in this file are charged in this billing month
     const effectiveBillingDate = statement.billingDate || billingDate
 
-    // Format charging date (DD/MM/YYYY format)
+    // Format charging date in canonical YYYY-MM-DD form
     const chargingDateStr = effectiveBillingDate
-      ? `${String(effectiveBillingDate.getDate()).padStart(2, '0')}/${String(effectiveBillingDate.getMonth() + 1).padStart(2, '0')}/${effectiveBillingDate.getFullYear()}`
+      ? normalizeDate(
+          `${String(effectiveBillingDate.getDate()).padStart(2, '0')}/${String(effectiveBillingDate.getMonth() + 1).padStart(2, '0')}/${effectiveBillingDate.getFullYear()}`
+        )
       : undefined
 
     // Extract processing month from billing date (MM/YYYY)

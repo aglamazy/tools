@@ -20,6 +20,6 @@ next-env.d.ts
 .taskbot-worktrees/
 .taskbot-state/
 .taskbot-run.pid
-run.log
+run*log
 task-logs/
 .vercel

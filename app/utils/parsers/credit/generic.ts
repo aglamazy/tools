@@ -2,7 +2,7 @@ import { parseXlsTables } from '../../xlsTableParser'
 import { config } from '@/app/config'
 import { SheetCell, SheetRow } from '@/app/types/transactions'
 import type { Parser, ParsedCreditResult } from '../types'
-import { normalizeCell, toNumber, getRowValue } from '../shared'
+import { normalizeCell, toNumber, normalizeAmount, normalizeDate, getRowValue } from '../shared'
 
 // Mapping from Hebrew column names to standardized property names
 const COLUMN_MAPPINGS = {
@@ -218,7 +218,7 @@ export function parseCreditCardStatement(rows: SheetRow[]): CreditCardStatement 
 
       // Always use billing amount (סכום חיוב) - this is the actual charged amount
       // This handles installments, discounts, and foreign currency correctly
-      const amount = toNumber(normalizedRow.billingAmount)
+      const amount = normalizeAmount(normalizedRow.billingAmount)
 
       if (!amount || amount === 0) {
         return
@@ -248,14 +248,17 @@ export function parseCreditCardStatement(rows: SheetRow[]): CreditCardStatement 
       }
 
       // Calculate totalAmount: use סכום עסקה if available, otherwise totalSteps * amount
-      const domesticAmount = toNumber(normalizedRow.domesticAmount)
+      const domesticAmount = normalizeAmount(normalizedRow.domesticAmount)
       const totalAmount = totalSteps > 1
-        ? (domesticAmount && domesticAmount !== 0 ? domesticAmount : totalSteps * amount)
+        ? normalizeAmount(domesticAmount && domesticAmount !== 0 ? domesticAmount : totalSteps * amount)
         : undefined
 
+      const rawTxDate = String(normalizedRow.transactionDate)
+      const normalizedTxDate = normalizeDate(rawTxDate) || rawTxDate
+
       payments.push({
-        id: `${cardNumber || 'unknown'}-${globalRowIndex}-${String(normalizedRow.transactionDate)}-${String(normalizedRow.merchant)}-${amount}-${currentStep}-${totalSteps}`,
-        transactionDate: String(normalizedRow.transactionDate),
+        id: `${cardNumber || 'unknown'}-${globalRowIndex}-${normalizedTxDate}-${String(normalizedRow.merchant)}-${amount}-${currentStep}-${totalSteps}`,
+        transactionDate: normalizedTxDate,
         merchant: merchantName || 'עסקה ללא שם',
         amount,
         currentStep,

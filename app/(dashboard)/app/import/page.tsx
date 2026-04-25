@@ -252,16 +252,10 @@ const handleDeleteFile = (file: ImportedFile) => {
         const fileId = `${Date.now()}-${file.name}`
         const { fileImportService } = await import('@/app/services/fileImportService')
 
-        // Delete old transactions if replacing
-        if (existingFile) {
-          await transactionStore.deleteTransactionsForFile(
-            existingFile.fileType,
-            existingFile.processingMonth || '',
-            existingFile.cardNumber,
-            existingFile.fileKey,
-            existingFile.fileName
-          )
-        }
+        // Re-import is additive: don't delete the old file's transactions.
+        // saveBankTransactions / saveCreditCardData dedup by date|desc|amount,
+        // so existing categorized rows are preserved and only genuinely new
+        // rows from the (more complete) file get inserted.
 
         // Import new transactions
         if (metadata.fileType === 'credit-card' && metadata.cardNumber) {

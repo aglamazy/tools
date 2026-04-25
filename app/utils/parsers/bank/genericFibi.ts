@@ -1,7 +1,7 @@
 import { SheetCell, SheetRow } from '@/app/types/transactions'
 import type { Parser, ParsedBankResult } from '../types'
 import { getCardTypeIndicators } from '@/app/services/appSettingsService'
-import { normalizeCell, toNumber, findColumnIndex } from '../shared'
+import { normalizeCell, toNumber, normalizeAmount, normalizeDate, findColumnIndex } from '../shared'
 
 // Mapping from Hebrew column names to standardized property names
 const COLUMN_MAPPINGS = {
@@ -99,8 +99,9 @@ export function parseBankTransactions(
 
     const debit = debitIdx !== -1 ? toNumber(row[debitIdx]) : 0
     const credit = creditIdx !== -1 ? toNumber(row[creditIdx]) : 0
-    const amount = debit !== 0 ? -debit : credit
-    const balance = balanceIdx !== -1 ? toNumber(row[balanceIdx]) : 0
+    const rawAmount = debit !== 0 ? -debit : credit
+    const amount = normalizeAmount(rawAmount)
+    const balance = balanceIdx !== -1 ? normalizeAmount(row[balanceIdx]) : 0
 
     // Detect credit card charges
     const descriptionStr = String(description).trim().replace(/\s+/g, ' ');
@@ -110,7 +111,8 @@ export function parseBankTransactions(
     const cardNumber = cardNumberMatch ? cardNumberMatch[1] : undefined
 
     // Generate ID in new format: <account_id>-<date>-<index>
-    const dateStr = String(date)
+    const rawDateStr = String(date)
+    const dateStr = normalizeDate(rawDateStr) || rawDateStr
     const currentIndex = (dateIndexMap.get(dateStr) || 0) + 1
     dateIndexMap.set(dateStr, currentIndex)
     transactions.push({
@@ -163,12 +165,7 @@ export function extractBankPreview(rows: SheetRow[], cardTypeIndicators?: string
   // Extract processing month from first transaction
   let processingMonth: string | null = null
   if (transactions.length > 0) {
-    const firstDate = transactions[0].date
-    const match = firstDate.match(/(\d{2})\/(\d{2})\/(\d{4})/)
-    if (match) {
-      const [, , month, year] = match
-      processingMonth = `${month}/${year}`
-    }
+    processingMonth = monthFromNormalizedDate(transactions[0].date)
   }
 
   return {
@@ -176,6 +173,24 @@ export function extractBankPreview(rows: SheetRow[], cardTypeIndicators?: string
     processingMonth,
     transactionCount: transactions.length,
   }
+}
+
+/**
+ * Extract MM/YYYY string from a normalized YYYY-MM-DD date.
+ * Falls back to legacy DD/MM/YYYY parsing if needed.
+ */
+function monthFromNormalizedDate(date: string): string | null {
+  const isoMatch = date.match(/^(\d{4})-(\d{2})-\d{2}$/)
+  if (isoMatch) {
+    const [, year, month] = isoMatch
+    return `${month}/${year}`
+  }
+  const slashMatch = date.match(/(\d{2})\/(\d{2})\/(\d{4})/)
+  if (slashMatch) {
+    const [, , month, year] = slashMatch
+    return `${month}/${year}`
+  }
+  return null
 }
 
 /**
@@ -213,12 +228,7 @@ export const genericFibiParser: Parser = {
     // Derive processing month from first transaction if present
     let processingMonth: string | null = null
     if (transactions.length > 0) {
-      const firstDate = transactions[0].date
-      const match = firstDate.match(/(\d{2})\/(\d{2})\/(\d{4})/)
-      if (match) {
-        const [, , month, year] = match
-        processingMonth = `${month}/${year}`
-      }
+      processingMonth = monthFromNormalizedDate(transactions[0].date)
     }
 
     return {

@@ -32,6 +32,67 @@ export const toNumber = (value: string | number): number => {
 }
 
 /**
+ * Normalize an amount to a number rounded to 2 decimals.
+ * Uses toNumber for parsing, then `Math.round(n * 100) / 100` to avoid float drift.
+ * Returns 0 for NaN / non-finite values.
+ */
+export function normalizeAmount(v: unknown): number {
+  let n: number
+  if (typeof v === 'number') {
+    n = v
+  } else if (typeof v === 'string') {
+    n = toNumber(v)
+  } else if (v === null || v === undefined) {
+    return 0
+  } else {
+    // Best-effort coercion for other types
+    n = toNumber(String(v))
+  }
+  if (!Number.isFinite(n)) return 0
+  return Math.round(n * 100) / 100
+}
+
+/**
+ * Normalize a date string into canonical YYYY-MM-DD form.
+ * Accepts:
+ *   - DD/MM/YYYY
+ *   - DD.MM.YYYY
+ *   - DD.MM.YY (assumes 20YY)
+ *   - YYYY-MM-DD (already canonical)
+ * Returns undefined for empty input. Unknown formats are returned
+ * as-is with a console.warn so we don't silently lose data.
+ */
+export function normalizeDate(input: string | undefined | null): string | undefined {
+  if (input === undefined || input === null) return undefined
+  const s = String(input).trim()
+  if (s === '') return undefined
+
+  // Already canonical YYYY-MM-DD
+  const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (isoMatch) {
+    return s
+  }
+
+  // DD/MM/YYYY
+  const slashMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (slashMatch) {
+    const [, d, m, y] = slashMatch
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
+  }
+
+  // DD.MM.YYYY or DD.MM.YY
+  const dotMatch = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2}|\d{4})$/)
+  if (dotMatch) {
+    const [, d, m, yRaw] = dotMatch
+    const y = yRaw.length === 2 ? `20${yRaw}` : yRaw
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
+  }
+
+  console.warn(`[normalizeDate] Unknown date format, returning as-is: "${s}"`)
+  return s
+}
+
+/**
  * Gets a column index from headers using multiple possible names
  */
 export function findColumnIndex(headers: Array<string | number>, possibleNames: string[]): number {

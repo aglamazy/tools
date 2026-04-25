@@ -3,9 +3,10 @@
 import { useEffect, useState } from 'react'
 import { migrateFromLocalStorage } from '@/app/db/migration'
 import { migrateBusinessCategories } from '@/app/db/businessCategoryMigration'
+import { runNormalizeTransactionsOnce } from '@/app/services/migrations/normalizeTransactions'
 
 export default function MigrationRunner() {
-  const [migrationStatus, setMigrationStatus] = useState<'pending' | 'running' | 'success' | 'error'>('pending')
+  const [, setMigrationStatus] = useState<'pending' | 'running' | 'success' | 'error'>('pending')
 
   useEffect(() => {
     const runMigrations = async () => {
@@ -26,6 +27,9 @@ export default function MigrationRunner() {
         console.error('Business-category migration error:', businessResult.error)
         return
       }
+
+      // Normalize legacy transaction date/amount formats (one-time)
+      await runNormalizeTransactionsOnce()
 
       setMigrationStatus('success')
     }
