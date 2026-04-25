@@ -206,7 +206,15 @@ function TaskCard({
           {task.taskType === 'auto' && <span style={{ marginLeft: '0.25rem' }}>{getAutoTaskIcon(task.autoType!)}</span>}
           {task.dataType === 'lead' && <span style={{ marginLeft: '0.25rem' }}>🔗</span>}
           {task.taskType === 'auto' && task.link ? (
-            <a href={task.link} style={{ color: '#3b82f6', textDecoration: 'underline' }}>{task.title}</a>
+            <a
+              href={task.link}
+              target={task.link.startsWith('http') ? '_blank' : undefined}
+              rel={task.link.startsWith('http') ? 'noopener noreferrer' : undefined}
+              onClick={(e) => e.stopPropagation()}
+              style={{ color: '#3b82f6', textDecoration: 'none' }}
+            >
+              {task.title}
+            </a>
           ) : task.title}
         </div>
 

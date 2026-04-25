@@ -724,6 +724,15 @@ async function checkBtlPaymentReminders(): Promise<AutoTask[]> {
 
   if (schedule.length === 0 && fallbackAmount === 0) return []
 
+  // Link target per task:
+  //   1. The month's QR payment URL (decoded from the notice), if present.
+  //   2. Else the most recently uploaded BTL notice file in Drive.
+  //   3. Else /app/taxes.
+  const latestNotice = (profile.btlNotices || [])
+    .filter((n) => n.driveWebViewLink)
+    .sort((a, b) => (b.uploadedAt || '').localeCompare(a.uploadedAt || ''))[0]
+  const fallbackLink = latestNotice?.driveWebViewLink || '/app/taxes'
+
   const allTx = await db.transactions.toArray()
   const btlTx = allTx.filter(
     (t) => t.category?.startsWith('ביטוח לאומי') && t.month?.endsWith(`/${year}`),
@@ -782,7 +791,7 @@ async function checkBtlPaymentReminders(): Promise<AutoTask[]> {
       priority,
       quadrant,
       deadline: deadline.toISOString(),
-      link: '/app/taxes',
+      link: scheduled?.paymentUrl || fallbackLink,
       createdAt: new Date().toISOString(),
       month: monthStr,
     })
