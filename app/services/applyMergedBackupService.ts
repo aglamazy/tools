@@ -258,9 +258,14 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
     },
   )
 
-  // Import non-DB stores
+  // Import non-DB stores — only if cloud is newer than local
   if (cloud.stores.subjectStore) {
-    await subjectStore.import(cloud.stores.subjectStore)
+    const cloudUpdated = cloud.stores.subjectStore.lastUpdated
+    const local = subjectStore.getRaw()
+    const localUpdated = local?.lastUpdated
+    if (!localUpdated || !cloudUpdated || new Date(cloudUpdated) > new Date(localUpdated)) {
+      await subjectStore.import(cloud.stores.subjectStore)
+    }
   }
   // Local timer always wins — don't restore cloud timer (user may have stopped it locally)
   // timerStore is only imported during full restore (importAllStores), not incremental sync
