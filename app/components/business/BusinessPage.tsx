@@ -16,7 +16,6 @@ import AuditionsTab from './AuditionsTab'
 import OpenDocumentsTab from './OpenDocumentsTab'
 import BizSettingsTab from './BizSettingsTab'
 import ExpenseTab from './ExpenseTab'
-import ExtensionLink from './ExtensionLink'
 import BusinessTasksTab from './BusinessTasksTab'
 import FilesSubTab from './TaxFilesSubTab'
 import { getUser } from '@/app/stores/authStore'
@@ -49,11 +48,10 @@ const TABS: TabItem[] = [
   { id: 'tasks', label: 'משימות', icon: '✅' },
   { id: 'projects', label: 'פרויקטים', icon: '📂' },
   { id: 'settings', label: 'הגדרות', icon: '⚙️' },
-  { id: 'extension', label: 'תוסף', icon: '🧩' },
 ]
 
 // Tabs hidden from sharees (sharedWithMe businesses)
-const OWNER_ONLY_TABS = new Set(['settings', 'extension'])
+const OWNER_ONLY_TABS = new Set(['settings'])
 
 const APARTMENT_TABS: TabItem[] = [
   { id: 'income', label: 'הכנסות', icon: '💰' },
@@ -81,7 +79,6 @@ const ARTIST_TABS: TabItem[] = [
   { id: 'tasks', label: 'משימות', icon: '✅' },
   { id: 'projects', label: 'פרויקטים', icon: '📂' },
   { id: 'settings', label: 'הגדרות', icon: '⚙️' },
-  { id: 'extension', label: 'תוסף', icon: '🧩' },
 ]
 
 type BusinessPageProps = {
@@ -167,7 +164,6 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
               {activeTab === 'tasks' && <BusinessTasksTab businessId={businessId} />}
               {activeTab === 'projects' && <BusinessSettingsTab businessId={businessId} />}
               {activeTab === 'settings' && <BizSettingsTab businessId={businessId} />}
-              {activeTab === 'extension' && <ExtensionLink />}
             </>
           )}
         </SettingsTabs>

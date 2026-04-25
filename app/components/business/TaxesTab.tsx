@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useEffect, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { db, type TaxDocument, type Business, type Transaction, type AdvancePayment } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import type { Category } from '@/app/types/category'
@@ -11,12 +11,14 @@ import { getAccessToken } from '@/app/services/googleTokenService'
 import { getHouseholdInfo } from '@/app/services/householdService'
 import { type TaxStatus, type TaxStatusInfo, useExemptTaxStatus } from '@/app/components/TaxExemptBadge'
 import RentalSummaryTable from './TaxRentalSummary'
+import HouseholdIncomeSummary from './TaxHouseholdSummary'
 import { SelfEmployedBTLSection, SelfEmployedIncomeTaxSection, type BTLRates, type IncomeTaxStep } from './TaxSelfEmployedSections'
 import { getTaxProfile, type TaxProfile } from '@/app/components/TaxProfileSection'
 import Modal from '@/app/components/Modal'
 import BusinessForm from '@/app/components/settings/BusinessForm'
 import type { BusinessUI } from '@/app/types/business'
 import { businessStore } from '@/app/stores/businessStore'
+import { BusinessType } from '@/app/types/business'
 
 import TaxesDebugPanel, { type HouseholdMember, type HouseholdDebug } from './TaxesDebugPanel'
 
@@ -74,10 +76,19 @@ function AnnualSummarySubTab() {
   const [expCategoryMap, setExpCategoryMap] = useState<Map<number, string[]>>(new Map())
   const [members, setMembers] = useState<HouseholdMember[]>([])
   const [householdDebug, setHouseholdDebug] = useState<HouseholdDebug | null>(null)
-  const [selectedUser, setSelectedUser] = useState<string>('all')
   const [loading, setLoading] = useState(true)
+  const router = useRouter()
+  const pathname = usePathname()
   const searchParams = useSearchParams()
   const debugMode = searchParams?.get('debug') === '1'
+  const selectedUser = searchParams?.get('user') || 'all'
+  const setSelectedUser = (uid: string) => {
+    const params = new URLSearchParams(searchParams?.toString() || '')
+    if (uid === 'all') params.delete('user')
+    else params.set('user', uid)
+    const qs = params.toString()
+    router.replace(qs ? `${pathname}?${qs}` : pathname || '/')
+  }
   const [authReady, setAuthReady] = useState(false)
 
   useEffect(() => {
@@ -89,6 +100,7 @@ function AnnualSummarySubTab() {
   const exemptStatus = useExemptTaxStatus()
   const [btlRates, setBtlRates] = useState<BTLRates | null>(null)
   const [incomeTaxBrackets, setIncomeTaxBrackets] = useState<IncomeTaxStep[] | null>(null)
+  const [rentalMonthlyLimit, setRentalMonthlyLimit] = useState<number | null>(null)
   const [advancePayments, setAdvancePayments] = useState<AdvancePayment[]>([])
   const [taxProfile, setTaxProfile] = useState<TaxProfile>({})
   const currentYear = new Date().getFullYear()
@@ -186,6 +198,7 @@ function AnnualSummarySubTab() {
       const tl = data.taxLimits as { amount: number; sinceYear: number } | null
       if (tl && currentYear >= tl.sinceYear) {
         setTaxExemptInfo(prev => prev ? { ...prev, limit: tl.amount } : prev)
+        setRentalMonthlyLimit(tl.amount)
       }
     }).catch(() => {})
   }, [currentYear])
@@ -334,14 +347,35 @@ function AnnualSummarySubTab() {
         </div>
       )}
 
-      {/* Exempt status banner */}
-      {exemptStatus && <ExemptStatusBanner info={exemptStatus} />}
+      {/* Exempt status banner — only for individual person tabs */}
+      {selectedUser !== 'all' && exemptStatus && <ExemptStatusBanner info={exemptStatus} />}
 
       {/* Conditional section tabs: שכיר / עצמאי */}
       {(() => {
         const hasDocs = filteredDocs.length > 0
-        const nonRentalBiz = relevantBusinesses.filter(b => !b.isTaxFree)
+        const nonRentalBiz = relevantBusinesses.filter(b => !b.isTaxFree && b.type !== BusinessType.Employee)
         const rentalBiz = relevantBusinesses.filter(b => b.isTaxFree)
+
+        // Household tab: income summary (שכיר + עצמאי per member) + rental detail
+        if (selectedUser === 'all') {
+          return (
+            <>
+              <HouseholdIncomeSummary
+                members={members}
+                docs={filteredDocs}
+                selfEmployedBizzes={nonRentalBiz}
+                employeeBizzes={ownBusinesses.filter(b => b.type === BusinessType.Employee)}
+                rentalBusinesses={rentalBiz}
+                transactions={transactions}
+                bizCategoryMap={bizCategoryMap}
+                expCategoryMap={expCategoryMap}
+                currentYear={currentYear}
+                currentMonth={currentMonth}
+              />
+            </>
+          )
+        }
+
         const sections: { id: string; label: string }[] = []
         if (hasDocs) sections.push({ id: 'employee', label: 'שכיר' })
         if (nonRentalBiz.length > 0) sections.push({ id: 'selfEmployed', label: 'עצמאי' })
@@ -365,7 +399,7 @@ function AnnualSummarySubTab() {
             advancePayments={advancePayments}
             onUploadReceipt={handleUploadReceipt}
             taxProfile={taxProfile}
-            personUid={selectedUser === 'all' ? getUser()?.uid : selectedUser}
+            personUid={selectedUser}
           />
         )
       })()}
@@ -621,7 +655,7 @@ function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, ex
     ])),
   }
 
-  const [drillDown, setDrillDown] = useState<{ monthIdx: number; bizId: number } | null>(null)
+  const [drillDown, setDrillDown] = useState<{ monthIdx: number; bizId: number; kind: 'income' | 'expense' } | null>(null)
   const [editingBiz, setEditingBiz] = useState<BusinessUI | null>(null)
 
   const handleBizSave = async () => {
@@ -633,11 +667,10 @@ function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, ex
   const getDrillDownTransactions = () => {
     if (!drillDown) return []
     const monthStr = `${String(drillDown.monthIdx + 1).padStart(2, '0')}/${currentYear}`
-    const incomeCatNames = bizCategoryMap.get(drillDown.bizId) || []
-    const expenseCatNames = expCategoryMap.get(drillDown.bizId) || []
-    const allCatNames = [...incomeCatNames, ...expenseCatNames]
+    const catNames = (drillDown.kind === 'income' ? bizCategoryMap : expCategoryMap).get(drillDown.bizId) || []
     return transactions
-      .filter(t => t.month === monthStr && t.category && allCatNames.includes(t.category))
+      .filter(t => t.month === monthStr && t.category && catNames.includes(t.category))
+      .filter(t => drillDown.kind === 'income' ? t.amount >= 0 : t.amount < 0)
       .filter(t => t.amount >= 0 || !t.currentStep || t.currentStep === 1)
       .map(t => {
         if (t.amount < 0 && t.totalSteps && t.totalSteps > 1) {
@@ -649,15 +682,24 @@ function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, ex
       .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
   }
 
+  const isCellOpen = (monthIdx: number, bizId: number, kind: 'income' | 'expense') =>
+    drillDown?.monthIdx === monthIdx && drillDown?.bizId === bizId && drillDown?.kind === kind
+
+  const subTh: React.CSSProperties = { ...tHeaderStyle, fontSize: '0.75rem', color: '#64748b', fontWeight: 500 }
+  const incomeBg = '#f0fdf4'
+  const expenseBg = '#fef2f2'
+  const incomeOpen = '#bbf7d0'
+  const expenseOpen = '#fecaca'
+
   return (
     <div style={{ overflowX: 'auto' }}>
-      <h3 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>עצמאי — סיכום שנתי {currentYear}</h3>
+      <h3 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>עצמאי — הכנסות / הוצאות {currentYear}</h3>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
         <thead>
           <tr>
-            <th style={{ ...tHeaderStyle, textAlign: 'right', direction: 'rtl' }}>חודש</th>
+            <th rowSpan={2} style={{ ...tHeaderStyle, textAlign: 'right', direction: 'rtl', verticalAlign: 'bottom' }}>חודש</th>
             {businesses.map(biz => (
-              <th key={biz.id} style={{ ...tHeaderStyle, background: '#faf5ff', color: '#7c3aed' }}>
+              <th key={biz.id} colSpan={2} style={{ ...tHeaderStyle, background: '#faf5ff', color: '#7c3aed', borderBottom: '1px solid #e2e8f0' }}>
                 {biz.name}
                 <button
                   onClick={() => { const { createdAt: _, updatedAt: __, ...ui } = biz; setEditingBiz({ ...ui, id: biz.id! }) }}
@@ -665,6 +707,14 @@ function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, ex
                   title="הגדרות עסק"
                 >⚙️</button>
               </th>
+            ))}
+          </tr>
+          <tr>
+            {businesses.map(biz => (
+              <React.Fragment key={biz.id}>
+                <th style={{ ...subTh, color: '#16a34a' }}>הכנסה</th>
+                <th style={{ ...subTh, color: '#dc2626' }}>הוצאה</th>
+              </React.Fragment>
             ))}
           </tr>
         </thead>
@@ -675,34 +725,48 @@ function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, ex
               {businesses.map(biz => {
                 const income = row.bizIncome[biz.id!] || 0
                 const expense = row.bizExpense[biz.id!] || 0
-                const net = income - expense
-                const hasData = income > 0 || expense > 0
                 return (
-                  <td
-                    key={biz.id}
-                    onClick={() => hasData ? setDrillDown(
-                      drillDown?.monthIdx === row.month && drillDown?.bizId === biz.id! ? null : { monthIdx: row.month, bizId: biz.id! }
-                    ) : undefined}
-                    style={{
-                      ...cellStyle,
-                      background: drillDown?.monthIdx === row.month && drillDown?.bizId === biz.id! ? '#fef3c7' : '#fefce8',
-                      cursor: hasData ? 'pointer' : 'default',
-                    }}
-                  >
-                    {hasData ? fmt(net) : '—'}
-                  </td>
+                  <React.Fragment key={biz.id}>
+                    <td
+                      onClick={() => income ? setDrillDown(isCellOpen(row.month, biz.id!, 'income') ? null : { monthIdx: row.month, bizId: biz.id!, kind: 'income' }) : undefined}
+                      style={{
+                        ...cellStyle,
+                        background: isCellOpen(row.month, biz.id!, 'income') ? incomeOpen : incomeBg,
+                        cursor: income ? 'pointer' : 'default',
+                        color: '#16a34a',
+                      }}
+                    >
+                      {income ? fmt(income) : '—'}
+                    </td>
+                    <td
+                      onClick={() => expense ? setDrillDown(isCellOpen(row.month, biz.id!, 'expense') ? null : { monthIdx: row.month, bizId: biz.id!, kind: 'expense' }) : undefined}
+                      style={{
+                        ...cellStyle,
+                        background: isCellOpen(row.month, biz.id!, 'expense') ? expenseOpen : expenseBg,
+                        cursor: expense ? 'pointer' : 'default',
+                        color: '#dc2626',
+                      }}
+                    >
+                      {expense ? fmt(expense) : '—'}
+                    </td>
+                  </React.Fragment>
                 )
               })}
             </tr>
           ))}
         </tbody>
         <tfoot>
-          <tr style={{ borderTop: '2px solid #e2e8f0', background: '#f0fdf4' }}>
+          <tr style={{ borderTop: '2px solid #e2e8f0' }}>
             <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 700 }}>סה&quot;כ</td>
             {businesses.map(biz => (
-              <td key={biz.id} style={{ ...cellStyle, fontWeight: 700, background: '#fefce8' }}>
-                {fmt((totals.bizIncome[biz.id!] || 0) - (totals.bizExpense[biz.id!] || 0))}
-              </td>
+              <React.Fragment key={biz.id}>
+                <td style={{ ...cellStyle, fontWeight: 700, background: incomeBg, color: '#16a34a' }}>
+                  {fmt(totals.bizIncome[biz.id!] || 0)}
+                </td>
+                <td style={{ ...cellStyle, fontWeight: 700, background: expenseBg, color: '#dc2626' }}>
+                  {fmt(totals.bizExpense[biz.id!] || 0)}
+                </td>
+              </React.Fragment>
             ))}
           </tr>
         </tfoot>
@@ -723,7 +787,7 @@ function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, ex
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
               <h4 style={{ margin: 0, fontSize: '0.95rem' }}>
-                {biz?.name} — {HEBREW_MONTHS[drillDown.monthIdx]} {currentYear}
+                {biz?.name} — {drillDown.kind === 'income' ? 'הכנסות' : 'הוצאות'} — {HEBREW_MONTHS[drillDown.monthIdx]} {currentYear}
               </h4>
               <button
                 onClick={() => setDrillDown(null)}
@@ -741,6 +805,7 @@ function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, ex
                     <th style={{ ...tHeaderStyle, textAlign: 'right', direction: 'rtl' }}>תאריך</th>
                     <th style={{ ...tHeaderStyle, textAlign: 'right', direction: 'rtl' }}>תיאור</th>
                     <th style={{ ...tHeaderStyle, textAlign: 'right', direction: 'rtl' }}>קטגוריה</th>
+                    <th style={{ ...tHeaderStyle, textAlign: 'right', direction: 'rtl' }}>אמצעי תשלום</th>
                     <th style={tHeaderStyle}>סכום</th>
                   </tr>
                 </thead>
@@ -750,6 +815,13 @@ function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, ex
                       <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl' }}>{tx.date}</td>
                       <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl' }}>{tx.description}</td>
                       <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl' }}>{tx.category}</td>
+                      <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', color: '#64748b', fontSize: '0.8rem' }}>
+                        {tx.type === 'credit' && tx.cardNumber
+                          ? `כרטיס ${tx.cardNumber}`
+                          : tx.type === 'bank' && tx.accountNumber
+                            ? `חשבון ${tx.accountNumber}`
+                            : 'מזומן'}
+                      </td>
                       <td style={{ ...cellStyle, color: tx.amount >= 0 ? '#16a34a' : '#dc2626' }}>
                         {fmt(tx.amount)}
                       </td>
@@ -758,7 +830,7 @@ function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, ex
                 </tbody>
                 <tfoot>
                   <tr style={{ borderTop: '2px solid #e2e8f0' }}>
-                    <td colSpan={3} style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 700 }}>סה&quot;כ</td>
+                    <td colSpan={4} style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 700 }}>סה&quot;כ</td>
                     <td style={{ ...cellStyle, fontWeight: 700, color: total >= 0 ? '#16a34a' : '#dc2626' }}>{fmt(total)}</td>
                   </tr>
                 </tfoot>

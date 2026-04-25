@@ -23,6 +23,7 @@ export type BtlPayment = {
   month: string // MM/YYYY — the BTL period this payment covers
   amount: number
   dueDate: string // YYYY-MM-DD
+  paymentUrl?: string // Decoded from the month's QR code on the notice
 }
 
 export type BtlNotice = {
@@ -266,6 +267,7 @@ export default function TaxProfileSection({ userId, memberLabel }: TaxProfileSec
                   month: String(p.month),
                   amount: Number(p.amount),
                   dueDate: String(p.dueDate),
+                  paymentUrl: p.paymentUrl ? String(p.paymentUrl) : undefined,
                 })).filter((p: BtlPayment) => p.month && Number.isFinite(p.amount) && p.dueDate)
               }
               if (Number.isFinite(parsed.annualTotal)) {
@@ -536,6 +538,7 @@ export default function TaxProfileSection({ userId, memberLabel }: TaxProfileSec
                             <th style={{ textAlign: 'right', padding: '0.25rem 0.4rem' }}>חודש</th>
                             <th style={{ textAlign: 'right', padding: '0.25rem 0.4rem' }}>תאריך לתשלום</th>
                             <th style={{ textAlign: 'left', padding: '0.25rem 0.4rem' }}>סכום</th>
+                            <th style={{ textAlign: 'center', padding: '0.25rem 0.4rem' }}>תשלום</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -545,6 +548,13 @@ export default function TaxProfileSection({ userId, memberLabel }: TaxProfileSec
                               <td style={{ padding: '0.25rem 0.4rem' }}>{formatDisplayDate(p.dueDate)}</td>
                               <td style={{ padding: '0.25rem 0.4rem', textAlign: 'left', direction: 'ltr' }}>
                                 {p.amount.toLocaleString('he-IL')} ₪
+                              </td>
+                              <td style={{ padding: '0.25rem 0.4rem', textAlign: 'center' }}>
+                                {p.paymentUrl ? (
+                                  <a href={p.paymentUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#1e40af', textDecoration: 'none' }}>
+                                    💳 שלם
+                                  </a>
+                                ) : '—'}
                               </td>
                             </tr>
                           ))}

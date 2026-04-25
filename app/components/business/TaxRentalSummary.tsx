@@ -25,12 +25,13 @@ const tHeaderStyle: React.CSSProperties = {
 
 const fmt = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
 
-export default function RentalSummaryTable({ businesses, transactions, bizCategoryMap, currentYear, currentMonth }: {
+export default function RentalSummaryTable({ businesses, transactions, bizCategoryMap, currentYear, currentMonth, monthlyLimit }: {
   businesses: Business[]
   transactions: Transaction[]
   bizCategoryMap: Map<number, string[]>
   currentYear: number
   currentMonth: number
+  monthlyLimit?: number
 }) {
   const monthlyData = Array.from({ length: currentMonth + 1 }, (_, i) => {
     const monthStr = `${String(i + 1).padStart(2, '0')}/${currentYear}`
@@ -56,6 +57,9 @@ export default function RentalSummaryTable({ businesses, transactions, bizCatego
 
   const showPerBiz = businesses.length > 1
 
+  const maxMonthTotal = monthlyData.length > 0 ? Math.max(...monthlyData.map(r => r.total)) : 0
+  const overLimit = monthlyLimit ? maxMonthTotal > monthlyLimit : false
+
   const [drillDown, setDrillDown] = useState<{ monthIdx: number; bizId: number } | null>(null)
 
   const getDrillDownTransactions = () => {
@@ -70,6 +74,20 @@ export default function RentalSummaryTable({ businesses, transactions, bizCatego
   return (
     <div style={{ overflowX: 'auto' }}>
       <h3 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>השכרת דירה — סיכום שנתי {currentYear}</h3>
+      {overLimit && monthlyLimit && (
+        <div style={{
+          marginBottom: '0.75rem',
+          padding: '0.6rem 1rem',
+          background: '#fff7ed',
+          border: '1px solid #fdba74',
+          borderRadius: '0.5rem',
+          fontSize: '0.85rem',
+          color: '#c2410c',
+          direction: 'rtl',
+        }}>
+          חריגה מפטור: הכנסה גבוהה ביותר בחודש {fmt(maxMonthTotal)} — מעל תקרה {fmt(monthlyLimit)}
+        </div>
+      )}
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
         <thead>
           <tr>
@@ -81,44 +99,46 @@ export default function RentalSummaryTable({ businesses, transactions, bizCatego
           </tr>
         </thead>
         <tbody>
-          {monthlyData.map(row => (
-            <tr key={row.month} style={{ borderBottom: '1px solid #f1f5f9' }}>
-              <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 500 }}>{row.label}</td>
-              {showPerBiz && businesses.map(biz => {
-                const val = row.perBiz[biz.id!] || 0
-                return (
-                  <td
-                    key={biz.id}
-                    onClick={() => val ? setDrillDown(
-                      drillDown?.monthIdx === row.month && drillDown?.bizId === biz.id! ? null : { monthIdx: row.month, bizId: biz.id! }
-                    ) : undefined}
-                    style={{
-                      ...cellStyle,
-                      background: drillDown?.monthIdx === row.month && drillDown?.bizId === biz.id! ? '#d1fae5' : '#f0fdf4',
-                      cursor: val ? 'pointer' : 'default',
-                    }}
-                  >
-                    {val ? fmt(val) : '—'}
-                  </td>
-                )
-              })}
-              <td
-                style={{
-                  ...cellStyle,
-                  background: !showPerBiz && drillDown?.monthIdx === row.month ? '#d1fae5' : '#f0fdf4',
-                  fontWeight: 500,
-                  cursor: !showPerBiz && row.total ? 'pointer' : 'default',
-                }}
-                onClick={() => {
-                  if (!showPerBiz && row.total && businesses[0]) {
-                    setDrillDown(drillDown?.monthIdx === row.month ? null : { monthIdx: row.month, bizId: businesses[0].id! })
-                  }
-                }}
-              >
-                {row.total ? fmt(row.total) : '—'}
-              </td>
-            </tr>
-          ))}
+          {monthlyData.map(row => {
+            return (
+              <tr key={row.month} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 500 }}>{row.label}</td>
+                {showPerBiz && businesses.map(biz => {
+                  const val = row.perBiz[biz.id!] || 0
+                  return (
+                    <td
+                      key={biz.id}
+                      onClick={() => val ? setDrillDown(
+                        drillDown?.monthIdx === row.month && drillDown?.bizId === biz.id! ? null : { monthIdx: row.month, bizId: biz.id! }
+                      ) : undefined}
+                      style={{
+                        ...cellStyle,
+                        background: drillDown?.monthIdx === row.month && drillDown?.bizId === biz.id! ? '#d1fae5' : '#f0fdf4',
+                        cursor: val ? 'pointer' : 'default',
+                      }}
+                    >
+                      {val ? fmt(val) : '—'}
+                    </td>
+                  )
+                })}
+                <td
+                  style={{
+                    ...cellStyle,
+                    background: !showPerBiz && drillDown?.monthIdx === row.month ? '#d1fae5' : '#f0fdf4',
+                    fontWeight: 500,
+                    cursor: !showPerBiz && row.total ? 'pointer' : 'default',
+                  }}
+                  onClick={() => {
+                    if (!showPerBiz && row.total && businesses[0]) {
+                      setDrillDown(drillDown?.monthIdx === row.month ? null : { monthIdx: row.month, bizId: businesses[0].id! })
+                    }
+                  }}
+                >
+                  {row.total ? fmt(row.total) : '—'}
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
         <tfoot>
           <tr style={{ borderTop: '2px solid #e2e8f0', background: '#ecfdf5' }}>

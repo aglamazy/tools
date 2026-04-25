@@ -21,7 +21,8 @@ const fmt = (n: number) => n.toLocaleString('he-IL', { style: 'currency', curren
 
 export function TaxExemptStatusBanner({ info }: { info: TaxStatusInfo }) {
   const style = TAX_STATUS_STYLES[info.status]
-  const remainingToLimit = Math.max(0, info.limit - info.currentIncome)
+  const remainingToLimit = Math.max(0, info.limit - info.maxMonthlyIncome)
+  const pct = info.limit > 0 ? Math.min(100, (info.maxMonthlyIncome / info.limit) * 100) : 0
 
   return (
     <div style={{
@@ -35,15 +36,14 @@ export function TaxExemptStatusBanner({ info }: { info: TaxStatusInfo }) {
     }}>
       <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>{style.label}</div>
       <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap', fontSize: '0.85rem', color: '#475569' }}>
-        <div><span style={{ color: '#64748b' }}>הכנסה שנתית נוכחית: </span><strong>{fmt(info.currentIncome)}</strong></div>
-        <div><span style={{ color: '#64748b' }}>תקרת השכרה:</span><strong>{fmt(info.limit)}</strong></div>
-        <div><span style={{ color: '#64748b' }}>נותר עד לתקרה: </span><strong>{fmt(remainingToLimit)}</strong></div>
         <div><span style={{ color: '#64748b' }}>הכנסה חודשית מקסימלית: </span><strong>{fmt(info.maxMonthlyIncome)}</strong></div>
+        <div><span style={{ color: '#64748b' }}>תקרה חודשית: </span><strong>{fmt(info.limit)}</strong></div>
+        <div><span style={{ color: '#64748b' }}>נותר עד לתקרה: </span><strong>{fmt(remainingToLimit)}</strong></div>
       </div>
       <div style={{ marginTop: '0.5rem', height: 6, background: '#e2e8f0', borderRadius: 3, overflow: 'hidden' }}>
         <div style={{
           height: '100%',
-          width: `${Math.min(100, (info.currentIncome / info.limit) * 100)}%`,
+          width: `${pct}%`,
           background: style.text,
           borderRadius: 3,
           transition: 'width 0.3s ease',

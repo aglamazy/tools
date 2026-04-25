@@ -12,6 +12,31 @@ type BizSettingsTabProps = {
   businessId: number
 }
 
+let cachedHouseholdMembers: { uid: string; label: string }[] | null = null
+
+async function fetchHouseholdMembers(): Promise<{ uid: string; label: string }[]> {
+  if (cachedHouseholdMembers) return cachedHouseholdMembers
+  const currentUser = getUser()
+  const members: { uid: string; label: string }[] = []
+  try {
+    const info = await getHouseholdInfo()
+    if (info.household) {
+      const emails = (info.household as any).memberEmails || {}
+      const names = (info.household as any).memberNames || {}
+      for (const uid of info.household.members) {
+        members.push({ uid, label: names[uid] || emails[uid] || uid })
+      }
+      cachedHouseholdMembers = members
+      return members
+    }
+  } catch { /* no household */ }
+  if (currentUser) {
+    members.push({ uid: currentUser.uid, label: currentUser.displayName || currentUser.email || currentUser.uid })
+  }
+  cachedHouseholdMembers = members
+  return members
+}
+
 export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
   const [business, setBusiness] = useState<Business | null>(null)
   const [ypayClientId, setYpayClientId] = useState('')
@@ -22,30 +47,16 @@ export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
   const [ownerSaved, setOwnerSaved] = useState(false)
 
   useEffect(() => {
-    void loadBusiness()
-    void loadHouseholdMembers()
-  }, [businessId])
-
-  const loadHouseholdMembers = async () => {
-    const currentUser = getUser()
-    const members: { uid: string; label: string }[] = []
-    try {
-      const info = await getHouseholdInfo()
-      if (info.household) {
-        const emails = (info.household as any).memberEmails || {}
-        const names = (info.household as any).memberNames || {}
-        for (const uid of info.household.members) {
-          members.push({ uid, label: names[uid] || emails[uid] || uid })
-        }
-        setHouseholdMembers(members)
-        return
-      }
-    } catch { /* no household */ }
-    if (currentUser) {
-      members.push({ uid: currentUser.uid, label: currentUser.displayName || currentUser.email || currentUser.uid })
+    const init = async () => {
+      const members = await fetchHouseholdMembers()
+      setHouseholdMembers(members)
+      await loadBusiness()
     }
-    setHouseholdMembers(members)
-  }
+    void init()
+    const handleSync = () => void loadBusiness()
+    window.addEventListener('shared-data-updated', handleSync)
+    return () => window.removeEventListener('shared-data-updated', handleSync)
+  }, [businessId])
 
   const loadBusiness = async () => {
     const b = await businessStore.getById(businessId)
@@ -59,6 +70,7 @@ export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
 
   const saveOwner = async () => {
     await businessStore.update(businessId, { userId: selectedUserId || undefined })
+    await loadBusiness()
     setOwnerSaved(true)
     setTimeout(() => setOwnerSaved(false), 2000)
   }
