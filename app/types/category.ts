@@ -9,6 +9,8 @@ export type Category = {
   isFixed?: boolean
   isCapital?: boolean
   isExternal?: boolean
+  isDeductible?: boolean // הוצאה מוכרת — counts as a tax-deductible business expense
+  deductiblePercent?: number // 1-100, only meaningful when isDeductible is true
   businessId?: number // Maps category to a business (business scope)
   parentId?: string // If this is a sub-category, reference to parent category
   subCategories?: string[] // IDs of sub-categories (for parent categories)

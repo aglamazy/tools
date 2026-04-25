@@ -12,6 +12,16 @@ import type { BudgetTransaction } from '@/app/types/transactions'
 import type { Category } from '@/app/types/category'
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts'
 import { useToast } from '@/app/components/ToastContainer'
+import SubjectsOverlay from '@/app/components/budget/SubjectsOverlay'
+import { useTransactionSort, type SortKey } from '@/app/components/budget/useTransactionSort'
+
+const SORTABLE_COLS: [SortKey, string][] = [
+  ['date', 'תאריך'],
+  ['business', 'עסק'],
+  ['category', 'נושא'],
+  ['amount', 'סכום'],
+  ['paymentMethod', 'אמצעי תשלום'],
+]
 
 export default function BudgetPage() {
   return (
@@ -38,6 +48,8 @@ function BudgetPageContent() {
   const [cardOwnerFilter, setCardOwnerFilter] = useState<string>('all') // 'all' or uid
   const [householdMembers, setHouseholdMembers] = useState<{ uid: string; label: string }[]>([])
   const [accountOwners, setAccountOwners] = useState<Record<string, string>>({})
+  const [subjectsDrawerOpen, setSubjectsDrawerOpen] = useState(false)
+  const { sortKey, sortDir, toggleSort, sortTransactions } = useTransactionSort()
 
   // Load household members for card owner filter
   useEffect(() => {
@@ -284,6 +296,7 @@ function BudgetPageContent() {
     // Show all transactions if no filters applied
     return true
   })
+  const sortedTransactions = sortTransactions(displayedTransactions)
 
   return (
     <main className="app" dir="rtl">
@@ -400,10 +413,22 @@ function BudgetPageContent() {
                   >
                     🪄 סיווג אוטומטי
                   </button>
+                  <button
+                    onClick={() => setSubjectsDrawerOpen(true)}
+                    className="file-picker"
+                    style={{ margin: 0, padding: '0.5rem 1rem', fontSize: '0.875rem' }}
+                  >
+                    🗂️ ניהול נושאים
+                  </button>
                 </>
               )}
             </div>
           )}
+
+          {subjectsDrawerOpen && <SubjectsOverlay onClose={() => {
+            setSubjectsDrawerOpen(false)
+            setCategories(subjectStore.getAll())
+          }} />}
 
           {/* Summary Cards - Compact */}
           {selectedMonth && !loading && (
@@ -733,17 +758,18 @@ function BudgetPageContent() {
                 <table>
                   <thead>
                     <tr>
-                      <th>תאריך</th>
-                      <th>עסק</th>
-                      <th>נושא</th>
-                      <th>סכום</th>
-                      <th>אמצעי תשלום</th>
+                      {(SORTABLE_COLS).map(([key, label]) => (
+                        <th key={key} onClick={() => toggleSort(key)} style={{ cursor: 'pointer', userSelect: 'none' }} title="לחץ למיון">
+                          {label}
+                          {sortKey === key && <span style={{ marginInlineStart: '0.25rem', fontSize: '0.85em' }}>{sortDir === 'asc' ? '▲' : '▼'}</span>}
+                        </th>
+                      ))}
                       <th>קבוע</th>
                       <th>תשלום</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {displayedTransactions.map((transaction) => {
+                    {sortedTransactions.map((transaction) => {
                       const isAutoClassified = autoClassifiedIds.has(transaction.id)
                       const isCapitalTx = capitalNames.has(transaction.category || '')
                       const isExternalTx = externalNames.has(transaction.category || '')
@@ -796,31 +822,41 @@ function BudgetPageContent() {
                                 </React.Fragment>
                               )
                             })}
-                            {categories
-                              .filter((cat) =>
-                                transaction.amount > 0 ? cat.type === 'income' : cat.type === 'expense'
-                              )
-                              .map((cat) => {
-                                // For parent categories, render them and their sub-categories
-                                if (!cat.parentId) {
-                                  const subCats = cat.subCategories?.map((subId) =>
-                                    categories.find((c) => c.id === subId)
-                                  ).filter(Boolean) || []
-
-                                  return (
-                                    <React.Fragment key={cat.id}>
-                                      <option value={cat.name}>{cat.name}</option>
-                                      {subCats.map((subCat) => (
-                                        <option key={subCat!.id} value={subCat!.name}>
-                                          {'  ┘─ ' + subCat!.name}
-                                        </option>
-                                      ))}
-                                    </React.Fragment>
-                                  )
+                            {(() => {
+                              const wantType = transaction.amount > 0 ? 'income' : 'expense'
+                              const parents = categories.filter((c) => !c.parentId && c.type === wantType)
+                              const rendered = new Set<string>()
+                              const items = parents.flatMap((parent) => {
+                                rendered.add(parent.id)
+                                const childMap = new Map<string, Category>()
+                                for (const c of categories) {
+                                  if (c.parentId === parent.id) childMap.set(c.id, c)
                                 }
-                                // Sub-categories are already rendered with their parents
-                                return null
-                              })}
+                                for (const id of parent.subCategories || []) {
+                                  const c = categories.find((x) => x.id === id)
+                                  if (c) childMap.set(c.id, c)
+                                }
+                                const children = Array.from(childMap.values())
+                                children.forEach((c) => rendered.add(c.id))
+                                return [
+                                  <option key={parent.id} value={parent.name}>{parent.name}</option>,
+                                  ...children.map((child) => (
+                                    <option key={child.id} value={child.name}>
+                                      {'  ┘─ ' + child.name}
+                                    </option>
+                                  )),
+                                ]
+                              })
+                              const orphans = categories.filter(
+                                (c) => c.type === wantType && c.parentId && !rendered.has(c.id)
+                              )
+                              return [
+                                ...items,
+                                ...orphans.map((c) => (
+                                  <option key={c.id} value={c.name}>{c.name}</option>
+                                )),
+                              ]
+                            })()}
                           </select>
                         </td>
                         <td
@@ -891,3 +927,4 @@ function BudgetPageContent() {
     </main>
   )
 }
+

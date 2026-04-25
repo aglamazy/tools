@@ -176,28 +176,18 @@ export default function CloudSyncManager() {
   }
 
   useEffect(() => {
-    const doSync = async () => {
-      // Prevent concurrent syncs
+    const runSync = async () => {
       if (isSyncingRef.current) return
-
-      // Cloud sync requires a paid tier
       if (!userTierStore.hasAccess(UserTier.HOME)) return
-
-      // Wait for initial restore check to complete
       if (!initialCheckDoneRef.current) return
-
-      // Check if cloud backup is available
       if (!isCloudBackupAvailable()) return
 
-      // Check if password is set up
       const hasPassword = await hasEncryptionPasswordSetup()
       if (!hasPassword) return
 
-      // Get password from session
       const password = getSyncPassword()
       if (!password) return
 
-      // Verify password is still valid
       const isValid = await verifyEncryptionPassword(password)
       if (!isValid) {
         clearSyncPassword()
@@ -208,12 +198,29 @@ export default function CloudSyncManager() {
       try {
         const result = await syncMerge(password)
         if (result.success) {
-          console.log('[CloudSync] Sync completed')
+          console.log('[CloudSync] Sync completed (leader)')
         } else {
           console.warn('[CloudSync] Sync failed:', result.error)
         }
       } finally {
         isSyncingRef.current = false
+      }
+    }
+
+    const doSync = async () => {
+      // Multi-tab leader election: only the lock holder runs sync this round.
+      // Other tabs skip; next interval re-elects, so a closed tab is replaced.
+      if (typeof navigator !== 'undefined' && navigator.locks) {
+        await navigator.locks.request(
+          'aglamazo-cloud-sync',
+          { mode: 'exclusive', ifAvailable: true },
+          async (lock) => {
+            if (!lock) return // another tab leads this round
+            await runSync()
+          }
+        )
+      } else {
+        await runSync()
       }
     }
 
@@ -253,7 +260,7 @@ export default function CloudSyncManager() {
     const sharedIntervalRef = { current: null as NodeJS.Timeout | null }
     const isSyncingShared = { current: false }
 
-    const doSharedSync = async () => {
+    const runSharedSync = async () => {
       if (isSyncingShared.current) return
       isSyncingShared.current = true
       try {
@@ -262,6 +269,22 @@ export default function CloudSyncManager() {
         console.error('[CloudSync] Shared business sync error:', err)
       } finally {
         isSyncingShared.current = false
+      }
+    }
+
+    const doSharedSync = async () => {
+      // Same leader-election pattern as personal sync, separate lock so the two can run in parallel across tabs.
+      if (typeof navigator !== 'undefined' && navigator.locks) {
+        await navigator.locks.request(
+          'aglamazo-shared-sync',
+          { mode: 'exclusive', ifAvailable: true },
+          async (lock) => {
+            if (!lock) return
+            await runSharedSync()
+          }
+        )
+      } else {
+        await runSharedSync()
       }
     }
 

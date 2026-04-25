@@ -37,7 +37,7 @@ export default function CategoriesTab() {
 
   const loadBusinesses = async () => {
     const all = await businessStore.getAll()
-    setBusinesses(all.filter(b => (b.type === BusinessType.Business || b.type === BusinessType.Teacher) && !b.sharedWithMe))
+    setBusinesses(all.filter(b => (b.type === BusinessType.Business || b.type === BusinessType.Teacher || b.type === BusinessType.Employee || b.type === BusinessType.Artist) && !b.sharedWithMe))
   }
 
   const loadCategories = () => {
@@ -86,16 +86,21 @@ export default function CategoriesTab() {
   const moveCategoryToScope = (categoryId: string, target: Scope) => {
     const cat = categories.find(c => c.id === categoryId)
     if (!cat) return
-    if (cat.parentId) {
-      setAlertModal({ isOpen: true, message: 'לא ניתן להעביר תת-נושא — גרור את נושא-העל' })
-      return
-    }
     const targetBusinessId = target.kind === 'business' ? target.id : undefined
-    if ((cat.businessId ?? undefined) === targetBusinessId) return
+    if ((cat.businessId ?? undefined) === targetBusinessId && !cat.parentId) return
 
+    const oldParentId = cat.parentId
     const subIds = new Set(cat.subCategories || [])
+    const detachColor = oldParentId ? getNextColor(cat.type) : cat.color
+
     const updated = categories.map(c => {
-      if (c.id === categoryId || subIds.has(c.id)) {
+      if (c.id === categoryId) {
+        return { ...c, businessId: targetBusinessId, parentId: undefined, color: detachColor }
+      }
+      if (oldParentId && c.id === oldParentId) {
+        return { ...c, subCategories: (c.subCategories || []).filter(id => id !== categoryId) }
+      }
+      if (subIds.has(c.id)) {
         return { ...c, businessId: targetBusinessId }
       }
       return c
@@ -646,6 +651,57 @@ export default function CategoriesTab() {
                   <label htmlFor="isExternal" style={{ fontWeight: 600, cursor: 'pointer' }}>חיצוני</label>
                   <span style={{ fontSize: '0.8rem', color: '#64748b' }}>(מתנות, ירושה, העברות חד-פעמיות - לא יספר כהכנסה שוטפת)</span>
                 </div>
+                {editingCategory.type === 'expense' && (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <input
+                        type="checkbox"
+                        id="isDeductible"
+                        checked={editingCategory.isDeductible || false}
+                        onChange={(e) => setEditingCategory({
+                          ...editingCategory,
+                          isDeductible: e.target.checked,
+                          deductiblePercent: e.target.checked ? (editingCategory.deductiblePercent ?? 100) : undefined,
+                        })}
+                        style={{ width: '1.1rem', height: '1.1rem', cursor: 'pointer' }}
+                      />
+                      <label htmlFor="isDeductible" style={{ fontWeight: 600, cursor: 'pointer' }}>הוצאה מוכרת</label>
+                      <span style={{ fontSize: '0.8rem', color: '#64748b' }}>(נכלל בדיווח להוצאות מוכרות לצרכי מס)</span>
+                    </div>
+                    {editingCategory.isDeductible && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', paddingInlineStart: '1.6rem' }}>
+                        <label htmlFor="deductiblePercent" style={{ fontSize: '0.9rem' }}>אחוז ההכרה:</label>
+                        <input
+                          type="number"
+                          id="deductiblePercent"
+                          min={1}
+                          max={100}
+                          step={1}
+                          value={editingCategory.deductiblePercent ?? 100}
+                          onChange={(e) => {
+                            const raw = e.target.value
+                            if (raw === '') {
+                              setEditingCategory({ ...editingCategory, deductiblePercent: undefined })
+                              return
+                            }
+                            const n = Math.max(1, Math.min(100, Math.round(Number(raw))))
+                            setEditingCategory({ ...editingCategory, deductiblePercent: n })
+                          }}
+                          style={{
+                            width: '5rem',
+                            padding: '0.4rem 0.5rem',
+                            borderRadius: '0.4rem',
+                            border: '1px solid #e2e8f0',
+                            fontSize: '0.95rem',
+                            textAlign: 'center',
+                          }}
+                        />
+                        <span style={{ fontSize: '0.9rem', color: '#475569' }}>%</span>
+                        <span style={{ fontSize: '0.8rem', color: '#64748b' }}>(100 = הוצאה ישירה לעסק; פחות = חלק מההוצאה הוא משק בית)</span>
+                      </div>
+                    )}
+                  </>
+                )}
                 {editingCategory.businessId && (
                   <div style={{ fontSize: '0.8rem', color: '#64748b', padding: '0.5rem 0.75rem', background: '#f8fafc', borderRadius: '0.375rem', border: '1px solid #e2e8f0' }}>
                     שיוך: עסק — <strong>{businesses.find(b => b.id === editingCategory.businessId)?.name || editingCategory.businessId}</strong>
