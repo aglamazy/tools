@@ -5,6 +5,7 @@ import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { db, type TaxDocument, type Business, type Transaction, type AdvancePayment } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import type { Category } from '@/app/types/category'
+import { effectiveExpenseAmount } from './expenseScale'
 import { getUser, subscribeToAuth } from '@/app/stores/authStore'
 import { uploadAdvancePaymentReceipt, ensureRootFolder } from '@/app/services/googleDriveService'
 import { getAccessToken } from '@/app/services/googleTokenService'
@@ -74,6 +75,7 @@ function AnnualSummarySubTab() {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [bizCategoryMap, setBizCategoryMap] = useState<Map<number, string[]>>(new Map())
   const [expCategoryMap, setExpCategoryMap] = useState<Map<number, string[]>>(new Map())
+  const [categoryByName, setCategoryByName] = useState<Map<string, Category>>(new Map())
   const [members, setMembers] = useState<HouseholdMember[]>([])
   const [householdDebug, setHouseholdDebug] = useState<HouseholdDebug | null>(null)
   const [loading, setLoading] = useState(true)
@@ -134,6 +136,24 @@ function AnnualSummarySubTab() {
         }
       }
 
+      // Fold household-scope deductible expense categories (no businessId, isDeductible=true)
+      // into the expense map of every business owned by a member with non-zero share.
+      // This is what makes things like ארנונה / חשמל / מים flow into the taxes report
+      // for the relevant person's businesses.
+      for (const cat of categories) {
+        if (cat.businessId || cat.type !== 'expense') continue
+        if (!cat.isDeductible || !cat.deductibleByMember) continue
+        for (const [memberUid, percent] of Object.entries(cat.deductibleByMember)) {
+          if (!percent || percent <= 0) continue
+          for (const b of biz) {
+            if (b.id == null || b.userId !== memberUid) continue
+            const existing = expCatMap.get(b.id) || []
+            if (!existing.includes(cat.name)) existing.push(cat.name)
+            expCatMap.set(b.id, existing)
+          }
+        }
+      }
+
       // Load transactions for the current year that match any business category (income or expense)
       const allCatNames = new Set<string>()
       catMap.forEach(names => names.forEach(n => allCatNames.add(n)))
@@ -153,6 +173,9 @@ function AnnualSummarySubTab() {
       setTransactions(bizTransactions)
       setBizCategoryMap(catMap)
       setExpCategoryMap(expCatMap)
+      const byName = new Map<string, Category>()
+      for (const c of categories) byName.set(c.name, c)
+      setCategoryByName(byName)
       setMembers(m.members)
       setHouseholdDebug(m.debug)
       setAdvancePayments(advPay)
@@ -391,6 +414,7 @@ function AnnualSummarySubTab() {
             transactions={transactions}
             bizCategoryMap={bizCategoryMap}
             expCategoryMap={expCategoryMap}
+            categoryByName={categoryByName}
             currentYear={currentYear}
             currentMonth={currentMonth}
             taxExemptInfo={taxExemptInfo}
@@ -415,6 +439,7 @@ type SummarySectionsProps = {
   transactions: Transaction[]
   bizCategoryMap: Map<number, string[]>
   expCategoryMap: Map<number, string[]>
+  categoryByName: Map<string, Category>
   currentYear: number
   currentMonth: number
   taxExemptInfo: TaxStatusInfo | null
@@ -426,7 +451,7 @@ type SummarySectionsProps = {
   personUid?: string
 }
 
-function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBusinesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, taxExemptInfo, btlRates, incomeTaxBrackets, advancePayments, onUploadReceipt, taxProfile, personUid }: SummarySectionsProps) {
+function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBusinesses, transactions, bizCategoryMap, expCategoryMap, categoryByName, currentYear, currentMonth, taxExemptInfo, btlRates, incomeTaxBrackets, advancePayments, onUploadReceipt, taxProfile, personUid }: SummarySectionsProps) {
   const [activeSection, setActiveSection] = useState(sections[0].id)
 
   return (
@@ -466,6 +491,7 @@ function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBu
             transactions={transactions}
             bizCategoryMap={bizCategoryMap}
             expCategoryMap={expCategoryMap}
+            categoryByName={categoryByName}
             currentYear={currentYear}
             currentMonth={currentMonth}
           />
@@ -615,11 +641,12 @@ type SelfEmployedTableProps = {
   transactions: Transaction[]
   bizCategoryMap: Map<number, string[]>
   expCategoryMap: Map<number, string[]>
+  categoryByName: Map<string, Category>
   currentYear: number
   currentMonth: number
 }
 
-function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth }: SelfEmployedTableProps) {
+function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, expCategoryMap, categoryByName, currentYear, currentMonth }: SelfEmployedTableProps) {
   const monthlyData = Array.from({ length: currentMonth + 1 }, (_, i) => {
     const monthStr = `${String(i + 1).padStart(2, '0')}/${currentYear}`
 
@@ -640,7 +667,7 @@ function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, ex
           }
           return t
         })
-      bizExpense[biz.id!] = expTx.reduce((s, t) => s + Math.abs(t.amount), 0)
+      bizExpense[biz.id!] = expTx.reduce((s, t) => s + effectiveExpenseAmount(t, biz, categoryByName), 0)
     }
 
     return { month: i, label: HEBREW_MONTHS[i], bizIncome, bizExpense }
@@ -776,7 +803,12 @@ function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, ex
       {drillDown && (() => {
         const biz = businesses.find(b => b.id === drillDown.bizId)
         const txList = getDrillDownTransactions()
-        const total = txList.reduce((s, t) => s + (t.amount || 0), 0)
+        const isExpense = drillDown.kind === 'expense'
+        const effectiveAmount = (t: Transaction): number => {
+          if (!isExpense || !biz) return t.amount || 0
+          return -effectiveExpenseAmount(t, biz, categoryByName)
+        }
+        const total = txList.reduce((s, t) => s + effectiveAmount(t), 0)
         return (
           <div style={{
             marginTop: '1rem',
@@ -823,7 +855,18 @@ function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, ex
                             : 'מזומן'}
                       </td>
                       <td style={{ ...cellStyle, color: tx.amount >= 0 ? '#16a34a' : '#dc2626' }}>
-                        {fmt(tx.amount)}
+                        {(() => {
+                          const eff = effectiveAmount(tx)
+                          if (!isExpense || eff === tx.amount) return fmt(tx.amount)
+                          return (
+                            <span title={`מקורי: ${fmt(tx.amount)}`}>
+                              {fmt(eff)}
+                              <span style={{ marginInlineStart: '0.4rem', fontSize: '0.75em', color: '#94a3b8' }}>
+                                ({fmt(tx.amount)})
+                              </span>
+                            </span>
+                          )
+                        })()}
                       </td>
                     </tr>
                   ))}

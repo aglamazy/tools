@@ -7,6 +7,7 @@ import { db, type Business } from '@/app/db/financeDB'
 import { BusinessType } from '@/app/types/business'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { businessStore } from '@/app/stores/businessStore'
+import { getHouseholdInfo } from '@/app/services/householdService'
 import YesNoModal from '../YesNoModal'
 import Modal from '../Modal'
 
@@ -28,16 +29,36 @@ export default function CategoriesTab() {
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
   const [businesses, setBusinesses] = useState<Business[]>([])
   const [scope, setScope] = useState<Scope>({ kind: 'household' })
+  const [householdMembers, setHouseholdMembers] = useState<{ uid: string; label: string }[]>([])
 
   useEffect(() => {
     loadCategories()
     loadCategoryUsage()
     loadBusinesses()
+    loadHouseholdMembers()
   }, [])
 
   const loadBusinesses = async () => {
     const all = await businessStore.getAll()
     setBusinesses(all.filter(b => (b.type === BusinessType.Business || b.type === BusinessType.Teacher || b.type === BusinessType.Employee || b.type === BusinessType.Artist) && !b.sharedWithMe))
+  }
+
+  const loadHouseholdMembers = async () => {
+    try {
+      const info = await getHouseholdInfo()
+      const list: { uid: string; label: string }[] = []
+      if (info.household) {
+        const hNames = (info.household as { memberNames?: Record<string, string> }).memberNames || {}
+        const hEmails = (info.household as { memberEmails?: Record<string, string> }).memberEmails || {}
+        for (const uid of info.household.members) {
+          const label = hNames[uid] || (hEmails[uid] ? hEmails[uid].split('@')[0] : uid.slice(-6))
+          list.push({ uid, label })
+        }
+      }
+      setHouseholdMembers(list)
+    } catch {
+      setHouseholdMembers([])
+    }
   }
 
   const loadCategories = () => {
@@ -658,46 +679,60 @@ export default function CategoriesTab() {
                         type="checkbox"
                         id="isDeductible"
                         checked={editingCategory.isDeductible || false}
-                        onChange={(e) => setEditingCategory({
-                          ...editingCategory,
-                          isDeductible: e.target.checked,
-                          deductiblePercent: e.target.checked ? (editingCategory.deductiblePercent ?? 100) : undefined,
-                        })}
+                        onChange={(e) => {
+                          const enabled = e.target.checked
+                          if (enabled && !editingCategory.deductibleByMember && householdMembers.length > 0) {
+                            const init: Record<string, number> = {}
+                            for (const m of householdMembers) init[m.uid] = 100
+                            setEditingCategory({ ...editingCategory, isDeductible: true, deductibleByMember: init })
+                          } else {
+                            setEditingCategory({ ...editingCategory, isDeductible: enabled })
+                          }
+                        }}
                         style={{ width: '1.1rem', height: '1.1rem', cursor: 'pointer' }}
                       />
                       <label htmlFor="isDeductible" style={{ fontWeight: 600, cursor: 'pointer' }}>הוצאה מוכרת</label>
                       <span style={{ fontSize: '0.8rem', color: '#64748b' }}>(נכלל בדיווח להוצאות מוכרות לצרכי מס)</span>
                     </div>
                     {editingCategory.isDeductible && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', paddingInlineStart: '1.6rem' }}>
-                        <label htmlFor="deductiblePercent" style={{ fontSize: '0.9rem' }}>אחוז ההכרה:</label>
-                        <input
-                          type="number"
-                          id="deductiblePercent"
-                          min={1}
-                          max={100}
-                          step={1}
-                          value={editingCategory.deductiblePercent ?? 100}
-                          onChange={(e) => {
-                            const raw = e.target.value
-                            if (raw === '') {
-                              setEditingCategory({ ...editingCategory, deductiblePercent: undefined })
-                              return
-                            }
-                            const n = Math.max(1, Math.min(100, Math.round(Number(raw))))
-                            setEditingCategory({ ...editingCategory, deductiblePercent: n })
-                          }}
-                          style={{
-                            width: '5rem',
-                            padding: '0.4rem 0.5rem',
-                            borderRadius: '0.4rem',
-                            border: '1px solid #e2e8f0',
-                            fontSize: '0.95rem',
-                            textAlign: 'center',
-                          }}
-                        />
-                        <span style={{ fontSize: '0.9rem', color: '#475569' }}>%</span>
-                        <span style={{ fontSize: '0.8rem', color: '#64748b' }}>(100 = הוצאה ישירה לעסק; פחות = חלק מההוצאה הוא משק בית)</span>
+                      <div style={{ paddingInlineStart: '1.6rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                        <div style={{ fontSize: '0.85rem', color: '#475569' }}>אחוז ההכרה לכל בן בית (100% = ההוצאה כולה נכללת לאותו אדם):</div>
+                        {(householdMembers.length > 0 ? householdMembers : [{ uid: '__self', label: 'אני' }]).map((m) => {
+                          const cur = editingCategory.deductibleByMember?.[m.uid]
+                          return (
+                            <div key={m.uid} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                              <label htmlFor={`ded-${m.uid}`} style={{ fontSize: '0.9rem', minWidth: '6rem' }}>{m.label}:</label>
+                              <input
+                                type="number"
+                                id={`ded-${m.uid}`}
+                                min={0}
+                                max={100}
+                                step={1}
+                                value={cur ?? ''}
+                                placeholder="0"
+                                onChange={(e) => {
+                                  const raw = e.target.value
+                                  const next = { ...(editingCategory.deductibleByMember || {}) }
+                                  if (raw === '') {
+                                    delete next[m.uid]
+                                  } else {
+                                    next[m.uid] = Math.max(0, Math.min(100, Math.round(Number(raw))))
+                                  }
+                                  setEditingCategory({ ...editingCategory, deductibleByMember: next })
+                                }}
+                                style={{
+                                  width: '5rem',
+                                  padding: '0.4rem 0.5rem',
+                                  borderRadius: '0.4rem',
+                                  border: '1px solid #e2e8f0',
+                                  fontSize: '0.95rem',
+                                  textAlign: 'center',
+                                }}
+                              />
+                              <span style={{ fontSize: '0.9rem', color: '#475569' }}>%</span>
+                            </div>
+                          )
+                        })}
                       </div>
                     )}
                   </>
