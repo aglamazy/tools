@@ -42,19 +42,10 @@ type ClassifyResponse = {
 
 type ChatMessage =
   | { id: string; role: 'agent'; text: string }
-  | { id: string; role: 'user'; text: string }
   | {
       id: string
       role: 'agent-prompt'
       tx: AskUserItem
-    }
-  | {
-      id: string
-      role: 'agent-rule-prompt'
-      business: string
-      subject: string
-      onYes: () => void
-      onNo: () => void
     }
 
 type Props = {
@@ -84,10 +75,7 @@ export default function SmartClassifierAgent({ month, onClose, onApplied }: Prop
   const [askUser, setAskUser] = useState<AskUserItem[]>([])
   const [askIdx, setAskIdx] = useState(0)
   const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [input, setInput] = useState('')
-  const [pendingTurn, setPendingTurn] = useState(false)
   const [savedSubjectsCount, setSavedSubjectsCount] = useState(0)
-  const [savedRulesCount, setSavedRulesCount] = useState(0)
   // Map txId → business so we can save rules without searching the original transaction list.
   const businessByTxIdRef = useRef<Map<string, string>>(new Map())
   // Map txId → original transaction so the confident review can show date + amount.
@@ -108,7 +96,7 @@ export default function SmartClassifierAgent({ month, onClose, onApplied }: Prop
   // Auto-scroll chat to bottom.
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, pendingTurn])
+  }, [messages])
 
   // Initial load: kick off classification.
   useEffect(() => {
@@ -253,7 +241,7 @@ export default function SmartClassifierAgent({ month, onClose, onApplied }: Prop
         {
           id: makeMessageId(),
           role: 'agent',
-          text: `סיימתי. סיווגתי ${savedSubjectsCount} עסקאות, שמרתי ${savedRulesCount} כללים חדשים.`,
+          text: `סיימתי. סיווגתי ${savedSubjectsCount} עסקאות.`,
         },
       ])
       onApplied()
@@ -303,15 +291,15 @@ export default function SmartClassifierAgent({ month, onClose, onApplied }: Prop
     startNextAmbiguous(askIdx + 1, askUser)
   }
 
-  const advanceAfterPick = async (subject: string, ruleSuggestion?: { business: string; subject: string } | null) => {
+  const advanceAfterPick = async (subject: string) => {
     const tx = askUser[askIdx]
     if (!tx) return
 
     const ok = await transactionStore.updateAny(tx.txId, { category: subject })
     if (ok) {
       setSavedSubjectsCount((prev) => prev + 1)
-      // Light "learn from this answer" — we always teach the matcher when the user picks a subject,
-      // because that's how the existing 🪄 button auto-classifies next time.
+      // Teach the existing 🪄 pattern matcher implicitly on every pick — same behaviour
+      // as classifying through the inline subject dropdown on the budget table.
       await transactionStore.saveBusinessCategory(tx.business, subject)
       onApplied()
     }
@@ -321,104 +309,11 @@ export default function SmartClassifierAgent({ month, onClose, onApplied }: Prop
       { id: makeMessageId(), role: 'agent', text: `סיווגתי "${tx.business}" כ-"${subject}".` },
     ])
 
-    // If the model also surfaced an explicit rule suggestion that DIFFERS from what we already
-    // saved (e.g. a different business name), confirm before persisting.
-    if (
-      ruleSuggestion &&
-      ruleSuggestion.business &&
-      ruleSuggestion.subject &&
-      ruleSuggestion.business !== tx.business
-    ) {
-      const ruleId = makeMessageId()
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: ruleId,
-          role: 'agent-rule-prompt',
-          business: ruleSuggestion.business,
-          subject: ruleSuggestion.subject,
-          onYes: async () => {
-            await transactionStore.saveBusinessCategory(ruleSuggestion.business, ruleSuggestion.subject)
-            setSavedRulesCount((prev) => prev + 1)
-            setMessages((prev) => [
-              ...prev,
-              { id: makeMessageId(), role: 'agent', text: `שמרתי כלל: "${ruleSuggestion.business}" → "${ruleSuggestion.subject}".` },
-            ])
-            // Move on after the rule decision.
-            startNextAmbiguous(askIdx + 1, askUser)
-          },
-          onNo: () => {
-            setMessages((prev) => [...prev, { id: makeMessageId(), role: 'agent', text: 'בסדר, לא שמרתי כלל.' }])
-            startNextAmbiguous(askIdx + 1, askUser)
-          },
-        },
-      ])
-      return
-    }
-
     startNextAmbiguous(askIdx + 1, askUser)
   }
 
-  const handleSendUserMessage = async (rawText: string) => {
-    const text = rawText.trim()
-    if (!text) return
-    if (phase !== 'chatting') return
-    const tx = askUser[askIdx]
-    if (!tx) return
-
-    setMessages((prev) => [...prev, { id: makeMessageId(), role: 'user', text }])
-    setInput('')
-    setPendingTurn(true)
-    try {
-      const res = await fetch('/api/classify-turn', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          context: tx,
-          userMessage: text,
-          categories: subjectStore.getAll(),
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok || data.error) {
-        setMessages((prev) => [
-          ...prev,
-          { id: makeMessageId(), role: 'agent', text: `שגיאה בעוזר השיחה: ${data?.error ?? res.status}` },
-        ])
-        return
-      }
-
-      if (data.chosen === '__skip__') {
-        skipCurrent()
-        return
-      }
-
-      if (data.chosen) {
-        await advanceAfterPick(data.chosen as string, data.ruleSuggestion ?? null)
-        return
-      }
-
-      if (data.followUp) {
-        setMessages((prev) => [...prev, { id: makeMessageId(), role: 'agent', text: data.followUp as string }])
-        return
-      }
-
-      // Neither chosen nor followUp — defensive fallback.
-      setMessages((prev) => [
-        ...prev,
-        { id: makeMessageId(), role: 'agent', text: 'לא הצלחתי להבין. אפשר לבחור אחת מהאפשרויות?' },
-      ])
-    } catch (err: unknown) {
-      const m = err instanceof Error ? err.message : 'שגיאה לא ידועה'
-      setMessages((prev) => [...prev, { id: makeMessageId(), role: 'agent', text: `שגיאה: ${m}` }])
-    } finally {
-      setPendingTurn(false)
-    }
-  }
-
   const onPickOption = (subject: string) => {
-    setMessages((prev) => [...prev, { id: makeMessageId(), role: 'user', text: subject }])
-    void advanceAfterPick(subject, null)
+    void advanceAfterPick(subject)
   }
 
   const headerSummary = useMemo(() => {
@@ -520,13 +415,6 @@ export default function SmartClassifierAgent({ month, onClose, onApplied }: Prop
                     </div>
                   )
                 }
-                if (m.role === 'user') {
-                  return (
-                    <div key={m.id} className="app-chat-message-group">
-                      <div className="app-chat-bubble app-chat-user">{m.text}</div>
-                    </div>
-                  )
-                }
                 if (m.role === 'agent-prompt') {
                   const promptTx = txByTxIdRef.current.get(m.tx.txId)
                   const promptIsPositive = m.tx.amount > 0
@@ -593,47 +481,6 @@ export default function SmartClassifierAgent({ month, onClose, onApplied }: Prop
                             }}
                           >
                             דלג
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                }
-                if (m.role === 'agent-rule-prompt') {
-                  return (
-                    <div key={m.id} className="app-chat-message-group">
-                      <div className="app-chat-bubble app-chat-assistant">
-                        <div style={{ marginBottom: '0.5rem' }}>
-                          לשמור כלל אוטומטי: <b>{m.business}</b> → <b>{m.subject}</b>?
-                        </div>
-                        <div style={{ display: 'flex', gap: '0.4rem' }}>
-                          <button
-                            onClick={m.onYes}
-                            style={{
-                              padding: '0.4rem 0.8rem',
-                              background: '#3b82f6',
-                              color: '#fff',
-                              border: 'none',
-                              borderRadius: '0.5rem',
-                              cursor: 'pointer',
-                              fontSize: '0.875rem',
-                            }}
-                          >
-                            כן, שמור
-                          </button>
-                          <button
-                            onClick={m.onNo}
-                            style={{
-                              padding: '0.4rem 0.8rem',
-                              background: '#f1f5f9',
-                              border: '1px solid #e2e8f0',
-                              borderRadius: '0.5rem',
-                              cursor: 'pointer',
-                              fontSize: '0.875rem',
-                              color: '#64748b',
-                            }}
-                          >
-                            לא
                           </button>
                         </div>
                       </div>
@@ -740,72 +587,11 @@ export default function SmartClassifierAgent({ month, onClose, onApplied }: Prop
                 </div>
               )}
 
-              {pendingTurn && (
-                <div className="app-chat-message-group">
-                  <div className="app-chat-bubble app-chat-assistant" style={{ color: '#94a3b8' }}>
-                    חושב...
-                  </div>
-                </div>
-              )}
             </>
           )}
 
           <div ref={messagesEndRef} />
         </div>
-
-        {phase === 'chatting' && (
-          <div
-            style={{
-              borderTop: '1px solid #e2e8f0',
-              padding: '0.75rem 1.25rem',
-              background: '#fff',
-              display: 'flex',
-              gap: '0.5rem',
-              maxWidth: '720px',
-              width: '100%',
-              margin: '0 auto',
-            }}
-          >
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  void handleSendUserMessage(input)
-                }
-              }}
-              placeholder="כתוב תשובה או בחר אפשרות..."
-              disabled={pendingTurn}
-              style={{
-                flex: 1,
-                padding: '0.5rem 0.75rem',
-                border: '1px solid #cbd5e1',
-                borderRadius: '0.5rem',
-                fontSize: '0.95rem',
-                direction: 'rtl',
-              }}
-            />
-            <button
-              onClick={() => void handleSendUserMessage(input)}
-              disabled={pendingTurn || !input.trim()}
-              style={{
-                padding: '0.5rem 1rem',
-                background: '#3b82f6',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '0.5rem',
-                cursor: pendingTurn || !input.trim() ? 'default' : 'pointer',
-                opacity: pendingTurn || !input.trim() ? 0.5 : 1,
-                fontSize: '0.875rem',
-                fontWeight: 600,
-              }}
-            >
-              שלח
-            </button>
-          </div>
-        )}
       </div>
 
       <div
