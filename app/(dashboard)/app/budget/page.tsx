@@ -13,6 +13,8 @@ import type { Category } from '@/app/types/category'
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts'
 import { useToast } from '@/app/components/ToastContainer'
 import SubjectsOverlay from '@/app/components/budget/SubjectsOverlay'
+import SubjectSelect from '@/app/components/budget/SubjectSelect'
+import SmartClassifierAgent from '@/app/components/budget/SmartClassifierAgent'
 import { useTransactionSort, type SortKey } from '@/app/components/budget/useTransactionSort'
 
 const SORTABLE_COLS: [SortKey, string][] = [
@@ -49,6 +51,7 @@ function BudgetPageContent() {
   const [householdMembers, setHouseholdMembers] = useState<{ uid: string; label: string }[]>([])
   const [accountOwners, setAccountOwners] = useState<Record<string, string>>({})
   const [subjectsDrawerOpen, setSubjectsDrawerOpen] = useState(false)
+  const [smartAgentOpen, setSmartAgentOpen] = useState(false)
   const { sortKey, sortDir, toggleSort, sortTransactions } = useTransactionSort()
 
   // Load household members for card owner filter
@@ -413,6 +416,7 @@ function BudgetPageContent() {
                   >
                     🪄 סיווג אוטומטי
                   </button>
+                  <button onClick={() => setSmartAgentOpen(true)} className="file-picker" style={{ margin: 0, padding: '0.5rem 1rem', fontSize: '0.875rem' }}>🤖 סיווג חכם</button>
                   <button
                     onClick={() => setSubjectsDrawerOpen(true)}
                     className="file-picker"
@@ -429,6 +433,9 @@ function BudgetPageContent() {
             setSubjectsDrawerOpen(false)
             setCategories(subjectStore.getAll())
           }} />}
+          {smartAgentOpen && selectedMonth && (
+            <SmartClassifierAgent month={selectedMonth} onClose={() => setSmartAgentOpen(false)} onApplied={async () => { setTransactions(await transactionStore.getBudgetTransactions(selectedMonth)) }} />
+          )}
 
           {/* Summary Cards - Compact */}
           {selectedMonth && !loading && (
@@ -789,17 +796,16 @@ function BudgetPageContent() {
                             )}
                           </td>
                         <td>
-                          <select
+                          <SubjectSelect
                             value={transaction.category}
-                            onChange={async (e) => {
-                              const newCategory = e.target.value
-                              // Update local state
+                            amount={transaction.amount}
+                            categories={categories}
+                            householdMembers={householdMembers}
+                            onChange={async (newCategory) => {
                               setTransactions((prev) =>
                                 prev.map((t) => (t.id === transaction.id ? { ...t, category: newCategory } : t))
                               )
-                              // Save to storage
                               await transactionStore.updateAny(transaction.id, { category: newCategory })
-                              // Save business-category mapping for auto-classification
                               await transactionStore.saveBusinessCategory(transaction.business, newCategory)
                             }}
                             style={{
@@ -810,54 +816,7 @@ function BudgetPageContent() {
                               width: '100%',
                               direction: 'rtl',
                             }}
-                          >
-                            <option value="">בחר נושא</option>
-                            {/* Dynamic tax categories — per household member. Not stored; emitted on render. */}
-                            {transaction.amount < 0 && householdMembers.map((m) => {
-                              const tag = (m.label || '').split('@')[0].split(/[\s.]+/)[0] || m.uid.slice(-4)
-                              return (
-                                <React.Fragment key={`tax-${m.uid}`}>
-                                  <option value={`ביטוח לאומי (${tag})`}>{`ביטוח לאומי (${tag})`}</option>
-                                  <option value={`מקדמות מס הכנסה (${tag})`}>{`מקדמות מס הכנסה (${tag})`}</option>
-                                </React.Fragment>
-                              )
-                            })}
-                            {(() => {
-                              const wantType = transaction.amount > 0 ? 'income' : 'expense'
-                              const parents = categories.filter((c) => !c.parentId && c.type === wantType)
-                              const rendered = new Set<string>()
-                              const items = parents.flatMap((parent) => {
-                                rendered.add(parent.id)
-                                const childMap = new Map<string, Category>()
-                                for (const c of categories) {
-                                  if (c.parentId === parent.id) childMap.set(c.id, c)
-                                }
-                                for (const id of parent.subCategories || []) {
-                                  const c = categories.find((x) => x.id === id)
-                                  if (c) childMap.set(c.id, c)
-                                }
-                                const children = Array.from(childMap.values())
-                                children.forEach((c) => rendered.add(c.id))
-                                return [
-                                  <option key={parent.id} value={parent.name}>{parent.name}</option>,
-                                  ...children.map((child) => (
-                                    <option key={child.id} value={child.name}>
-                                      {'  ┘─ ' + child.name}
-                                    </option>
-                                  )),
-                                ]
-                              })
-                              const orphans = categories.filter(
-                                (c) => c.type === wantType && c.parentId && !rendered.has(c.id)
-                              )
-                              return [
-                                ...items,
-                                ...orphans.map((c) => (
-                                  <option key={c.id} value={c.name}>{c.name}</option>
-                                )),
-                              ]
-                            })()}
-                          </select>
+                          />
                         </td>
                         <td
                           style={{
