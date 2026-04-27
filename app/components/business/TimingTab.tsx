@@ -22,6 +22,7 @@ import ViewModeSelector from './ViewModeSelector'
 import { exportToExcel, generateExcelBase64 } from './excelExport'
 import { hasGmailAccess, requestGmailAccess, sendEmail, type EmailAttachment } from '@/app/services/gmailService'
 import { ypayService } from '@/app/services/ypayService'
+import { getTaxProfile } from '@/app/components/TaxProfileSection'
 import { type WeekEntry, type ViewMode, VIEW_MODES } from './timingTypes'
 import {
   hasCalendarAccess,
@@ -73,6 +74,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
   const [invoicePreview, setInvoicePreview] = useState<InvoicePreview | null>(null)
   const [invoiceError, setInvoiceError] = useState<string | null>(null)
   const [createdInvoices, setCreatedInvoices] = useState<Record<string, string>>({})
+  const [profileVatType, setProfileVatType] = useState<'exempt' | 'authorized' | undefined>(undefined)
   const hasYpay = !!(business?.ypayClientId && business?.ypayClientSecret)
 
   // Load existing invoices for the selected month
@@ -197,6 +199,8 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     const load = async () => {
       const b = await businessStore.getById(businessId)
       setBusiness(b || null)
+      const profile = await getTaxProfile(b?.userId)
+      setProfileVatType(profile.vatType)
     }
     void load()
   }, [businessId])
@@ -893,6 +897,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
         <InvoicePreviewModal
           preview={invoicePreview}
           business={business!}
+          vatType={profileVatType}
           onClose={() => setInvoicePreview(null)}
           onCreated={(serialNumber) => {
             setCreatedInvoices(prev => ({ ...prev, [invoicePreview!.projectName]: serialNumber }))

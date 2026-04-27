@@ -7,6 +7,7 @@ import { BusinessType } from '@/app/types/business'
 import { BUSINESS_TYPE_CONFIG } from '@/app/types/businessColors'
 import SettingsTabs, { type TabItem } from '../settings/SettingsTabs'
 import TimingTab from './TimingTab'
+import InvoicesTab from './InvoicesTab'
 import IncomeTab from './IncomeTab'
 import BusinessSettingsTab from './BusinessSettingsTab'
 import StudentsTab from './StudentsTab'
@@ -44,6 +45,7 @@ const TABS: TabItem[] = [
   { id: 'income', label: 'הכנסות', icon: '💰' },
   { id: 'expenses', label: 'הוצאות', icon: '💸' },
   { id: 'timing', label: 'תיעוד זמן', icon: '⏱️' },
+  { id: 'invoices', label: 'חשבוניות', icon: '🧾' },
   { id: 'open-docs', label: 'מסמכים פתוחים', icon: '📄' },
   { id: 'tasks', label: 'משימות', icon: '✅' },
   { id: 'projects', label: 'פרויקטים', icon: '📂' },
@@ -182,6 +184,7 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
               {activeTab === 'income' && <IncomeTab businessId={businessId} />}
               {activeTab === 'expenses' && <ExpenseTab businessId={businessId} />}
               {activeTab === 'timing' && <TimingTab businessId={businessId} />}
+              {activeTab === 'invoices' && <InvoicesTab businessId={businessId} />}
               {activeTab === 'open-docs' && <OpenDocumentsTab businessId={businessId} />}
               {activeTab === 'tasks' && <BusinessTasksTab businessId={businessId} />}
               {activeTab === 'projects' && <BusinessSettingsTab businessId={businessId} />}

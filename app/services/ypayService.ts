@@ -66,6 +66,18 @@ function getCredentials(business: Business): YpayCredentials {
   return { clientId: business.ypayClientId, clientSecret: business.ypayClientSecret }
 }
 
+// Pre-payment billing document — depends on dealer VAT status:
+//   exempt     → 104 חשבונית עסקה
+//   authorized → 106 חשבונית מס
+// (Post-payment receipt docs are picked separately in createDocument.)
+function getBillingDocType(business: Business, vatType?: 'exempt' | 'authorized'): YpayDocType {
+  const effective = vatType || business.vatType
+  if (!effective) {
+    throw new Error('סוג עוסק לא הוגדר — הגדר בפרופיל')
+  }
+  return effective === 'exempt' ? YpayDocType.BusinessInvoice : YpayDocType.TaxInvoice
+}
+
 export const ypayService = {
   testConnection: async (credentials: YpayCredentials): Promise<{ success: boolean; message: string }> => {
     const response = await fetch('/api/ypay', {
@@ -135,8 +147,10 @@ export const ypayService = {
     monthName: string
     date: string
     contact?: YpayContact
+    vatType?: 'exempt' | 'authorized'
   }): Promise<{ url: string; serialNumber: string }> => {
     const credentials = getCredentials(business)
+    const docType = getBillingDocType(business, params.vatType)
 
     const amount = params.totalHours * params.hourlyRate
 
@@ -152,7 +166,7 @@ export const ypayService = {
       body: JSON.stringify({
         ...credentials,
         action: 'createDocument',
-        docType: YpayDocType.BusinessInvoice,
+        docType,
         items,
         date: params.date,
         ...(params.contact ? { contact: params.contact } : {}),
@@ -161,17 +175,60 @@ export const ypayService = {
 
     const data = await response.json()
     if (!data.success) {
-      throw new Error(data.message || 'שגיאה ביצירת חשבונית עסקה')
+      throw new Error(data.message || 'שגיאה ביצירת חשבונית')
     }
 
     await db.ypayDocuments.add({
       transactionId: `invoice:${params.projectName}:${params.monthName}`,
       url: data.url,
       serialNumber: data.serialNumber,
-      docType: YpayDocType.BusinessInvoice,
+      docType,
       amount,
       projectName: params.projectName,
       monthName: params.monthName,
+      createdAt: new Date().toISOString(),
+    })
+
+    return { url: data.url, serialNumber: data.serialNumber }
+  },
+
+  createItemBasedInvoice: async (business: Business, params: {
+    projectName: string
+    items: Array<{ description: string; quantity: number; price: number }>
+    date: string
+    contact?: YpayContact
+    vatType?: 'exempt' | 'authorized'
+  }): Promise<{ url: string; serialNumber: string }> => {
+    const credentials = getCredentials(business)
+    const docType = getBillingDocType(business, params.vatType)
+
+    const amount = params.items.reduce((sum, it) => sum + it.quantity * it.price, 0)
+
+    const response = await fetch('/api/ypay', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...credentials,
+        action: 'createDocument',
+        docType,
+        items: params.items,
+        date: params.date,
+        ...(params.contact ? { contact: params.contact } : {}),
+      }),
+    })
+
+    const data = await response.json()
+    if (!data.success) {
+      throw new Error(data.message || 'שגיאה ביצירת חשבונית')
+    }
+
+    await db.ypayDocuments.add({
+      transactionId: `invoice-items:${data.serialNumber}`,
+      url: data.url,
+      serialNumber: data.serialNumber,
+      docType,
+      amount,
+      projectName: params.projectName,
       createdAt: new Date().toISOString(),
     })
 

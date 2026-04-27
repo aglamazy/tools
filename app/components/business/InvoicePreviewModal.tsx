@@ -20,6 +20,7 @@ export type InvoicePreview = {
 type InvoicePreviewModalProps = {
   preview: InvoicePreview
   business: Business
+  vatType?: 'exempt' | 'authorized'
   onClose: () => void
   onCreated: (serialNumber: string) => void
   onError: (message: string) => void
@@ -40,8 +41,10 @@ function PreviewRow({ label, value, highlight }: { label: string; value: string;
   )
 }
 
-export default function InvoicePreviewModal({ preview, business, onClose, onCreated, onError }: InvoicePreviewModalProps) {
+export default function InvoicePreviewModal({ preview, business, vatType, onClose, onCreated, onError }: InvoicePreviewModalProps) {
   const [creating, setCreating] = useState(false)
+  const effectiveVat = vatType || business.vatType
+  const docLabel = effectiveVat === 'authorized' ? 'חשבונית מס' : 'חשבונית עסקה'
 
   const handleCreate = async () => {
     setCreating(true)
@@ -59,12 +62,13 @@ export default function InvoicePreviewModal({ preview, business, onClose, onCrea
         monthName: preview.monthName,
         date: preview.date,
         contact,
+        vatType,
       })
       window.open(result.url, '_blank')
       onCreated(result.serialNumber)
       onClose()
     } catch (err: any) {
-      onError(err.message || 'שגיאה ביצירת חשבונית עסקה')
+      onError(err.message || 'שגיאה ביצירת חשבונית')
     } finally {
       setCreating(false)
     }
@@ -79,7 +83,7 @@ export default function InvoicePreviewModal({ preview, business, onClose, onCrea
         background: 'white', borderRadius: '0.75rem', padding: '1.5rem', width: '450px', maxWidth: '90vw',
         direction: 'rtl',
       }} onClick={e => e.stopPropagation()}>
-        <h3 style={{ margin: '0 0 1rem', fontSize: '1.1rem' }}>חשבונית עסקה - תצוגה מקדימה</h3>
+        <h3 style={{ margin: '0 0 1rem', fontSize: '1.1rem' }}>{docLabel} - תצוגה מקדימה</h3>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           <PreviewRow label="פרויקט" value={preview.projectName} />
