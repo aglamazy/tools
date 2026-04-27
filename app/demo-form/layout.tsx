@@ -2,17 +2,35 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { branding } from '@/app/config'
 
+const PAGE_DATE_MODIFIED = '2026-04-27'
+const PAGE_DATE_PUBLISHED = '2026-03-29'
+
 export const metadata: Metadata = {
   title: `טופס הדגמה | ${branding.name}`,
   description: `נסו את ${branding.name} עם טופס הדגמה אינטראקטיבי. גלו כיצד המערכת עוזרת לנהל את העסק שלכם.`,
-  robots: { index: true, follow: true, googleBot: { index: true, follow: true } },
+  keywords: ['טופס הדגמה', 'דמו Aglamazo', 'טופס הרשמה אינטראקטיבי', 'מילוי טפסים אוטומטי', 'דוגמה לטופס', 'אקדמיה למוזיקה'],
+  robots: { index: true, follow: true, googleBot: { index: true, follow: true, 'max-video-preview': -1, 'max-image-preview': 'large', 'max-snippet': -1 } },
   alternates: {
     canonical: '/demo-form',
+    languages: {
+      'he-IL': '/demo-form',
+      'x-default': '/demo-form',
+    },
   },
   openGraph: {
     title: `טופס הדגמה | ${branding.name}`,
     description: `נסו את ${branding.name} עם טופס הדגמה אינטראקטיבי. גלו כיצד המערכת עוזרת לנהל את העסק שלכם.`,
     url: '/demo-form',
+    siteName: branding.name,
+    type: 'website',
+    locale: 'he_IL',
+    images: [{ url: '/logo.png', width: 2816, height: 1536, alt: `${branding.name} - טופס הדגמה` }],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: `טופס הדגמה | ${branding.name}`,
+    description: `נסו את ${branding.name} עם טופס הדגמה אינטראקטיבי.`,
+    images: ['/logo.png'],
   },
 }
 
@@ -23,7 +41,11 @@ const jsonLd = [
     name: `טופס הדגמה | ${branding.name}`,
     description: `נסו את ${branding.name} עם טופס הדגמה אינטראקטיבי.`,
     url: 'https://aglamazo.com/demo-form',
-    inLanguage: 'he',
+    inLanguage: 'he-IL',
+    datePublished: PAGE_DATE_PUBLISHED,
+    dateModified: PAGE_DATE_MODIFIED,
+    isPartOf: { '@type': 'WebSite', name: branding.name, url: 'https://aglamazo.com/' },
+    primaryImageOfPage: { '@type': 'ImageObject', url: 'https://aglamazo.com/logo.png' },
   },
   {
     '@context': 'https://schema.org',

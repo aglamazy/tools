@@ -73,6 +73,20 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  const hcUrl = process.env.HEALTHCHECK_GROCERY_CRON_URL
+
+  try {
+    return await runCron(hcUrl)
+  } catch (err) {
+    // Infra-level failure: the cron route itself blew up before it could
+    // iterate users. Surface this to healthchecks.io as a real /fail.
+    console.error('[Grocery Cron] Infra error:', err)
+    if (hcUrl) await fetch(`${hcUrl}/fail`).catch(() => {})
+    throw err
+  }
+}
+
+async function runCron(hcUrl: string | undefined) {
   initStores()
 
   const firestore = getAdminFirestore()
@@ -256,10 +270,16 @@ export async function GET(request: NextRequest) {
 
   console.log(`[Grocery Cron] Processed ${results.length} actions`)
 
-  // Ping healthchecks.io — must be awaited; Vercel freezes execution on return
-  const hasErrors = results.some(r => !r.ok)
-  const hcUrl = process.env.HEALTHCHECK_GROCERY_CRON_URL
-  if (hcUrl) await fetch(hasErrors ? `${hcUrl}/fail` : hcUrl).catch(() => {})
+  // Healthchecks.io semantics: a successful ping means the cron ran end-to-end,
+  // not that every per-user action succeeded. Per-iteration failures (slow
+  // store APIs that exceed `withTimeout`, plugin.checkout returning
+  // success:false, stale Telegram chats) are per-user state issues — they're
+  // recorded in `results` and notified to the user, but they MUST NOT trip
+  // /fail, because that buries the signal we actually want from the probe
+  // ("is the cron firing on schedule?") under per-user noise.
+  // Real infra failures (Firestore unreachable, route crash) are caught by
+  // the outer try/catch in GET() and routed to /fail.
+  if (hcUrl) await fetch(hcUrl).catch(() => {})
 
   return NextResponse.json({ ok: true, results })
 }

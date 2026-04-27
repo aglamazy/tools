@@ -2,17 +2,35 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { branding } from '@/app/config'
 
+const PAGE_DATE_MODIFIED = '2026-04-27'
+const PAGE_DATE_PUBLISHED = '2026-03-29'
+
 export const metadata: Metadata = {
   title: `אודות | ${branding.name}`,
   description: `${branding.name} - ${branding.tagline}. ניהול פיננסי חכם לעסקים קטנים ובינוניים בישראל — תזרים מזומנים, תקציב, ייבוא קבצי בנק ואשראי, הכל בפרטיות מלאה.`,
-  robots: { index: true, follow: true, googleBot: { index: true, follow: true } },
+  keywords: ['אודות Aglamazo', 'ניהול פיננסי', 'תזרים מזומנים', 'תקציב עסק קטן', 'ייבוא קבצי בנק', 'פרטיות פיננסית', 'IndexedDB', 'עסקים קטנים בישראל'],
+  robots: { index: true, follow: true, googleBot: { index: true, follow: true, 'max-video-preview': -1, 'max-image-preview': 'large', 'max-snippet': -1 } },
   alternates: {
     canonical: '/about',
+    languages: {
+      'he-IL': '/about',
+      'x-default': '/about',
+    },
   },
   openGraph: {
     title: `אודות | ${branding.name}`,
     description: `${branding.name} - ${branding.tagline}. ניהול פיננסי חכם לעסקים קטנים ובינוניים בישראל.`,
     url: '/about',
+    siteName: branding.name,
+    type: 'website',
+    locale: 'he_IL',
+    images: [{ url: '/logo.png', width: 2816, height: 1536, alt: `${branding.name} - אודות` }],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: `אודות | ${branding.name}`,
+    description: `${branding.name} - ${branding.tagline}. ניהול פיננסי חכם לעסקים קטנים ובינוניים.`,
+    images: ['/logo.png'],
   },
 }
 
@@ -23,7 +41,11 @@ const jsonLd = [
     name: `אודות | ${branding.name}`,
     description: `${branding.name} - ${branding.tagline}. ניהול פיננסי, תובנות חכמות ועוד.`,
     url: 'https://aglamazo.com/about',
-    inLanguage: 'he',
+    inLanguage: 'he-IL',
+    datePublished: PAGE_DATE_PUBLISHED,
+    dateModified: PAGE_DATE_MODIFIED,
+    isPartOf: { '@type': 'WebSite', name: branding.name, url: 'https://aglamazo.com/' },
+    primaryImageOfPage: { '@type': 'ImageObject', url: 'https://aglamazo.com/logo.png' },
   },
   {
     '@context': 'https://schema.org',

@@ -3,8 +3,8 @@ import path from 'path'
 import type { MetadataRoute } from 'next'
 import routeLastmod from './route-lastmod.json'
 
-export const dynamic = 'force-dynamic'
-export const revalidate = 0
+export const dynamic = 'force-static'
+export const revalidate = 3600
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://aglamazo.com'
 const normalizedBase = siteUrl.endsWith('/') ? siteUrl.slice(0, -1) : siteUrl

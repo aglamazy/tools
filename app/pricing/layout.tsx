@@ -2,17 +2,35 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { branding } from '@/app/config'
 
+const PAGE_DATE_MODIFIED = '2026-04-27'
+const PAGE_DATE_PUBLISHED = '2026-03-29'
+
 export const metadata: Metadata = {
   title: `מחירים | ${branding.name}`,
   description: `תוכניות ומחירים של ${branding.name}. בחרו את התוכנית המתאימה לעסק שלכם — חינם, בסיסי או פרימיום.`,
-  robots: { index: true, follow: true, googleBot: { index: true, follow: true } },
+  keywords: ['מחירים Aglamazo', 'תוכנית חינם', 'תוכנית פרימיום', 'מנוי חודשי', 'מחיר ניהול פיננסי', 'תוכנית עסקים'],
+  robots: { index: true, follow: true, googleBot: { index: true, follow: true, 'max-video-preview': -1, 'max-image-preview': 'large', 'max-snippet': -1 } },
   alternates: {
     canonical: '/pricing',
+    languages: {
+      'he-IL': '/pricing',
+      'x-default': '/pricing',
+    },
   },
   openGraph: {
     title: `מחירים | ${branding.name}`,
     description: `תוכניות ומחירים של ${branding.name}. בחרו את התוכנית המתאימה לעסק שלכם — חינם, בסיסי או פרימיום.`,
     url: '/pricing',
+    siteName: branding.name,
+    type: 'website',
+    locale: 'he_IL',
+    images: [{ url: '/logo.png', width: 2816, height: 1536, alt: `${branding.name} - תוכניות ומחירים` }],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: `מחירים | ${branding.name}`,
+    description: `תוכנית חינמית, בית או מקצועי. בחרו את המתאים.`,
+    images: ['/logo.png'],
   },
 }
 
@@ -23,7 +41,11 @@ const jsonLd = [
     name: `מחירים | ${branding.name}`,
     description: `תוכניות ומחירים של ${branding.name}. בחרו את התוכנית המתאימה לעסק שלכם.`,
     url: 'https://aglamazo.com/pricing',
-    inLanguage: 'he',
+    inLanguage: 'he-IL',
+    datePublished: PAGE_DATE_PUBLISHED,
+    dateModified: PAGE_DATE_MODIFIED,
+    isPartOf: { '@type': 'WebSite', name: branding.name, url: 'https://aglamazo.com/' },
+    primaryImageOfPage: { '@type': 'ImageObject', url: 'https://aglamazo.com/logo.png' },
   },
   {
     '@context': 'https://schema.org',

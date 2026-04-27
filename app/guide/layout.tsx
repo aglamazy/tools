@@ -2,17 +2,35 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { branding } from '@/app/config'
 
+const PAGE_DATE_MODIFIED = '2026-04-27'
+const PAGE_DATE_PUBLISHED = '2026-03-29'
+
 export const metadata: Metadata = {
   title: `מדריך שימוש | ${branding.name}`,
   description: `מדריך מפורט לשימוש ב-${branding.name} - ייבוא קבצים, ניתוח תזרים, ניהול תקציב ותחזית תשלומים. למד כיצד לנהל את הכספים שלך בצורה חכמה.`,
-  robots: { index: true, follow: true, googleBot: { index: true, follow: true } },
+  keywords: ['מדריך Aglamazo', 'איך לייבא קבצי בנק', 'איך לנהל תקציב', 'ניתוח תזרים מזומנים', 'תחזית תשלומים', 'מדריך ניהול פיננסי'],
+  robots: { index: true, follow: true, googleBot: { index: true, follow: true, 'max-video-preview': -1, 'max-image-preview': 'large', 'max-snippet': -1 } },
   alternates: {
     canonical: '/guide',
+    languages: {
+      'he-IL': '/guide',
+      'x-default': '/guide',
+    },
   },
   openGraph: {
     title: `מדריך שימוש | ${branding.name}`,
     description: `מדריך מפורט לשימוש ב-${branding.name} - ייבוא קבצים, ניתוח תזרים, ניהול תקציב ותחזית תשלומים.`,
     url: '/guide',
+    siteName: branding.name,
+    type: 'article',
+    locale: 'he_IL',
+    images: [{ url: '/logo.png', width: 2816, height: 1536, alt: `${branding.name} - מדריך שימוש` }],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: `מדריך שימוש | ${branding.name}`,
+    description: `מדריך מפורט לייבוא, ניתוח, תקציב ותחזית.`,
+    images: ['/logo.png'],
   },
 }
 
@@ -23,7 +41,25 @@ const jsonLd = [
     name: `מדריך שימוש | ${branding.name}`,
     description: `מדריך מפורט לשימוש ב-${branding.name} - ייבוא קבצים, ניתוח תזרים, ניהול תקציב ותחזית תשלומים.`,
     url: 'https://aglamazo.com/guide',
-    inLanguage: 'he',
+    inLanguage: 'he-IL',
+    datePublished: PAGE_DATE_PUBLISHED,
+    dateModified: PAGE_DATE_MODIFIED,
+    isPartOf: { '@type': 'WebSite', name: branding.name, url: 'https://aglamazo.com/' },
+    primaryImageOfPage: { '@type': 'ImageObject', url: 'https://aglamazo.com/logo.png' },
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'HowTo',
+    name: `מדריך שימוש ב-${branding.name}`,
+    description: 'מדריך מפורט לניהול פיננסי עם Aglamazo - ייבוא קבצי בנק, ניתוח תזרים, וניהול תקציב.',
+    inLanguage: 'he-IL',
+    totalTime: 'PT15M',
+    step: [
+      { '@type': 'HowToStep', position: 1, name: 'ייבוא קבצי בנק ואשראי', text: 'הורד את קובץ התנועות מאתר הבנק או חברת האשראי וייבא אותו לאפליקציה.' },
+      { '@type': 'HowToStep', position: 2, name: 'ניתוח תזרים מזומנים', text: 'צפה בתנועות הכסף לפי חודש, ראה הכנסות והוצאות וזהה דפוסים.' },
+      { '@type': 'HowToStep', position: 3, name: 'ניהול תקציב', text: 'סווג עסקאות לקטגוריות והגדר תקציב חודשי לכל קטגוריה.' },
+      { '@type': 'HowToStep', position: 4, name: 'תחזית תשלומים', text: 'הגדר תשלומים קבועים וצפה בתחזית של החודשים הקרובים.' },
+    ],
   },
   {
     '@context': 'https://schema.org',

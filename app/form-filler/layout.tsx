@@ -2,17 +2,35 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { branding } from '@/app/config'
 
+const PAGE_DATE_MODIFIED = '2026-04-27'
+const PAGE_DATE_PUBLISHED = '2026-03-29'
+
 export const metadata: Metadata = {
   title: `מילוי טפסים | ${branding.name}`,
   description: `כלי מילוי טפסים אוטומטי של ${branding.name}. חסכו זמן במילוי טפסים מקוונים עבור העסק שלכם.`,
-  robots: { index: true, follow: true, googleBot: { index: true, follow: true } },
+  keywords: ['מילוי טפסים אוטומטי', 'auto fill forms', 'טפסים מקוונים', 'הרשמה אוטומטית', 'בקשות ממשלתיות', 'טפסים לעסקים', 'Aglamazo'],
+  robots: { index: true, follow: true, googleBot: { index: true, follow: true, 'max-video-preview': -1, 'max-image-preview': 'large', 'max-snippet': -1 } },
   alternates: {
     canonical: '/form-filler',
+    languages: {
+      'he-IL': '/form-filler',
+      'x-default': '/form-filler',
+    },
   },
   openGraph: {
     title: `מילוי טפסים | ${branding.name}`,
     description: `כלי מילוי טפסים אוטומטי של ${branding.name}. חסכו זמן במילוי טפסים מקוונים עבור העסק שלכם.`,
     url: '/form-filler',
+    siteName: branding.name,
+    type: 'website',
+    locale: 'he_IL',
+    images: [{ url: '/logo.png', width: 2816, height: 1536, alt: `${branding.name} - מילוי טפסים` }],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: `מילוי טפסים | ${branding.name}`,
+    description: `כלי מילוי טפסים אוטומטי של ${branding.name}.`,
+    images: ['/logo.png'],
   },
 }
 
@@ -23,7 +41,11 @@ const jsonLd = [
     name: `מילוי טפסים | ${branding.name}`,
     description: `כלי מילוי טפסים אוטומטי של ${branding.name}. חסכו זמן במילוי טפסים מקוונים.`,
     url: 'https://aglamazo.com/form-filler',
-    inLanguage: 'he',
+    inLanguage: 'he-IL',
+    datePublished: PAGE_DATE_PUBLISHED,
+    dateModified: PAGE_DATE_MODIFIED,
+    isPartOf: { '@type': 'WebSite', name: branding.name, url: 'https://aglamazo.com/' },
+    primaryImageOfPage: { '@type': 'ImageObject', url: 'https://aglamazo.com/logo.png' },
   },
   {
     '@context': 'https://schema.org',
