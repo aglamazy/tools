@@ -12,6 +12,10 @@ export const metadata: Metadata = {
   robots: { index: true, follow: true, googleBot: { index: true, follow: true, 'max-video-preview': -1, 'max-image-preview': 'large', 'max-snippet': -1 } },
   alternates: {
     canonical: '/form-filler',
+    languages: {
+      'he-IL': '/form-filler',
+      'x-default': '/form-filler',
+    },
   },
   openGraph: {
     title: `מילוי טפסים | ${branding.name}`,

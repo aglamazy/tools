@@ -10,28 +10,56 @@ export const metadata: Metadata = {
   description: `${branding.name} - ניהול פיננסי חכם לעסק שלך. תזרים מזומנים, תקציב, תחזית תשלומים ועוד - הכל בפרטיות מלאה.`,
   alternates: {
     canonical: '/',
+    languages: {
+      'he-IL': '/',
+      'x-default': '/',
+    },
   },
 }
 
-const breadcrumbJsonLd = {
-  '@context': 'https://schema.org',
-  '@type': 'BreadcrumbList',
-  itemListElement: [
-    {
-      '@type': 'ListItem',
-      position: 1,
-      name: 'דף הבית',
-      item: siteUrl,
-    },
-  ],
-}
+const homeJsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      {
+        '@type': 'ListItem',
+        position: 1,
+        name: 'דף הבית',
+        item: siteUrl,
+      },
+    ],
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'SiteNavigationElement',
+    name: [
+      'אודות',
+      'מדריך שימוש',
+      'מחירים',
+      'טופס הדגמה',
+      'מילוי טפסים',
+      'צור קשר',
+      'תנאי שימוש',
+    ],
+    url: [
+      `${siteUrl}/about`,
+      `${siteUrl}/guide`,
+      `${siteUrl}/pricing`,
+      `${siteUrl}/demo-form`,
+      `${siteUrl}/form-filler`,
+      `${siteUrl}/contact`,
+      `${siteUrl}/terms`,
+    ],
+  },
+]
 
 export default function LandingPage() {
   return (
     <div className="landing" dir="rtl">
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(homeJsonLd) }}
       />
       <ReturningUserRedirect />
       <section className="landing-hero">
