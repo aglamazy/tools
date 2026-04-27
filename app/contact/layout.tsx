@@ -2,9 +2,13 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { branding } from '@/app/config'
 
+const PAGE_DATE_MODIFIED = '2026-04-27'
+const PAGE_DATE_PUBLISHED = '2026-03-29'
+
 export const metadata: Metadata = {
   title: `צור קשר | ${branding.name}`,
   description: `צרו קשר עם צוות ${branding.name}. נשמח לענות על שאלות, לקבל משוב ולעזור בכל נושא.`,
+  keywords: ['צור קשר Aglamazo', 'תמיכה Aglamazo', 'support@aglamaz.com', 'משוב', 'שירות לקוחות', 'ניהול פיננסי'],
   robots: { index: true, follow: true, googleBot: { index: true, follow: true, 'max-video-preview': -1, 'max-image-preview': 'large', 'max-snippet': -1 } },
   alternates: {
     canonical: '/contact',
@@ -13,6 +17,16 @@ export const metadata: Metadata = {
     title: `צור קשר | ${branding.name}`,
     description: `צרו קשר עם צוות ${branding.name}. נשמח לענות על שאלות, לקבל משוב ולעזור בכל נושא.`,
     url: '/contact',
+    siteName: branding.name,
+    type: 'website',
+    locale: 'he_IL',
+    images: [{ url: '/logo.png', width: 2816, height: 1536, alt: `${branding.name} - צור קשר` }],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: `צור קשר | ${branding.name}`,
+    description: `צרו קשר עם צוות ${branding.name}. נשמח לעזור.`,
+    images: ['/logo.png'],
   },
 }
 
@@ -23,7 +37,11 @@ const jsonLd = [
     name: `צור קשר | ${branding.name}`,
     description: `צרו קשר עם צוות ${branding.name}. נשמח לענות על שאלות, לקבל משוב ולעזור בכל נושא.`,
     url: 'https://aglamazo.com/contact',
-    inLanguage: 'he',
+    inLanguage: 'he-IL',
+    datePublished: PAGE_DATE_PUBLISHED,
+    dateModified: PAGE_DATE_MODIFIED,
+    isPartOf: { '@type': 'WebSite', name: branding.name, url: 'https://aglamazo.com/' },
+    primaryImageOfPage: { '@type': 'ImageObject', url: 'https://aglamazo.com/logo.png' },
   },
   {
     '@context': 'https://schema.org',

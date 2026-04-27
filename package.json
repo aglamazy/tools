@@ -6,6 +6,7 @@
     "dev": "next dev -p 3100",
     "prebuild": "node scripts/generate-route-lastmod.mjs",
     "build": "next build",
+    "postbuild": "node scripts/submit-indexnow.mjs || true",
     "start": "next start -p 3100",
     "lint": "eslint app",
     "prepare": "husky"
