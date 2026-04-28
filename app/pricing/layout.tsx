@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { branding } from '@/app/config'
 
-const PAGE_DATE_MODIFIED = '2026-04-27'
+const PAGE_DATE_MODIFIED = '2026-04-28'
 const PAGE_DATE_PUBLISHED = '2026-03-29'
 
 export const metadata: Metadata = {

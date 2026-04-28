@@ -92,18 +92,27 @@ const NOINDEX_ROUTES = new Set(['/share-invite'])
 export default function sitemap(): MetadataRoute.Sitemap {
   const appDir = path.join(process.cwd(), 'app')
   const routes = discoverPublicRoutes(appDir)
+  const logoUrl = `${normalizedBase}/logo.png`
 
   return routes
     .filter(({ routePath }) => !NOINDEX_ROUTES.has(routePath))
     .map(({ routePath, lastModified }) => {
       const isHome = routePath === '/'
       const isHighPriority = HIGH_PRIORITY_ROUTES.has(routePath)
+      const url = `${normalizedBase}${isHome ? '/' : routePath}`
 
       return {
-        url: `${normalizedBase}${isHome ? '/' : routePath}`,
+        url,
         lastModified,
         changeFrequency: isHome ? 'weekly' : isHighPriority ? 'weekly' : 'monthly',
         priority: isHome ? 1.0 : isHighPriority ? 0.8 : 0.6,
+        images: [logoUrl],
+        alternates: {
+          languages: {
+            'he-IL': url,
+            'x-default': url,
+          },
+        },
       }
     })
 }

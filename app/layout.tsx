@@ -77,6 +77,9 @@ export const viewport: Viewport = {
   themeColor: '#4338ca',
 }
 
+const SITE_DATE_MODIFIED = '2026-04-28'
+const SITE_DATE_PUBLISHED = '2026-03-29'
+
 const jsonLd = [
   {
     '@context': 'https://schema.org',
@@ -85,10 +88,17 @@ const jsonLd = [
     description: branding.tagline,
     url: siteUrl,
     inLanguage: 'he',
+    datePublished: SITE_DATE_PUBLISHED,
+    dateModified: SITE_DATE_MODIFIED,
     publisher: {
       '@type': 'Organization',
       name: branding.name,
       url: siteUrl,
+    },
+    potentialAction: {
+      '@type': 'SearchAction',
+      target: { '@type': 'EntryPoint', urlTemplate: `${siteUrl}/?q={search_term_string}` },
+      'query-input': 'required name=search_term_string',
     },
   },
   {
@@ -108,6 +118,8 @@ const jsonLd = [
     applicationCategory: 'FinanceApplication',
     operatingSystem: 'Web',
     inLanguage: 'he',
+    datePublished: SITE_DATE_PUBLISHED,
+    dateModified: SITE_DATE_MODIFIED,
     offers: {
       '@type': 'Offer',
       price: '0',

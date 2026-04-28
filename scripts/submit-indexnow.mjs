@@ -30,7 +30,7 @@ if (skip) {
   process.exit(0)
 }
 
-async function submit() {
+async function submitIndexNow() {
   const host = new URL(SITE_URL).hostname
   const body = {
     host,
@@ -56,7 +56,26 @@ async function submit() {
   }
 }
 
-submit().catch((err) => {
-  // Same: postbuild network failures must never break the deploy.
-  console.warn('IndexNow submission failed:', err.message)
+async function submitYandexSitemap() {
+  // Yandex still supports the legacy sitemap-ping endpoint. Google retired
+  // theirs in 2023 and Bing followed suit, but Yandex's pingSitemap returns
+  // 200 and triggers a re-crawl. IndexNow already covers most engines, but
+  // this is a cheap belt-and-suspenders signal for a separate index.
+  const sitemapUrl = `${SITE_URL}/sitemap.xml`
+  const submitUrl = `https://webmaster.yandex.com/ping?sitemap=${encodeURIComponent(sitemapUrl)}`
+  try {
+    const res = await fetch(submitUrl, { method: 'GET' })
+    console.log(`Yandex sitemap ping HTTP ${res.status} for ${sitemapUrl}`)
+  } catch (err) {
+    console.warn('Yandex sitemap ping failed:', err.message)
+  }
+}
+
+async function run() {
+  await Promise.allSettled([submitIndexNow(), submitYandexSitemap()])
+}
+
+run().catch((err) => {
+  // Postbuild network failures must never break the deploy.
+  console.warn('Search-engine submission failed:', err.message)
 })
