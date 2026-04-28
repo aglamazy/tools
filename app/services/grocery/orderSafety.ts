@@ -26,6 +26,38 @@ import { getStoreOrderCycle, setStoreOrderCycle } from './groceryStoreMulti'
 const LOCK_TTL_MS = 10 * 60 * 1000
 const CYCLE_WINDOW_DAYS = 7
 
+/**
+ * Minimum number of lines before we'll place an order.
+ * The 2026-04-21 11:01 incident placed a 1-line Shufersal order from a stale
+ * legacy doc; the 2026-04-28 incident placed a 1-line order via chat
+ * `trigger_order` (cron skipped it correctly, chat path didn't have the guard).
+ * Floor enforced for BOTH automatic and user-triggered orders.
+ */
+export const MIN_ORDER_LINES = 2
+
+export type SizeCheckResult = { ok: true } | { ok: false; reason: string }
+
+/**
+ * Reject orders below MIN_ORDER_LINES. Both call sites (cron + chat) must run
+ * this before `preflightOrderSafety` so we don't take a lock on a doomed order.
+ */
+export function checkOrderSize(merged: { catalogId?: string }[]): SizeCheckResult {
+  const withId = merged.filter(i => i.catalogId)
+  if (merged.length < MIN_ORDER_LINES) {
+    return {
+      ok: false,
+      reason: `רשימה קצרה מדי (${merged.length} פריטים, מינימום ${MIN_ORDER_LINES})`,
+    }
+  }
+  if (withId.length < MIN_ORDER_LINES) {
+    return {
+      ok: false,
+      reason: `מעט מדי פריטים מקושרים (${withId.length}/${merged.length}, מינימום ${MIN_ORDER_LINES})`,
+    }
+  }
+  return { ok: true }
+}
+
 export type SafetyDecision =
   | 'already-placed'
   | 'linked-existing'

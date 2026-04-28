@@ -32,6 +32,7 @@ import {
   preflightOrderSafety,
   finalizeOrderSuccess,
   finalizeOrderFailure,
+  checkOrderSize,
 } from '@/app/services/grocery/orderSafety'
 import { sendMessage } from '@/app/services/telegram/telegramClient'
 import { withTimeout } from '@/app/services/grocery/timeoutUtil'
@@ -40,15 +41,6 @@ export const maxDuration = 60
 
 // Vercel cron auth
 const CRON_SECRET = process.env.CRON_SECRET
-
-/**
- * Minimum number of lines before we'll place an automatic order.
- * The 2026-04-21 11:01 incident placed a 1-line Shufersal order from a
- * stale legacy doc; this is the defensive floor to prevent recurrence.
- * If the merged list has fewer than MIN_ORDER_LINES entries (or no items
- * with catalogId), the cron skips and notifies the user instead.
- */
-const MIN_ORDER_LINES = 2
 
 /**
  * Best-effort Telegram notification. A stale chatId ("chat not found", user
@@ -131,21 +123,17 @@ async function runCron(hcUrl: string | undefined) {
           const activePending = filterActivePending(data.pendingChanges, now)
           const mergedMap = mergeStoreList(data.standingList, activePending)
           const merged = Object.values(mergedMap)
-          const withId = merged.filter(i => i.catalogId)
 
-          // Defensive guard: never place a tiny auto-order. The 2026-04-21
-          // incident delivered a single-item order from a stale doc.
-          // This intentionally runs BEFORE the safety gate — no point taking
-          // a lock and probing the store for an order we'd skip anyway.
-          if (merged.length < MIN_ORDER_LINES || withId.length < MIN_ORDER_LINES) {
-            const reason = merged.length < MIN_ORDER_LINES
-              ? `רשימה קצרה מדי (${merged.length} פריטים, מינימום ${MIN_ORDER_LINES})`
-              : `מעט מדי פריטים מקושרים (${withId.length}/${merged.length}, מינימום ${MIN_ORDER_LINES})`
+          // Defensive guard: never place a tiny auto-order. Runs BEFORE the
+          // safety gate — no point taking a lock for an order we'd skip anyway.
+          const sizeCheck = checkOrderSize(merged)
+          if (!sizeCheck.ok) {
             console.warn(`[Grocery Cron] Safety: uid=${uid} store=${storeId} decision=size-skip`)
-            await notify(chatId, `⚠️ דילגתי על הזמנה אוטומטית ב${plugin.label}: ${reason}. אפשר להוסיף פריטים ולהריץ ידנית.`)
+            await notify(chatId, `⚠️ דילגתי על הזמנה אוטומטית ב${plugin.label}: ${sizeCheck.reason}. אפשר להוסיף פריטים ולהריץ ידנית.`)
             results.push({ uid, storeId, action: 'skip_tiny', ok: true })
             return
           }
+          const withId = merged.filter(i => i.catalogId)
 
           // --- Safety gate: idempotency + lock + pre-flight live check ---
           const gate = await preflightOrderSafety({ uid, storeId, plugin, now })

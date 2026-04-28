@@ -16,16 +16,12 @@ import {
   saveCredentials,
   setCredentialsVerified,
   login as shufersalLogin,
-  cartAdd,
-  cartRead,
-  cartRemove,
-  orderLoadToCart,
 } from '@/app/services/grocery/shufersalClient'
 import { sendOtp, verifyOtp, saveRetalixCredentials } from '@/app/services/grocery/retalixClient'
 import { getStore, getAllStores } from '@/app/services/grocery/storeRegistry'
 import { getUserStores, setDefaultStore, addActiveStore, getStoreData, addToStoreStanding, addStorePendingItems, removeFromStoreStanding, removeStorePendingItems, clearStorePending, movePendingToStanding as moveStorePendingToStanding, getStoreSchedule, setStoreSchedule } from '@/app/services/grocery/groceryStoreMulti'
 import type { OtpStorePlugin, CredentialsStorePlugin, StoreOrder } from '@/app/services/grocery/storeTypes'
-import { preflightOrderSafety, finalizeOrderSuccess, finalizeOrderFailure } from '@/app/services/grocery/orderSafety'
+import { preflightOrderSafety, finalizeOrderSuccess, finalizeOrderFailure, checkOrderSize } from '@/app/services/grocery/orderSafety'
 
 import { listTasks, createTask, updateTask, deleteTask, findTasks } from '@/app/services/taskFirestoreService'
 import { randomBytes } from 'crypto'
@@ -115,15 +111,34 @@ export async function selectProduct(uid: string, searchKey: string, resultIndex:
   }
 }
 
+/**
+ * Add a product to an already-open Shufersal order. MUST go through
+ * `plugin.modifyOrder` — the full edit-order flow (login → cartFromOrder →
+ * cartMerge(false) → cartAdd → commitCheckout(isEdit:true)).
+ *
+ * The previous implementation only did `orderLoadToCart` + `cartAdd`, which
+ * put the session in edit-order mode without ever committing. A subsequent
+ * `cartClear` (e.g. from a later checkout) would then wipe the order's
+ * contents in-place — the 2026-04-28 "order opened with 1 product" incident.
+ * See `project_shufersal_edit_order_flow.md`.
+ */
 async function pushToActiveCart(uid: string, catalogId: string, qty: number): Promise<void> {
   try {
-    // Live query — Shufersal API is source of truth, not cached orderCycle
     const shufersal = getStore('shufersal')
-    const orders = shufersal ? await shufersal.listOrders(uid).catch(() => []) : []
+    if (!shufersal) return
+    const orders = await shufersal.listOrders(uid).catch(() => [])
     const active = orders.find(o => o.cancelable)
-    if (active) {
-      await orderLoadToCart(uid, active.orderId)
-      await cartAdd(uid, catalogId, qty)
+    if (!active) {
+      console.log(`[pushToActiveCart] uid=${uid} no active order — skip`)
+      return
+    }
+    console.log(`[pushToActiveCart] uid=${uid} order=#${active.orderId} add catalog=${catalogId} qty=${qty}`)
+    const result = await shufersal.modifyOrder(uid, active.orderId, {
+      add: [{ productId: catalogId, qty }],
+    })
+    console.log(`[pushToActiveCart] uid=${uid} order=#${active.orderId} done: added=${result.added} failed=${result.failed.length}`)
+    if (result.failed.length > 0) {
+      console.error(`[pushToActiveCart] uid=${uid} order=#${active.orderId} failures:`, result.failed)
     }
   } catch (err) {
     console.error('[ActionExecutor] Failed to push to active cart:', err)
@@ -325,24 +340,32 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
       const rmValidTo = normalizeValidTo(action.validTo)
       await removeStorePendingItems(uid, rmStoreId, names, { validTo: rmValidTo })
 
-      // If Shufersal has an active (cancelable) order, also remove from it.
-      // Live query — no caching.
+      // If Shufersal has an active (cancelable) order, also remove from it
+      // through the proper edit-order flow. Same destructive-cart trap as
+      // pushToActiveCart if we cartRemove without cartMerge + commitCheckout.
       if (rmStoreId === 'shufersal') {
         try {
           const shufersal = getStore('shufersal')
-          const orders = shufersal ? await shufersal.listOrders(uid).catch(() => []) : []
-          const active = orders.find(o => o.cancelable)
-          if (active) {
-            await orderLoadToCart(uid, active.orderId)
-            const cart = await cartRead(uid)
-            for (const name of names) {
-              const lowerName = name.toLowerCase()
-              const match = cart.find((c: any) => c.name.toLowerCase().includes(lowerName))
-              if (match?.entryNumber) await cartRemove(uid, match.entryNumber)
+          if (shufersal) {
+            const orders = await shufersal.listOrders(uid).catch(() => [])
+            const active = orders.find(o => o.cancelable)
+            if (active) {
+              const orderItems = await shufersal.readOrderItems(uid, active.orderId).catch(() => [])
+              const refs: string[] = []
+              for (const name of names) {
+                const lowerName = name.toLowerCase()
+                const match = orderItems.find(i => i.name.toLowerCase().includes(lowerName))
+                if (match?.entryRef) refs.push(match.entryRef)
+              }
+              if (refs.length > 0) {
+                console.log(`[remove_items] uid=${uid} order=#${active.orderId} remove refs=${refs.join(',')}`)
+                const result = await shufersal.modifyOrder(uid, active.orderId, { remove: refs })
+                console.log(`[remove_items] uid=${uid} order=#${active.orderId} done: removed=${result.removed} failed=${result.failed.length}`)
+              }
             }
           }
         } catch (err) {
-          console.error(`[ActionExecutor] Failed to remove from live cart:`, err)
+          console.error(`[ActionExecutor] Failed to remove from live order:`, err)
         }
       }
       return null
@@ -423,11 +446,16 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
       const merged = Object.values(mergeList(data.standingList, activePending))
       if (merged.length === 0) return 'הרשימה ריקה — אין מה להזמין.'
 
+      // Defensive size guard — same floor as the cron. The 2026-04-28 incident
+      // placed a 1-line chat-triggered order because this check was missing here.
+      const sizeCheck = checkOrderSize(merged)
+      if (!sizeCheck.ok) {
+        console.warn(`[ActionExecutor] Safety: uid=${uid} store=${storeId} decision=size-skip`)
+        return `⚠️ לא פתחתי הזמנה ב${store.label}: ${sizeCheck.reason}. אפשר להוסיף פריטים ולנסות שוב.`
+      }
+
       const withId = merged.filter(i => i.catalogId)
       const withoutId = merged.filter(i => !i.catalogId)
-      if (withId.length === 0) {
-        return `אין מוצרים מקושרים. ${withoutId.length} מוצרים לא מקושרים: ${withoutId.map(i => i.name).join(', ')}`
-      }
       if (withoutId.length > 0) {
         console.log(`[ActionExecutor] Ordering without unlinked: ${withoutId.map(i => i.name).join(', ')}`)
       }
@@ -506,10 +534,9 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
         const orders = await shufersal.listOrders(uid).catch(() => [])
         const active = orders.find(o => o.cancelable)
         if (!active) return 'אין הזמנה פתוחה בשופרסל.'
-        await orderLoadToCart(uid, active.orderId)
-        const cart = await cartRead(uid)
+        const cart = await shufersal.readOrderItems(uid, active.orderId)
         if (cart.length === 0) return `הזמנה #${active.orderId}: העגלה ריקה.`
-        const lines = cart.map((item: any) => {
+        const lines = cart.map(item => {
           const qtyStr = item.qty > 1 ? ` x${item.qty}` : ''
           return `• ${item.name}${qtyStr}`
         })
