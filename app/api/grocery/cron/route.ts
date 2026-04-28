@@ -239,7 +239,11 @@ async function runCron(hcUrl: string | undefined) {
       })()
 
       try {
-        await withTimeout(iteration, 25_000, `cron uid=${uid} store=${storeId}`)
+        // 45s leaves a 15s buffer under maxDuration=60s. The 25s cap was too
+        // tight: cartClear×N + cartAdd×N for a full Shufersal order routinely
+        // takes ~20-25s alone (each call is one round-trip to Shufersal),
+        // and the 2026-04-28 08:00 UTC firing died after 3/8 cartAdds.
+        await withTimeout(iteration, 45_000, `cron uid=${uid} store=${storeId}`)
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err)
         if (/timeout after /.test(errMsg)) {

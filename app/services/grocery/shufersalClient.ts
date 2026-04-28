@@ -454,23 +454,56 @@ export async function cartAdd(uid: string, productCode: string, qty = 1): Promis
 }
 
 /**
- * Add many products to the cart. Loops cartAdd one-by-one, refetching the
- * persisted cookies/CSRF each call. The previous in-place loop reused a single
- * `csrf` value across all items; Shufersal rotates CSRF after the first add,
- * so items 2..N got HTTP 302 with no cart effect (the 2026-04-26 Sunday-cron
- * "1/9 added" incident from AGENT_REPORT.md). cartAdd inside modifyOrder
- * already worked correctly because it always reads cookies fresh — match that.
+ * Add many products to the cart. Shares one cookie jar across the whole loop
+ * and re-derives `csrftoken` from the rotated cookies on every iteration.
+ *
+ * The previous in-place loop reused a single `csrf` value computed once; that
+ * was the 2026-04-26 "1/9 added" Sunday-cron bug — Shufersal rotates CSRF
+ * after the first add so items 2..N got 302 with no cart effect. The naive
+ * fix (loop calling `cartAdd`, which refetches cookies from Firestore each
+ * call) is correct but spent ~2-3 s/item; with cartClear×7 the iteration
+ * blew the 25 s budget after 3/8 adds (2026-04-28 08:00 UTC).
  */
 export async function cartAddMany(
   uid: string,
   items: { code: string; qty: number }[],
 ): Promise<{ added: number; failed: { code: string; error: string }[] }> {
-  console.log(`[Shufersal] cartAddMany: ${items.length} items`)
+  const cookies = await getAuthenticatedCookies(uid)
+  console.log(`[Shufersal] cartAddMany: ${items.length} items, cookies=${Object.keys(cookies).join(',')}`)
   let added = 0
   const failed: { code: string; error: string }[] = []
+
   for (const item of items) {
     try {
-      await cartAdd(uid, item.code, item.qty)
+      // CSRF is in cookies['XSRF-TOKEN']; getCsrf() rereads it after each
+      // Object.assign so we pick up Shufersal's rotation.
+      const csrf = getCsrf(cookies)
+      const { resp, cookies: updated } = await shuFetch(
+        '/cart/add?cartContext[openFrom]=CART&cartContext[recommendationType]=REGULAR',
+        cookies,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            productCodePost: item.code,
+            productCode: item.code,
+            sellingMethod: 'BY_UNIT',
+            qty: String(item.qty),
+            frontQuantity: String(item.qty),
+            comment: '',
+            affiliateCode: '',
+          }),
+          headers: {
+            'Content-Type': 'application/json',
+            'csrftoken': csrf,
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+        },
+      )
+      Object.assign(cookies, updated)
+      // 302 is normal for /cart/add (redirect to cart page).
+      if (!resp.ok && resp.status !== 302) {
+        throw new Error(`HTTP ${resp.status}`)
+      }
       added++
       console.log(`[Shufersal] cartAdd ${item.code}: ok (${added}/${items.length})`)
     } catch (err) {
@@ -479,6 +512,10 @@ export async function cartAddMany(
       failed.push({ code: item.code, error: msg })
     }
   }
+
+  // Persist the rotated cookies so subsequent calls (place order, etc.) see
+  // Shufersal's latest CSRF/session state.
+  await saveSession(uid, { cookies, updatedAt: new Date().toISOString() })
   return { added, failed }
 }
 
