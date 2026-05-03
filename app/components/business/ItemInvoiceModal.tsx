@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from 'react'
 import { ypayService } from '@/app/services/ypayService'
 import type { Business, Project } from '@/app/db/financeDB'
+import { VAT_RATE_AUTHORIZED_DEALER, billingDocLabel } from '@/app/lib/vat'
 
 type LineItem = {
   description: string
@@ -40,7 +41,9 @@ export default function ItemInvoiceModal({
   onError,
 }: ItemInvoiceModalProps) {
   const effectiveVat = vatType || business.vatType
-  const docLabel = effectiveVat === 'authorized' ? 'חשבונית מס' : 'חשבונית עסקה'
+  const docLabel = billingDocLabel(effectiveVat)
+  const isAuthorized = effectiveVat === 'authorized'
+  const VAT_RATE = VAT_RATE_AUTHORIZED_DEALER
   const [projectId, setProjectId] = useState<number | null>(defaultProjectId ?? projects[0]?.id ?? null)
   const [date, setDate] = useState<string>(todayLocal())
   const [lines, setLines] = useState<LineItem[]>([emptyLine()])
@@ -163,7 +166,7 @@ export default function ItemInvoiceModal({
           }}>
             <span>תיאור</span>
             <span>כמות</span>
-            <span>מחיר יחידה</span>
+            <span>{isAuthorized ? 'מחיר ללא מע״מ' : 'מחיר יחידה'}</span>
             <span>סה״כ</span>
             <span></span>
           </div>
@@ -233,11 +236,34 @@ export default function ItemInvoiceModal({
         </div>
 
         <div style={{
-          display: 'flex', justifyContent: 'space-between', padding: '0.75rem',
+          padding: '0.75rem',
           background: '#dbeafe', border: '1px solid #93c5fd', borderRadius: '0.375rem', marginBottom: '1rem',
         }}>
-          <span style={{ color: '#1e40af', fontWeight: 600 }}>סה״כ</span>
-          <span style={{ color: '#1e40af', fontWeight: 700, fontSize: '1.1rem' }}>{subtotal.toFixed(2)} ₪</span>
+          {isAuthorized ? (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#1e40af', fontSize: '0.9rem' }}>
+                <span>סכום ללא מע״מ</span>
+                <span>{subtotal.toFixed(2)} ₪</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#1e40af', fontSize: '0.9rem' }}>
+                <span>מע״מ ({Math.round(VAT_RATE * 100)}%)</span>
+                <span>{(subtotal * VAT_RATE).toFixed(2)} ₪</span>
+              </div>
+              <div style={{
+                display: 'flex', justifyContent: 'space-between',
+                color: '#1e40af', fontWeight: 700, fontSize: '1.1rem',
+                borderTop: '1px solid #93c5fd', marginTop: '0.4rem', paddingTop: '0.4rem',
+              }}>
+                <span>סה״כ לתשלום</span>
+                <span>{(subtotal * (1 + VAT_RATE)).toFixed(2)} ₪</span>
+              </div>
+            </>
+          ) : (
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: '#1e40af', fontWeight: 600 }}>סה״כ</span>
+              <span style={{ color: '#1e40af', fontWeight: 700, fontSize: '1.1rem' }}>{subtotal.toFixed(2)} ₪</span>
+            </div>
+          )}
         </div>
 
         {validationError && (

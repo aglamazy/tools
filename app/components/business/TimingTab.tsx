@@ -752,6 +752,13 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     const businessName = business?.name || ''
     const subject = `${businessName} — דוח שעות ${projectName} — ${monthName}`
     const invoiceUrl = invoiceDoc?.url?.replace('/document/view/', '/document/pdf/')
+    // Label per the actual doc that was issued (104 = חשבונית עסקה, 106 = חשבונית מס).
+    // Falls back to the current profile status when docType is missing.
+    const invoiceDocLabel = invoiceDoc?.docType === 106
+      ? 'חשבונית מס'
+      : invoiceDoc?.docType === 104
+        ? 'חשבונית עסקה'
+        : (profileVatType === 'authorized' ? 'חשבונית מס' : 'חשבונית עסקה')
     const html = `
       <div dir="rtl" style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b;">
         <div style="background: linear-gradient(135deg, #1e40af, #3b82f6); padding: 1.5rem 2rem; border-radius: 0.75rem 0.75rem 0 0;">
@@ -770,12 +777,12 @@ export default function TimingTab({ businessId }: TimingTabProps) {
             </tr>
             ${invoiceDoc ? `
             <tr>
-              <td style="padding: 0.5rem 0; color: #64748b; font-size: 0.9rem;">חשבונית עסקה</td>
+              <td style="padding: 0.5rem 0; color: #64748b; font-size: 0.9rem;">${invoiceDocLabel}</td>
               <td style="padding: 0.5rem 0; font-weight: 600;">#${invoiceDoc.serialNumber}${invoicePdfAttached ? ' (מצורפת)' : ` — <a href="${invoiceUrl}" style="color: #2563eb;">צפה בחשבונית</a>`}</td>
             </tr>` : ''}
           </table>
           <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 1rem 0;" />
-          <p style="color: #475569; font-size: 0.9rem; margin: 0;">מצורפים: דוח שעות מפורט${invoicePdfAttached ? ' + חשבונית עסקה' : ''}.</p>
+          <p style="color: #475569; font-size: 0.9rem; margin: 0;">מצורפים: דוח שעות מפורט${invoicePdfAttached ? ` + ${invoiceDocLabel}` : ''}.</p>
         </div>
         <div style="text-align: center; padding: 1rem 0 0.5rem;">
           <a href="https://aglamazo.com" style="color: #94a3b8; text-decoration: none; font-size: 0.8rem;">
@@ -854,6 +861,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
           weekEntries={weekEntries}
           weekTotal={weekTotal}
           hasYpay={hasYpay}
+          vatType={profileVatType}
           onExportToExcel={handleExportToExcel}
           onCreateInvoice={handleCreateInvoice}
           onEmailReport={handleEmailReport}

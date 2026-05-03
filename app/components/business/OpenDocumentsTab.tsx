@@ -2,9 +2,12 @@
 
 import React, { useEffect, useState } from 'react'
 import { db, type YpayDocument, type Project } from '@/app/db/financeDB'
+import { businessStore } from '@/app/stores/businessStore'
 import { projectStore } from '@/app/stores/projectStore'
 import { YpayDocType } from '@/app/services/ypayService'
 import { MONTH_NAMES_HE } from '@/app/lib/dateUtils'
+import { getTaxProfile } from '@/app/components/TaxProfileSection'
+import { billingDocLabel, type VatType } from '@/app/lib/vat'
 import FormModal, { FormField, inputStyle } from '../FormModal'
 import Modal from '@/app/components/Modal'
 
@@ -47,11 +50,17 @@ export default function OpenDocumentsTab({ businessId }: OpenDocumentsTabProps) 
   const [loading, setLoading] = useState(true)
   const [formData, setFormData] = useState<ManualInvoiceForm | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [vatType, setVatType] = useState<VatType | undefined>(undefined)
+
+  const docLabel = billingDocLabel(vatType)
+  const billingDocType = vatType === 'authorized' ? YpayDocType.TaxInvoice : YpayDocType.BusinessInvoice
+  const billingDocTypes = new Set<number>([YpayDocType.BusinessInvoice, YpayDocType.TaxInvoice])
 
   const loadDocuments = async (projectNames: Set<string>) => {
+    // Show both חשבונית עסקה (104) and חשבונית מס (106) — owner status may have
+    // changed mid-stream and historical docs of the prior status must remain visible.
     const docs = await db.ypayDocuments
-      .where('docType')
-      .equals(YpayDocType.BusinessInvoice)
+      .filter(d => billingDocTypes.has(d.docType))
       .toArray()
     const filtered = docs.filter(d => d.projectName && projectNames.has(d.projectName))
     filtered.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
@@ -60,11 +69,15 @@ export default function OpenDocumentsTab({ businessId }: OpenDocumentsTabProps) 
   }
 
   useEffect(() => {
-    projectStore.getByBusinessId(businessId).then(bizProjects => {
+    void (async () => {
+      const business = await businessStore.getById(businessId)
+      const profile = await getTaxProfile(business?.userId)
+      setVatType(profile.vatType)
+      const bizProjects = await projectStore.getByBusinessId(businessId)
       setProjects(bizProjects)
       const projectNames = new Set(bizProjects.map(p => p.name))
-      void loadDocuments(projectNames)
-    })
+      await loadDocuments(projectNames)
+    })()
   }, [businessId])
 
   const projectNames = new Set(projects.map(p => p.name))
@@ -90,14 +103,14 @@ export default function OpenDocumentsTab({ businessId }: OpenDocumentsTabProps) 
     const transactionId = `invoice:${project.name}:${monthName}`
     const existing = await db.ypayDocuments.where('transactionId').equals(transactionId).first()
     if (existing) {
-      setError('חשבונית עסקה כבר קיימת לפרויקט וחודש זה')
+      setError(`${docLabel} כבר קיימת לפרויקט וחודש זה`)
       return
     }
     await db.ypayDocuments.add({
       transactionId,
       url: formData.url || '',
       serialNumber: formData.serialNumber || '',
-      docType: YpayDocType.BusinessInvoice,
+      docType: billingDocType,
       amount: Number(formData.amount),
       projectName: project.name,
       monthName,
@@ -183,7 +196,7 @@ export default function OpenDocumentsTab({ businessId }: OpenDocumentsTabProps) 
       {formData && (
         <FormModal
           isOpen
-          title="הוסף חשבונית עסקה"
+          title={`הוסף ${docLabel}`}
           onClose={() => setFormData(null)}
           onSave={() => void handleAddManual()}
           saveText="הוסף"

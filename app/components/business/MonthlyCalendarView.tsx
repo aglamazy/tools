@@ -8,6 +8,7 @@ import {
   getCalendarDays,
   DAY_NAMES_HE,
 } from '@/app/lib/dateUtils'
+import { billingDocLabel, type VatType } from '@/app/lib/vat'
 
 type MonthlyCalendarViewProps = {
   monthOffset: number
@@ -15,6 +16,7 @@ type MonthlyCalendarViewProps = {
   weekEntries: WeekEntry[]
   weekTotal: number
   hasYpay: boolean
+  vatType?: VatType
   createdInvoices: Record<string, string>
   onExportToExcel: (projectName: string, entries: WeekEntry[]) => void
   onCreateInvoice: (projectName: string, totalHours: number) => void
@@ -24,8 +26,9 @@ type MonthlyCalendarViewProps = {
 
 export default function MonthlyCalendarView({
   monthOffset, onMonthOffsetChange, weekEntries, weekTotal,
-  hasYpay, createdInvoices, onExportToExcel, onCreateInvoice, onEmailReport, onDayClick,
+  hasYpay, vatType, createdInvoices, onExportToExcel, onCreateInvoice, onEmailReport, onDayClick,
 }: MonthlyCalendarViewProps) {
+  const docLabel = billingDocLabel(vatType)
   return (
     <div style={{ marginBottom: '1rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
@@ -147,12 +150,12 @@ export default function MonthlyCalendarView({
                         ) : (
                           <button
                             onClick={() => onCreateInvoice(project.projectName, projectTotal)}
-                            title="חשבונית עסקה"
+                            title={docLabel}
                             style={{
                               padding: '0.375rem 0.75rem', background: '#6366f1', color: 'white',
                               border: 'none', borderRadius: '0.375rem', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 500,
                             }}
-                          >חשבונית עסקה</button>
+                          >{docLabel}</button>
                         )
                       })()}
                     </div>

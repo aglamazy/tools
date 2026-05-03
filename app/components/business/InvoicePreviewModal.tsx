@@ -3,6 +3,7 @@
 import React, { useState } from 'react'
 import { ypayService } from '@/app/services/ypayService'
 import type { Business } from '@/app/db/financeDB'
+import { VAT_RATE_AUTHORIZED_DEALER, billingDocLabel } from '@/app/lib/vat'
 
 export type InvoicePreview = {
   projectName: string
@@ -44,7 +45,10 @@ function PreviewRow({ label, value, highlight }: { label: string; value: string;
 export default function InvoicePreviewModal({ preview, business, vatType, onClose, onCreated, onError }: InvoicePreviewModalProps) {
   const [creating, setCreating] = useState(false)
   const effectiveVat = vatType || business.vatType
-  const docLabel = effectiveVat === 'authorized' ? 'חשבונית מס' : 'חשבונית עסקה'
+  const docLabel = billingDocLabel(effectiveVat)
+  const isAuthorized = effectiveVat === 'authorized'
+  const vatAmount = isAuthorized ? preview.amount * VAT_RATE_AUTHORIZED_DEALER : 0
+  const totalWithVat = preview.amount + vatAmount
 
   const handleCreate = async () => {
     setCreating(true)
@@ -91,7 +95,15 @@ export default function InvoicePreviewModal({ preview, business, vatType, onClos
           <PreviewRow label="תאריך מסמך" value={preview.date.split('-').reverse().join('/')} />
           <PreviewRow label="שעות" value={preview.totalHours.toFixed(2)} />
           <PreviewRow label="תעריף שעתי" value={`${preview.hourlyRate} ₪`} />
-          <PreviewRow label="סה״כ" value={`${preview.amount.toFixed(2)} ₪`} highlight />
+          {isAuthorized ? (
+            <>
+              <PreviewRow label="סכום ללא מע״מ" value={`${preview.amount.toFixed(2)} ₪`} />
+              <PreviewRow label={`מע״מ (${Math.round(VAT_RATE_AUTHORIZED_DEALER * 100)}%)`} value={`${vatAmount.toFixed(2)} ₪`} />
+              <PreviewRow label="סה״כ לתשלום" value={`${totalWithVat.toFixed(2)} ₪`} highlight />
+            </>
+          ) : (
+            <PreviewRow label="סה״כ" value={`${preview.amount.toFixed(2)} ₪`} highlight />
+          )}
 
           <hr style={{ border: 'none', borderTop: '1px solid #e2e8f0', margin: '0.25rem 0' }} />
 
