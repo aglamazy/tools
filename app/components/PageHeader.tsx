@@ -7,14 +7,19 @@ import AuthStatus from './AuthStatus'
 import PageSearch from './PageSearch'
 import AppLauncher from './AppLauncher'
 import { branding, routes } from '@/app/config'
+import { VARIANT } from '@/app/config/variants'
 import { useToast } from './ToastContainer'
 
-const publicLinks = [
+// Saliko has no /about, /guide, /pricing, /contact yet — proxy rewrites
+// them to /saliko/* which 404. Hide the public nav for Saliko until those
+// pages exist; brand-link only.
+const ALL_PUBLIC_LINKS = [
   { href: routes.about, label: 'אודות' },
   { href: routes.guide, label: 'מדריך' },
   { href: routes.pricing, label: 'מחירון' },
   { href: routes.contact, label: 'צור קשר' },
 ]
+const publicLinks = VARIANT === 'saliko' ? [] : ALL_PUBLIC_LINKS
 
 export default function PageHeader() {
   const { notifications, clearNotifications } = useToast()
