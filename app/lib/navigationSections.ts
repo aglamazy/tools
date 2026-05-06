@@ -1,4 +1,5 @@
 import { routes } from '@/app/config'
+import { isPageAllowed } from '@/app/config/variants'
 import { UserTier } from '@/app/stores/userTierStore'
 
 export type SectionId = 'home' | 'finance' | 'business' | 'tools'
@@ -10,7 +11,7 @@ export type SectionTab = {
   requiredTier: UserTier
 }
 
-export const sectionTabs: Record<SectionId, SectionTab[]> = {
+const ALL_SECTION_TABS: Record<SectionId, SectionTab[]> = {
   home: [],
   finance: [
     { id: 'cash-flow', label: 'תזרים', href: routes.cashFlow, requiredTier: UserTier.FREE },
@@ -30,6 +31,18 @@ export const sectionTabs: Record<SectionId, SectionTab[]> = {
     { id: 'gmail', label: 'Gmail', href: routes.gmail, requiredTier: UserTier.PRO },
   ],
 }
+
+/**
+ * Section tabs with the current variant's whitelist applied.
+ * Consumers (e.g. SectionTabs.tsx) should import this directly — they get
+ * the correctly-filtered set without having to know about variants.
+ */
+export const sectionTabs: Record<SectionId, SectionTab[]> = Object.fromEntries(
+  Object.entries(ALL_SECTION_TABS).map(([section, tabs]) => [
+    section,
+    tabs.filter(t => isPageAllowed(t.id)),
+  ]),
+) as Record<SectionId, SectionTab[]>
 
 export function getActiveSection(pathname: string): SectionId | null {
   if (pathname === '/app') return 'home'

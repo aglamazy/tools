@@ -1,11 +1,18 @@
 /**
- * Next.js 16 proxy — runtime guard for API routes.
+ * Next.js 16 proxy — two responsibilities:
  *
- * Runs in Edge Runtime, BEFORE the route handler.
- * Verifies Firebase JWT signature using Web Crypto API (no firebase-admin needed).
- * Reads custom claims (tier, tcAcceptedAt) to enforce access rules per path.
+ * 1. **API auth** (always-on): Firebase JWT signature verification using Web
+ *    Crypto API for `/api/admin/*`, `/api/household/*`, `/api/profile-qa`.
+ *    See docs/SECURITY.md for the full policy.
  *
- * See docs/SECURITY.md for the full policy.
+ * 2. **Saliko URL prefix** (saliko deployment only): on the variant
+ *    deployment, transparently rewrite public marketing URLs (`/`, `/about`,
+ *    etc.) to their `app/saliko/*` counterparts so Saliko keeps its own
+ *    route subtree without per-page variant flags. Rewrites `/app` to
+ *    `/app/stores` so Saliko users hitting the dashboard root land on
+ *    their actual home (Aglamazo's `/app` shows finance, irrelevant here).
+ *    On Aglamazo, the env check below short-circuits and the proxy is a
+ *    no-op for non-API paths.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -25,7 +32,16 @@ const TIER_RANK: Record<string, number> = { free: 1, home: 2, pro: 3, owner: 4 }
 const TC_VERSION_FALLBACK = '2026-03-09'
 
 export const config = {
-  matcher: ['/api/admin/:path*', '/api/household/:path*', '/api/profile-qa'],
+  matcher: [
+    // API auth (existing, always-on regardless of variant)
+    '/api/admin/:path*',
+    '/api/household/:path*',
+    '/api/profile-qa',
+    // Saliko URL rewrites — covers all non-API paths. The proxy function
+    // early-returns when NEXT_PUBLIC_PRODUCT !== 'saliko' so Aglamazo just
+    // sees one extra no-op function call per request.
+    '/((?!api|_next/static|_next/image|favicon.ico).*)',
+  ],
 }
 
 // ---------------------------------------------------------------------------
@@ -162,7 +178,55 @@ function deny(message: string, status: 401 | 403) {
   return NextResponse.json({ success: false, error: message }, { status })
 }
 
+const SALIKO_SHARED_PATHS = ['/app', '/api', '/_next']
+
+function isSalikoSharedPath(pathname: string): boolean {
+  if (pathname.includes('.')) return true // static asset
+  return SALIKO_SHARED_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'))
+}
+
+function salikoRewrite(request: NextRequest): NextResponse {
+  if (process.env.NEXT_PUBLIC_PRODUCT !== 'saliko') {
+    return NextResponse.next()
+  }
+
+  const { pathname } = request.nextUrl
+
+  // Already under /saliko? Leave it (handles canonical Next.js routing).
+  if (pathname === '/saliko' || pathname.startsWith('/saliko/')) {
+    return NextResponse.next()
+  }
+
+  // /app is the authenticated dashboard root. Aglamazo renders a finance
+  // home there; Saliko has no equivalent and lands users straight on stores.
+  // Rewrite (not redirect) so the URL bar still reads /app — feels like one
+  // surface to the user.
+  if (pathname === '/app') {
+    const url = request.nextUrl.clone()
+    url.pathname = '/app/stores'
+    return NextResponse.rewrite(url)
+  }
+
+  if (isSalikoSharedPath(pathname)) {
+    return NextResponse.next()
+  }
+
+  // Public marketing surface — rewrite to the Saliko subtree.
+  const url = request.nextUrl.clone()
+  url.pathname = pathname === '/' ? '/saliko' : `/saliko${pathname}`
+  return NextResponse.rewrite(url)
+}
+
 export async function proxy(request: NextRequest) {
+  const { pathname } = request.nextUrl
+
+  // Non-API paths skip JWT entirely and only run through the Saliko rewrite
+  // (which itself short-circuits on the Aglamazo deployment).
+  if (!pathname.startsWith('/api/')) {
+    return salikoRewrite(request)
+  }
+
+  // --- API auth path (Firebase JWT verification) ---
   const authHeader = request.headers.get('Authorization')
   if (!authHeader?.startsWith('Bearer ')) {
     return deny('Unauthorized', 401)
@@ -180,8 +244,6 @@ export async function proxy(request: NextRequest) {
   if (!payload) {
     return deny('Invalid token', 401)
   }
-
-  const { pathname } = request.nextUrl
 
   // --- /api/admin/* — require owner tier ---
   if (pathname.startsWith('/api/admin')) {

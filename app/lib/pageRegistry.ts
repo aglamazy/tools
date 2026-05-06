@@ -1,4 +1,5 @@
 import { routes } from '@/app/config'
+import { VARIANT, isPageAllowed } from '@/app/config/variants'
 import { UserTier } from '@/app/stores/userTierStore'
 
 export interface NavigablePage {
@@ -9,7 +10,7 @@ export interface NavigablePage {
   requiredTier: UserTier
 }
 
-export const ALL_PAGES: NavigablePage[] = [
+const ALL_PAGES_RAW: NavigablePage[] = [
   { id: 'home', label: 'בית', icon: '🏠', href: routes.dashboard, requiredTier: UserTier.FREE },
   { id: 'cash-flow', label: 'תזרים', icon: '💰', href: routes.cashFlow, requiredTier: UserTier.FREE },
   { id: 'budget', label: 'תקציב', icon: '📊', href: routes.budget, requiredTier: UserTier.FREE },
@@ -23,11 +24,19 @@ export const ALL_PAGES: NavigablePage[] = [
   { id: 'gmail', label: 'Gmail', icon: '📧', href: routes.gmail, requiredTier: UserTier.PRO },
   { id: 'business-categories', label: 'עסקים', icon: '🏛️', href: routes.businessCategories, requiredTier: UserTier.PRO },
   { id: 'stores', label: 'חנויות', icon: '🛒', href: routes.stores, requiredTier: UserTier.FREE },
+  { id: 'chat', label: 'צ׳אט', icon: '💬', href: routes.chat, requiredTier: UserTier.FREE },
   { id: 'form-filler', label: 'מילוי טפסים', icon: '📋', href: '/form-filler', requiredTier: UserTier.FREE },
   { id: 'settings', label: 'הגדרות', icon: '⚙️', href: routes.settings, requiredTier: UserTier.FREE },
 ]
 
-export const DEFAULT_TAB_IDS = ['home', 'cash-flow', 'todo', 'business-categories']
+export const ALL_PAGES: NavigablePage[] = ALL_PAGES_RAW.filter(p => isPageAllowed(p.id))
+
+const DEFAULT_TAB_IDS_BY_VARIANT: Record<typeof VARIANT, string[]> = {
+  aglamazo: ['home', 'cash-flow', 'todo', 'business-categories'],
+  saliko: ['home', 'stores', 'chat', 'settings'],
+}
+
+export const DEFAULT_TAB_IDS: string[] = [...DEFAULT_TAB_IDS_BY_VARIANT[VARIANT]]
 
 export function getPageById(id: string): NavigablePage | undefined {
   return ALL_PAGES.find(p => p.id === id)

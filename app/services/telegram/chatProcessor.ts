@@ -6,6 +6,7 @@
 import { GeminiClient } from '@/app/services/llm/geminiClient'
 import { ACTION_DECLARATIONS } from './actionDeclarations'
 import type { LLMMessage } from '@/app/services/llm/types'
+import { VARIANT_CONFIG } from '@/app/config/variants'
 
 const gemini = new GeminiClient()
 
@@ -86,7 +87,7 @@ export interface ChatAction {
   [key: string]: unknown
 }
 
-const SYSTEM_PROMPT = `אתה AglamazoBot — עוזר משפחתי לניהול קניות ומשימות. אתה מדבר בעברית טבעית, ידידותי וקצר.
+const SYSTEM_PROMPT = `אתה ${VARIANT_CONFIG.botName} — עוזר משפחתי לניהול קניות ומשימות. אתה מדבר בעברית טבעית, ידידותי וקצר.
 
 ## מה אתה יכול לעשות
 - ניהול רשימות קניות שבועיות בחנויות שונות (שופרסל, מקור השפע, ועוד)

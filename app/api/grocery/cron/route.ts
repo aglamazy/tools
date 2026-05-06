@@ -59,6 +59,14 @@ async function notify(chatId: number | null, text: string): Promise<void> {
 }
 
 export async function GET(request: NextRequest) {
+  // Variant gate: when grocery automation is moved to a sibling deployment
+  // (e.g. Saliko), Aglamazo's deployment can disable its grocery cron via
+  // env without touching code. Default = enabled. Anything other than the
+  // exact string 'false' keeps the cron live.
+  if (process.env.GROCERY_CRON_ENABLED === 'false') {
+    return NextResponse.json({ ok: true, skipped: 'GROCERY_CRON_ENABLED=false' })
+  }
+
   // Verify cron secret (Vercel sends this header)
   const authHeader = request.headers.get('authorization')
   if (CRON_SECRET && authHeader !== `Bearer ${CRON_SECRET}`) {

@@ -7,14 +7,19 @@ import AuthStatus from './AuthStatus'
 import PageSearch from './PageSearch'
 import AppLauncher from './AppLauncher'
 import { branding, routes } from '@/app/config'
+import { VARIANT } from '@/app/config/variants'
 import { useToast } from './ToastContainer'
 
-const publicLinks = [
+// Saliko has no /about, /guide, /pricing, /contact yet — proxy rewrites
+// them to /saliko/* which 404. Hide the public nav for Saliko until those
+// pages exist; brand-link only.
+const ALL_PUBLIC_LINKS = [
   { href: routes.about, label: 'אודות' },
   { href: routes.guide, label: 'מדריך' },
   { href: routes.pricing, label: 'מחירון' },
   { href: routes.contact, label: 'צור קשר' },
 ]
+const publicLinks = VARIANT === 'saliko' ? [] : ALL_PUBLIC_LINKS
 
 export default function PageHeader() {
   const { notifications, clearNotifications } = useToast()
@@ -34,8 +39,10 @@ export default function PageHeader() {
               <h1>{branding.name}</h1>
             </Link>
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              <PageSearch />
-              <AppLauncher />
+              {/* Saliko has only a few pages — page search + 9-grid launcher
+                  are noise. Aglamazo keeps both for cross-feature navigation. */}
+              {VARIANT !== 'saliko' && <PageSearch />}
+              {VARIANT !== 'saliko' && <AppLauncher />}
             </div>
           </>
         ) : (

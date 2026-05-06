@@ -7,6 +7,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { useToast } from '@/app/components/ToastContainer'
 import { subscribeToAuth } from '@/app/stores/authStore'
 import {
@@ -29,6 +30,7 @@ import OrderDetailsModal from '@/app/components/stores/OrderDetailsModal'
 type DropTarget = 'standing' | 'pending' | null
 
 export default function StoresPage() {
+  const router = useRouter()
   const { showToast } = useToast()
   const [stores, setStores] = useState<StorePanelData[] | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -55,8 +57,11 @@ export default function StoresPage() {
     const unsubscribe = subscribeToAuth(({ user, initialized }) => {
       if (cancelled || !initialized) return
       if (!user) {
-        setLoadError('Not authenticated')
-        setLoading(false)
+        // Don't surface "Not authenticated" as a visible error — that confuses
+        // users who hit the URL directly or reached this page via a stale
+        // cached avatar. Send them back to the public landing where the
+        // sign-in flow lives.
+        router.replace('/')
         return
       }
       if (fetched) return

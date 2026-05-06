@@ -13,6 +13,7 @@ import { selectProduct } from '@/app/services/telegram/actionExecutor'
 import { processChatMessage, handleReset, handleClear } from '@/app/services/chatBrain'
 import { enqueueChatMessage } from '@/app/services/chatQueue'
 import { panicAdmin } from '@/app/services/adminPanic'
+import { VARIANT_CONFIG } from '@/app/config/variants'
 import type { TelegramCallbackQuery, TelegramUpdate, TelegramMessage } from '@/app/services/telegram/types'
 
 const HISTORY_COLLECTION = 'telegramChatHistory'
@@ -65,10 +66,10 @@ export async function POST(request: NextRequest) {
     // Handle /start command
     if (message.text === '/start') {
       await sendMessage(message.chat.id,
-        'שלום! אני העוזר האישי של Aglamazo.\n\n' +
+        `שלום! אני העוזר האישי של ${VARIANT_CONFIG.name}.\n\n` +
         'כדי לחבר את החשבון שלך, שלח:\n' +
         '/link <קוד>\n\n' +
-        'את הקוד תמצא בהגדרות של Aglamazo.'
+        `את הקוד תמצא בהגדרות של ${VARIANT_CONFIG.name}.`
       )
       return NextResponse.json({ ok: true })
     }
@@ -171,7 +172,7 @@ async function handleLinkCommand(message: TelegramMessage) {
   const parts = message.text!.replace(/^\/link(@\w+)?/, '/link').split(' ')
   if (parts.length < 2) {
     await sendMessage(message.chat.id,
-      'שימוש: /link <קוד>\nאת הקוד תמצא בהגדרות של Aglamazo.'
+      `שימוש: /link <קוד>\nאת הקוד תמצא בהגדרות של ${VARIANT_CONFIG.name}.`
     )
     return
   }
