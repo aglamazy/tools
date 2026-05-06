@@ -40,12 +40,15 @@ export interface VariantConfig {
   }
 }
 
+/**
+ * Saliko deliberately exposes a tiny nav surface: stores (the main thing)
+ * and settings, plus the owner-only admin tab. Chat lives as a floating
+ * bubble (not a sidebar item) and profile lives in the AuthStatus dropdown
+ * — both still reachable by URL, just not on the nav.
+ */
 const SALIKO_ALLOWED_PAGES = new Set([
-  'home',          // dashboard root
-  'stores',        // grocery store connection / config
-  'chat',          // the agent
+  'stores',        // main: connect grocery store + manage standing list
   'settings',
-  'profile',
   'admin',         // owner-only system tab
 ])
 

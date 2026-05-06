@@ -39,8 +39,10 @@ export default function PageHeader() {
               <h1>{branding.name}</h1>
             </Link>
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              <PageSearch />
-              <AppLauncher />
+              {/* Saliko has only a few pages — page search + 9-grid launcher
+                  are noise. Aglamazo keeps both for cross-feature navigation. */}
+              {VARIANT !== 'saliko' && <PageSearch />}
+              {VARIANT !== 'saliko' && <AppLauncher />}
             </div>
           </>
         ) : (
