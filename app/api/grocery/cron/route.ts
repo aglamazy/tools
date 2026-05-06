@@ -276,17 +276,24 @@ async function runCron(hcUrl: string | undefined) {
   return NextResponse.json({ ok: true, results })
 }
 
-/** Resolve uid → Telegram chatId for notifications. */
+/**
+ * Resolve uid → Telegram chatId for notifications.
+ * A user can have multiple links (private + group(s)). Cron messages are
+ * personal, so prefer the private chat. Without this preference a leftover
+ * group/test link can win the `limit(1)` lottery and silently swallow every
+ * notification — happened in 2026-05 with chatId -100999 ("Test" group).
+ */
 async function getTelegramChatId(uid: string): Promise<number | null> {
   const firestore = getAdminFirestore()
   const query = await firestore
     .collection('telegramLinks')
     .where('uid', '==', uid)
-    .limit(1)
     .get()
 
   if (query.empty) return null
-  return query.docs[0].data().telegramChatId as number
+  const docs = query.docs.map(d => d.data() as { telegramChatId: number; chatType?: string })
+  const privateLink = docs.find(d => d.chatType === 'private')
+  return (privateLink ?? docs[0]).telegramChatId
 }
 
 /** Parse DD/MM + time into a Date for the current/next occurrence. */

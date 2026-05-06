@@ -8,6 +8,7 @@ import { subscribeToAuth } from '@/app/stores/authStore'
 import SettingsTabs from '@/app/components/settings/SettingsTabs'
 import RichEditor from '@/app/components/ui/RichEditor'
 import TaxSettingsPanel, { type TaxRateYear, type TaxRateYearDraft, type IncomeTaxStep, rateYearToDraft, incomeTaxStepsToDraft } from './TaxSettingsPanel'
+import SystemSettingsPanel from './SystemSettingsPanel'
 
 type Member = {
   uid: string
@@ -338,6 +339,7 @@ export default function AdminPage() {
     { id: 'provisions', label: 'הזמנות', icon: '📨' },
     { id: 'tc', label: 'תנאי שימוש', icon: '📜' },
     { id: 'taxes', label: 'מיסים', icon: '🧾' },
+    { id: 'system', label: 'מערכת', icon: '⚙️' },
   ]
 
   return (
@@ -698,6 +700,8 @@ export default function AdminPage() {
                   newIncomeTaxYear={newIncomeTaxYear} setNewIncomeTaxYear={setNewIncomeTaxYear}
                 />
               )}
+
+              {activeTab === 'system' && <SystemSettingsPanel />}
             </>
           )}
         </SettingsTabs>

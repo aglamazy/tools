@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireTc } from '@/app/lib/apiGuard'
 import { processChatMessage, handleReset, handleClear } from '@/app/services/chatBrain'
+import { panicAdmin } from '@/app/services/adminPanic'
 
 const COLLECTION = 'appChatHistory'
 
@@ -42,6 +43,31 @@ export async function POST(request: NextRequest) {
       historyCollection: COLLECTION,
       includeTasks: true,
     })
+
+    if (result.llmExhausted) {
+      // Fire the admin panic from here (server-side, throttled). Never let
+      // the client trigger panic — that path is only invoked when our own
+      // retry ladder observed a real upstream failure.
+      panicAdmin({
+        source: 'web-exhaust',
+        upstreamError: result.upstreamError || 'unknown',
+        uid,
+        userTextSnippet: text,
+      }).catch(err => console.warn('[AppChat] panicAdmin failed:', err))
+
+      // 503 + retryable signals the React client to schedule a backoff retry.
+      // The user message has NOT been persisted (chatBrain skips on exhaust),
+      // so the client retrying with the same text is safe and idempotent.
+      return NextResponse.json(
+        {
+          success: false,
+          retryable: true,
+          error: result.upstreamError || 'LLM exhausted',
+          reply: result.reply,
+        },
+        { status: 503 },
+      )
+    }
 
     return NextResponse.json({
       success: true,

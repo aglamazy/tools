@@ -7,7 +7,7 @@
  */
 
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
-import { processChat, type ChatMessage, type UserContext } from '@/app/services/telegram/chatProcessor'
+import { processChat, type ChatMessage, type ChatStatusReporter, type UserContext } from '@/app/services/telegram/chatProcessor'
 import { executeActions, savePendingSearch, type PendingProductSelection } from '@/app/services/telegram/actionExecutor'
 import { getUserStores, getStoreData } from '@/app/services/grocery/groceryStoreMulti'
 import { getAllStores } from '@/app/services/grocery/storeRegistry'
@@ -28,6 +28,8 @@ export interface ChatBrainInput {
   displayName?: string
   historyCollection: string
   includeTasks?: boolean
+  /** Optional progress notifier used by the LLM recovery ladder. */
+  onStatus?: ChatStatusReporter
 }
 
 export interface ChatBrainResult {
@@ -35,6 +37,10 @@ export interface ChatBrainResult {
   thinking?: string
   actions: { action: string; [key: string]: unknown }[]
   pendingSelections?: (PendingProductSelection & { searchKey: string })[]
+  /** True when the LLM gave up after the in-line retry ladder. */
+  llmExhausted?: boolean
+  /** Server-observed upstream error string (forwarded from chatProcessor). */
+  upstreamError?: string
 }
 
 // --- History + session helpers ---
@@ -132,7 +138,7 @@ export async function handleClear(uid: string): Promise<void> {
 export async function processChatMessage(input: ChatBrainInput): Promise<ChatBrainResult> {
   initStores()
 
-  const { uid, text, displayName, historyCollection, includeTasks } = input
+  const { uid, text, displayName, historyCollection, includeTasks, onStatus } = input
 
   const loaded = await loadChat(historyCollection, uid)
   const persistedHistory = loaded.messages
@@ -150,10 +156,16 @@ export async function processChatMessage(input: ChatBrainInput): Promise<ChatBra
   let thinking: string | undefined
   let allActions: ChatBrainResult['actions'] = []
   let pendingSelections: PendingProductSelection[] | undefined
+  let llmExhausted = false
+  let upstreamError: string | undefined
 
   for (let step = 0; step < MAX_AGENTIC_STEPS; step++) {
-    const result = await processChat(working, context)
+    const result = await processChat(working, context, onStatus)
     thinking = thinking ?? result.thinking
+    if (result.llmExhausted) {
+      llmExhausted = true
+      upstreamError = result.upstreamError
+    }
 
     // set_session is a sentinel hint, not a real tool call — update session and exclude it from tool execution.
     for (const action of result.actions) {
@@ -216,9 +228,16 @@ export async function processChatMessage(input: ChatBrainInput): Promise<ChatBra
   }
 
   // Persist only user + final-assistant text (tool calls/results are transient).
-  persistedHistory.push({ role: 'user', content: text })
-  persistedHistory.push({ role: 'assistant', content: replyText })
-  await saveChat(historyCollection, uid, persistedHistory, session)
+  // When the LLM exhausted, we DON'T persist either — the user message is
+  // still pending a real reply. The webhook will enqueue (Telegram) or the
+  // web client will poll for retry. Persisting now would mean: (a) the user
+  // message gets a fake assistant ack baked into history; (b) the cron retry
+  // sees the duplicate user line and produces a confusing trace.
+  if (!llmExhausted) {
+    persistedHistory.push({ role: 'user', content: text })
+    persistedHistory.push({ role: 'assistant', content: replyText })
+    await saveChat(historyCollection, uid, persistedHistory, session)
+  }
 
   // Persist pending searches
   let selectionsWithKeys: ChatBrainResult['pendingSelections']
@@ -236,5 +255,7 @@ export async function processChatMessage(input: ChatBrainInput): Promise<ChatBra
     thinking,
     actions: allActions,
     pendingSelections: selectionsWithKeys,
+    llmExhausted,
+    upstreamError,
   }
 }

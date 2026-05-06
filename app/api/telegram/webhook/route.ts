@@ -11,6 +11,8 @@ import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import { sendMessage, sendWithKeyboard, answerCallbackQuery } from '@/app/services/telegram/telegramClient'
 import { selectProduct } from '@/app/services/telegram/actionExecutor'
 import { processChatMessage, handleReset, handleClear } from '@/app/services/chatBrain'
+import { enqueueChatMessage } from '@/app/services/chatQueue'
+import { panicAdmin } from '@/app/services/adminPanic'
 import type { TelegramCallbackQuery, TelegramUpdate, TelegramMessage } from '@/app/services/telegram/types'
 
 const HISTORY_COLLECTION = 'telegramChatHistory'
@@ -94,16 +96,45 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true })
     }
 
-    // Process via shared brain
+    // Process via shared brain. The chat brain may surface a status message
+    // mid-recovery (e.g. "מערכת מתקשה לענות, מנסה שוב...") — forward it to
+    // the same chat. Failures here are non-fatal; we log and keep going.
     const result = await processChatMessage({
       uid: link.uid,
       text: message.text,
       displayName: message.from.first_name,
       historyCollection: HISTORY_COLLECTION,
       includeTasks: true,
+      onStatus: async (statusMsg) => {
+        try { await sendMessage(message.chat.id, statusMsg) }
+        catch (err) { console.warn('[Telegram Webhook] onStatus send failed:', err) }
+      },
     })
 
     await sendMessage(message.chat.id, result.reply)
+
+    // LLM exhausted in-line retries. Enqueue for cron-driven backoff retries
+    // AND fire the admin panic so we know upstream is sick. Both are server
+    // -only side effects — no client input gates either decision.
+    if (result.llmExhausted) {
+      try {
+        const id = await enqueueChatMessage({
+          uid: link.uid,
+          telegramChatId: message.chat.id,
+          displayName: message.from.first_name,
+          text: message.text,
+        })
+        console.warn(`[Telegram Webhook] Queued chat message id=${id} uid=${link.uid}`)
+      } catch (err) {
+        console.error('[Telegram Webhook] Enqueue failed:', err)
+      }
+      panicAdmin({
+        source: 'webhook-exhaust',
+        upstreamError: result.upstreamError || 'unknown',
+        uid: link.uid,
+        userTextSnippet: message.text,
+      }).catch(err => console.warn('[Telegram Webhook] panicAdmin failed:', err))
+    }
 
     // Send product selection keyboards
     if (result.pendingSelections?.length) {

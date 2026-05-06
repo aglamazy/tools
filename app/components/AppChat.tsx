@@ -44,17 +44,58 @@ function toUIMessage(row: ChatMessage): Message {
   return { role: row.role, content: row.content, thinking: row.thinking }
 }
 
+/**
+ * Backoff schedule (seconds) for client-side retry when /api/chat returns
+ * 503/retryable. Mirrors the server-side cron schedule in chatQueue.ts so
+ * the user-felt cadence is the same on both surfaces. Total ≈ 67 minutes.
+ */
+const RETRY_BACKOFF_SECONDS = [30, 60, 120, 300, 600, 1200, 1800]
+
+function formatDelay(seconds: number): string {
+  if (seconds < 60) return `${seconds} שניות`
+  const min = Math.round(seconds / 60)
+  return `${min} דקות`
+}
+
+/** AbortController-friendly sleep that rejects on `AbortError`. */
+function sleepAbortable(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'))
+      return
+    }
+    const t = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    const onAbort = () => {
+      clearTimeout(t)
+      signal.removeEventListener('abort', onAbort)
+      reject(new DOMException('Aborted', 'AbortError'))
+    }
+    signal.addEventListener('abort', onAbort)
+  })
+}
+
 export default function AppChat() {
   const { showToast } = useToast()
   const [messages, setMessages] = useState<Message[]>([])
   const [pendingSelections, setPendingSelections] = useState<PendingSelection[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [retryStatus, setRetryStatus] = useState<{ attempt: number; total: number; nextDelaySec: number } | null>(null)
   const [selectingKey, setSelectingKey] = useState<string | null>(null)
   const [uid, setUid] = useState<string | null>(null)
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  /**
+   * Tracks the in-flight retry sequence. `abort()` is called when the user
+   * sends a new message or unmounts the chat — without this, the polling
+   * loop would keep firing fetches even after the user gave up on the prior
+   * message (and would also race the new message's own retry sequence).
+   */
+  const retryControllerRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -138,44 +179,120 @@ export default function AppChat() {
     const text = input.trim()
     if (!text || loading || !uid || !activeChatId) return
 
+    // Cancel any prior retry sequence — sending a new message implicitly
+    // abandons the previous one. The user has moved on.
+    if (retryControllerRef.current) {
+      retryControllerRef.current.abort()
+      retryControllerRef.current = null
+    }
+
     const userMsg: Message = { role: 'user', content: text }
     setMessages(prev => [...prev, userMsg])
     setInput('')
     setLoading(true)
+    setRetryStatus(null)
     setPendingSelections([])
 
+    const controller = new AbortController()
+    retryControllerRef.current = controller
+
+    // We persist the user message to local Dexie immediately so it survives
+    // a refresh, but we ONLY persist the assistant reply on success — a 503
+    // means the server didn't persist either, and we shouldn't bake a fake
+    // assistant message into local history that the next retry can't see.
     try {
       await chatHistoryStore.appendMessage(uid, activeChatId, userMsg)
 
-      const token = await getIdToken()
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ message: text }),
-      })
+      const totalAttempts = 1 + RETRY_BACKOFF_SECONDS.length
+      let attempt = 0
 
-      const data = await res.json()
-      if (data.success) {
-        const assistantMsg: Message = { role: 'assistant', content: data.reply, thinking: data.thinking }
-        setMessages(prev => [...prev, assistantMsg])
-        await chatHistoryStore.appendMessage(uid, activeChatId, assistantMsg)
-        if (data.pendingSelections?.length) {
-          setPendingSelections(data.pendingSelections)
+      while (attempt < totalAttempts) {
+        attempt += 1
+
+        if (controller.signal.aborted) return
+
+        let response: Response
+        let data: { success?: boolean; retryable?: boolean; reply?: string; thinking?: string; error?: string; pendingSelections?: PendingSelection[] }
+        try {
+          const token = await getIdToken()
+          response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({ message: text }),
+            signal: controller.signal,
+          })
+          data = await response.json()
+        } catch (err) {
+          if (controller.signal.aborted) return
+          // Network errors are also retryable on the same backoff schedule.
+          console.warn('[AppChat] fetch failed, treating as retryable:', err)
+          data = { success: false, retryable: true, error: 'network' }
+          response = new Response(null, { status: 503 })
         }
-      } else {
-        showToast('error', data.error || 'שגיאה בשליחת ההודעה')
+
+        if (data.success) {
+          const assistantMsg: Message = { role: 'assistant', content: data.reply || '', thinking: data.thinking }
+          setMessages(prev => [...prev, assistantMsg])
+          await chatHistoryStore.appendMessage(uid, activeChatId, assistantMsg)
+          if (data.pendingSelections?.length) {
+            setPendingSelections(data.pendingSelections)
+          }
+          setRetryStatus(null)
+          return
+        }
+
+        // Non-retryable server error (auth, 400, 500). Surface and stop.
+        if (!data.retryable) {
+          showToast('error', data.error || 'שגיאה בשליחת ההודעה')
+          return
+        }
+
+        // Out of retry budget — give up with a Hebrew assistant message.
+        // The admin panic was already fired by the server on first exhaust;
+        // the client deliberately does NOT call panic itself.
+        const backoffIdx = attempt - 1
+        if (backoffIdx >= RETRY_BACKOFF_SECONDS.length) {
+          const giveUp: Message = {
+            role: 'assistant',
+            content: '⚠️ מערכת התקשורת לא מגיבה. הודענו לאדמין — נסה שוב מאוחר יותר.',
+          }
+          setMessages(prev => [...prev, giveUp])
+          await chatHistoryStore.appendMessage(uid, activeChatId, giveUp)
+          setRetryStatus(null)
+          return
+        }
+
+        const delaySec = RETRY_BACKOFF_SECONDS[backoffIdx]
+        setRetryStatus({ attempt: attempt, total: totalAttempts, nextDelaySec: delaySec })
+        try {
+          await sleepAbortable(delaySec * 1000, controller.signal)
+        } catch {
+          return
+        }
       }
     } catch (err) {
       console.error('[AppChat] Error:', err)
       showToast('error', 'שגיאה בחיבור לשרת')
     } finally {
+      if (retryControllerRef.current === controller) retryControllerRef.current = null
       setLoading(false)
+      setRetryStatus(null)
       setTimeout(() => inputRef.current?.focus(), 100)
     }
   }, [input, loading, uid, activeChatId, showToast])
+
+  // Cancel any in-flight retry when the component unmounts or the user logs out.
+  useEffect(() => {
+    return () => {
+      if (retryControllerRef.current) {
+        retryControllerRef.current.abort()
+        retryControllerRef.current = null
+      }
+    }
+  }, [])
 
   const handleSelect = async (searchKey: string, resultIndex: number) => {
     setSelectingKey(searchKey)
@@ -266,9 +383,18 @@ export default function AppChat() {
           </div>
         ))}
 
-        {loading && (
+        {loading && !retryStatus && (
           <div className="app-chat-bubble app-chat-assistant app-chat-loading">
             <span className="mr-dot-pulse" />
+          </div>
+        )}
+
+        {retryStatus && (
+          <div
+            className="app-chat-bubble app-chat-assistant"
+            style={{ background: '#fef3c7', color: '#92400e', borderRadius: '0.5rem', padding: '0.6rem 0.8rem' }}
+          >
+            🤖 המערכת מתקשה לענות — מנסה שוב (ניסיון {retryStatus.attempt}/{retryStatus.total}). הניסיון הבא בעוד {formatDelay(retryStatus.nextDelaySec)}.
           </div>
         )}
 

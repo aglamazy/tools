@@ -62,7 +62,24 @@ export interface ChatResult {
   reply: string
   thinking?: string
   actions: ChatAction[]
+  /**
+   * True when every step of the in-line recovery ladder failed. The caller
+   * decides what to do next: Telegram webhook enqueues + panics; web route
+   * returns 503 + panics; cron records the failed attempt for backoff.
+   */
+  llmExhausted?: boolean
+  /** Server-observed upstream error string from the last LLM attempt. */
+  upstreamError?: string
 }
+
+/**
+ * Optional progress callback for long-running recovery (e.g. between retry 2
+ * and retry 3 we tell the user via Telegram that we're still trying). Called
+ * with a Hebrew string; the caller is responsible for delivering it.
+ */
+export type ChatStatusReporter = (msg: string) => Promise<void>
+
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 
 export interface ChatAction {
   action: string
@@ -113,6 +130,7 @@ const SYSTEM_PROMPT = `אתה AglamazoBot — עוזר משפחתי לניהול
 - כשמשתמש שואל על מחיר מוצר שאינו ברשימה, או רוצה להוסיף מוצר — השתמש ב-search_product
 - אם ההודעה היא שיחה רגילה — תגיב בטבעיות, בלי קריאות לפונקציות
 - אם לא ברור מה המשתמש רוצה, שאל — אל תנחש
+- **חובה תמיד להחזיר תשובה** (טקסט או קריאה לפונקציה). לעולם אל תשאיר את ההודעה ריקה. אם אין מה לעשות, ענה לפחות באישור קצר ("אוקיי", "הבנתי")
 
 ## הזמנה פתוחה (orderStatus: active/review)
 כשיש הזמנה פתוחה בחנות:
@@ -138,7 +156,12 @@ const SYSTEM_PROMPT = `אתה AglamazoBot — עוזר משפחתי לניהול
 - **אל תרשום את רשימת המשבצות שוב** — כבר נראתה למשתמש
 - **השתמש אך ורק בתאריכים שמופיעים ברשימה** — אסור להמציא תאריכים
 - אם אין לתאריך המבוקש — ציין זאת ושאל אם לזמין לתאריך הקרוב ביותר
-- כשמפעיל trigger_order: כתוב רק "מזמין..." — אל תודיע על הצלחה לפני שהמערכת אישרה
+
+## פתיחת הזמנה (trigger_order)
+- כשהמשתמש מבקש לפתוח הזמנה — **קרא ל-trigger_order ישירות**, בלי לכתוב טקסט מקדים כמו "מזמין..."
+- המערכת תבצע את ההזמנה ותחזיר תוצאה עם מספר הזמנה ופרטי משלוח (או הודעת שגיאה)
+- אחרי שהמערכת מחזירה תוצאה — סכם למשתמש: מספר הזמנה, חלון משלוח, וכל פריטים שלא נוספו (אם יש). תהיה תמציתי.
+- **אסור להודיע על הצלחה לפני שהמערכת אישרה.** רק אחרי שהיא מחזירה את האישור.
 
 ## כלל יסוד — אל תמציא נתונים
 אסור להמציא מספרי הזמנה, שמות מוצרים, מחירים, כמויות או תאריכים. אם צריך ערך כזה — תקרא לכלי שמחזיר אותו. אם כלי כבר החזיר ערך בשיחה הזו — תצטט אותו כפי שהוא, אל תייצר אותו מחדש.`
@@ -161,12 +184,6 @@ function capBySize(messages: LLMMessage[], maxChars = MAX_HISTORY_CHARS): LLMMes
   return messages.slice(start)
 }
 
-/** Keep only the last `keep` messages. Used as a recovery step when Gemini returns empty. */
-function compactHistory(messages: LLMMessage[], keep: number): LLMMessage[] {
-  if (messages.length <= keep) return messages
-  return messages.slice(-keep)
-}
-
 function isEmptyResponse(r: { text: string; functionCalls?: unknown[]; error?: string }): boolean {
   return !r.text && !r.functionCalls?.length && !!r.error
 }
@@ -180,6 +197,7 @@ function isEmptyResponse(r: { text: string; functionCalls?: unknown[]; error?: s
 export async function processChat(
   messages: LLMMessage[],
   context: UserContext,
+  onStatus?: ChatStatusReporter,
 ): Promise<ChatResult> {
   const contextBlock = buildContextBlock(context)
   const fullSystem = `${SYSTEM_PROMPT}\n\n## מצב נוכחי\n${contextBlock}`
@@ -209,29 +227,42 @@ export async function processChat(
   })
   console.log('========================================\n')
 
-  // Gemini occasionally returns an empty response (finishReason: STOP, 0 parts).
-  // Recovery ladder:
-  //   1. Retry with compacted history (drops old tokens).
-  //   2. Retry with compacted history AND temperature=0 (deterministic — helps
-  //      on short ambiguous turns like "אתה בטוח?" → "כן" where 0.7 sampling
-  //      seems to return 0 parts).
-  let result = await callWithTools(cleanMessages, 0.7)
+  // Gemini-2.5-flash occasionally returns finishReason=STOP with 0 parts and 0
+  // output tokens — the router decided "nothing to say" before generation. The
+  // big tool array (~2000 tokens of Hebrew function declarations) is a strong
+  // trigger. Recovery ladder, escalating with deliberate spacing so transient
+  // upstream pressure has a chance to clear:
+  //   1. Immediate retry @ temp=0 (deterministic resample; covers sampling flake).
+  //   2. Sleep 1s, retry @ temp=0 with tools.
+  //   3. Tell the user via Telegram we're still trying, sleep 5s, retry WITHOUT
+  //      tools + nudge prompt — forces a plain-text reply.
+  // If all three fail, the caller queues the message for cron-driven retry.
+  let result = await callLLM(cleanMessages, 0.7, /*withTools*/ true)
   if (isEmptyResponse(result)) {
-    const compacted = compactHistory(cleanMessages, 6)
-    console.warn(`[ChatProcessor] Empty Gemini response (${result.error}). Retrying with compacted history: ${cleanMessages.length} → ${compacted.length} messages`)
-    result = await callWithTools(compacted, 0.7)
+    console.warn(`[ChatProcessor] Empty Gemini response (${result.error}). Retry 1: sleep 1s + temperature=0.`)
+    await sleep(1000)
+    result = await callLLM(cleanMessages, 0, /*withTools*/ true)
   }
   if (isEmptyResponse(result)) {
-    console.warn(`[ChatProcessor] Still empty. Retrying with temperature=0 (deterministic).`)
-    result = await callWithTools(compactHistory(cleanMessages, 6), 0)
+    console.warn(`[ChatProcessor] Still empty. Retry 2: status notice + sleep 5s + drop tools + nudge.`)
+    if (onStatus) {
+      try { await onStatus('🤖 המערכת מתקשה לענות, מנסה שוב...') }
+      catch (notifyErr) { console.warn('[ChatProcessor] onStatus failed:', notifyErr) }
+    }
+    await sleep(5000)
+    const nudged: LLMMessage[] = [
+      ...cleanMessages,
+      { role: 'user', content: 'תגיב למשתמש בעברית בקצרה. אם אינך בטוח מה המשתמש רוצה, שאל שאלת הבהרה.' },
+    ]
+    result = await callLLM(nudged, 0, /*withTools*/ false)
   }
 
-  async function callWithTools(msgs: LLMMessage[], temperature: number) {
+  async function callLLM(msgs: LLMMessage[], temperature: number, withTools: boolean) {
     return gemini.chatWithTools({
       system: fullSystem,
       messages: msgs,
       maxTokens: 2048,
-      tools: ACTION_DECLARATIONS,
+      tools: withTools ? ACTION_DECLARATIONS : undefined,
       temperature,
     })
   }
@@ -240,9 +271,18 @@ export async function processChat(
   console.log('[ChatProcessor] functionCalls:', result.functionCalls?.map(fc => `${fc.name}(${JSON.stringify(fc.args)})`).join(', ') || 'none')
   console.log('[ChatProcessor] error:', result.error)
 
+  // Last-resort: every recovery step (immediate, sleep+temp=0, sleep+drop-tools)
+  // failed. Signal `llmExhausted` and surface the upstream error verbatim so
+  // the caller (webhook / web route / cron) can decide whether to enqueue,
+  // return 503, or fire admin panic.
   if (result.error && !result.text && !result.functionCalls?.length) {
-    console.error('[ChatProcessor] LLM error:', result.error)
-    return { reply: 'שגיאה. נסה שוב.', actions: [] }
+    console.error('[ChatProcessor] LLM error after all retries:', result.error)
+    return {
+      reply: `⚠️ המערכת לא מגיבה כרגע. נסה שוב בעוד מספר דקות.`,
+      actions: [],
+      llmExhausted: true,
+      upstreamError: result.error,
+    }
   }
 
   // Map function calls directly to actions — no regex parsing needed
