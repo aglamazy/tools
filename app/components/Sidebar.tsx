@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation'
 import { businessStore } from '@/app/stores/businessStore'
 import { userTierStore, UserTier } from '@/app/stores/userTierStore'
 import { config, routes } from '@/app/config'
+import { isPageAllowed } from '@/app/config/variants'
 import type { Business } from '@/app/db/financeDB'
 import { BUSINESS_TYPE_CONFIG } from '@/app/types/businessColors'
 import { BusinessStatusBadge } from '@/app/components/TaxExemptBadge'
@@ -56,6 +57,15 @@ const allModules: Module[] = [
     includeBusinesses: true,
     items: [
       { id: 'taxes', title: 'מסים', href: routes.taxes, icon: '🏛️', available: true, requiredTier: UserTier.PRO },
+    ],
+  },
+  {
+    id: 'shopping',
+    label: 'קניות',
+    icon: '🛒',
+    items: [
+      { id: 'stores', title: 'חנויות', href: routes.stores, icon: '🛒', available: true, requiredTier: UserTier.FREE },
+      { id: 'chat', title: 'צ׳אט', href: routes.chat, icon: '💬', available: true, requiredTier: UserTier.FREE },
     ],
   },
   {
@@ -110,10 +120,13 @@ export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose
   const [userTier, setUserTier] = useState<UserTier>(userTierStore.get())
   const [upgradePrompt, setUpgradePrompt] = useState<{ item: MenuItem } | null>(null)
 
-  // Filter modules based on config and access
+  // Filter modules based on variant whitelist, dev-mode, and tier access.
+  // Variant filter runs first so a missing page id doesn't reach the
+  // tier-gated branch that would otherwise show "🔒 locked".
   const modules = useMemo(() => allModules.map(mod => ({
     ...mod,
     items: mod.items
+      .filter(item => isPageAllowed(item.id))
       .filter(item => config.developerMode || item.id !== 'dev-db')
       .filter(item => item.requiredTier !== UserTier.OWNER || userTierStore.hasAccess(UserTier.OWNER)),
   })).filter(mod => mod.items.length > 0 || (mod.includeBusinesses && pinnedBusinesses.length > 0)),

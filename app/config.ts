@@ -1,8 +1,9 @@
 // Application configuration
+import { VARIANT_CONFIG } from './config/variants'
 
 export const branding = {
-  name: 'Aglamazo',
-  tagline: 'הראש השקט של העסק שלך',
+  name: VARIANT_CONFIG.name,
+  tagline: VARIANT_CONFIG.tagline,
 } as const
 
 export const routes = {
