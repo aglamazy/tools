@@ -32,7 +32,7 @@ export default function SalikoLanding() {
           <div className="landing-step">
             <div className="landing-step-number">1</div>
             <h3>חבר חנות</h3>
-            <p>מחבר את החשבון שלך בשופרסל או רמי לוי. ההתחברות מוצפנת — הסיסמה שלך לעולם לא נשמרת בפלט.</p>
+            <p>מחבר את החשבון שלך בשופרסל או מקור השפע. ההתחברות מוצפנת — הסיסמה שלך לעולם לא נשמרת בפלט.</p>
           </div>
           <div className="landing-step">
             <div className="landing-step-number">2</div>
