@@ -7,7 +7,6 @@ import { GeminiClient } from '@/app/services/llm/geminiClient'
 import { ACTION_DECLARATIONS } from './actionDeclarations'
 import type { LLMMessage } from '@/app/services/llm/types'
 import { VARIANT_CONFIG } from '@/app/config/variants'
-import { REXAIL_STORES } from '@/app/services/grocery/rexailStores'
 
 const gemini = new GeminiClient()
 
@@ -21,6 +20,8 @@ export interface StoreContext {
   id: string
   label: string
   connected: boolean
+  /** Optional chain website URL — surfaced to the LLM so it can hand it out. */
+  siteOrigin?: string
   standingList?: { name: string; qty: number; unit?: string }[]
   pendingChanges?: {
     add: { name: string; qty: number; unit?: string; validTo?: string }[]
@@ -100,7 +101,9 @@ const SYSTEM_PROMPT = `אתה ${VARIANT_CONFIG.botName} — עוזר משפחת�
 כל פעולת קניות מכוונת לחנות ספציפית. **חובה** לשלוח store בכל קריאה לפונקציה.
 - אם המשתמש מזכיר שם חנות — השתמש בה **וקרא ל-set_session עם activeStore**
 - אם לא מזכיר חנות — השתמש ב-activeStore מהסשן (אם יש), אחרת חנות ברירת המחדל
-- מיפוי שמות: "שופרסל" → store="shufersal", "מקור השפע" → store="retalix". כשהמשתמש שואל על חנות שמופיעה ב"חנויות נתמכות נוספות" שלמטה — ענה שאנחנו תומכים בה אבל החיבור עוד לא מוכן (בקרוב), והפנה לאתר החנות.
+- מיפוי שמות: "שופרסל" → store="shufersal", "מקור השפע" → store="retalix". שאר החנויות — store="rexail_<id>" לפי הרשימה בהקשר.
+- כל חנות שמופיעה ברשימה "חנויות נתמכות" בהקשר היא חנות פעילה, ואפשר לחפש בה מוצרים, לפתוח בה הזמנה, לקבוע בה לוח זמנים, וכו'. כשמשתמש שואל "אילו חנויות?" — תן את הרשימה המלאה מההקשר עם השם וכתובת האתר, נקודה.
+- הסטטוס "מחובר" ליד חנות מציין שהמשתמש הזה כבר התחבר לחנות. בלי הסטטוס הזה — המשתמש פשוט עוד לא חיבר את החשבון שלו, וזה לא קשור לזה שהחנות נתמכת או לא.
 
 ## שאלות חוצות חנויות (show_orders)
 כאשר המשתמש שואל על הזמנות באופן כללי בלי לציין חנות — למשל "יש הזמנות פתוחות?", "יש לי הזמנות?", "מה פתוח אצלי?" — קרא ל-show_orders **בלי להעביר store**. המערכת תבדוק את כל החנויות המחוברות ותחזיר תשובה משולבת. אל תסתמך על activeStore/ברירת מחדל לשאלה כזו.
@@ -314,21 +317,15 @@ function buildContextBlock(ctx: UserContext): string {
 
   if (ctx.displayName) parts.push(`משתמש: ${ctx.displayName}`)
 
-  // Supported stores — full directory. The LLM should rely on this list when
-  // answering "what stores do you support?" rather than its training memory.
-  // Two tiers: chains we already integrate (chat-actions work end-to-end),
-  // and Rexail boutiques we know about but for which checkout is not wired
-  // yet — for those, the LLM points users at the chain's own site.
-  const integratedIds = new Set((ctx.stores || []).map(s => s.id))
-  const directoryOnly = REXAIL_STORES.filter((s) => !integratedIds.has(s.id) && s.id !== 'rexail_makorhashefa')
+  // Supported stores — every Rexail-powered chain plus Shufersal. The LLM
+  // should rely on this list verbatim rather than its training memory.
+  // Includes the chain website so the LLM can hand it to users on request.
   parts.push('\n## חנויות נתמכות')
   if (ctx.stores?.length) {
-    parts.push('### משולבות (פעולות הסוכן זמינות)')
-    for (const s of ctx.stores) parts.push(`- ${s.label} (${s.id})`)
-  }
-  if (directoryOnly.length) {
-    parts.push('### בקטלוג (חיבור עוד לא מוכן — הפנה לאתר החנות)')
-    for (const s of directoryOnly) parts.push(`- ${s.label} — ${s.siteOrigin}${s.description ? ` (${s.description})` : ''}`)
+    for (const s of ctx.stores) {
+      const status = s.connected ? ' — מחובר' : ''
+      parts.push(`- ${s.label} (${s.id})${s.siteOrigin ? ` — ${s.siteOrigin}` : ''}${status}`)
+    }
   }
 
   // Session state

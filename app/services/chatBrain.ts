@@ -13,6 +13,7 @@ import { getUserStores, getStoreData } from '@/app/services/grocery/groceryStore
 import { getAllStores } from '@/app/services/grocery/storeRegistry'
 import { initStores } from '@/app/services/grocery/initStores'
 import { isCredentialsVerified } from '@/app/services/grocery/shufersalClient'
+import { REXAIL_STORES } from '@/app/services/grocery/rexailStores'
 import { listTasks } from '@/app/services/taskFirestoreService'
 import type { LLMMessage } from '@/app/services/llm/types'
 
@@ -88,10 +89,20 @@ async function buildContext(uid: string, displayName?: string, includeTasks = fa
   // talk about "we support Shufersal, מקור השפע, etc.") but everything
   // shows as not-connected, no standing list, no schedule. Tools that need
   // server-side state will return their own auth-required errors when called.
+  // Lookup table for chain website URL by plugin id (Rexail entries only —
+  // Shufersal's site is well-known to the LLM). Used to enrich the context.
+  const siteByStoreId = new Map<string, string>()
+  for (const e of REXAIL_STORES) siteByStoreId.set(e.id, e.siteOrigin)
+
   if (isAnonUid(uid)) {
     return {
       displayName,
-      stores: getAllStores().map(s => ({ id: s.id, label: s.label, connected: false })),
+      stores: getAllStores().map(s => ({
+        id: s.id,
+        label: s.label,
+        connected: false,
+        siteOrigin: siteByStoreId.get(s.id),
+      })),
       defaultStore: 'shufersal',
       session,
       tasks: undefined,
@@ -113,6 +124,7 @@ async function buildContext(uid: string, displayName?: string, includeTasks = fa
         id: store.id,
         label: store.label,
         connected,
+        siteOrigin: siteByStoreId.get(store.id),
         standingList: storeData?.standingList ? Object.values(storeData.standingList).map(i => ({ name: i.name, qty: i.qty, unit: i.unit })) : undefined,
         pendingChanges: storeData ? {
           add: Object.values(storeData.pendingChanges.add).map(e => ({

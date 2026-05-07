@@ -124,50 +124,55 @@ async function rexailFetch(
 }
 
 // --- Credentials (Firestore) ---
+//
+// All functions are storeId-aware. The credential + catalog Firestore paths
+// scope under groceries/{uid}/stores/{storeId} so multiple Rexail-powered
+// chains can coexist for the same user without colliding. Each plugin
+// instance binds its own storeId via createRexailPlugin().
 
-function credRef(uid: string) {
+function credRef(uid: string, storeId: string) {
   return getAdminFirestore().collection('groceries').doc(uid)
-    .collection('stores').doc('retalix')
+    .collection('stores').doc(storeId)
     .collection('private').doc('credentials')
 }
 
-function catalogRef(uid: string) {
+function catalogRef(uid: string, storeId: string) {
   return getAdminFirestore().collection('groceries').doc(uid)
-    .collection('stores').doc('retalix')
+    .collection('stores').doc(storeId)
     .collection('private').doc('catalog')
 }
 
-export async function loadCredentials(uid: string): Promise<RetalixCredentials | null> {
-  const doc = await credRef(uid).get()
+export async function loadCredentials(uid: string, storeId: string): Promise<RetalixCredentials | null> {
+  const doc = await credRef(uid, storeId).get()
   if (!doc.exists) return null
   return doc.data() as RetalixCredentials
 }
 
-export async function saveRetalixCredentials(uid: string, phone: string, config?: Partial<RetalixStoreConfig>): Promise<void> {
+export async function saveRetalixCredentials(uid: string, storeId: string, phone: string, config: RetalixStoreConfig): Promise<void> {
   const cred: RetalixCredentials = {
     phone,
     token: null,
-    config: { ...DEFAULT_CONFIG, ...config },
+    config,
     verified: false,
     otpPending: false,
   }
-  await credRef(uid).set(cred)
+  await credRef(uid, storeId).set(cred)
 }
 
-export async function isRetalixAuthenticated(uid: string): Promise<boolean> {
-  const cred = await loadCredentials(uid)
+export async function isRetalixAuthenticated(uid: string, storeId: string): Promise<boolean> {
+  const cred = await loadCredentials(uid, storeId)
   return !!cred?.verified && !!cred?.token
 }
 
-export async function hasRetalixCredentials(uid: string): Promise<boolean> {
-  const doc = await credRef(uid).get()
+export async function hasRetalixCredentials(uid: string, storeId: string): Promise<boolean> {
+  const doc = await credRef(uid, storeId).get()
   return doc.exists
 }
 
 // --- Auth (OTP) ---
 
-export async function sendOtp(uid: string): Promise<void> {
-  const cred = await loadCredentials(uid)
+export async function sendOtp(uid: string, storeId: string): Promise<void> {
+  const cred = await loadCredentials(uid, storeId)
   if (!cred) throw new Error('Retalix credentials not configured')
 
   const resp = await rexailFetch(cred.config, 'apply-for-authentication', {
@@ -178,12 +183,12 @@ export async function sendOtp(uid: string): Promise<void> {
     throw new Error(`OTP failed: ${resp.resolvedMessage || resp.message || 'unknown'}`)
   }
 
-  await credRef(uid).update({ otpPending: true })
-  console.log(`[Retalix] OTP sent to ${cred.phone}`)
+  await credRef(uid, storeId).update({ otpPending: true })
+  console.log(`[Retalix:${storeId}] OTP sent to ${cred.phone}`)
 }
 
-export async function verifyOtp(uid: string, otp: string): Promise<string> {
-  const cred = await loadCredentials(uid)
+export async function verifyOtp(uid: string, storeId: string, otp: string): Promise<string> {
+  const cred = await loadCredentials(uid, storeId)
   if (!cred) throw new Error('Retalix credentials not configured')
 
   const resp = await rexailFetch(cred.config, 'authenticate', {
@@ -201,21 +206,21 @@ export async function verifyOtp(uid: string, otp: string): Promise<string> {
   const token = resp.data?.second
   if (!token) throw new Error('No token in OTP response')
 
-  await credRef(uid).update({ token, verified: true, otpPending: false })
+  await credRef(uid, storeId).update({ token, verified: true, otpPending: false })
   console.log(`[Retalix] OTP verified for uid=${uid}`)
   return token
 }
 
-async function getToken(uid: string): Promise<{ token: string; config: RetalixStoreConfig }> {
-  const cred = await loadCredentials(uid)
+async function getToken(uid: string, storeId: string): Promise<{ token: string; config: RetalixStoreConfig }> {
+  const cred = await loadCredentials(uid, storeId)
   if (!cred?.token) throw new Error('Retalix not authenticated. Send OTP first.')
   return { token: cred.token, config: cred.config }
 }
 
 // --- Catalog ---
 
-export async function fetchCatalog(uid: string): Promise<RetalixProduct[]> {
-  const { token, config } = await getToken(uid)
+export async function fetchCatalog(uid: string, storeId: string): Promise<RetalixProduct[]> {
+  const { token, config } = await getToken(uid, storeId)
 
   const resp = await rexailFetch(config, 'public/store/catalog', {
     token,
@@ -252,13 +257,13 @@ export async function fetchCatalog(uid: string): Promise<RetalixProduct[]> {
   })
 
   // Cache in Firestore
-  await catalogRef(uid).set({ products, fetchedAt: new Date().toISOString() })
-  console.log(`[Retalix] Fetched ${products.length} products`)
+  await catalogRef(uid, storeId).set({ products, fetchedAt: new Date().toISOString() })
+  console.log(`[Retalix:${storeId}] Fetched ${products.length} products`)
   return products
 }
 
-async function loadCatalog(uid: string): Promise<RetalixProduct[]> {
-  const doc = await catalogRef(uid).get()
+async function loadCatalog(uid: string, storeId: string): Promise<RetalixProduct[]> {
+  const doc = await catalogRef(uid, storeId).get()
   if (doc.exists) {
     const data = doc.data()!
     // Refresh if older than 24h
@@ -267,11 +272,11 @@ async function loadCatalog(uid: string): Promise<RetalixProduct[]> {
       return data.products as RetalixProduct[]
     }
   }
-  return fetchCatalog(uid)
+  return fetchCatalog(uid, storeId)
 }
 
-export async function searchCatalog(uid: string, query: string): Promise<RetalixSearchResult[]> {
-  const products = await loadCatalog(uid)
+export async function searchCatalog(uid: string, storeId: string, query: string): Promise<RetalixSearchResult[]> {
+  const products = await loadCatalog(uid, storeId)
   const q = query.toLowerCase()
 
   const nameMatch = products.filter(p =>
@@ -304,8 +309,8 @@ export async function searchCatalog(uid: string, query: string): Promise<Retalix
 }
 
 /** Resolve sellingUnitId for a product by its catalog ID. Uses cached catalog. */
-export async function resolveSellingUnitId(uid: string, productId: number): Promise<number> {
-  const products = await loadCatalog(uid)
+export async function resolveSellingUnitId(uid: string, storeId: string, productId: number): Promise<number> {
+  const products = await loadCatalog(uid, storeId)
   const product = products.find(p => p.id === productId)
   if (!product) return 0
   const kgUnit = product.sellingUnits.find(u => u.unitName === 'ק"ג')
@@ -332,8 +337,8 @@ function toEnglishDay(day: string): string | undefined {
 
 // --- Delivery Slots ---
 
-export async function getSlots(uid: string, dayName?: string): Promise<RetalixSlot[]> {
-  const { token, config } = await getToken(uid)
+export async function getSlots(uid: string, storeId: string, dayName?: string): Promise<RetalixSlot[]> {
+  const { token, config } = await getToken(uid, storeId)
 
   const resp = await rexailFetch(config,
     `client/stores/store-available-service-areas?storeId=${config.storeId}&allServiceHours=false`,
@@ -359,8 +364,8 @@ export async function getSlots(uid: string, dayName?: string): Promise<RetalixSl
 
 // --- Order Flow ---
 
-export async function saveDrafts(uid: string, items: { id: number; qty: number; sellingUnitId: number }[]): Promise<void> {
-  const { token, config } = await getToken(uid)
+export async function saveDrafts(uid: string, storeId: string, items: { id: number; qty: number; sellingUnitId: number }[]): Promise<void> {
+  const { token, config } = await getToken(uid, storeId)
   const now = Date.now()
 
   const cartItems = items.map(item => ({
@@ -382,8 +387,8 @@ export async function saveDrafts(uid: string, items: { id: number; qty: number; 
   console.log(`[Retalix] Drafts saved: ${items.length} items`)
 }
 
-async function prepareOrder(uid: string, slot: RetalixSlot): Promise<string> {
-  const { token, config } = await getToken(uid)
+async function prepareOrder(uid: string, storeId: string, slot: RetalixSlot): Promise<string> {
+  const { token, config } = await getToken(uid, storeId)
 
   const resp = await rexailFetch(config, 'client/orders/new/prepare-to-place-order', {
     body: JSON.stringify({
@@ -407,8 +412,8 @@ async function prepareOrder(uid: string, slot: RetalixSlot): Promise<string> {
   return orderToken
 }
 
-async function getPaymentMethod(uid: string): Promise<string> {
-  const { token, config } = await getToken(uid)
+async function getPaymentMethod(uid: string, storeId: string): Promise<string> {
+  const { token, config } = await getToken(uid, storeId)
 
   const resp = await rexailFetch(config,
     `client/payments-methods/my-payment-options?storeId=${config.storeId}`,
@@ -426,13 +431,14 @@ async function getPaymentMethod(uid: string): Promise<string> {
 
 export async function checkout(
   uid: string,
+  storeId: string,
   items: { id: number; qty: number; sellingUnitId: number }[],
   options: { day?: string; hour?: number; dryRun?: boolean; nearest?: boolean } = {},
 ): Promise<RetalixOrderResult> {
-  const { config } = await getToken(uid)
+  const { config } = await getToken(uid, storeId)
 
   // 1. Save drafts
-  await saveDrafts(uid, items)
+  await saveDrafts(uid, storeId, items)
 
   // 2. Get delivery slot
   const rawDay = options.day || (options.nearest ? undefined : config.preferredDay)
@@ -446,7 +452,7 @@ export async function checkout(
     const [, d, m, y] = exactDateMatch
     // Normalize to YYYY-MM-DD for comparison (API may return with/without leading zeros)
     const targetDate = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
-    const allSlots = await getSlots(uid)
+    const allSlots = await getSlots(uid, storeId)
     console.log(`[retalixClient] checkout exact date: rawDay=${rawDay} targetDate=${targetDate} allSlots[0].date=${allSlots[0]?.date}`)
     slots = allSlots.filter(s => {
       const m2 = s.date?.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
@@ -456,7 +462,7 @@ export async function checkout(
     slotErrorSuffix = ` לתאריך ${rawDay}`
   } else {
     const dayName = rawDay ? (toEnglishDay(rawDay) ?? rawDay) : undefined
-    slots = await getSlots(uid, dayName)
+    slots = await getSlots(uid, storeId, dayName)
     slotErrorSuffix = dayName ? ` ליום ${dayName}` : ''
   }
   if (slots.length === 0) return { success: false, error: `אין משבצות משלוח${slotErrorSuffix}. נסה list_slots לראות מה זמין.` }
@@ -469,13 +475,13 @@ export async function checkout(
   }
 
   // 3. Prepare order (get encrypted token)
-  const orderToken = await prepareOrder(uid, slot)
+  const orderToken = await prepareOrder(uid, storeId, slot)
 
   // 4. Get payment method
-  const paymentMethodId = await getPaymentMethod(uid)
+  const paymentMethodId = await getPaymentMethod(uid, storeId)
 
   // 5. Place order
-  const { token } = await getToken(uid)
+  const { token } = await getToken(uid, storeId)
   const now = Date.now()
   const cartItems = items.map(item => ({
     storeProduct: { id: item.id },
@@ -521,8 +527,8 @@ export async function checkout(
 
 // --- Orders ---
 
-export async function listOrders(uid: string): Promise<StoreOrder[]> {
-  const { token, config } = await getToken(uid)
+export async function listOrders(uid: string, storeId: string): Promise<StoreOrder[]> {
+  const { token, config } = await getToken(uid, storeId)
 
   const resp = await rexailFetch(config, 'client/orders/my-orders', { token })
   if (!resp.success) throw new Error(`List orders failed: ${resp.resolvedMessage}`)
@@ -550,8 +556,8 @@ export async function listOrders(uid: string): Promise<StoreOrder[]> {
 
 // --- Cancel ---
 
-export async function cancelOrder(uid: string, orderId: string): Promise<boolean> {
-  const { token, config } = await getToken(uid)
+export async function cancelOrder(uid: string, storeId: string, orderId: string): Promise<boolean> {
+  const { token, config } = await getToken(uid, storeId)
 
   const resp = await rexailFetch(config, 'client/orders/my-orders/cancel-order', {
     body: `orderId=${encodeURIComponent(orderId)}`,
@@ -563,58 +569,99 @@ export async function cancelOrder(uid: string, orderId: string): Promise<boolean
   return !!resp.success
 }
 
-// --- Plugin export ---
+// --- Plugin factory ---
+//
+// Each Rexail-powered chain gets its own plugin instance, identified by the
+// storeId we register it as. The factory captures the storeId + per-chain
+// config in closures so the plugin's OtpStorePlugin contract (which only
+// receives `uid`) still routes to the right chain's Firestore credentials,
+// catalog cache, and JWE-encrypted xWebsite token.
 
-export const retalixPlugin: OtpStorePlugin = {
+export interface RexailPluginEntry {
+  /** Plugin id used as Firestore subcollection key + LLM tool dispatch key. */
+  id: string
+  /** User-facing Hebrew label. */
+  label: string
+  /** Per-chain config: siteOrigin + xWebsite + storeId. Other fields fall back to shared Rexail defaults. */
+  config: Pick<RetalixStoreConfig, 'siteOrigin' | 'xWebsite' | 'storeId'> & Partial<RetalixStoreConfig>
+  /** Optional extra keywords for fuzzy chain-name matching in chat. */
+  keywords?: string[]
+}
+
+const SHARED_REXAIL_DEFAULTS: Omit<RetalixStoreConfig, 'siteOrigin' | 'xWebsite' | 'storeId'> = {
+  apiBase: 'https://client-il.rexail.com/client',
+  deviceId: '96b94189f7353d93283bf995265b5737',
+  deliveryAreaId: 0,           // user picks at connect time
+  deliveryMethod: 'deliveryByStore',
+  preferredDay: 'thursday',
+  preferredHour: 18,
+}
+
+export function createRexailPlugin(entry: RexailPluginEntry): OtpStorePlugin {
+  const fullConfig: RetalixStoreConfig = { ...SHARED_REXAIL_DEFAULTS, ...entry.config }
+  const storeId = entry.id
+
+  return {
+    id: storeId,
+    label: entry.label,
+    keywords: entry.keywords ?? [entry.label, storeId],
+    authType: 'otp',
+
+    isAuthenticated: (uid) => isRetalixAuthenticated(uid, storeId),
+
+    sendOtp: async (uid, phone) => {
+      await saveRetalixCredentials(uid, storeId, phone, fullConfig)
+      await sendOtp(uid, storeId)
+    },
+
+    verifyOtp: (uid, otp) => verifyOtp(uid, storeId, otp),
+
+    search: (uid, query): Promise<StoreSearchResult[]> => searchCatalog(uid, storeId, query),
+
+    checkout: async (uid, items: CheckoutItem[], options: CheckoutOptions): Promise<StoreCheckoutResult> => {
+      // Resolve missing sellingUnitIds from cached catalog (per-chain)
+      const retalixItems = await Promise.all(items.map(async i => {
+        const id = parseInt(i.code, 10)
+        const stored = i.sellingUnitId
+        const resolved = await resolveSellingUnitId(uid, storeId, id)
+        const sellingUnitId = stored || resolved
+        console.log(`[Rexail:${storeId}] checkout item id=${id} stored=${stored} resolved=${resolved} using=${sellingUnitId}`)
+        return { id, qty: i.qty, sellingUnitId }
+      }))
+      const hour = options.hour || (options.time ? parseInt(options.time, 10) : undefined)
+      return checkout(uid, storeId, retalixItems, { day: options.day, hour, dryRun: options.dryRun })
+    },
+
+    listOrders: (uid) => listOrders(uid, storeId),
+
+    cancelOrder: (uid, orderId) => cancelOrder(uid, storeId, orderId),
+
+    readOrderItems: async (_uid, _orderId): Promise<StoreOrderItem[]> => {
+      throw new Error(`Rexail (${storeId}): readOrderItems not implemented`)
+    },
+
+    modifyOrder: async (_uid, _orderId, _changes: OrderModification): Promise<OrderModificationResult> => {
+      throw new Error(`Rexail (${storeId}): modifyOrder not implemented`)
+    },
+
+    listSlots: async (uid): Promise<StoreSlotDay[]> => {
+      const slots = await getSlots(uid, storeId)
+      const byDate = new Map<string, StoreSlotDay>()
+      for (const s of slots) {
+        if (!byDate.has(s.date)) {
+          byDate.set(s.date, { day: s.dayHebrew, date: s.date, slots: [] })
+        }
+        byDate.get(s.date)!.slots.push({ day: s.dayHebrew, date: s.date, time: `${s.hour}:00` })
+      }
+      return Array.from(byDate.values())
+    },
+  }
+}
+
+/** Legacy export — Makor HaShefa as the original 'retalix' plugin (data continuity). */
+export const retalixPlugin: OtpStorePlugin = createRexailPlugin({
   id: 'retalix',
   label: 'מקור השפע',
   keywords: ['מקור השפע', 'makor', 'retalix', 'rexail'],
-  authType: 'otp',
-
-  isAuthenticated: isRetalixAuthenticated,
-  sendOtp: async (uid, phone) => {
-    await saveRetalixCredentials(uid, phone)
-    await sendOtp(uid)
-  },
-  verifyOtp,
-
-  search: async (uid, query): Promise<StoreSearchResult[]> => searchCatalog(uid, query),
-
-  checkout: async (uid, items: CheckoutItem[], options: CheckoutOptions): Promise<StoreCheckoutResult> => {
-    // Resolve missing sellingUnitIds from cached catalog
-    const retalixItems = await Promise.all(items.map(async i => {
-      const id = parseInt(i.code, 10)
-      const stored = i.sellingUnitId
-      const resolved = await resolveSellingUnitId(uid, id)
-      const sellingUnitId = stored || resolved
-      console.log(`[retalixPlugin] checkout item id=${id} stored=${stored} resolved=${resolved} using=${sellingUnitId}`)
-      return { id, qty: i.qty, sellingUnitId }
-    }))
-    const hour = options.hour || (options.time ? parseInt(options.time, 10) : undefined)
-    return checkout(uid, retalixItems, { day: options.day, hour, dryRun: options.dryRun })
-  },
-
-  listOrders,
-
-  cancelOrder,
-
-  readOrderItems: async (_uid, _orderId): Promise<StoreOrderItem[]> => {
-    throw new Error('Retalix: readOrderItems not implemented')
-  },
-
-  modifyOrder: async (_uid, _orderId, _changes: OrderModification): Promise<OrderModificationResult> => {
-    throw new Error('Retalix: modifyOrder not implemented')
-  },
-
-  listSlots: async (uid): Promise<StoreSlotDay[]> => {
-    const slots = await getSlots(uid)
-    const byDate = new Map<string, StoreSlotDay>()
-    for (const s of slots) {
-      if (!byDate.has(s.date)) {
-        byDate.set(s.date, { day: s.dayHebrew, date: s.date, slots: [] })
-      }
-      byDate.get(s.date)!.slots.push({ day: s.dayHebrew, date: s.date, time: `${s.hour}:00` })
-    }
-    return Array.from(byDate.values())
-  },
-}
+  config: { ...DEFAULT_CONFIG },
+})

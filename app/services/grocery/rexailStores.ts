@@ -23,7 +23,9 @@ export interface RexailStoreEntry {
 
 export const REXAIL_STORES: RexailStoreEntry[] = [
   {
-    id: 'rexail_makorhashefa',
+    // Makor HaShefa keeps the legacy 'retalix' plugin id for back-compat
+    // with existing Firestore data (groceries/{uid}/stores/retalix/...).
+    id: 'retalix',
     label: 'מקור השפע',
     description: 'רשת חנויות בריאות',
     siteOrigin: 'https://www.makorhashefa.co.il',

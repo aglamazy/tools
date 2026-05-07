@@ -17,7 +17,8 @@ import {
   setCredentialsVerified,
   login as shufersalLogin,
 } from '@/app/services/grocery/shufersalClient'
-import { sendOtp, verifyOtp, saveRetalixCredentials } from '@/app/services/grocery/retalixClient'
+// Note: retalixClient functions are no longer imported directly — the OTP
+// flow goes through the resolved plugin (multi-store Rexail support).
 import { getStore, getAllStores } from '@/app/services/grocery/storeRegistry'
 import { getUserStores, setDefaultStore, addActiveStore, getStoreData, addToStoreStanding, addStorePendingItems, removeFromStoreStanding, removeStorePendingItems, clearStorePending, movePendingToStanding as moveStorePendingToStanding, getStoreSchedule, setStoreSchedule } from '@/app/services/grocery/groceryStoreMulti'
 import type { OtpStorePlugin, CredentialsStorePlugin, StoreOrder } from '@/app/services/grocery/storeTypes'
@@ -719,10 +720,14 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
     case 'set_otp_phone': {
       const phone = typeof action.phone === 'string' ? action.phone.trim() : ''
       if (!phone) return 'חסר מספר טלפון.'
+      // Resolve which OTP-based chain the user is connecting. Default keeps
+      // the legacy 'retalix' (Makor HaShefa) for back-compat with old prompts.
+      const targetStoreId = await resolveActionStore(uid, action, sessionStore).catch(() => 'retalix')
+      const plugin = getStore(targetStoreId)
+      if (!plugin || plugin.authType !== 'otp') return `חנות "${targetStoreId}" לא תומכת בחיבור עם SMS.`
       try {
-        await saveRetalixCredentials(uid, phone)
-        await sendOtp(uid)
-        return 'שלחתי קוד SMS. שלח לי את הקוד שקיבלת.'
+        await (plugin as OtpStorePlugin).sendOtp(uid, phone)
+        return `שלחתי קוד SMS ל-${plugin.label}. שלח לי את הקוד שקיבלת.`
       } catch (err) {
         console.error('[ActionExecutor] Send OTP failed:', err)
         return 'שגיאה בשליחת SMS. בדוק את מספר הטלפון.'
@@ -732,10 +737,13 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
     case 'verify_otp': {
       const otp = typeof action.otp === 'string' ? action.otp.trim() : ''
       if (!otp) return 'חסר קוד.'
+      const targetStoreId = await resolveActionStore(uid, action, sessionStore).catch(() => 'retalix')
+      const plugin = getStore(targetStoreId)
+      if (!plugin || plugin.authType !== 'otp') return `חנות "${targetStoreId}" לא תומכת בחיבור עם SMS.`
       try {
-        await verifyOtp(uid, otp)
-        await addActiveStore(uid, 'retalix')
-        return 'חשבון מקור השפע חובר בהצלחה!'
+        await (plugin as OtpStorePlugin).verifyOtp(uid, otp)
+        await addActiveStore(uid, targetStoreId)
+        return `חשבון ${plugin.label} חובר בהצלחה!`
       } catch (err) {
         console.error('[ActionExecutor] Verify OTP failed:', err)
         return 'הקוד שגוי. נסה שוב או בקש קוד חדש.'
