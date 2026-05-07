@@ -35,6 +35,13 @@ export interface GroceryStorePlugin {
 
   // --- Slots ---
   listSlots(uid: string): Promise<StoreSlotDay[]>
+
+  /**
+   * List distinct product categories for the store. Returns Hebrew labels.
+   * For Rexail-powered stores this comes from the cached catalog. Stores
+   * that don't have a category concept return [].
+   */
+  listCategories(uid: string): Promise<string[]>
 }
 
 /** Optional OTP methods — only for stores with authType === 'otp' */

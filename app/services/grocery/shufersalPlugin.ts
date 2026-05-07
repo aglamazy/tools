@@ -134,4 +134,9 @@ export const shufersalPlugin: CredentialsStorePlugin = {
       slots: d.slots.map(s => ({ day: s.day, date: s.date, time: s.time })),
     }))
   },
+
+  // Shufersal's catalog is enormous and dynamic; categories aren't trivially
+  // enumerable from our scrape. Return empty for now — the LLM will fall
+  // back to "search a specific item" instead of offering a category list.
+  listCategories: async (): Promise<string[]> => [],
 }

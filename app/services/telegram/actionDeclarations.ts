@@ -125,6 +125,16 @@ export const ACTION_DECLARATIONS: FunctionDeclaration[] = [
     },
   },
   {
+    name: 'list_categories',
+    description: 'הצג קטגוריות מוצרים זמינות בחנות. שימושי כשהמשתמש שואל "איזה קטגוריות יש?" או רוצה להתעיין לפי קטגוריה במקום שם מוצר.',
+    parameters: {
+      type: 'object',
+      properties: {
+        store: { type: 'string', description: 'מזהה חנות. אם לא מצוין — המערכת תשתמש ב-activeStore.' },
+      },
+    },
+  },
+  {
     name: 'trigger_order',
     description: 'בצע הזמנה. day: שם יום בעברית או תאריך DD/MM/YYYY מרשימת המשבצות',
     parameters: {

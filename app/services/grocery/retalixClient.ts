@@ -308,6 +308,21 @@ export async function searchCatalog(uid: string, storeId: string, query: string)
   })
 }
 
+/**
+ * Distinct categories present in the cached catalog. Sorted by frequency
+ * (most-popular first) so the LLM gets the obvious entries up front.
+ */
+export async function listCategories(uid: string, storeId: string): Promise<string[]> {
+  const products = await loadCatalog(uid, storeId)
+  const counts = new Map<string, number>()
+  for (const p of products) {
+    if (p.category) counts.set(p.category, (counts.get(p.category) || 0) + 1)
+  }
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([name]) => name)
+}
+
 /** Resolve sellingUnitId for a product by its catalog ID. Uses cached catalog. */
 export async function resolveSellingUnitId(uid: string, storeId: string, productId: number): Promise<number> {
   const products = await loadCatalog(uid, storeId)
@@ -655,6 +670,8 @@ export function createRexailPlugin(entry: RexailPluginEntry): OtpStorePlugin {
       }
       return Array.from(byDate.values())
     },
+
+    listCategories: (uid) => listCategories(uid, storeId),
   }
 }
 

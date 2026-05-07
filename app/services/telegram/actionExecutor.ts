@@ -29,7 +29,7 @@ import { randomBytes } from 'crypto'
 import { deleteMapping, lookupMapping, saveProductMapping } from '@/app/services/grocery/productResolver'
 
 /** Actions that require a connected store */
-const STORE_ACTIONS = new Set(['trigger_order', 'cancel_order', 'search_product', 're_search', 'list_slots', 'product_details'])
+const STORE_ACTIONS = new Set(['trigger_order', 'cancel_order', 'search_product', 're_search', 'list_slots', 'list_categories', 'product_details'])
 // Note: `show_orders` handles its own auth check because it iterates all
 // authenticated stores when no store is specified.
 
@@ -543,6 +543,23 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
       } catch (err) {
         console.error(`[ActionExecutor] list_slots failed (${storeId}):`, err)
         return `שגיאה בקריאת משבצות ב${store.label}.`
+      }
+    }
+
+    case 'list_categories': {
+      const storeId = await resolveActionStore(uid, action, sessionStore)
+      const store = getStore(storeId)
+      if (!store) return `חנות "${storeId}" לא מוכרת.`
+      try {
+        const cats = await store.listCategories(uid)
+        if (cats.length === 0) return `ב${store.label} אין רשימת קטגוריות זמינה — נסה לחפש מוצר ספציפי.`
+        // Cap at 30 to keep replies tight; the most common ones come first.
+        const list = cats.slice(0, 30).join(', ')
+        const more = cats.length > 30 ? ` (ועוד ${cats.length - 30})` : ''
+        return `קטגוריות ב${store.label}: ${list}${more}.`
+      } catch (err) {
+        console.error(`[ActionExecutor] list_categories failed (${storeId}):`, err)
+        return `שגיאה בקריאת קטגוריות ב${store.label}.`
       }
     }
 
