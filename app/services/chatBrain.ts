@@ -18,6 +18,15 @@ import type { LLMMessage } from '@/app/services/llm/types'
 
 const MAX_HISTORY = 10
 
+/**
+ * Anon-uid prefix for visitor sessions. Routes that hit chatBrain without
+ * a real Firebase uid generate `anon:<sessionId>` and pass it through —
+ * the brain treats anon ids as ephemeral (no Firestore reads/writes for
+ * chat history, no auth-required tools).
+ */
+export const ANON_PREFIX = 'anon:'
+export function isAnonUid(uid: string): boolean { return uid.startsWith(ANON_PREFIX) }
+
 export interface SessionState {
   activeStore?: string | null
 }
@@ -51,6 +60,8 @@ interface StoredChat {
 }
 
 async function loadChat(collection: string, uid: string): Promise<StoredChat> {
+  // Anon visitors don't have server-side history — Dexie holds it client-side.
+  if (isAnonUid(uid)) return { messages: [], session: {} }
   const doc = await getAdminFirestore().collection(collection).doc(uid).get()
   if (!doc.exists) return { messages: [], session: {} }
   const data = doc.data()!
@@ -61,6 +72,7 @@ async function loadChat(collection: string, uid: string): Promise<StoredChat> {
 }
 
 async function saveChat(collection: string, uid: string, messages: ChatMessage[], session: SessionState): Promise<void> {
+  if (isAnonUid(uid)) return // anon session — no Firestore writes
   const trimmed = messages.slice(-MAX_HISTORY)
   await getAdminFirestore().collection(collection).doc(uid).set({
     messages: trimmed,
@@ -72,6 +84,21 @@ async function saveChat(collection: string, uid: string, messages: ChatMessage[]
 // --- Context builder ---
 
 async function buildContext(uid: string, displayName?: string, includeTasks = false, session?: SessionState): Promise<UserContext> {
+  // Anon visitors: minimal context — list stores by name (so the LLM can
+  // talk about "we support Shufersal, מקור השפע, etc.") but everything
+  // shows as not-connected, no standing list, no schedule. Tools that need
+  // server-side state will return their own auth-required errors when called.
+  if (isAnonUid(uid)) {
+    return {
+      displayName,
+      stores: getAllStores().map(s => ({ id: s.id, label: s.label, connected: false })),
+      defaultStore: 'shufersal',
+      session,
+      tasks: undefined,
+      hasCredentials: false,
+    }
+  }
+
   const [hasCreds, userStores, tasks] = await Promise.all([
     isCredentialsVerified(uid).catch(() => false),
     getUserStores(uid).catch(() => ({ activeStores: [] as string[], defaultStore: 'shufersal' })),

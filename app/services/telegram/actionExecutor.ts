@@ -32,6 +32,18 @@ const STORE_ACTIONS = new Set(['trigger_order', 'cancel_order', 'search_product'
 // Note: `show_orders` handles its own auth check because it iterates all
 // authenticated stores when no store is specified.
 
+/**
+ * Actions that fundamentally require a real signed-in account
+ * (encrypted credentials, server-side cron registration, persistent state).
+ * Anon visitors get a polite Hebrew response instead of execution.
+ */
+const ACTIONS_REQUIRING_ACCOUNT = new Set([
+  'trigger_order', 'cancel_order', 'set_credentials', 'set_otp_phone',
+  'verify_otp', 'set_schedule', 'show_cart', 'show_orders',
+])
+
+const ANON_PREFIX = 'anon:'
+
 /** Resolve which store an action targets */
 async function resolveActionStore(uid: string, action: ChatAction, sessionStore?: string | null): Promise<string> {
   if (typeof action.store === 'string') return action.store
@@ -198,6 +210,13 @@ interface ExecuteOneResult {
 }
 
 async function executeOne(uid: string, action: ChatAction, sessionStore?: string | null): Promise<string | ExecuteOneResult | null> {
+  // Guard: anon visitors can chat freely with the LLM, but tools that need
+  // a real account (encrypted creds, schedule, cron) get a friendly Hebrew
+  // bounce. The LLM relays this back to the user verbatim.
+  if (uid.startsWith(ANON_PREFIX) && ACTIONS_REQUIRING_ACCOUNT.has(action.action)) {
+    return 'כדי להפעיל את הסוכן (לחבר חנות, לקבוע לוח זמנים, או לפתוח הזמנה) צריך להתחבר. כל השאר זמין גם בלי התחברות.'
+  }
+
   // Guard: store actions require authenticated store
   if (STORE_ACTIONS.has(action.action)) {
     const storeId = await resolveActionStore(uid, action, sessionStore)

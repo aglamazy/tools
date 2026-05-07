@@ -51,6 +51,24 @@ function toUIMessage(row: ChatMessage): Message {
  */
 const RETRY_BACKOFF_SECONDS = [30, 60, 120, 300, 600, 1200, 1800]
 
+/**
+ * Stable per-tab anonymous identity. Used as both the chatHistoryStore key
+ * and the value of the X-Anon-Session header sent to /api/chat. Persists
+ * across reloads in the same tab via sessionStorage; new tab → new id.
+ */
+const ANON_PREFIX = 'anon:'
+const ANON_KEY = 'saliko_anon_chat_uid'
+function getOrCreateAnonUid(): string {
+  if (typeof window === 'undefined') return `${ANON_PREFIX}ssr`
+  let id = sessionStorage.getItem(ANON_KEY)
+  if (!id) {
+    const rand = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
+    id = `${ANON_PREFIX}${rand}`
+    try { sessionStorage.setItem(ANON_KEY, id) } catch { /* private mode */ }
+  }
+  return id
+}
+
 function formatDelay(seconds: number): string {
   if (seconds < 60) return `${seconds} שניות`
   const min = Math.round(seconds / 60)
@@ -102,43 +120,41 @@ export default function AppChat() {
   }, [messages, pendingSelections])
 
   // Hydrate from Dexie once we know who the user is. We only migrate + pick
-  // an active chat once per auth user per mount.
+  // an active chat once per auth user per mount. Visitor mode: when no user,
+  // use a stable per-tab anon id so chatHistoryStore + the /api/chat backend
+  // can both key off it. Saliko's chat is open to visitors — only tools
+  // that need a real account fail gracefully on the server.
   useEffect(() => {
     const unsubscribe = subscribeToAuth(async ({ user, initialized }) => {
       if (!initialized) return
-      if (!user) {
-        setUid(null)
-        setActiveChatId(null)
-        setMessages([])
-        setPendingSelections([])
-        return
+      const effectiveUid = user?.uid ?? getOrCreateAnonUid()
+      if (uid === effectiveUid) return // already hydrated
+
+      setUid(effectiveUid)
+      if (user) {
+        // One-time migration from the old single-thread localStorage key.
+        await chatHistoryStore.migrateFromLocalStorageV1(user.uid)
       }
-      if (uid === user.uid) return // already hydrated for this user
 
-      setUid(user.uid)
-
-      // One-time migration from the old single-thread localStorage key.
-      await chatHistoryStore.migrateFromLocalStorageV1(user.uid)
-
-      let chatId = chatHistoryStore.getActiveChatId(user.uid)
+      let chatId = chatHistoryStore.getActiveChatId(effectiveUid)
       if (chatId) {
-        const chat = await chatHistoryStore.getChat(user.uid, chatId)
+        const chat = await chatHistoryStore.getChat(effectiveUid, chatId)
         if (!chat) chatId = null
       }
       if (!chatId) {
-        const chats = await chatHistoryStore.listChats(user.uid)
+        const chats = await chatHistoryStore.listChats(effectiveUid)
         if (chats.length > 0) {
           chatId = chats[0].id
-          chatHistoryStore.setActiveChatId(user.uid, chatId)
+          chatHistoryStore.setActiveChatId(effectiveUid, chatId)
         } else {
-          const fresh = await chatHistoryStore.createChat(user.uid)
+          const fresh = await chatHistoryStore.createChat(effectiveUid)
           chatId = fresh.id
-          chatHistoryStore.setActiveChatId(user.uid, chatId)
+          chatHistoryStore.setActiveChatId(effectiveUid, chatId)
         }
       }
       setActiveChatId(chatId)
 
-      const rows = await chatHistoryStore.listMessages(user.uid, chatId)
+      const rows = await chatHistoryStore.listMessages(effectiveUid, chatId)
       setMessages(rows.map(toUIMessage))
       setPendingSelections([])
     })
@@ -177,14 +193,7 @@ export default function AppChat() {
 
   const sendMessage = useCallback(async () => {
     const text = input.trim()
-    if (!text || loading) return
-    // Anon visitor: chat is auth-gated (LLM cost + agent tools need user state).
-    // Surface that — a silent return on uid==null was confusing ("שלח doesn't
-    // do anything"). Toast + nudge to sign in.
-    if (!uid || !activeChatId) {
-      showToast('error', 'כדי לשוחח עם הסוכן צריך להתחבר. לחץ "התחבר" בראש העמוד.')
-      return
-    }
+    if (!text || loading || !uid || !activeChatId) return
 
     // Cancel any prior retry sequence — sending a new message implicitly
     // abandons the previous one. The user has moved on.
@@ -222,12 +231,16 @@ export default function AppChat() {
         let data: { success?: boolean; retryable?: boolean; reply?: string; thinking?: string; error?: string; pendingSelections?: PendingSelection[] }
         try {
           const token = await getIdToken()
+          // Anon visitor: send the per-tab session id so the server can key
+          // chat history (in chatBrain it short-circuits to no-Firestore mode)
+          // and tools that need a real account return their auth-required
+          // fallback instead of crashing on missing creds.
+          const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+          if (token) headers['Authorization'] = `Bearer ${token}`
+          if (uid.startsWith(ANON_PREFIX)) headers['x-anon-session'] = uid.slice(ANON_PREFIX.length)
           response = await fetch('/api/chat', {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
+            headers,
             body: JSON.stringify({ message: text }),
             signal: controller.signal,
           })

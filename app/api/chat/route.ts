@@ -1,17 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireTc } from '@/app/lib/apiGuard'
-import { processChatMessage, handleReset, handleClear } from '@/app/services/chatBrain'
+import { requireAuth } from '@/app/lib/apiGuard'
+import { processChatMessage, handleReset, handleClear, isAnonUid, ANON_PREFIX } from '@/app/services/chatBrain'
 import { panicAdmin } from '@/app/services/adminPanic'
 
 const COLLECTION = 'appChatHistory'
 
 export const maxDuration = 30
 
-export async function POST(request: NextRequest) {
-  const guard = await requireTc(request)
-  if (guard.error) return guard.error
+/**
+ * Resolve the user identity for a chat request.
+ * Authed → real Firebase uid. Anon → `anon:<sessionId>` from the request
+ * (header X-Anon-Session, or auto-generated). The chatBrain treats anon ids
+ * specially: no Firestore writes, no auth-requiring tools.
+ *
+ * Per Saliko's product model, Gemini chat is open to all visitors —
+ * Saliko T&C accepted client-side via TcGate is the only gate, and that
+ * runs on the client surface that hits this route.
+ */
+async function resolveChatIdentity(request: NextRequest): Promise<{ uid: string; displayName?: string }> {
+  const guard = await requireAuth(request)
+  if (!guard.error) {
+    return { uid: guard.uid, displayName: guard.claims.email?.split('@')[0] }
+  }
+  // Anon path. Use a stable per-tab id from the client; generate one if absent.
+  const headerSession = request.headers.get('x-anon-session')?.trim()
+  const session = headerSession && /^[\w-]{8,64}$/.test(headerSession)
+    ? headerSession
+    : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
+  return { uid: `${ANON_PREFIX}${session}` }
+}
 
-  const uid = guard.uid
+export async function POST(request: NextRequest) {
+  const { uid, displayName } = await resolveChatIdentity(request)
 
   let body: { message: string }
   try {
@@ -26,12 +46,12 @@ export async function POST(request: NextRequest) {
   }
 
   if (text === '/reset') {
-    await handleReset(COLLECTION, uid)
+    if (!isAnonUid(uid)) await handleReset(COLLECTION, uid)
     return NextResponse.json({ success: true, reply: 'היסטוריה נמחקה!', actions: [] })
   }
 
   if (text === '/clear') {
-    await handleClear(uid)
+    if (!isAnonUid(uid)) await handleClear(uid)
     return NextResponse.json({ success: true, reply: 'רשימה קבועה ושינויים שבועיים נמחקו.', actions: [] })
   }
 
@@ -39,7 +59,7 @@ export async function POST(request: NextRequest) {
     const result = await processChatMessage({
       uid,
       text,
-      displayName: guard.claims.email?.split('@')[0],
+      displayName,
       historyCollection: COLLECTION,
       includeTasks: true,
     })
