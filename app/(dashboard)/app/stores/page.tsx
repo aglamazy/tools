@@ -7,9 +7,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { useToast } from '@/app/components/ToastContainer'
 import { subscribeToAuth } from '@/app/stores/authStore'
+import { signInWithGoogle } from '@/app/services/firebaseAuthService'
 import {
   fetchStores,
   addStanding,
@@ -30,12 +30,12 @@ import OrderDetailsModal from '@/app/components/stores/OrderDetailsModal'
 type DropTarget = 'standing' | 'pending' | null
 
 export default function StoresPage() {
-  const router = useRouter()
   const { showToast } = useToast()
   const [stores, setStores] = useState<StorePanelData[] | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [unauthed, setUnauthed] = useState(false)
   const [draggedItem, setDraggedItem] = useState<HistoryEntry | null>(null)
   const [dropTarget, setDropTarget] = useState<DropTarget>(null)
   const [selectedOrder, setSelectedOrder] = useState<{ storeId: string; orderId: string } | null>(null)
@@ -57,13 +57,14 @@ export default function StoresPage() {
     const unsubscribe = subscribeToAuth(({ user, initialized }) => {
       if (cancelled || !initialized) return
       if (!user) {
-        // Don't surface "Not authenticated" as a visible error — that confuses
-        // users who hit the URL directly or reached this page via a stale
-        // cached avatar. Send them back to the public landing where the
-        // sign-in flow lives.
-        router.replace('/')
+        // Anon users can browse the app — they just can't connect a store
+        // (encrypted credentials need a real account). Show an empty state
+        // with a Google sign-in CTA instead of forcing a redirect.
+        setUnauthed(true)
+        setLoading(false)
         return
       }
+      setUnauthed(false)
       if (fetched) return
       fetched = true
 
@@ -211,6 +212,39 @@ export default function StoresPage() {
     return (
       <main className="app" dir="rtl">
         <div className="card"><p>טוען...</p></div>
+      </main>
+    )
+  }
+
+  if (unauthed) {
+    return (
+      <main className="app" dir="rtl">
+        <div className="card" style={{ maxWidth: 520, margin: '2rem auto', textAlign: 'center' }}>
+          <h1>חנויות</h1>
+          <p style={{ color: '#475569', lineHeight: 1.6, marginBottom: '1.5rem' }}>
+            כדי לחבר חשבון בשופרסל או מקור השפע ולהפעיל את הסוכן השבועי,
+            צריך להתחבר. ההתחברות מאפשרת להצפין את פרטי החנות שלך
+            ולתזמן את ההזמנות.
+          </p>
+          <button
+            onClick={async () => {
+              const r = await signInWithGoogle()
+              if (!r.success) showToast('error', r.error || 'שגיאת התחברות')
+            }}
+            style={{
+              padding: '0.75rem 1.5rem',
+              background: '#2563eb',
+              color: 'white',
+              border: 'none',
+              borderRadius: '0.5rem',
+              fontSize: '1rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            התחבר עם Google
+          </button>
+        </div>
       </main>
     )
   }
