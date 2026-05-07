@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useToast } from '@/app/components/ToastContainer'
 import { subscribeToAuth } from '@/app/stores/authStore'
+import { REXAIL_STORES } from '@/app/services/grocery/rexailStores'
 import {
   fetchStores,
   addStanding,
@@ -233,9 +234,45 @@ export default function StoresPage() {
           <p style={{ color: '#6b7280' }}>אין חנויות מוגדרות.</p>
           {unauthed && (
             <p style={{ color: '#94a3b8', fontSize: '0.9rem', marginTop: '0.5rem' }}>
-              כדי לחבר חשבון בשופרסל או מקור השפע — התחבר בכפתור למעלה.
+              כדי לחבר חשבון לחנות גדולה כמו שופרסל — התחבר בכפתור למעלה.
             </p>
           )}
+        </div>
+
+        <div className="card" style={{ marginTop: '1rem' }}>
+          <h2 style={{ margin: 0, marginBottom: '0.5rem' }}>חנויות זמינות</h2>
+          <p style={{ color: '#6b7280', fontSize: '0.9rem', marginTop: 0 }}>
+            חנויות שאנחנו תומכים בהן. לחיצה תפתח את אתר החנות בלשונית חדשה.
+          </p>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+              gap: '0.75rem',
+              marginTop: '1rem',
+            }}
+          >
+            {REXAIL_STORES.map(s => (
+              <a
+                key={s.id}
+                href={s.siteOrigin}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '0.5rem',
+                  padding: '0.75rem 1rem',
+                  textDecoration: 'none',
+                  color: '#1f2937',
+                  background: '#fff',
+                  display: 'block',
+                }}
+              >
+                <div style={{ fontWeight: 600 }}>{s.label}</div>
+                <div style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: '0.25rem' }}>{s.description}</div>
+              </a>
+            ))}
+          </div>
         </div>
       </main>
     )
