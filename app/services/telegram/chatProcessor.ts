@@ -257,7 +257,10 @@ export async function processChat(
     await sleep(5000)
     const nudged: LLMMessage[] = [
       ...cleanMessages,
-      { role: 'user', content: 'תגיב למשתמש בעברית בקצרה. אם אינך בטוח מה המשתמש רוצה, שאל שאלת הבהרה.' },
+      // Without tools, naive phrasings like "search X" make Gemini describe
+      // tool calls as text (e.g. `search_product(query='...')`). Explicitly
+      // forbid that pseudocode pattern.
+      { role: 'user', content: 'תגיב למשתמש בעברית בקצרה ובשפה טבעית. אם אינך בטוח מה המשתמש רוצה, שאל שאלת הבהרה. **אסור** לכתוב קריאות לפונקציות בסגנון `func_name(...)` — תענה רק במשפטים בעברית רגילה.' },
     ]
     result = await callLLM(nudged, 0, /*withTools*/ false)
   }
@@ -296,8 +299,17 @@ export async function processChat(
     ...fc.args,
   }))
 
-  // Gemini sometimes returns only function calls with no text
-  const reply = result.text || ''
+  // Gemini sometimes returns only function calls with no text. Also: when
+  // the retry-without-tools path runs, Gemini occasionally describes what
+  // it WOULD have called as raw pseudocode. Strip those lines so they
+  // never reach the user — known offenders look like:
+  //   set_session(activeStore='...')
+  //   search_product(store='...', query='...')
+  // The tool name list comes from ACTION_DECLARATIONS so this stays in sync
+  // even as new tools are added.
+  const toolNamePattern = ACTION_DECLARATIONS.map(a => a.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+  const pseudocodeLine = new RegExp(`^\\s*(?:${toolNamePattern})\\s*\\([^\\n]*\\)?\\s*$`, 'gm')
+  const reply = (result.text || '').replace(pseudocodeLine, '').replace(/\n{3,}/g, '\n\n').trim()
 
   return {
     reply,
