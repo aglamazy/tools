@@ -232,17 +232,13 @@ export default function StoresPage() {
         <div className="card">
           <h1>חנויות</h1>
           <p style={{ color: '#6b7280' }}>אין חנויות מוגדרות.</p>
-          {unauthed && (
-            <p style={{ color: '#94a3b8', fontSize: '0.9rem', marginTop: '0.5rem' }}>
-              כדי לחבר חשבון לחנות גדולה כמו שופרסל — התחבר בכפתור למעלה.
-            </p>
-          )}
         </div>
 
         <div className="card" style={{ marginTop: '1rem' }}>
           <h2 style={{ margin: 0, marginBottom: '0.5rem' }}>חנויות זמינות</h2>
           <p style={{ color: '#6b7280', fontSize: '0.9rem', marginTop: 0 }}>
             חנויות שאנחנו תומכים בהן. לחיצה תפתח את אתר החנות בלשונית חדשה.
+            {unauthed && ' כדי לחבר אחת מהן לסוכן — התחבר בראש העמוד.'}
           </p>
           <div
             style={{

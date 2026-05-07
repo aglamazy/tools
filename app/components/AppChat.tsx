@@ -177,7 +177,14 @@ export default function AppChat() {
 
   const sendMessage = useCallback(async () => {
     const text = input.trim()
-    if (!text || loading || !uid || !activeChatId) return
+    if (!text || loading) return
+    // Anon visitor: chat is auth-gated (LLM cost + agent tools need user state).
+    // Surface that — a silent return on uid==null was confusing ("שלח doesn't
+    // do anything"). Toast + nudge to sign in.
+    if (!uid || !activeChatId) {
+      showToast('error', 'כדי לשוחח עם הסוכן צריך להתחבר. לחץ "התחבר" בראש העמוד.')
+      return
+    }
 
     // Cancel any prior retry sequence — sending a new message implicitly
     // abandons the previous one. The user has moved on.
