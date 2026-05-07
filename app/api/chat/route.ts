@@ -30,10 +30,22 @@ async function resolveChatIdentity(request: NextRequest): Promise<{ uid: string;
   return { uid: `${ANON_PREFIX}${session}` }
 }
 
+interface ChatRequestBody {
+  message: string
+  /**
+   * Anon visitors don't have server-side history (no Firestore writes for
+   * anon). To preserve conversation context across turns the client sends
+   * its recent Dexie messages with each request. The server uses this as
+   * the persistedHistory for the call. Authed users ignore this — Firestore
+   * is the source of truth.
+   */
+  history?: { role: 'user' | 'assistant'; content: string }[]
+}
+
 export async function POST(request: NextRequest) {
   const { uid, displayName } = await resolveChatIdentity(request)
 
-  let body: { message: string }
+  let body: ChatRequestBody
   try {
     body = await request.json()
   } catch {
@@ -62,6 +74,10 @@ export async function POST(request: NextRequest) {
       displayName,
       historyCollection: COLLECTION,
       includeTasks: true,
+      // Only honor client-supplied history for anon visitors. Authed users
+      // get their persistent Firestore-backed thread, which is more reliable
+      // and prevents an attacker-tampered history from polluting their context.
+      seedHistory: isAnonUid(uid) ? body.history : undefined,
     })
 
     if (result.llmExhausted) {

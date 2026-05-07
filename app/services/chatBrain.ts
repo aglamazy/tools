@@ -40,6 +40,13 @@ export interface ChatBrainInput {
   includeTasks?: boolean
   /** Optional progress notifier used by the LLM recovery ladder. */
   onStatus?: ChatStatusReporter
+  /**
+   * Optional client-supplied conversation history. Used for anon visitors
+   * whose threads aren't persisted server-side — the client (Dexie) holds
+   * the truth and re-sends recent turns with each request so the LLM has
+   * context. Ignored for authed uids (Firestore is authoritative).
+   */
+  seedHistory?: ChatMessage[]
 }
 
 export interface ChatBrainResult {
@@ -177,10 +184,15 @@ export async function handleClear(uid: string): Promise<void> {
 export async function processChatMessage(input: ChatBrainInput): Promise<ChatBrainResult> {
   initStores()
 
-  const { uid, text, displayName, historyCollection, includeTasks, onStatus } = input
+  const { uid, text, displayName, historyCollection, includeTasks, onStatus, seedHistory } = input
 
   const loaded = await loadChat(historyCollection, uid)
-  const persistedHistory = loaded.messages
+  // For anon visitors loadChat returns empty (no Firestore). Honor the
+  // client-supplied seedHistory (Dexie source-of-truth) so context survives
+  // across turns. Cap to last 20 messages to bound LLM token usage.
+  const persistedHistory = (isAnonUid(uid) && seedHistory?.length)
+    ? seedHistory.slice(-20)
+    : loaded.messages
   const session: SessionState = loaded.session || {}
 
   const context = await buildContext(uid, displayName, includeTasks, session)

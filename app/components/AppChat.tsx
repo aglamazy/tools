@@ -235,13 +235,22 @@ export default function AppChat() {
           // chat history (in chatBrain it short-circuits to no-Firestore mode)
           // and tools that need a real account return their auth-required
           // fallback instead of crashing on missing creds.
+          const isAnon = uid.startsWith(ANON_PREFIX)
           const headers: Record<string, string> = { 'Content-Type': 'application/json' }
           if (token) headers['Authorization'] = `Bearer ${token}`
-          if (uid.startsWith(ANON_PREFIX)) headers['x-anon-session'] = uid.slice(ANON_PREFIX.length)
+          if (isAnon) headers['x-anon-session'] = uid.slice(ANON_PREFIX.length)
+          // Anon visitors have no Firestore-backed thread, so we re-send the
+          // recent messages with each request to preserve cross-turn context.
+          // Cap to ~20 turns; older content rolls off (matches server cap).
+          const requestBody: { message: string; history?: { role: 'user' | 'assistant'; content: string }[] } = { message: text }
+          if (isAnon) {
+            const recent = messages.slice(-20).map(m => ({ role: m.role, content: m.content }))
+            requestBody.history = recent
+          }
           response = await fetch('/api/chat', {
             method: 'POST',
             headers,
-            body: JSON.stringify({ message: text }),
+            body: JSON.stringify(requestBody),
             signal: controller.signal,
           })
           data = await response.json()
