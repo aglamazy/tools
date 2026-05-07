@@ -568,7 +568,7 @@ export async function cancelOrder(uid: string, orderId: string): Promise<boolean
 export const retalixPlugin: OtpStorePlugin = {
   id: 'retalix',
   label: 'מקור השפע',
-  keywords: ['מקור השפע', 'makor', 'retalix', 'רמי לוי', 'rami levy'],
+  keywords: ['מקור השפע', 'makor', 'retalix', 'rexail'],
   authType: 'otp',
 
   isAuthenticated: isRetalixAuthenticated,

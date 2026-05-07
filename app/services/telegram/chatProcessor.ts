@@ -7,6 +7,7 @@ import { GeminiClient } from '@/app/services/llm/geminiClient'
 import { ACTION_DECLARATIONS } from './actionDeclarations'
 import type { LLMMessage } from '@/app/services/llm/types'
 import { VARIANT_CONFIG } from '@/app/config/variants'
+import { REXAIL_STORES } from '@/app/services/grocery/rexailStores'
 
 const gemini = new GeminiClient()
 
@@ -90,7 +91,7 @@ export interface ChatAction {
 const SYSTEM_PROMPT = `אתה ${VARIANT_CONFIG.botName} — עוזר משפחתי לניהול קניות ומשימות. אתה מדבר בעברית טבעית, ידידותי וקצר.
 
 ## מה אתה יכול לעשות
-- ניהול רשימות קניות שבועיות בחנויות שונות (שופרסל, מקור השפע, ועוד)
+- ניהול רשימות קניות שבועיות בחנויות שונות (רשימת החנויות הנתמכות מופיעה למטה בהקשר)
 - ניהול רשימה קבועה (מוצרים שחוזרים כל שבוע) — לכל חנות בנפרד
 - יצירת משימות ותזכורות
 - מענה על שאלות לגבי הרשימה והמשימות
@@ -99,7 +100,7 @@ const SYSTEM_PROMPT = `אתה ${VARIANT_CONFIG.botName} — עוזר משפחת�
 כל פעולת קניות מכוונת לחנות ספציפית. **חובה** לשלוח store בכל קריאה לפונקציה.
 - אם המשתמש מזכיר שם חנות — השתמש בה **וקרא ל-set_session עם activeStore**
 - אם לא מזכיר חנות — השתמש ב-activeStore מהסשן (אם יש), אחרת חנות ברירת המחדל
-- מיפוי שמות: "שופרסל" → store="shufersal", "מקור השפע" / "רמי לוי" → store="retalix"
+- מיפוי שמות: "שופרסל" → store="shufersal", "מקור השפע" → store="retalix". כשהמשתמש שואל על חנות שמופיעה ב"חנויות נתמכות נוספות" שלמטה — ענה שאנחנו תומכים בה אבל החיבור עוד לא מוכן (בקרוב), והפנה לאתר החנות.
 
 ## שאלות חוצות חנויות (show_orders)
 כאשר המשתמש שואל על הזמנות באופן כללי בלי לציין חנות — למשל "יש הזמנות פתוחות?", "יש לי הזמנות?", "מה פתוח אצלי?" — קרא ל-show_orders **בלי להעביר store**. המערכת תבדוק את כל החנויות המחוברות ותחזיר תשובה משולבת. אל תסתמך על activeStore/ברירת מחדל לשאלה כזו.
@@ -111,7 +112,7 @@ const SYSTEM_PROMPT = `אתה ${VARIANT_CONFIG.botName} — עוזר משפחת�
 
 ## חיבור חנויות
 - שופרסל: דורש אימייל וסיסמה → set_credentials
-- מקור השפע / רמי לוי (Retalix): דורש מספר טלפון → set_otp_phone → SMS → verify_otp
+- מקור השפע (Retalix): דורש מספר טלפון → set_otp_phone → SMS → verify_otp
 - כשמשתמש שולח קוד מספרי והמצב מראה otpPending=true, זה קוד SMS → verify_otp
 
 ## כללים
@@ -312,6 +313,23 @@ function buildContextBlock(ctx: UserContext): string {
   parts.push(`היום: ${todayDayName} ${todayStr}`)
 
   if (ctx.displayName) parts.push(`משתמש: ${ctx.displayName}`)
+
+  // Supported stores — full directory. The LLM should rely on this list when
+  // answering "what stores do you support?" rather than its training memory.
+  // Two tiers: chains we already integrate (chat-actions work end-to-end),
+  // and Rexail boutiques we know about but for which checkout is not wired
+  // yet — for those, the LLM points users at the chain's own site.
+  const integratedIds = new Set((ctx.stores || []).map(s => s.id))
+  const directoryOnly = REXAIL_STORES.filter((s) => !integratedIds.has(s.id) && s.id !== 'rexail_makorhashefa')
+  parts.push('\n## חנויות נתמכות')
+  if (ctx.stores?.length) {
+    parts.push('### משולבות (פעולות הסוכן זמינות)')
+    for (const s of ctx.stores) parts.push(`- ${s.label} (${s.id})`)
+  }
+  if (directoryOnly.length) {
+    parts.push('### בקטלוג (חיבור עוד לא מוכן — הפנה לאתר החנות)')
+    for (const s of directoryOnly) parts.push(`- ${s.label} — ${s.siteOrigin}${s.description ? ` (${s.description})` : ''}`)
+  }
 
   // Session state
   const activeStore = ctx.session?.activeStore || ctx.defaultStore || null
