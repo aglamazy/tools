@@ -28,8 +28,13 @@ import { listTasks, createTask, updateTask, deleteTask, findTasks } from '@/app/
 import { randomBytes } from 'crypto'
 import { deleteMapping, lookupMapping, saveProductMapping } from '@/app/services/grocery/productResolver'
 
-/** Actions that require a connected store */
-const STORE_ACTIONS = new Set(['trigger_order', 'cancel_order', 'search_product', 're_search', 'list_slots', 'list_categories', 'product_details'])
+/**
+ * Actions that require a connected store (auth-gated). Catalog reads
+ * (search_product, list_categories, product_details) are deliberately NOT
+ * here — Rexail's `/public/store/catalog` endpoint is fully public, so
+ * anon visitors can browse any chain's catalog without first connecting.
+ */
+const STORE_ACTIONS = new Set(['trigger_order', 'cancel_order', 're_search', 'list_slots'])
 // Note: `show_orders` handles its own auth check because it iterates all
 // authenticated stores when no store is specified.
 

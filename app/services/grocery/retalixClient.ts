@@ -136,10 +136,14 @@ function credRef(uid: string, storeId: string) {
     .collection('private').doc('credentials')
 }
 
-function catalogRef(uid: string, storeId: string) {
-  return getAdminFirestore().collection('groceries').doc(uid)
-    .collection('stores').doc(storeId)
-    .collection('private').doc('catalog')
+/**
+ * Shared catalog cache — Rexail's /public/store/catalog endpoint is genuinely
+ * public (no tarfash token required, only the chain's xWebsite header).
+ * One cached snapshot per chain serves all users (anon + authed). Refreshed
+ * if older than 24h. Lives outside the per-user `groceries/` tree.
+ */
+function catalogRef(storeId: string) {
+  return getAdminFirestore().collection('_catalogs').doc(storeId)
 }
 
 export async function loadCredentials(uid: string, storeId: string): Promise<RetalixCredentials | null> {
@@ -217,14 +221,12 @@ async function getToken(uid: string, storeId: string): Promise<{ token: string; 
   return { token: cred.token, config: cred.config }
 }
 
-// --- Catalog ---
+// --- Catalog (public — no user auth required) ---
 
-export async function fetchCatalog(uid: string, storeId: string): Promise<RetalixProduct[]> {
-  const { token, config } = await getToken(uid, storeId)
-
-  const resp = await rexailFetch(config, 'public/store/catalog', {
-    token,
-  })
+export async function fetchCatalog(storeId: string, config: RetalixStoreConfig): Promise<RetalixProduct[]> {
+  // /public/store/catalog only needs the chain xWebsite + device-id headers,
+  // both already in `config`. No tarfash token, no user uid.
+  const resp = await rexailFetch(config, 'public/store/catalog', {})
 
   if (!resp.success) throw new Error(`Catalog fetch failed: ${resp.resolvedMessage || resp.message}`)
 
@@ -256,14 +258,14 @@ export async function fetchCatalog(uid: string, storeId: string): Promise<Retali
     }
   })
 
-  // Cache in Firestore
-  await catalogRef(uid, storeId).set({ products, fetchedAt: new Date().toISOString() })
+  // Cache in shared per-chain doc (not per-user — catalog is the same for everyone).
+  await catalogRef(storeId).set({ products, fetchedAt: new Date().toISOString() })
   console.log(`[Retalix:${storeId}] Fetched ${products.length} products`)
   return products
 }
 
-async function loadCatalog(uid: string, storeId: string): Promise<RetalixProduct[]> {
-  const doc = await catalogRef(uid, storeId).get()
+async function loadCatalog(storeId: string, config: RetalixStoreConfig): Promise<RetalixProduct[]> {
+  const doc = await catalogRef(storeId).get()
   if (doc.exists) {
     const data = doc.data()!
     // Refresh if older than 24h
@@ -272,11 +274,11 @@ async function loadCatalog(uid: string, storeId: string): Promise<RetalixProduct
       return data.products as RetalixProduct[]
     }
   }
-  return fetchCatalog(uid, storeId)
+  return fetchCatalog(storeId, config)
 }
 
-export async function searchCatalog(uid: string, storeId: string, query: string): Promise<RetalixSearchResult[]> {
-  const products = await loadCatalog(uid, storeId)
+export async function searchCatalog(storeId: string, config: RetalixStoreConfig, query: string): Promise<RetalixSearchResult[]> {
+  const products = await loadCatalog(storeId, config)
   const q = query.toLowerCase()
 
   const nameMatch = products.filter(p =>
@@ -311,9 +313,10 @@ export async function searchCatalog(uid: string, storeId: string, query: string)
 /**
  * Distinct categories present in the cached catalog. Sorted by frequency
  * (most-popular first) so the LLM gets the obvious entries up front.
+ * Public — no user auth required, since the catalog itself is public.
  */
-export async function listCategories(uid: string, storeId: string): Promise<string[]> {
-  const products = await loadCatalog(uid, storeId)
+export async function listCategories(storeId: string, config: RetalixStoreConfig): Promise<string[]> {
+  const products = await loadCatalog(storeId, config)
   const counts = new Map<string, number>()
   for (const p of products) {
     if (p.category) counts.set(p.category, (counts.get(p.category) || 0) + 1)
@@ -324,8 +327,8 @@ export async function listCategories(uid: string, storeId: string): Promise<stri
 }
 
 /** Resolve sellingUnitId for a product by its catalog ID. Uses cached catalog. */
-export async function resolveSellingUnitId(uid: string, storeId: string, productId: number): Promise<number> {
-  const products = await loadCatalog(uid, storeId)
+export async function resolveSellingUnitId(storeId: string, config: RetalixStoreConfig, productId: number): Promise<number> {
+  const products = await loadCatalog(storeId, config)
   const product = products.find(p => p.id === productId)
   if (!product) return 0
   const kgUnit = product.sellingUnits.find(u => u.unitName === 'ק"ג')
@@ -631,14 +634,14 @@ export function createRexailPlugin(entry: RexailPluginEntry): OtpStorePlugin {
 
     verifyOtp: (uid, otp) => verifyOtp(uid, storeId, otp),
 
-    search: (uid, query): Promise<StoreSearchResult[]> => searchCatalog(uid, storeId, query),
+    search: (_uid, query): Promise<StoreSearchResult[]> => searchCatalog(storeId, fullConfig, query),
 
     checkout: async (uid, items: CheckoutItem[], options: CheckoutOptions): Promise<StoreCheckoutResult> => {
-      // Resolve missing sellingUnitIds from cached catalog (per-chain)
+      // Resolve missing sellingUnitIds from cached catalog (per-chain, public).
       const retalixItems = await Promise.all(items.map(async i => {
         const id = parseInt(i.code, 10)
         const stored = i.sellingUnitId
-        const resolved = await resolveSellingUnitId(uid, storeId, id)
+        const resolved = await resolveSellingUnitId(storeId, fullConfig, id)
         const sellingUnitId = stored || resolved
         console.log(`[Rexail:${storeId}] checkout item id=${id} stored=${stored} resolved=${resolved} using=${sellingUnitId}`)
         return { id, qty: i.qty, sellingUnitId }
@@ -671,7 +674,7 @@ export function createRexailPlugin(entry: RexailPluginEntry): OtpStorePlugin {
       return Array.from(byDate.values())
     },
 
-    listCategories: (uid) => listCategories(uid, storeId),
+    listCategories: (_uid) => listCategories(storeId, fullConfig),
   }
 }
 
