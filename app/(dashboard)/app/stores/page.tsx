@@ -9,7 +9,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useToast } from '@/app/components/ToastContainer'
 import { subscribeToAuth } from '@/app/stores/authStore'
-import { signInWithGoogle } from '@/app/services/firebaseAuthService'
 import {
   fetchStores,
   addStanding,
@@ -216,39 +215,6 @@ export default function StoresPage() {
     )
   }
 
-  if (unauthed) {
-    return (
-      <main className="app" dir="rtl">
-        <div className="card" style={{ maxWidth: 520, margin: '2rem auto', textAlign: 'center' }}>
-          <h1>חנויות</h1>
-          <p style={{ color: '#475569', lineHeight: 1.6, marginBottom: '1.5rem' }}>
-            כדי לחבר חשבון בשופרסל או מקור השפע ולהפעיל את הסוכן השבועי,
-            צריך להתחבר. ההתחברות מאפשרת להצפין את פרטי החנות שלך
-            ולתזמן את ההזמנות.
-          </p>
-          <button
-            onClick={async () => {
-              const r = await signInWithGoogle()
-              if (!r.success) showToast('error', r.error || 'שגיאת התחברות')
-            }}
-            style={{
-              padding: '0.75rem 1.5rem',
-              background: '#2563eb',
-              color: 'white',
-              border: 'none',
-              borderRadius: '0.5rem',
-              fontSize: '1rem',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            התחבר עם Google
-          </button>
-        </div>
-      </main>
-    )
-  }
-
   if (loadError) {
     return (
       <main className="app" dir="rtl">
@@ -259,12 +225,17 @@ export default function StoresPage() {
     )
   }
 
-  if (!stores || stores.length === 0) {
+  if (unauthed || !stores || stores.length === 0) {
     return (
       <main className="app" dir="rtl">
         <div className="card">
           <h1>חנויות</h1>
           <p style={{ color: '#6b7280' }}>אין חנויות מוגדרות.</p>
+          {unauthed && (
+            <p style={{ color: '#94a3b8', fontSize: '0.9rem', marginTop: '0.5rem' }}>
+              כדי לחבר חשבון בשופרסל או מקור השפע — התחבר בכפתור למעלה.
+            </p>
+          )}
         </div>
       </main>
     )
