@@ -4,58 +4,60 @@ import React, { useEffect, useState } from 'react'
 import { businessStore } from '@/app/stores/businessStore'
 import type { Business } from '@/app/db/financeDB'
 import { ypayService } from '@/app/services/ypayService'
-import { getUser } from '@/app/stores/authStore'
-import { getHouseholdInfo } from '@/app/services/householdService'
+import { subscribeToAuthState } from '@/app/services/firebaseAuthService'
+import { partnerStore, type Partner } from '@/app/stores/partnerStore'
+import Modal from '@/app/components/Modal'
 import BusinessSharingSection from './BusinessSharingSection'
 
 type BizSettingsTabProps = {
   businessId: number
 }
 
-let cachedHouseholdMembers: { uid: string; label: string }[] | null = null
-
-async function fetchHouseholdMembers(): Promise<{ uid: string; label: string }[]> {
-  if (cachedHouseholdMembers) return cachedHouseholdMembers
-  const currentUser = getUser()
-  const members: { uid: string; label: string }[] = []
-  try {
-    const info = await getHouseholdInfo()
-    if (info.household) {
-      const emails = (info.household as any).memberEmails || {}
-      const names = (info.household as any).memberNames || {}
-      for (const uid of info.household.members) {
-        members.push({ uid, label: names[uid] || emails[uid] || uid })
-      }
-      cachedHouseholdMembers = members
-      return members
-    }
-  } catch { /* no household */ }
-  if (currentUser) {
-    members.push({ uid: currentUser.uid, label: currentUser.displayName || currentUser.email || currentUser.uid })
-  }
-  cachedHouseholdMembers = members
-  return members
-}
 
 export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
   const [business, setBusiness] = useState<Business | null>(null)
   const [ypayClientId, setYpayClientId] = useState('')
   const [ypayClientSecret, setYpayClientSecret] = useState('')
   const [ypayStatus, setYpayStatus] = useState<{ type: 'idle' | 'success' | 'error'; message: string }>({ type: 'idle', message: '' })
-  const [householdMembers, setHouseholdMembers] = useState<{ uid: string; label: string }[]>([])
+  const [householdMembers, setHouseholdMembers] = useState<Partner[]>(() =>
+    typeof window !== 'undefined' ? partnerStore.getCached(undefined) : []
+  )
   const [selectedUserId, setSelectedUserId] = useState<string>('')
   const [ownerSaved, setOwnerSaved] = useState(false)
+  const [ownerSharePercent, setOwnerSharePercent] = useState<string>('100')
+  const [editingOwner, setEditingOwner] = useState(false)
 
   useEffect(() => {
-    const init = async () => {
-      const members = await fetchHouseholdMembers()
-      setHouseholdMembers(members)
-      await loadBusiness()
-    }
-    void init()
+    // Subscribe to Firebase auth so the household members fetch only fires after a user
+    // resolves — otherwise getUser() can return null at first render and the dropdown
+    // ends up missing the current user.
+    let syncIdForBiz: string | undefined
+    // Initial sync read: show cached partners immediately to avoid empty-dropdown flash.
+    void businessStore.getById(businessId).then(b => {
+      syncIdForBiz = b?.syncId
+      setHouseholdMembers(partnerStore.getCached(syncIdForBiz))
+    })
+    const unsubStore = partnerStore.subscribe(() => {
+      setHouseholdMembers(partnerStore.getCached(syncIdForBiz))
+    })
+    const unsubAuth = subscribeToAuthState(async (user) => {
+      if (user) {
+        const b = await businessStore.getById(businessId)
+        syncIdForBiz = b?.syncId
+        // Trigger background refresh; subscribe handler above picks up the result.
+        await partnerStore.refresh(syncIdForBiz)
+      } else {
+        partnerStore.clear()
+      }
+    })
+    const unsubscribe = () => { unsubStore(); unsubAuth() }
+    void loadBusiness()
     const handleSync = () => void loadBusiness()
     window.addEventListener('shared-data-updated', handleSync)
-    return () => window.removeEventListener('shared-data-updated', handleSync)
+    return () => {
+      unsubscribe()
+      window.removeEventListener('shared-data-updated', handleSync)
+    }
   }, [businessId])
 
   const loadBusiness = async () => {
@@ -65,12 +67,19 @@ export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
       setYpayClientId(b.ypayClientId || '')
       setYpayClientSecret(b.ypayClientSecret || '')
       setSelectedUserId(b.userId || '')
+      setOwnerSharePercent(String(b.ownerSharePercent ?? 100))
     }
   }
 
   const saveOwner = async () => {
-    await businessStore.update(businessId, { userId: selectedUserId || undefined })
+    const n = Number(ownerSharePercent)
+    const validPercent = Number.isFinite(n) && n >= 0 && n <= 100 ? n : undefined
+    await businessStore.update(businessId, {
+      userId: selectedUserId || undefined,
+      ...(validPercent !== undefined ? { ownerSharePercent: validPercent } : {}),
+    })
     await loadBusiness()
+    setEditingOwner(false)
     setOwnerSaved(true)
     setTimeout(() => setOwnerSaved(false), 2000)
   }
@@ -101,30 +110,73 @@ export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-      {/* Owner assignment */}
-      <section style={{ padding: '1rem', border: '1px solid #e2e8f0', borderRadius: '0.75rem', background: '#f0f9ff' }}>
-        <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem', fontWeight: 600 }}>בעלים</h3>
-        <p style={{ margin: '0 0 1rem', color: '#1e40af', fontSize: '0.85rem' }}>שייך את העסק למשתמש במשק הבית</p>
-        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+      {/* Edit owner + percent modal (triggered from BusinessSharingSection's owner row pencil) */}
+      <Modal isOpen={editingOwner} onClose={() => setEditingOwner(false)} maxWidth="420px">
+        <div style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>בעלים ואחוז שותפות</h3>
+          <p style={{ margin: 0, color: '#64748b', fontSize: '0.8rem' }}>שייך את העסק למשתמש במשק הבית או לשותף עסקי</p>
           <select
             value={selectedUserId}
             onChange={e => setSelectedUserId(e.target.value)}
-            style={{ flex: 1, padding: '0.5rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', fontSize: '0.9rem' }}
+            style={{ padding: '0.5rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', fontSize: '0.9rem' }}
           >
             <option value="">לא משויך</option>
             {householdMembers.map(m => (
               <option key={m.uid} value={m.uid}>{m.label}</option>
             ))}
           </select>
-          <button onClick={() => void saveOwner()} className="file-picker" style={{ padding: '0.5rem 1rem', fontSize: '0.875rem' }}>
-            שמור
-          </button>
-          {ownerSaved && <span style={{ fontSize: '0.85rem', color: '#16a34a' }}>נשמר</span>}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <label style={{ fontSize: '0.85rem', color: '#1e40af', minWidth: '100px' }}>אחוז שותפות:</label>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step={1}
+              value={ownerSharePercent}
+              onChange={e => setOwnerSharePercent(e.target.value)}
+              autoFocus
+              style={{ width: '90px', padding: '0.5rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', fontSize: '0.95rem', textAlign: 'center' }}
+            />
+            <span style={{ fontSize: '0.85rem', color: '#64748b' }}>%</span>
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+            <button
+              onClick={() => setEditingOwner(false)}
+              style={{
+                padding: '0.5rem 1rem', fontSize: '0.85rem', borderRadius: '0.375rem',
+                border: '1px solid #e2e8f0', background: '#fff', cursor: 'pointer',
+              }}
+            >
+              ביטול
+            </button>
+            <button
+              onClick={() => void saveOwner()}
+              className="file-picker"
+              style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}
+            >
+              שמור
+            </button>
+          </div>
         </div>
-      </section>
+      </Modal>
 
-      {/* Business sharing */}
-      <BusinessSharingSection business={business} />
+      {/* Unified partners list (owner + shares + pending invitations + add) */}
+      {(() => {
+        const owner = householdMembers.find(m => m.uid === business.userId)
+        const ownerLabelFinal = owner?.label || (business.userId ? business.userId : 'לא משויך')
+        return (
+          <BusinessSharingSection
+            business={business}
+            ownerLabel={ownerLabelFinal}
+            ownerSharePercent={business.ownerSharePercent}
+            onEditOwner={() => {
+              setSelectedUserId(business.userId || '')
+              setOwnerSharePercent(String(business.ownerSharePercent ?? 100))
+              setEditingOwner(true)
+            }}
+          />
+        )
+      })()}
 
       <section style={{ padding: '1rem', border: '1px solid #e2e8f0', borderRadius: '0.75rem', background: '#faf5ff' }}>
         <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem', fontWeight: 600 }}>YPAY - חשבוניות</h3>

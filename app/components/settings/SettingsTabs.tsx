@@ -42,8 +42,8 @@ function SettingsTabsContent({ tabs, defaultTab, children }: SettingsTabsProps) 
   }, [pathname])
 
   const tabStyle = (tabId: string) => ({
-    padding: '0.75rem 1.5rem',
-    fontSize: '0.95rem',
+    padding: '0.6rem 1rem',
+    fontSize: '0.9rem',
     fontWeight: 500,
     background: activeTab === tabId ? '#ffffff' : 'transparent',
     border: 'none',
@@ -53,21 +53,23 @@ function SettingsTabsContent({ tabs, defaultTab, children }: SettingsTabsProps) 
     transition: 'all 0.15s ease',
     display: 'flex',
     alignItems: 'center',
-    gap: '0.5rem',
-    whiteSpace: 'nowrap',
+    gap: '0.4rem',
+    whiteSpace: 'nowrap' as const,
+    flexShrink: 0,
   })
 
   return (
     <>
       <div style={{
         display: 'flex',
-        gap: '0.25rem',
+        gap: '0.15rem',
         borderBottom: '1px solid #e2e8f0',
         marginBottom: '1.5rem',
         background: '#f8fafc',
         borderRadius: '0.5rem 0.5rem 0 0',
         padding: '0.25rem 0.25rem 0',
-        flexWrap: 'wrap',
+        flexWrap: 'nowrap',
+        overflowX: 'auto',
       }}>
         {tabs.map((tab) => (
           <button

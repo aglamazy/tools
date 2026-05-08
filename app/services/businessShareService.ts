@@ -14,7 +14,9 @@ export type BusinessShare = {
   businessName: string
   sharedWithUid: string
   sharedWithEmail: string
+  sharedWithDisplayName?: string // Firebase Auth displayName, resolved server-side at list time
   status: 'active' | 'revoked'
+  sharePercent?: number // partnership share % (0-100); undefined = legacy share with no % set
   createdAt: string
 }
 
@@ -25,6 +27,7 @@ export type BusinessShareInvitation = {
   businessName: string
   inviteeEmail: string
   status: 'pending' | 'accepted' | 'expired' | 'cancelled'
+  sharePercent?: number // partnership share % (0-100); copied to BusinessShare on accept
   createdAt: string
   expiresAt: string
 }
@@ -75,8 +78,23 @@ export async function inviteToShare(
   businessSyncId: string,
   businessName: string,
   email: string,
+  sharePercent?: number,
 ): Promise<InviteResponse> {
-  return apiRequest<InviteResponse>('invite', 'POST', { businessSyncId, businessName, email })
+  return apiRequest<InviteResponse>('invite', 'POST', { businessSyncId, businessName, email, sharePercent })
+}
+
+/**
+ * Update partnership share % on an active business share
+ */
+export async function updateSharePercent(shareId: string, sharePercent: number): Promise<ApiResponse> {
+  return apiRequest<ApiResponse>('update-percent', 'POST', { shareId, sharePercent })
+}
+
+/**
+ * Update partnership share % on a pending invitation (before it's accepted)
+ */
+export async function updateInvitationPercent(invitationId: string, sharePercent: number): Promise<ApiResponse> {
+  return apiRequest<ApiResponse>('update-percent', 'POST', { invitationId, sharePercent })
 }
 
 /**

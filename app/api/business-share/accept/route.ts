@@ -75,6 +75,7 @@ export async function POST(request: NextRequest) {
       sharedWithUid: uid,
       sharedWithEmail: invitation.inviteeEmail,
       status: 'active',
+      ...(typeof invitation.sharePercent === 'number' ? { sharePercent: invitation.sharePercent } : {}),
       createdAt: new Date().toISOString(),
     })
 

@@ -41,6 +41,9 @@ export interface Transaction {
   totalSteps?: number
   totalAmount?: number // Full purchase price for installments
 
+  // Partnership
+  paidByUid?: string // Firebase UID of the partner who paid this expense (owner or shared-with). Only meaningful for businesses with sharing.
+
   // Metadata
   month: string // MM/YYYY - transaction month (extracted from date field)
   importedAt: string // ISO timestamp
@@ -143,6 +146,7 @@ export interface Business {
   pinnedToSidebar?: boolean
   sharedWithMe?: boolean // true for businesses shared by another user
   userId?: string // Firebase UID of the owning user
+  ownerSharePercent?: number // partnership share % for the owner (0-100). Sum across owner + all shares should = 100
   createdAt: string
   updatedAt: string
 }

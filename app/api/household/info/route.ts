@@ -41,10 +41,11 @@ export async function POST(request: NextRequest) {
 
     const householdData = householdDoc.data()!
 
-    // Get member emails and display names for display
+    // Get member emails and display names for display — fetch in parallel so the
+    // round-trip is one auth-lookup latency, not N. Failures fall through to 'לא ידוע'.
     const memberEmails: Record<string, string> = {}
     const memberNames: Record<string, string> = {}
-    for (const memberId of householdData.members || []) {
+    await Promise.all((householdData.members || []).map(async (memberId: string) => {
       try {
         const memberUser = await auth.getUser(memberId)
         memberEmails[memberId] = memberUser.email || 'לא ידוע'
@@ -52,7 +53,7 @@ export async function POST(request: NextRequest) {
       } catch {
         memberEmails[memberId] = 'לא ידוע'
       }
-    }
+    }))
 
     // Get pending invitations if owner
     let pendingInvitations: any[] = []

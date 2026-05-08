@@ -9,6 +9,8 @@ import { appSettingsStore } from '@/app/stores/appSettingsStore'
 import { hasGmailAccess, requestGmailAccess } from '@/app/services/gmailService'
 import { hasGoogleAccess, requestGoogleAccess, uploadExpenseDocument, downloadDriveFile } from '@/app/services/googleDriveService'
 import { matchReceiptForTransaction, parseDateFolder } from '@/app/services/receiptMatchService'
+import { partnerStore, type Partner as Participant } from '@/app/stores/partnerStore'
+import { getUser } from '@/app/stores/authStore'
 import type { Category } from '@/app/types/category'
 
 type ExpenseTabProps = {
@@ -245,6 +247,31 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
   const [cashCategory, setCashCategory] = useState('')
   const [cashFile, setCashFile] = useState<File | null>(null)
   const [cashSaving, setCashSaving] = useState(false)
+  const [cashPaidByUid, setCashPaidByUid] = useState<string>('')
+  const [participants, setParticipants] = useState<Participant[]>(() =>
+    typeof window !== 'undefined' ? partnerStore.getCached(undefined) : []
+  )
+
+  // Read partner list from cache for instant render; refresh in background; subscribe to store updates.
+  useEffect(() => {
+    if (!business) return
+    const syncId = business.syncId
+    setParticipants(partnerStore.getCached(syncId))
+    const unsub = partnerStore.subscribe(() => setParticipants(partnerStore.getCached(syncId)))
+    void partnerStore.refresh(syncId)
+    return unsub
+  }, [business?.id, business?.syncId])
+
+  // Default cashPaidByUid to current user when participants change.
+  useEffect(() => {
+    if (cashPaidByUid) return // user picked one already
+    const u = getUser()
+    if (u && participants.find(p => p.uid === u.uid)) {
+      setCashPaidByUid(u.uid)
+    } else if (participants.length > 0) {
+      setCashPaidByUid(participants[0].uid)
+    }
+  }, [participants, cashPaidByUid])
 
   const handleAddCash = async () => {
     if (!cashFile) return
@@ -273,6 +300,7 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
         description: extracted.vendor || extracted.description || 'הוצאה במזומן',
         category: cashCategory || categories[0]?.name,
         isFixed: false,
+        ...(cashPaidByUid ? { paidByUid: cashPaidByUid } : {}),
         month,
         importedAt: new Date().toISOString(),
         fileId: 'cash',
@@ -541,6 +569,15 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
               {categories.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
             </select>
           </div>
+          {participants.length > 1 && (
+            <div>
+              <label style={{ fontSize: '0.75rem', color: '#64748b', display: 'block' }}>שולם על ידי</label>
+              <select value={cashPaidByUid} onChange={e => setCashPaidByUid(e.target.value)}
+                style={{ padding: '0.5rem 1rem', borderRadius: '0.375rem', border: '1px solid #e2e8f0', fontSize: '0.85rem', direction: 'rtl', background: '#fff' }}>
+                {participants.map(p => <option key={p.uid} value={p.uid}>{p.label}</option>)}
+              </select>
+            </div>
+          )}
           <div>
             <label style={{ fontSize: '0.75rem', color: '#64748b', display: 'block' }}>קובץ</label>
             <label className="file-picker" style={{ padding: '0.45rem 1rem', fontSize: '0.85rem', borderRadius: '0.375rem' }}>
@@ -567,6 +604,67 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
         </div>
       )}
 
+      {/* Splid summary — only when there are 2+ participants and at least one expense has paidByUid */}
+      {participants.length > 1 && transactions.some(t => t.paidByUid) && (() => {
+        const totalSpent = transactions.reduce((sum, t) => sum + Math.abs(t.amount), 0)
+        const sharePctSum = participants.reduce((sum, p) => sum + (p.sharePercent ?? 0), 0)
+        const validShares = sharePctSum > 0
+        const rows = participants.map(p => {
+          const paid = transactions
+            .filter(t => t.paidByUid === p.uid)
+            .reduce((sum, t) => sum + Math.abs(t.amount), 0)
+          const sharePct = p.sharePercent ?? 0
+          const owesEqualShare = totalSpent * (sharePct / 100)
+          const balance = validShares ? (paid - owesEqualShare) : 0
+          return { ...p, paid, owesEqualShare, balance }
+        })
+        return (
+          <div style={{
+            marginBottom: '1rem', padding: '0.75rem 1rem',
+            background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '0.5rem',
+            fontSize: '0.85rem',
+          }}>
+            <div style={{ fontWeight: 600, marginBottom: '0.4rem', color: '#075985' }}>חלוקת תשלומים בין השותפים</div>
+            <table style={{ width: '100%', fontSize: '0.85rem', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #bae6fd', color: '#0369a1' }}>
+                  <th style={{ textAlign: 'right', padding: '0.25rem 0.5rem', fontWeight: 500 }}>שותף</th>
+                  <th style={{ textAlign: 'right', padding: '0.25rem 0.5rem', fontWeight: 500 }}>אחוז</th>
+                  <th style={{ textAlign: 'left', padding: '0.25rem 0.5rem', fontWeight: 500 }}>שילם</th>
+                  <th style={{ textAlign: 'left', padding: '0.25rem 0.5rem', fontWeight: 500 }}>חלקו</th>
+                  <th style={{ textAlign: 'left', padding: '0.25rem 0.5rem', fontWeight: 500 }}>מאזן</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(r => (
+                  <tr key={r.uid}>
+                    <td style={{ padding: '0.25rem 0.5rem' }}>{r.label}</td>
+                    <td style={{ padding: '0.25rem 0.5rem', color: '#64748b' }}>
+                      {r.sharePercent != null ? `${r.sharePercent}%` : '—'}
+                    </td>
+                    <td style={{ padding: '0.25rem 0.5rem', textAlign: 'left' }}>₪{r.paid.toLocaleString()}</td>
+                    <td style={{ padding: '0.25rem 0.5rem', textAlign: 'left', color: '#64748b' }}>
+                      ₪{Math.round(r.owesEqualShare).toLocaleString()}
+                    </td>
+                    <td style={{
+                      padding: '0.25rem 0.5rem', textAlign: 'left', fontWeight: 500,
+                      color: r.balance > 0 ? '#16a34a' : r.balance < 0 ? '#dc2626' : '#64748b',
+                    }}>
+                      {r.balance > 0 ? '+' : ''}₪{Math.round(r.balance).toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!validShares && (
+              <div style={{ marginTop: '0.4rem', fontSize: '0.75rem', color: '#dc2626' }}>
+                אחוזי שותפות לא הוגדרו — קבע אותם בלשונית ההגדרות
+              </div>
+            )}
+          </div>
+        )
+      })()}
+
       {/* Transactions table */}
       {transactions.length === 0 ? (
         <p style={{ color: '#64748b', textAlign: 'center', padding: '2rem' }}>
@@ -580,6 +678,9 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>תאריך</th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>תיאור</th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>נושא</th>
+                {participants.length > 1 && (
+                  <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>שולם ע״י</th>
+                )}
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'left' }}>סכום</th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'left' }}>מע״מ</th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'center', width: '80px' }}>קבלה</th>
@@ -627,6 +728,11 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
                         </select>
                       ) : t.category}
                     </td>
+                    {participants.length > 1 && (
+                      <td style={{ padding: '0.6rem 0.5rem', color: '#64748b', fontSize: '0.85rem' }}>
+                        {t.paidByUid ? (participants.find(p => p.uid === t.paidByUid)?.label ?? '') : ''}
+                      </td>
+                    )}
                     <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', fontWeight: 500, color: '#dc2626' }}>
                       {isEditing && editingIsCash ? (
                         <input

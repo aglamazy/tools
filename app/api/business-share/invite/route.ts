@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json()
-    const { businessSyncId, businessName, email } = body
+    const { businessSyncId, businessName, email, sharePercent } = body
 
     if (!businessSyncId || typeof businessSyncId !== 'string') {
       return NextResponse.json({ success: false, error: 'מזהה עסק חסר', errorCode: 'invalid-business' })
@@ -28,6 +28,14 @@ export async function POST(request: NextRequest) {
 
     if (!email || typeof email !== 'string') {
       return NextResponse.json({ success: false, error: 'נדרש אימייל', errorCode: 'invalid-email' })
+    }
+
+    let normalizedSharePercent: number | undefined
+    if (sharePercent !== undefined && sharePercent !== null) {
+      if (typeof sharePercent !== 'number' || sharePercent < 0 || sharePercent > 100) {
+        return NextResponse.json({ success: false, error: 'אחוז שותפות חייב להיות בין 0 ל-100', errorCode: 'invalid-share-percent' })
+      }
+      normalizedSharePercent = sharePercent
     }
 
     const normalizedEmail = email.toLowerCase().trim()
@@ -80,6 +88,7 @@ export async function POST(request: NextRequest) {
       businessName,
       inviteeEmail: normalizedEmail,
       status: 'pending',
+      ...(normalizedSharePercent !== undefined ? { sharePercent: normalizedSharePercent } : {}),
       createdAt: now.toISOString(),
       expiresAt: expiresAt.toISOString(),
     })
