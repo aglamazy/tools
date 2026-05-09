@@ -5,7 +5,8 @@ import JSZip from 'jszip'
 import { db, type Transaction, type Business, type ExpenseDocument } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { businessStore } from '@/app/stores/businessStore'
-import { appSettingsStore } from '@/app/stores/appSettingsStore'
+import { appSettingsStore, type AccountOwners } from '@/app/stores/appSettingsStore'
+import { getTransactionAttributedUid } from '@/app/utils/transactionAttribution'
 import { hasGmailAccess, requestGmailAccess } from '@/app/services/gmailService'
 import { hasGoogleAccess, requestGoogleAccess, uploadExpenseDocument, downloadDriveFile } from '@/app/services/googleDriveService'
 import { matchReceiptForTransaction, parseDateFolder } from '@/app/services/receiptMatchService'
@@ -251,6 +252,7 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
   const [participants, setParticipants] = useState<Participant[]>(() =>
     typeof window !== 'undefined' ? partnerStore.getCached(undefined) : []
   )
+  const [accountOwners, setAccountOwners] = useState<AccountOwners>({})
 
   // Read partner list from cache for instant render; refresh in background; subscribe to store updates.
   useEffect(() => {
@@ -261,6 +263,10 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
     void partnerStore.refresh(syncId)
     return unsub
   }, [business?.id, business?.syncId])
+
+  useEffect(() => {
+    void appSettingsStore.getAccountOwners().then(setAccountOwners)
+  }, [])
 
   // Default cashPaidByUid to current user when participants change.
   useEffect(() => {
@@ -728,11 +734,14 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
                         </select>
                       ) : t.category}
                     </td>
-                    {participants.length > 1 && (
-                      <td style={{ padding: '0.6rem 0.5rem', color: '#64748b', fontSize: '0.85rem' }}>
-                        {t.paidByUid ? (participants.find(p => p.uid === t.paidByUid)?.label ?? '') : ''}
-                      </td>
-                    )}
+                    {participants.length > 1 && (() => {
+                      const attributedUid = getTransactionAttributedUid(t, accountOwners, business?.userId)
+                      return (
+                        <td style={{ padding: '0.6rem 0.5rem', color: '#64748b', fontSize: '0.85rem' }}>
+                          {attributedUid ? (participants.find(p => p.uid === attributedUid)?.label ?? '') : ''}
+                        </td>
+                      )
+                    })()}
                     <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', fontWeight: 500, color: '#dc2626' }}>
                       {isEditing && editingIsCash ? (
                         <input

@@ -8,6 +8,8 @@ import { projectStore } from '@/app/stores/projectStore'
 import { ypayService, YpayDocType } from '@/app/services/ypayService'
 import { hasGmailAccess, requestGmailAccess, sendEmail, type EmailAttachment } from '@/app/services/gmailService'
 import { partnerStore, type Partner as Participant } from '@/app/stores/partnerStore'
+import { appSettingsStore, type AccountOwners } from '@/app/stores/appSettingsStore'
+import { getTransactionAttributedUid } from '@/app/utils/transactionAttribution'
 import ProjectEditModal from './ProjectEditModal'
 import Modal from '@/app/components/Modal'
 import type { Category } from '@/app/types/category'
@@ -47,12 +49,14 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
   const [participants, setParticipants] = useState<Participant[]>(() =>
     typeof window !== 'undefined' ? partnerStore.getCached(undefined) : []
   )
+  const [accountOwners, setAccountOwners] = useState<AccountOwners>({})
 
   useEffect(() => {
     loadBusiness()
     businessStore.getById(businessId)
       .then(b => getTaxProfile(b?.userId))
       .then(p => setProfileVatType(p.vatType))
+    void appSettingsStore.getAccountOwners().then(setAccountOwners)
   }, [businessId])
 
   // Read partners from cache for instant render; refresh in background; subscribe to store updates.
@@ -542,11 +546,14 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
                   <td style={{ padding: '0.6rem 0.5rem' }}>{t.date}</td>
                   <td style={{ padding: '0.6rem 0.5rem' }}>{t.description}</td>
                   <td style={{ padding: '0.6rem 0.5rem', color: '#64748b' }}>{t.category}</td>
-                  {participants.length > 1 && (
-                    <td style={{ padding: '0.6rem 0.5rem', color: '#64748b', fontSize: '0.85rem' }}>
-                      {t.paidByUid ? (participants.find(p => p.uid === t.paidByUid)?.label ?? '') : ''}
-                    </td>
-                  )}
+                  {participants.length > 1 && (() => {
+                    const attributedUid = getTransactionAttributedUid(t, accountOwners, business?.userId)
+                    return (
+                      <td style={{ padding: '0.6rem 0.5rem', color: '#64748b', fontSize: '0.85rem' }}>
+                        {attributedUid ? (participants.find(p => p.uid === attributedUid)?.label ?? '') : ''}
+                      </td>
+                    )
+                  })()}
                   <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', fontWeight: 500 }}>
                     ₪{t.amount.toLocaleString()}
                   </td>

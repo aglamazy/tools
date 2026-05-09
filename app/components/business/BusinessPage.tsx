@@ -17,6 +17,7 @@ import AuditionsTab from './AuditionsTab'
 import OpenDocumentsTab from './OpenDocumentsTab'
 import BizSettingsTab from './BizSettingsTab'
 import ExpenseTab from './ExpenseTab'
+import SettlementSummary from './SettlementSummary'
 import BusinessTasksTab from './BusinessTasksTab'
 import FilesSubTab from './TaxFilesSubTab'
 import { getUser } from '@/app/stores/authStore'
@@ -44,6 +45,7 @@ async function loadHouseholdMembers() {
 const TABS: TabItem[] = [
   { id: 'income', label: 'הכנסות', icon: '💰' },
   { id: 'expenses', label: 'הוצאות', icon: '💸' },
+  { id: 'settlement', label: 'התחשבנות', icon: '⚖️' },
   { id: 'timing', label: 'תיעוד זמן', icon: '⏱️' },
   { id: 'invoices', label: 'חשבוניות', icon: '🧾' },
   { id: 'open-docs', label: 'מסמכים פתוחים', icon: '📄' },
@@ -183,6 +185,7 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
             <>
               {activeTab === 'income' && <IncomeTab businessId={businessId} />}
               {activeTab === 'expenses' && <ExpenseTab businessId={businessId} />}
+              {activeTab === 'settlement' && <SettlementSummary businessId={businessId} />}
               {activeTab === 'timing' && <TimingTab businessId={businessId} />}
               {activeTab === 'invoices' && <InvoicesTab businessId={businessId} />}
               {activeTab === 'open-docs' && <OpenDocumentsTab businessId={businessId} />}
