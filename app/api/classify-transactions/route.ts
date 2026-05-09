@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import type { BudgetTransaction } from '@/app/types/transactions'
 import type { Category } from '@/app/types/category'
+import { parseClaudeJson } from '@/app/utils/parseClaudeJson'
 
 type HistoryEntry = { business: string; category: string }
 
@@ -100,7 +101,11 @@ ${JSON.stringify(slimTransactions, null, 2)}
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-6',
-        max_tokens: 4096,
+        // Bumped from 4096 — for ~50 txs the verbose Hebrew "reasoning"/"why"
+        // fields can exceed 4096 and truncate mid-JSON, causing JSON.parse
+        // failures. 8192 gives comfortable headroom; sonnet-4-6 supports up
+        // to 64k output tokens.
+        max_tokens: 8192,
         system: systemPrompt,
         messages: [{ role: 'user', content: userMessage }],
       }),
@@ -118,15 +123,9 @@ ${JSON.stringify(slimTransactions, null, 2)}
     const data = await response.json()
     const text: string = data.content?.[0]?.text ?? ''
 
-    // Be lenient about a leading ```json code fence in case the model adds one despite instructions.
-    const cleaned = text
-      .trim()
-      .replace(/^```(?:json)?\s*/i, '')
-      .replace(/\s*```\s*$/i, '')
-      .trim()
-
     try {
-      const parsed = JSON.parse(cleaned)
+      // Use shared helper — tolerates ```json fences and surrounding preamble.
+      const parsed = parseClaudeJson<{ confident?: unknown; askUser?: unknown }>(text)
       // Defensive defaults so callers never crash on missing arrays.
       return NextResponse.json({
         confident: Array.isArray(parsed.confident) ? parsed.confident : [],

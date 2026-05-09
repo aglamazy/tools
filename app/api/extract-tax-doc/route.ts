@@ -1,5 +1,6 @@
 // CALLER-KEYED ROUTE — authenticated via caller's Claude API key
 import { NextRequest, NextResponse } from 'next/server'
+import { parseClaudeJson } from '@/app/utils/parseClaudeJson'
 
 export async function POST(req: NextRequest) {
   try {
@@ -88,7 +89,7 @@ export async function POST(req: NextRequest) {
     const text = data.content?.[0]?.text ?? ''
 
     try {
-      const parsed = JSON.parse(text)
+      const parsed = parseClaudeJson(text)
       return NextResponse.json(parsed)
     } catch {
       return NextResponse.json(
