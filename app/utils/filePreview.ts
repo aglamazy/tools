@@ -1,4 +1,4 @@
-import { readExcelFile } from './excelReader'
+import { readFinancialFile } from './financialFileReader'
 import { classifyFile } from './fileClassifier'
 import { extractCreditCardPreview } from './creditCardParser'
 import { extractBankPreview, extractBankPreviewAsync } from './bankParser'
@@ -18,8 +18,8 @@ export type FileMetadata = {
  */
 export const extractFileMetadata = async (file: File): Promise<FileMetadata> => {
   try {
-    // Step 1: Read the Excel file
-    const rows = await readExcelFile(file)
+    // Step 1: Read the financial file (XLS/XLSX or PDF)
+    const rows = await readFinancialFile(file)
 
     // Step 2: Classify the file type
     const fileType = classifyFile(rows)

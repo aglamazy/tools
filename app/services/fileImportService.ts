@@ -1,4 +1,4 @@
-import { readExcelFile } from '@/app/utils/excelReader'
+import { readFinancialFile } from '@/app/utils/financialFileReader'
 import { parseCreditWithRegistry } from '@/app/utils/creditCardParser'
 import { parseBankWithRegistry } from '@/app/utils/bankParser'
 import { transactionStore } from '@/app/stores/transactionStore'
@@ -8,8 +8,8 @@ import { normalizeDate } from '@/app/utils/parsers/shared'
 export const fileImportService = {
   // Import credit card file
   importCreditCardFile: async (file: File, cardNumber: string, billingDate: Date | null, fileId?: string) => {
-    // Read Excel file
-    const rows = await readExcelFile(file)
+    // Read financial file (XLS/XLSX or PDF)
+    const rows = await readFinancialFile(file)
 
     // Parse credit card data via registry (issuer-aware)
     const parsed = parseCreditWithRegistry(rows)
@@ -52,8 +52,8 @@ export const fileImportService = {
 
   // Import bank file
   importBankFile: async (file: File, processingMonth: string, fileId?: string) => {
-    // Read Excel file
-    const rows = await readExcelFile(file)
+    // Read financial file (XLS/XLSX or PDF)
+    const rows = await readFinancialFile(file)
 
     // Get card type indicators from settings
     const cardTypeIndicators = await getCardTypeIndicators()

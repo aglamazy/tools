@@ -13,7 +13,7 @@ import { loadDirectoryHandle, persistDirectoryHandle } from '@/app/utils/directo
 import { transactionStore } from '@/app/stores/transactionStore'
 import { config } from '@/app/config'
 import { extractFileMetadata } from '@/app/utils/filePreview'
-import { readExcelFile } from '@/app/utils/excelReader'
+import { readFinancialFile } from '@/app/utils/financialFileReader'
 import { parseBankWithRegistry } from '@/app/utils/bankParser'
 import { parseCreditWithRegistry } from '@/app/utils/creditCardParser'
 import type { FilePreview } from '@/app/types/file-preview'
@@ -474,7 +474,7 @@ const handleDeleteFile = (file: ImportedFile) => {
                   onDebugInspect={async (preview: FilePreview, file: File) => {
                     try {
                       const metadata = await extractFileMetadata(file)
-                      const rows = await readExcelFile(file)
+                      const rows = await readFinancialFile(file)
                       const tables = parseXlsTables(rows)
                       let parsed: any = null
                       let transactions: any[] | undefined

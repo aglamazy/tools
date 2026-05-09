@@ -25,7 +25,7 @@ export async function scanDirectoryForFiles(dirHandle: FileSystemDirectoryHandle
       subfolders.push({ name: entry.name, handle: entry as FileSystemDirectoryHandle })
     } else if (entry.kind === 'file') {
       const fileName = entry.name.toLowerCase()
-      if (fileName.endsWith('.xls') || fileName.endsWith('.xlsx')) {
+      if (fileName.endsWith('.xls') || fileName.endsWith('.xlsx') || fileName.endsWith('.pdf')) {
         fileHandles.push(entry as FileSystemFileHandle)
       }
     }

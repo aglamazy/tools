@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
-import { readExcelFile } from '@/app/utils/excelReader'
+import { readFinancialFile } from '@/app/utils/financialFileReader'
 import type { SheetCell, SheetRow } from '@/app/types/transactions'
 
 type Payment = {
@@ -290,7 +290,7 @@ export default function FuturePayments() {
           setError('אירעה שגיאה בקריאת הקובץ. נסה לבחור קובץ XLS תקין.')
           return
         }
-        const rows = await readExcelFile(file)
+        const rows = await readFinancialFile(file)
 
         const statement = parseStatement(rows)
         setPayments(statement.payments)
