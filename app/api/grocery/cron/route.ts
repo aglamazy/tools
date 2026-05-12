@@ -37,7 +37,14 @@ import {
 import { sendMessage } from '@/app/services/telegram/telegramClient'
 import { withTimeout } from '@/app/services/grocery/timeoutUtil'
 
-export const maxDuration = 60
+// 300 s is the Vercel Pro hard cap. Two stores × ~45 s iteration timeout
+// + the trailing /success ping does NOT fit in 60 s when one iteration
+// hits its belt and Shufersal's background work continues — that was the
+// 2026-05-10 06:00 UTC firing where Vercel killed the function before the
+// healthchecks.io ping went out, immediately DOWNing the probe (504, no
+// ping). Per-iteration 45 s belt stays — this only buys the route headroom
+// to finish the loop and ping success.
+export const maxDuration = 300
 
 // Vercel cron auth
 const CRON_SECRET = process.env.CRON_SECRET
