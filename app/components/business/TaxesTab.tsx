@@ -5,7 +5,6 @@ import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { db, type TaxDocument, type Business, type Transaction, type AdvancePayment } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import type { Category } from '@/app/types/category'
-import { effectiveExpenseAmount } from './expenseScale'
 import { getUser, subscribeToAuth } from '@/app/stores/authStore'
 import { uploadAdvancePaymentReceipt, ensureRootFolder } from '@/app/services/googleDriveService'
 import { getAccessToken } from '@/app/services/googleTokenService'
@@ -16,10 +15,8 @@ import HouseholdIncomeSummary from './TaxHouseholdSummary'
 import { SelfEmployedBTLSection, SelfEmployedIncomeTaxSection, type BTLRates, type IncomeTaxStep } from './TaxSelfEmployedSections'
 import TaxVatSection from './TaxVatSection'
 import { getTaxProfile, type TaxProfile } from '@/app/components/TaxProfileSection'
-import Modal from '@/app/components/Modal'
-import BusinessForm from '@/app/components/settings/BusinessForm'
-import type { BusinessUI } from '@/app/types/business'
-import { businessStore } from '@/app/stores/businessStore'
+import SelfEmployedSummaryTable from './TaxSelfEmployedSummaryTable'
+import { HEBREW_MONTHS, cellStyle, tHeaderStyle, fmt } from './taxSharedStyles'
 import { BusinessType } from '@/app/types/business'
 
 import TaxesDebugPanel, { type HouseholdMember, type HouseholdDebug } from './TaxesDebugPanel'
@@ -64,11 +61,6 @@ export default function TaxesTab() {
 // ---------------------------------------------------------------------------
 // Annual Summary Sub-Tab
 // ---------------------------------------------------------------------------
-
-const HEBREW_MONTHS = [
-  'ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני',
-  'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר',
-]
 
 function AnnualSummarySubTab() {
   const [docs, setDocs] = useState<TaxDocument[]>([])
@@ -561,27 +553,6 @@ function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBu
 }
 
 // ---------------------------------------------------------------------------
-// Shared styles
-// ---------------------------------------------------------------------------
-
-const cellStyle: React.CSSProperties = {
-  padding: '0.5rem 0.75rem',
-  fontSize: '0.85rem',
-  textAlign: 'left' as const,
-  direction: 'ltr',
-}
-
-const tHeaderStyle: React.CSSProperties = {
-  ...cellStyle,
-  fontWeight: 600,
-  background: '#f8fafc',
-  color: '#475569',
-  borderBottom: '2px solid #e2e8f0',
-}
-
-const fmt = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
-
-// ---------------------------------------------------------------------------
 // Employee (שכיר) Summary Table
 // ---------------------------------------------------------------------------
 
@@ -648,264 +619,4 @@ function EmployeeSummaryTable({ docs, currentYear, currentMonth }: { docs: TaxDo
     </div>
   )
 }
-
-// ---------------------------------------------------------------------------
-// Self-Employed (עצמאי) Summary Table
-// ---------------------------------------------------------------------------
-
-type SelfEmployedTableProps = {
-  businesses: Business[]
-  transactions: Transaction[]
-  bizCategoryMap: Map<number, string[]>
-  expCategoryMap: Map<number, string[]>
-  categoryByName: Map<string, Category>
-  currentYear: number
-  currentMonth: number
-}
-
-function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, expCategoryMap, categoryByName, currentYear, currentMonth }: SelfEmployedTableProps) {
-  const monthlyData = Array.from({ length: currentMonth + 1 }, (_, i) => {
-    const monthStr = `${String(i + 1).padStart(2, '0')}/${currentYear}`
-
-    const bizIncome: Record<number, number> = {}
-    const bizExpense: Record<number, number> = {}
-    for (const biz of businesses) {
-      const catNames = bizCategoryMap.get(biz.id!) || []
-      const bizTx = transactions.filter(t => t.month === monthStr && t.category && catNames.includes(t.category))
-      bizIncome[biz.id!] = bizTx.reduce((s, t) => s + (t.amount || 0), 0)
-
-      const expCatNames = expCategoryMap.get(biz.id!) || []
-      const expTx = transactions.filter(t => t.month === monthStr && t.category && expCatNames.includes(t.category) && t.amount < 0)
-        .filter(t => !t.currentStep || t.currentStep === 1)
-        .map(t => {
-          if (t.totalSteps && t.totalSteps > 1) {
-            const fullAmount = t.totalAmount || (t.totalSteps * Math.abs(t.amount))
-            return { ...t, amount: -fullAmount }
-          }
-          return t
-        })
-      bizExpense[biz.id!] = expTx.reduce((s, t) => s + effectiveExpenseAmount(t, biz, categoryByName), 0)
-    }
-
-    return { month: i, label: HEBREW_MONTHS[i], bizIncome, bizExpense }
-  })
-
-  const totals = {
-    bizIncome: Object.fromEntries(businesses.map(biz => [
-      biz.id!, monthlyData.reduce((s, m) => s + (m.bizIncome[biz.id!] || 0), 0),
-    ])),
-    bizExpense: Object.fromEntries(businesses.map(biz => [
-      biz.id!, monthlyData.reduce((s, m) => s + (m.bizExpense[biz.id!] || 0), 0),
-    ])),
-  }
-
-  const [drillDown, setDrillDown] = useState<{ monthIdx: number; bizId: number; kind: 'income' | 'expense' } | null>(null)
-  const [editingBiz, setEditingBiz] = useState<BusinessUI | null>(null)
-
-  const handleBizSave = async () => {
-    if (!editingBiz) return
-    await businessStore.saveUI(editingBiz, false)
-    setEditingBiz(null)
-  }
-
-  const getDrillDownTransactions = () => {
-    if (!drillDown) return []
-    const monthStr = `${String(drillDown.monthIdx + 1).padStart(2, '0')}/${currentYear}`
-    const catNames = (drillDown.kind === 'income' ? bizCategoryMap : expCategoryMap).get(drillDown.bizId) || []
-    return transactions
-      .filter(t => t.month === monthStr && t.category && catNames.includes(t.category))
-      .filter(t => drillDown.kind === 'income' ? t.amount >= 0 : t.amount < 0)
-      .filter(t => t.amount >= 0 || !t.currentStep || t.currentStep === 1)
-      .map(t => {
-        if (t.amount < 0 && t.totalSteps && t.totalSteps > 1) {
-          const fullAmount = t.totalAmount || (t.totalSteps * Math.abs(t.amount))
-          return { ...t, amount: -fullAmount }
-        }
-        return t
-      })
-      .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
-  }
-
-  const isCellOpen = (monthIdx: number, bizId: number, kind: 'income' | 'expense') =>
-    drillDown?.monthIdx === monthIdx && drillDown?.bizId === bizId && drillDown?.kind === kind
-
-  const subTh: React.CSSProperties = { ...tHeaderStyle, fontSize: '0.75rem', color: '#64748b', fontWeight: 500 }
-  const incomeBg = '#f0fdf4'
-  const expenseBg = '#fef2f2'
-  const incomeOpen = '#bbf7d0'
-  const expenseOpen = '#fecaca'
-
-  return (
-    <div style={{ overflowX: 'auto' }}>
-      <h3 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>עצמאי — הכנסות / הוצאות {currentYear}</h3>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-        <thead>
-          <tr>
-            <th rowSpan={2} style={{ ...tHeaderStyle, textAlign: 'right', direction: 'rtl', verticalAlign: 'bottom' }}>חודש</th>
-            {businesses.map(biz => (
-              <th key={biz.id} colSpan={2} style={{ ...tHeaderStyle, background: '#faf5ff', color: '#7c3aed', borderBottom: '1px solid #e2e8f0' }}>
-                {biz.name}
-                <button
-                  onClick={() => { const { createdAt: _, updatedAt: __, ...ui } = biz; setEditingBiz({ ...ui, id: biz.id! }) }}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', marginRight: '0.25rem' }}
-                  title="הגדרות עסק"
-                >⚙️</button>
-              </th>
-            ))}
-          </tr>
-          <tr>
-            {businesses.map(biz => (
-              <React.Fragment key={biz.id}>
-                <th style={{ ...subTh, color: '#16a34a' }}>הכנסה</th>
-                <th style={{ ...subTh, color: '#dc2626' }}>הוצאה</th>
-              </React.Fragment>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {monthlyData.map(row => (
-            <tr key={row.month} style={{ borderBottom: '1px solid #f1f5f9' }}>
-              <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 500 }}>{row.label}</td>
-              {businesses.map(biz => {
-                const income = row.bizIncome[biz.id!] || 0
-                const expense = row.bizExpense[biz.id!] || 0
-                return (
-                  <React.Fragment key={biz.id}>
-                    <td
-                      onClick={() => income ? setDrillDown(isCellOpen(row.month, biz.id!, 'income') ? null : { monthIdx: row.month, bizId: biz.id!, kind: 'income' }) : undefined}
-                      style={{
-                        ...cellStyle,
-                        background: isCellOpen(row.month, biz.id!, 'income') ? incomeOpen : incomeBg,
-                        cursor: income ? 'pointer' : 'default',
-                        color: '#16a34a',
-                      }}
-                    >
-                      {income ? fmt(income) : '—'}
-                    </td>
-                    <td
-                      onClick={() => expense ? setDrillDown(isCellOpen(row.month, biz.id!, 'expense') ? null : { monthIdx: row.month, bizId: biz.id!, kind: 'expense' }) : undefined}
-                      style={{
-                        ...cellStyle,
-                        background: isCellOpen(row.month, biz.id!, 'expense') ? expenseOpen : expenseBg,
-                        cursor: expense ? 'pointer' : 'default',
-                        color: '#dc2626',
-                      }}
-                    >
-                      {expense ? fmt(expense) : '—'}
-                    </td>
-                  </React.Fragment>
-                )
-              })}
-            </tr>
-          ))}
-        </tbody>
-        <tfoot>
-          <tr style={{ borderTop: '2px solid #e2e8f0' }}>
-            <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 700 }}>סה&quot;כ</td>
-            {businesses.map(biz => (
-              <React.Fragment key={biz.id}>
-                <td style={{ ...cellStyle, fontWeight: 700, background: incomeBg, color: '#16a34a' }}>
-                  {fmt(totals.bizIncome[biz.id!] || 0)}
-                </td>
-                <td style={{ ...cellStyle, fontWeight: 700, background: expenseBg, color: '#dc2626' }}>
-                  {fmt(totals.bizExpense[biz.id!] || 0)}
-                </td>
-              </React.Fragment>
-            ))}
-          </tr>
-        </tfoot>
-      </table>
-
-      {/* Drill-down panel */}
-      {drillDown && (() => {
-        const biz = businesses.find(b => b.id === drillDown.bizId)
-        const txList = getDrillDownTransactions()
-        const isExpense = drillDown.kind === 'expense'
-        const effectiveAmount = (t: Transaction): number => {
-          if (!isExpense || !biz) return t.amount || 0
-          return -effectiveExpenseAmount(t, biz, categoryByName)
-        }
-        const total = txList.reduce((s, t) => s + effectiveAmount(t), 0)
-        return (
-          <div style={{
-            marginTop: '1rem',
-            padding: '1rem',
-            border: '1px solid #e2e8f0',
-            borderRadius: '0.5rem',
-            background: '#fffbeb',
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-              <h4 style={{ margin: 0, fontSize: '0.95rem' }}>
-                {biz?.name} — {drillDown.kind === 'income' ? 'הכנסות' : 'הוצאות'} — {HEBREW_MONTHS[drillDown.monthIdx]} {currentYear}
-              </h4>
-              <button
-                onClick={() => setDrillDown(null)}
-                style={{ background: 'none', border: 'none', fontSize: '1.1rem', cursor: 'pointer', color: '#64748b' }}
-              >
-                ✕
-              </button>
-            </div>
-            {txList.length === 0 ? (
-              <p style={{ color: '#94a3b8', fontSize: '0.85rem' }}>אין תנועות</p>
-            ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                <thead>
-                  <tr>
-                    <th style={{ ...tHeaderStyle, textAlign: 'right', direction: 'rtl' }}>תאריך</th>
-                    <th style={{ ...tHeaderStyle, textAlign: 'right', direction: 'rtl' }}>תיאור</th>
-                    <th style={{ ...tHeaderStyle, textAlign: 'right', direction: 'rtl' }}>קטגוריה</th>
-                    <th style={{ ...tHeaderStyle, textAlign: 'right', direction: 'rtl' }}>אמצעי תשלום</th>
-                    <th style={tHeaderStyle}>סכום</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {txList.map(tx => (
-                    <tr key={tx.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                      <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl' }}>{tx.date}</td>
-                      <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl' }}>{tx.description}</td>
-                      <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl' }}>{tx.category}</td>
-                      <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', color: '#64748b', fontSize: '0.8rem' }}>
-                        {tx.type === 'credit' && tx.cardNumber
-                          ? `כרטיס ${tx.cardNumber}`
-                          : tx.type === 'bank' && tx.accountNumber
-                            ? `חשבון ${tx.accountNumber}`
-                            : 'מזומן'}
-                      </td>
-                      <td style={{ ...cellStyle, color: tx.amount >= 0 ? '#16a34a' : '#dc2626' }}>
-                        {(() => {
-                          const eff = effectiveAmount(tx)
-                          if (!isExpense || eff === tx.amount) return fmt(tx.amount)
-                          return (
-                            <span title={`מקורי: ${fmt(tx.amount)}`}>
-                              {fmt(eff)}
-                              <span style={{ marginInlineStart: '0.4rem', fontSize: '0.75em', color: '#94a3b8' }}>
-                                ({fmt(tx.amount)})
-                              </span>
-                            </span>
-                          )
-                        })()}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr style={{ borderTop: '2px solid #e2e8f0' }}>
-                    <td colSpan={4} style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 700 }}>סה&quot;כ</td>
-                    <td style={{ ...cellStyle, fontWeight: 700, color: total >= 0 ? '#16a34a' : '#dc2626' }}>{fmt(total)}</td>
-                  </tr>
-                </tfoot>
-              </table>
-            )}
-          </div>
-        )
-      })()}
-      <Modal isOpen={!!editingBiz} onClose={() => setEditingBiz(null)} maxWidth="500px">
-        {editingBiz && (
-          <BusinessForm business={editingBiz} onChange={setEditingBiz} onSave={handleBizSave} onCancel={() => setEditingBiz(null)} isNew={false} />
-        )}
-      </Modal>
-    </div>
-  )
-}
-
 

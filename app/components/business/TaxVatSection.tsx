@@ -5,6 +5,7 @@ import { db, type Business, type Transaction, type YpayDocument, type ExpenseDoc
 import type { Category } from '@/app/types/category'
 import { getVatRateForDate, vatInclusiveFactor } from '@/app/lib/vat'
 import { YpayDocType } from '@/app/services/ypayService'
+import ExpenseMatchCell from './ExpenseMatchCell'
 
 const ILS = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
 
@@ -41,6 +42,11 @@ type IncomeRow = {
 
 type ExpenseRow = {
   key: string
+  transactionId: number
+  txDescription: string
+  txMerchant?: string
+  txAmount: number // raw transaction amount (negative for expense)
+  txDateStr: string // DD/MM/YYYY original
   date: Date
   vendor: string
   amount: number
@@ -63,6 +69,7 @@ export default function TaxVatSection({
   const [expenseDocs, setExpenseDocs] = useState<ExpenseDocument[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
+  const [claudeApiKey, setClaudeApiKey] = useState<string>('')
 
   const cutoff = useMemo(() => {
     const d = new Date(effectiveDate)
@@ -73,19 +80,26 @@ export default function TaxVatSection({
   useEffect(() => {
     let alive = true
     void (async () => {
-      const [yp, ex, pj] = await Promise.all([
+      const [yp, ex, pj, claudeKey] = await Promise.all([
         db.ypayDocuments.toArray(),
         db.expenseDocuments.toArray(),
         db.projects.toArray(),
+        db.appSettings.where('key').equals('claudeApiKey').first(),
       ])
       if (!alive) return
       setYpayDocs(yp)
       setExpenseDocs(ex)
       setProjects(pj)
+      if (claudeKey?.value) setClaudeApiKey(claudeKey.value)
       setLoading(false)
     })()
     return () => { alive = false }
   }, [])
+
+  const onMatched = async (doc: ExpenseDocument) => {
+    const id = await db.expenseDocuments.add(doc)
+    setExpenseDocs(prev => [...prev, { ...doc, id: id as number }])
+  }
 
   const userProjectNames = useMemo(() => {
     const businessIds = new Set(businesses.map(b => b.id).filter((x): x is number => x != null))
@@ -137,18 +151,33 @@ export default function TaxVatSection({
       if (!txDate || txDate < cutoff) continue
       if (t.paidByUid && t.paidByUid !== personUid) continue
       const cat = categoryByName.get(t.category)
-      const sharePercent = cat?.deductibleByMember?.[personUid] ?? (cat?.isDeductible ? 100 : 0)
+      // Resolve deductibility share:
+      //  - Business-scoped expense category (cat.businessId set) → implicitly 100%
+      //    for the business owner; expCategoryMap only includes it for that owner.
+      //  - Household-scoped: explicit per-member percent on deductibleByMember,
+      //    falling back to 100% when isDeductible=true with no per-member split.
+      const sharePercent = cat?.businessId != null
+        ? 100
+        : cat?.deductibleByMember?.[personUid] ?? (cat?.isDeductible ? 100 : 0)
       if (sharePercent <= 0) continue
-      const eligibleAmount = (t.amount || 0) * (sharePercent / 100)
+      const eligibleAmount = Math.abs(t.amount || 0) * (sharePercent / 100)
       const linkedDoc = t.id != null ? docByTxId.get(t.id) : undefined
       const vatRate = getVatRateForDate(txDate)
+      // Input VAT is only what the linked document confirms. Without a doc we
+      // cannot know if the vendor charged Israeli VAT (e.g. foreign vendors
+      // like Vercel charge none) — so unlinked rows contribute 0 to input VAT.
       const inputVat = linkedDoc?.vatAmount != null
         ? linkedDoc.vatAmount * (sharePercent / 100)
-        : eligibleAmount * vatInclusiveFactor(vatRate)
+        : 0
       rows.push({
         key: `tx:${t.id}`,
+        transactionId: t.id!,
+        txDescription: t.description || '',
+        txMerchant: t.merchant,
+        txAmount: t.amount || 0,
+        txDateStr: t.date,
         date: txDate,
-        vendor: linkedDoc?.vendor || t.description || '—',
+        vendor: linkedDoc?.vendor || t.merchant || t.description || '—',
         amount: eligibleAmount,
         inputVat,
         vatRate,
@@ -248,29 +277,37 @@ export default function TaxVatSection({
               </tr>
             </thead>
             <tbody>
-              {expenseRows.map(r => (
-                <tr key={r.key} style={trStyle}>
-                  <td style={tdStyle}>{formatDmy(r.date)}</td>
-                  <td style={tdStyle}>{r.vendor}</td>
-                  <td style={{ ...tdStyle, textAlign: 'left' }}>{ILS(r.amount)}</td>
-                  <td style={{ ...tdStyle, textAlign: 'left', color: '#64748b' }}>
-                    {r.sharePercent === 100 ? '—' : `${r.sharePercent}%`}
-                  </td>
-                  <td style={{ ...tdStyle, textAlign: 'left', color: '#64748b' }}>{Math.round(r.vatRate * 100)}%</td>
-                  <td style={{ ...tdStyle, textAlign: 'left', fontWeight: 600 }}>{ILS(r.inputVat)}</td>
-                  <td style={tdStyle}>
-                    {r.hasDoc ? (
-                      r.docUrl ? (
-                        <a href={r.docUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', textDecoration: 'none' }}>
-                          מסמך
-                        </a>
-                      ) : 'מסמך'
-                    ) : (
-                      <span title="הוצאה ללא מסמך מאומת" style={{ color: '#b45309', fontWeight: 600 }}>⚠️ ללא מסמך</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {expenseRows.map(r => {
+                const linked = expenseDocs.find(d => d.transactionId === r.transactionId)
+                return (
+                  <tr key={r.key} style={trStyle}>
+                    <td style={tdStyle}>{formatDmy(r.date)}</td>
+                    <td style={tdStyle}>{r.vendor}</td>
+                    <td style={{ ...tdStyle, textAlign: 'left' }}>{ILS(r.amount)}</td>
+                    <td style={{ ...tdStyle, textAlign: 'left', color: '#64748b' }}>
+                      {r.sharePercent === 100 ? '—' : `${r.sharePercent}%`}
+                    </td>
+                    <td style={{ ...tdStyle, textAlign: 'left', color: '#64748b' }}>{Math.round(r.vatRate * 100)}%</td>
+                    <td style={{ ...tdStyle, textAlign: 'left', fontWeight: 600 }}>
+                      {r.hasDoc ? ILS(r.inputVat) : <span style={{ color: '#94a3b8' }}>—</span>}
+                    </td>
+                    <td style={tdStyle}>
+                      <ExpenseMatchCell
+                        transaction={{
+                          id: r.transactionId,
+                          date: r.txDateStr,
+                          description: r.txDescription,
+                          merchant: r.txMerchant,
+                          amount: r.txAmount,
+                        }}
+                        linkedDoc={linked}
+                        claudeApiKey={claudeApiKey}
+                        onMatched={onMatched}
+                      />
+                    </td>
+                  </tr>
+                )
+              })}
               <tr style={totalRowStyle}>
                 <td style={tdStyle} colSpan={2}>סה״כ</td>
                 <td style={{ ...tdStyle, textAlign: 'left', fontWeight: 700 }}>{ILS(expenseRows.reduce((s, r) => s + r.amount, 0))}</td>

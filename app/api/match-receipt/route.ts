@@ -57,10 +57,15 @@ async function handleMatch(transaction: TransactionInfo, candidates: Candidate[]
 
 כללים:
 - תיאור העסקה בכרטיס אשראי לרוב מופיע בצורה שונה מהשולח במייל. דוגמאות:
-  וואי-פיי = YPAY, שופרסל = SHUFERSAL, הוט מובייל = HOT MOBILE, גוגל = Google Play
-- אתה צריך לזהות את השולח (from) שמתאים לעסקה, גם אם הנושא לא מכיל קבלה
-- הסכום לא בהכרח מופיע בנושא המייל
-- התאריך צריך להיות קרוב (עד 10 ימים הפרש)
+  וואי-פיי = YPAY, שופרסל = SHUFERSAL, הוט מובייל = HOT MOBILE, גוגל = Google Play,
+  VERCEL INC. = Vercel Inc., OPENAI *CHATGPT = OpenAI, GOOGLE *ONE = Google,
+  CLAUDE.AI = Anthropic, AWS / AMAZON WEB = Amazon, STRIPE = Stripe, MICROSOFT *... = Microsoft.
+- ספקים זרים (Vercel, OpenAI, Google, AWS, Stripe וכו') מחייבים במטבע זר (USD/EUR).
+  הסכום בעסקה הוא בש״ח לאחר המרה — אל תפסול קבלה רק כי הסכום במייל שונה מהסכום בעסקה.
+- אתה צריך לזהות את השולח (from) שמתאים לעסקה, גם אם הנושא לא מכיל קבלה.
+- כאשר שם הספק בתיאור (במלואו או חלקי) מופיע גם בשולח (display name או דומיין) —
+  זוהי **התאמה חזקה** ובדרך כלל מספיקה כדי להחזיר matchIndex, גם בלי התאמה של סכום.
+- התאריך צריך להיות קרוב (עד 10 ימים הפרש).
 
 אם מצאת התאמה ברורה — החזר matchIndex.
 אם אתה מזהה את השולח הנכון אבל לא מצאת את הקבלה עצמה — החזר matchIndex: null אבל הוסף senderHint עם כתובת המייל של השולח שנראה רלוונטי, כדי שנוכל לחפש שוב.
@@ -138,10 +143,19 @@ async function handleExtract(emailBody: string, transaction: TransactionInfo, cl
 - documentTitle: כותרת המסמך (לדוגמה: "חשבונית מס / קבלה 12345", "אישור הזמנה" וכו')
 - date: תאריך בפורמט DD/MM/YYYY
 - amount: סכום כולל (מספר)
+- currency: מטבע ("ILS" / "USD" / "EUR" וכו', אם זוהה)
 - vatAmount: סכום מע״מ אם מופיע (מספר או null)
 - description: תיאור קצר של הפריטים / השירות
 - invoiceNumber: מספר חשבונית / קבלה (מחרוזת או null)
 - documentUrl: קישור למסמך/קבלה/חשבונית אם יש (URL מלא או null)
+- matchesTransaction: האם הקבלה הזו אכן שייכת לעסקה הבנקאית שצוינה למטה? (true/false)
+- matchReason: משפט קצר המסביר את ההחלטה
+
+כללי התאמה ל-matchesTransaction:
+- שם הספק במייל צריך להופיע (במלואו או חלקי) בתיאור העסקה (או להפך) — נורמליזציה: VERCEL INC. = Vercel Inc., OPENAI *CHATGPT = OpenAI.
+- התאריך של הקבלה צריך להיות עד 10 ימים סביב תאריך העסקה.
+- הסכום עשוי להיות במטבע אחר (USD/EUR) כאשר הספק זר — אל תפסול קבלה רק כי הסכום שונה.
+- במקרה של ספק זר (Vercel, OpenAI, Google, AWS, Stripe וכו') — התאמת ספק + תאריך מספיקה.
 
 העסקה הבנקאית לעיון: ${transaction.description}, ₪${Math.abs(transaction.amount)}, ${transaction.date}
 
@@ -166,7 +180,9 @@ async function handleExtract(emailBody: string, transaction: TransactionInfo, cl
     const cleaned = text.replace(/```json?\s*/g, '').replace(/```/g, '').trim()
     const parsed = JSON.parse(cleaned)
     return NextResponse.json(parsed)
-  } catch {
+  } catch (parseErr) {
+    console.error('[match-receipt] Failed to parse extract response. Raw text (first 800 chars):', text.slice(0, 800))
+    console.error('[match-receipt] Parse error:', parseErr)
     return NextResponse.json({ error: 'Failed to parse extraction response', raw: text }, { status: 502 })
   }
 }
@@ -176,10 +192,48 @@ async function handleDownloadPdf(url: string) {
     return NextResponse.json({ error: 'Missing URL' }, { status: 400 })
   }
 
-  // Follow redirects and download the PDF
-  const response = await fetch(url, { redirect: 'follow' })
-  if (!response.ok) {
-    return NextResponse.json({ error: `Download failed: ${response.status}` }, { status: 502 })
+  // Stripe's /invoice/.../pdf?s=em returns an HTML viewer page, not the PDF.
+  // We try a series of URL variants — original first, then stripped query,
+  // then known query swaps — and accept the first one that returns binary.
+  const variants = [url]
+  try {
+    const u = new URL(url)
+    if (u.search) {
+      const noQuery = `${u.origin}${u.pathname}`
+      variants.push(noQuery)
+      // Stripe accepts ?s=ap (api source) and a few others; the API-source
+      // variant tends to bypass the hosted-page viewer.
+      variants.push(`${noQuery}?s=ap`)
+    }
+  } catch { /* malformed URL — let the original fetch surface the error */ }
+
+  const browserHeaders = {
+    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Accept': 'application/pdf,application/octet-stream,*/*',
+    'Accept-Language': 'en-US,en;q=0.9,he;q=0.8',
+  }
+
+  let response: Response | null = null
+  let triedUrls: string[] = []
+  for (const v of variants) {
+    triedUrls.push(v)
+    const r = await fetch(v, { redirect: 'follow', headers: browserHeaders })
+    if (!r.ok) {
+      console.error('[match-receipt] PDF variant non-OK:', r.status, v)
+      continue
+    }
+    const ct = (r.headers.get('content-type') || '').toLowerCase()
+    if (ct.startsWith('text/html')) {
+      console.error('[match-receipt] PDF variant returned HTML viewer (not the PDF):', v)
+      continue
+    }
+    // Accept anything that's not HTML — typically application/pdf or octet-stream.
+    response = r
+    break
+  }
+
+  if (!response) {
+    return NextResponse.json({ error: `Download failed: no PDF after ${triedUrls.length} variants`, triedUrls }, { status: 502 })
   }
 
   const contentType = response.headers.get('content-type') || 'application/pdf'
@@ -229,12 +283,20 @@ async function handleExtractPdf(pdfBase64: string, transaction: TransactionInfo,
 
 השדות:
 - vendor: שם העסק / ספק
-- documentTitle: כותרת המסמך (לדוגמה: "חשבונית מס / קבלה 12345", "אישור הזמנה" וכו')
+- documentTitle: כותרת המסמך
 - date: תאריך בפורמט DD/MM/YYYY
 - amount: סכום כולל (מספר)
+- currency: מטבע ("ILS" / "USD" / "EUR" וכו')
 - vatAmount: סכום מע״מ אם מופיע (מספר או null)
 - description: תיאור קצר של הפריטים / השירות
 - invoiceNumber: מספר חשבונית / קבלה (מחרוזת או null)
+- matchesTransaction: האם המסמך הזה אכן שייך לעסקה הבנקאית שצוינה למטה? (true/false)
+- matchReason: משפט קצר המסביר את ההחלטה
+
+כללי התאמה ל-matchesTransaction:
+- שם הספק במסמך צריך להופיע (במלואו או חלקי) בתיאור העסקה (או להפך).
+- התאריך של הקבלה צריך להיות עד 10 ימים סביב תאריך העסקה.
+- הסכום עשוי להיות במטבע אחר (USD/EUR) — אל תפסול קבלה רק כי הסכום שונה.
 
 העסקה הבנקאית לעיון: ${transaction.description}, ₪${Math.abs(transaction.amount)}, ${transaction.date}
 

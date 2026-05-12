@@ -52,6 +52,7 @@ function BudgetPageContent() {
   const [accountOwners, setAccountOwners] = useState<Record<string, string>>({})
   const [subjectsDrawerOpen, setSubjectsDrawerOpen] = useState(false)
   const [smartAgentOpen, setSmartAgentOpen] = useState(false)
+  const [focusedTxId, setFocusedTxId] = useState<string | null>(null)
   const { sortKey, sortDir, toggleSort, sortTransactions } = useTransactionSort()
 
   // Load household members for card owner filter
@@ -117,6 +118,14 @@ function BudgetPageContent() {
         setIsPieChartCollapsed(true) // Collapse pie chart when showing unclassified
       }
 
+      const txParam = searchParams.get('tx')
+      if (txParam) {
+        setFocusedTxId(txParam)
+        // Open expense rows by default so the focused row isn't hidden by the
+        // classified-filter toggle.
+        setHideClassified(false)
+      }
+
       // Load categories from settings
       setCategories(subjectStore.getAll())
 
@@ -124,6 +133,16 @@ function BudgetPageContent() {
     }
     loadData()
   }, [searchParams])
+
+  // After transactions render, scroll the focused row into view and fade out
+  // the highlight a few seconds later.
+  useEffect(() => {
+    if (!focusedTxId || loading) return
+    const el = document.getElementById(`tx-${focusedTxId}`)
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    const t = setTimeout(() => setFocusedTxId(null), 3500)
+    return () => clearTimeout(t)
+  }, [focusedTxId, loading, transactions])
 
   // Save selected month to sessionStorage when it changes
   useEffect(() => {
@@ -780,12 +799,17 @@ function BudgetPageContent() {
                       const isAutoClassified = autoClassifiedIds.has(transaction.id)
                       const isCapitalTx = capitalNames.has(transaction.category || '')
                       const isExternalTx = externalNames.has(transaction.category || '')
+                      const isFocused = String(transaction.id) === focusedTxId
                       return (
                         <tr
                           key={transaction.id}
+                          id={`tx-${transaction.id}`}
                           style={{
-                            backgroundColor: isAutoClassified ? '#fef3c7' : isCapitalTx ? '#f5f3ff' : isExternalTx ? '#fffbeb' : undefined,
-                            transition: 'background-color 0.3s ease',
+                            backgroundColor: isFocused
+                              ? '#fde68a'
+                              : isAutoClassified ? '#fef3c7' : isCapitalTx ? '#f5f3ff' : isExternalTx ? '#fffbeb' : undefined,
+                            outline: isFocused ? '2px solid #f59e0b' : undefined,
+                            transition: 'background-color 0.4s ease, outline 0.4s ease',
                           }}
                         >
                           <td>{transaction.date}</td>

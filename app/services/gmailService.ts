@@ -174,6 +174,57 @@ export async function trashMessage(messageId: string): Promise<{ success: boolea
 }
 
 /**
+ * Fetch the first PDF attachment in a Gmail message (if any).
+ * Returns base64 (standard, not URL-safe), filename, mime type — or null when
+ * the message has no PDF attached.
+ */
+export async function fetchFirstPdfAttachment(
+  messageId: string
+): Promise<{ base64: string; filename: string; mimeType: string } | null> {
+  try {
+    const token = await getToken()
+    const res = await fetch(
+      `${GMAIL_API_BASE}/messages/${messageId}?format=full`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    )
+    if (!res.ok) return null
+    const data = await res.json()
+
+    const attachments: { filename: string; mimeType: string; attachmentId: string }[] = []
+    function walk(part: any) {
+      if (part.filename && part.body?.attachmentId) {
+        attachments.push({
+          filename: part.filename,
+          mimeType: part.mimeType,
+          attachmentId: part.body.attachmentId,
+        })
+      }
+      if (part.parts) for (const sub of part.parts) walk(sub)
+    }
+    walk(data.payload)
+
+    const pdf = attachments.find(a =>
+      a.mimeType === 'application/pdf' || /\.pdf$/i.test(a.filename || '')
+    )
+    if (!pdf) return null
+
+    const attRes = await fetch(
+      `${GMAIL_API_BASE}/messages/${messageId}/attachments/${pdf.attachmentId}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    )
+    if (!attRes.ok) return null
+    const attData = await attRes.json()
+    if (!attData.data) return null
+    // Convert URL-safe base64 → standard base64 (Claude expects standard).
+    const std = attData.data.replace(/-/g, '+').replace(/_/g, '/')
+    return { base64: std, filename: pdf.filename || 'receipt.pdf', mimeType: pdf.mimeType || 'application/pdf' }
+  } catch (err) {
+    console.error('[Gmail] fetchFirstPdfAttachment error:', err)
+    return null
+  }
+}
+
+/**
  * Fetch the full body of a single message (HTML preferred, fallback to plain text)
  */
 export async function fetchMessageBody(
