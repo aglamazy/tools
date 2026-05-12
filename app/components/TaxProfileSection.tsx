@@ -44,6 +44,7 @@ export type TaxProfile = {
   btlNotices?: BtlNotice[]
   incomeTaxAdvancePercent?: number
   incomeTaxAdvancePeriod?: 1 | 2
+  vatReportPeriod?: 1 | 2 // 1=חודשי, 2=דו-חודשי — VAT (מע״מ) reporting cadence for authorized dealer
   taxOrder?: number
   vatConversion?: VatConversion
 }
@@ -428,6 +429,29 @@ export default function TaxProfileSection({ userId, memberLabel }: TaxProfileSec
                   תעודה: {profile.vatConversion.certificateFileName || 'פתח'}
                 </a>
               )}
+            </div>
+          )}
+          {profile.vatType === 'authorized' && (
+            <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.6rem', fontSize: '0.85rem', flexWrap: 'wrap' }}>
+              <span style={{ color: '#64748b' }}>תקופת דיווח מע״מ:</span>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="profileVatPeriod"
+                  checked={profile.vatReportPeriod === 1}
+                  onChange={() => update({ vatReportPeriod: 1 })}
+                />
+                חודשי
+              </label>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="profileVatPeriod"
+                  checked={(profile.vatReportPeriod ?? 2) === 2}
+                  onChange={() => update({ vatReportPeriod: 2 })}
+                />
+                דו-חודשי
+              </label>
             </div>
           )}
         </div>

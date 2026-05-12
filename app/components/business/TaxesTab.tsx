@@ -14,6 +14,7 @@ import { type TaxStatus, type TaxStatusInfo, useExemptTaxStatus } from '@/app/co
 import RentalSummaryTable from './TaxRentalSummary'
 import HouseholdIncomeSummary from './TaxHouseholdSummary'
 import { SelfEmployedBTLSection, SelfEmployedIncomeTaxSection, type BTLRates, type IncomeTaxStep } from './TaxSelfEmployedSections'
+import TaxVatSection from './TaxVatSection'
 import { getTaxProfile, type TaxProfile } from '@/app/components/TaxProfileSection'
 import Modal from '@/app/components/Modal'
 import BusinessForm from '@/app/components/settings/BusinessForm'
@@ -403,6 +404,11 @@ function AnnualSummarySubTab() {
         if (hasDocs) sections.push({ id: 'employee', label: 'שכיר' })
         if (nonRentalBiz.length > 0) sections.push({ id: 'selfEmployed', label: 'עצמאי' })
         if (rentalBiz.length > 0) sections.push({ id: 'rental', label: 'השכרת דירה' })
+        const showVat =
+          taxProfile.vatType === 'authorized' &&
+          !!taxProfile.vatConversion?.effectiveDate &&
+          nonRentalBiz.length > 0
+        if (showVat) sections.push({ id: 'vat', label: 'מע״מ' })
         if (sections.length === 0) return <p style={{ color: '#94a3b8', textAlign: 'center' }}>אין נתונים לשנה זו</p>
 
         return (
@@ -538,6 +544,17 @@ function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBu
             currentMonth={currentMonth}
           />
         </>
+      )}
+
+      {activeSection === 'vat' && taxProfile?.vatConversion?.effectiveDate && personUid && (
+        <TaxVatSection
+          effectiveDate={taxProfile.vatConversion.effectiveDate}
+          personUid={personUid}
+          businesses={nonRentalBusinesses}
+          transactions={transactions}
+          expCategoryMap={expCategoryMap}
+          categoryByName={categoryByName}
+        />
       )}
     </div>
   )
