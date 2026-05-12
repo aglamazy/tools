@@ -79,14 +79,14 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
         <h2 style={{ margin: 0, fontSize: '1.1rem' }}>חשבוניות עסקה</h2>
         <button
-          disabled={!hasYpay || activeProjects.length === 0}
+          disabled={!hasYpay}
           onClick={() => setShowModal(true)}
-          title={!hasYpay ? 'יש להגדיר פרטי YPAY בהגדרות העסק' : activeProjects.length === 0 ? 'אין פרויקטים פעילים' : ''}
+          title={!hasYpay ? 'יש להגדיר פרטי YPAY בהגדרות העסק' : ''}
           style={{
             padding: '0.5rem 1rem',
-            background: !hasYpay || activeProjects.length === 0 ? '#94a3b8' : '#6366f1',
+            background: !hasYpay ? '#94a3b8' : '#6366f1',
             color: 'white', border: 'none', borderRadius: '0.375rem',
-            cursor: !hasYpay || activeProjects.length === 0 ? 'not-allowed' : 'pointer', fontWeight: 600,
+            cursor: !hasYpay ? 'not-allowed' : 'pointer', fontWeight: 600,
           }}
         >
           + חשבונית חדשה
@@ -156,6 +156,7 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
           onClose={() => setShowModal(false)}
           onCreated={() => void load()}
           onError={setError}
+          onProjectAdded={() => void load()}
         />
       )}
 

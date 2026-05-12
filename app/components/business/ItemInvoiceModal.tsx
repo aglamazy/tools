@@ -1,9 +1,11 @@
 'use client'
 
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { ypayService } from '@/app/services/ypayService'
+import { projectStore } from '@/app/stores/projectStore'
 import type { Business, Project } from '@/app/db/financeDB'
 import { VAT_RATE_AUTHORIZED_DEALER, billingDocLabel } from '@/app/lib/vat'
+import ProjectEditModal from './ProjectEditModal'
 
 type LineItem = {
   description: string
@@ -19,6 +21,19 @@ type ItemInvoiceModalProps = {
   onClose: () => void
   onCreated: () => void
   onError: (message: string) => void
+  onProjectAdded?: () => void
+}
+
+function blankProject(businessId: number): Project {
+  const now = new Date().toISOString()
+  return {
+    businessId,
+    name: '',
+    color: '#3b82f6',
+    archived: false,
+    createdAt: now,
+    updatedAt: now,
+  }
 }
 
 const emptyLine = (): LineItem => ({ description: '', quantity: 1, price: 0 })
@@ -39,6 +54,7 @@ export default function ItemInvoiceModal({
   onClose,
   onCreated,
   onError,
+  onProjectAdded,
 }: ItemInvoiceModalProps) {
   const effectiveVat = vatType || business.vatType
   const docLabel = billingDocLabel(effectiveVat)
@@ -48,6 +64,31 @@ export default function ItemInvoiceModal({
   const [date, setDate] = useState<string>(todayLocal())
   const [lines, setLines] = useState<LineItem[]>([emptyLine()])
   const [creating, setCreating] = useState(false)
+  const [draftProject, setDraftProject] = useState<Project | null>(null)
+
+  useEffect(() => {
+    if (projectId == null && projects.length > 0) {
+      setProjectId(projects[0].id ?? null)
+    }
+  }, [projects, projectId])
+
+  const handleSaveNewProject = async (p: Project) => {
+    if (!p.name.trim()) return
+    const newId = await projectStore.add({
+      businessId: p.businessId,
+      name: p.name.trim(),
+      color: p.color,
+      defaultHourlyRate: p.defaultHourlyRate,
+      contactEmail: p.contactEmail,
+      contactBusinessID: p.contactBusinessID,
+      contactPhone: p.contactPhone,
+    })
+    if (newId != null) {
+      setProjectId(newId)
+      onProjectAdded?.()
+    }
+    setDraftProject(null)
+  }
 
   const project = useMemo(() => projects.find(p => p.id === projectId) || null, [projects, projectId])
 
@@ -126,16 +167,30 @@ export default function ItemInvoiceModal({
         <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
           <div style={{ flex: '1 1 280px' }}>
             <label style={{ display: 'block', fontSize: '0.85rem', color: '#64748b', marginBottom: '0.25rem' }}>פרויקט</label>
-            <select
-              value={projectId ?? ''}
-              onChange={e => setProjectId(e.target.value ? Number(e.target.value) : null)}
-              style={{ width: '100%', padding: '0.5rem', borderRadius: '0.375rem', border: '1px solid #cbd5e1' }}
-            >
-              {projects.length === 0 && <option value="">אין פרויקטים פעילים</option>}
-              {projects.map(p => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
+            <div style={{ display: 'flex', gap: '0.4rem' }}>
+              <select
+                value={projectId ?? ''}
+                onChange={e => setProjectId(e.target.value ? Number(e.target.value) : null)}
+                style={{ flex: 1, padding: '0.5rem', borderRadius: '0.375rem', border: '1px solid #cbd5e1' }}
+              >
+                {projects.length === 0 && <option value="">אין פרויקטים פעילים</option>}
+                {projects.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => setDraftProject(blankProject(business.id!))}
+                title="פרויקט חדש"
+                style={{
+                  padding: '0.5rem 0.75rem', background: '#f1f5f9', color: '#334155',
+                  border: '1px solid #cbd5e1', borderRadius: '0.375rem', cursor: 'pointer',
+                  fontWeight: 600, whiteSpace: 'nowrap',
+                }}
+              >
+                + חדש
+              </button>
+            </div>
           </div>
           <div style={{ flex: '0 0 180px' }}>
             <label style={{ display: 'block', fontSize: '0.85rem', color: '#64748b', marginBottom: '0.25rem' }}>תאריך מסמך</label>
@@ -294,6 +349,15 @@ export default function ItemInvoiceModal({
           </button>
         </div>
       </div>
+
+      {draftProject && (
+        <ProjectEditModal
+          project={draftProject}
+          isNew
+          onClose={() => setDraftProject(null)}
+          onSave={(p) => void handleSaveNewProject(p)}
+        />
+      )}
     </div>
   )
 }
