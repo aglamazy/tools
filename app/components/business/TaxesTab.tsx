@@ -542,6 +542,7 @@ function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBu
         <TaxVatSection
           effectiveDate={taxProfile.vatConversion.effectiveDate}
           personUid={personUid}
+          vatReportPeriod={taxProfile.vatReportPeriod ?? 2}
           businesses={nonRentalBusinesses}
           transactions={transactions}
           expCategoryMap={expCategoryMap}

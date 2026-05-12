@@ -8,6 +8,7 @@ import type { ScoutResult } from '@/app/types/scoutResult'
 import type { ScoutConfig } from '@/app/types/scoutConfig'
 import type { AgentTaskStatus } from '@/app/types/bot'
 import { BusinessType } from '@/app/types/business'
+import type { CredentialRow } from '@/app/types/credential'
 
 // Re-export types for convenience
 export type { CapitalEntry } from '@/app/types/capital'
@@ -202,6 +203,7 @@ export interface YpayDocument {
   projectName?: string // For business invoices
   monthName?: string // For business invoices
   paidAt?: string // ISO timestamp when payment was received
+  vatPaymentId?: number // FK → VatPayment.id once reported to the tax authority
   createdAt: string // ISO timestamp
   updatedAt?: string
 }
@@ -268,6 +270,7 @@ export interface ExpenseDocument {
   mismatchDetails?: string // Description of mismatches found
   sourceType?: 'upload' | 'gmail' // How the document was attached
   gmailMessageId?: string // Gmail message ID if attached from Gmail
+  vatPaymentId?: number // FK → VatPayment.id once included in a filed VAT report
   uploadedAt: string
   updatedAt?: string
 }
@@ -284,6 +287,32 @@ export interface AdvancePayment {
   fileName?: string
   userId?: string
   createdAt: string
+  updatedAt?: string
+}
+
+/**
+ * One VAT payment to the tax authority. Tags the YpayDocuments and
+ * ExpenseDocuments that were included in this filing so the section can:
+ *  - hide already-paid docs from the "current open period" view
+ *  - reassign late-arriving docs (no vatPaymentId set) to the next open period
+ */
+export interface VatPayment {
+  id?: number
+  syncId?: string
+  userId?: string                      // Firebase UID of the payer (per-person VAT)
+  periodLabel: string                 // user-friendly "מרץ-אפריל 2026" / "אפריל 2026"
+  periodStart: string                 // YYYY-MM-DD inclusive
+  periodEnd: string                   // YYYY-MM-DD inclusive
+  paymentDate: string                 // YYYY-MM-DD on the confirmation
+  output?: number                     // מס עסקאות reported
+  input?: number                      // מס תשומות reported
+  net?: number                        // לתשלום (>0) / להחזר (<0)
+  confirmationNumber?: string         // אסמכתא
+  fileName?: string
+  driveFileId?: string
+  driveWebViewLink?: string
+  extractedData?: any                 // raw Claude extraction blob
+  uploadedAt: string                  // ISO when row was created
   updatedAt?: string
 }
 
@@ -334,8 +363,10 @@ class FinanceDB extends Dexie {
   expenseDocuments!: Table<ExpenseDocument, number>
   businessTasks!: Table<BusinessTask, number>
   advancePayments!: Table<AdvancePayment, number>
+  vatPayments!: Table<VatPayment, number>
   chats!: Table<Chat, string>
   chatMessages!: Table<ChatMessageRow, string>
+  credentials!: Table<CredentialRow, number>
 
   constructor() {
     super('FinanceDB')
@@ -348,7 +379,7 @@ class FinanceDB extends Dexie {
       'importedFiles', 'transactions', 'tasks', 'financialInstitutions',
       'capitalEntries', 'ypayDocuments', 'projects', 'harvestTasks',
       'timeEntries', 'taxDocuments', 'advancePayments', 'businessTasks',
-      'chats', 'chatMessages',
+      'chats', 'chatMessages', 'credentials', 'vatPayments',
     ])
 
     // Auto-inject syncId/updatedAt on create/update, and record deletions
@@ -395,8 +426,17 @@ class FinanceDB extends Dexie {
         }
       })
     })
+
   }
 }
 
 // Export singleton instance
 export const db = new FinanceDB()
+
+// Dev-only: expose `db` on the global window so ad-hoc data-cleanup operations
+// can run from the browser console (e.g. removing test invoice rows). The
+// existing Dexie `deleting` hook auto-writes deletions to the `deletedRecords`
+// tombstone ledger, so console-driven deletes are sync-safe.
+if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production') {
+  ;(window as unknown as { db: FinanceDB }).db = db
+}

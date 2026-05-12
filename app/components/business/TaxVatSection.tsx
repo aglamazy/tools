@@ -1,10 +1,12 @@
 'use client'
 
-import React, { useEffect, useMemo, useState } from 'react'
-import { db, type Business, type Transaction, type YpayDocument, type ExpenseDocument, type Project } from '@/app/db/financeDB'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { db, type Business, type Transaction, type YpayDocument, type ExpenseDocument, type Project, type VatPayment } from '@/app/db/financeDB'
 import type { Category } from '@/app/types/category'
-import { getVatRateForDate, vatInclusiveFactor } from '@/app/lib/vat'
+import { getVatRateForDate } from '@/app/lib/vat'
 import { YpayDocType } from '@/app/services/ypayService'
+import { uploadExpenseDocument } from '@/app/services/googleDriveService'
+import { parseDateFolder } from '@/app/services/receiptMatchService'
 import ExpenseMatchCell from './ExpenseMatchCell'
 
 const ILS = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
@@ -23,10 +25,86 @@ function formatDmy(d: Date): string {
 type TaxVatSectionProps = {
   effectiveDate: string // YYYY-MM-DD — when user became authorized
   personUid: string
+  vatReportPeriod: 1 | 2 // 1 = monthly, 2 = bi-monthly
   businesses: Business[] // user's relevant businesses
   transactions: Transaction[] // all year transactions (already filtered to bizCategories)
   expCategoryMap: Map<number, string[]>
   categoryByName: Map<string, Category>
+}
+
+type ReportPeriod = {
+  key: string         // "2026-03_2026-04" — stable id
+  label: string       // "מרץ-אפריל 2026"
+  startISO: string    // inclusive YYYY-MM-DD
+  endISO: string      // inclusive YYYY-MM-DD
+  start: Date
+  end: Date
+}
+
+const HEBREW_MONTHS_GEN = [
+  'ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני',
+  'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר',
+]
+
+function isoDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/**
+ * Generate the fixed VAT reporting periods (calendar-aligned, never partial)
+ * between effectiveDate and today.
+ *  - monthly: Jan, Feb, …, Dec — each its own period
+ *  - bi-monthly: Jan-Feb, Mar-Apr, May-Jun, Jul-Aug, Sep-Oct, Nov-Dec
+ * The returned list is ordered oldest-first. effectiveDate inside a period
+ * still produces the full calendar period (we just don't count rows before
+ * the effectiveDate cutoff elsewhere).
+ */
+function generatePeriods(effectiveISO: string, periodSize: 1 | 2): ReportPeriod[] {
+  const eff = new Date(effectiveISO)
+  eff.setHours(0, 0, 0, 0)
+  const now = new Date()
+  const periods: ReportPeriod[] = []
+
+  if (periodSize === 1) {
+    // One period per calendar month.
+    const cursor = new Date(eff.getFullYear(), eff.getMonth(), 1)
+    const stop = new Date(now.getFullYear(), now.getMonth() + 1, 1)
+    while (cursor < stop) {
+      const start = new Date(cursor)
+      const end = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0)
+      end.setHours(23, 59, 59, 999)
+      periods.push({
+        key: `${isoDate(start)}_${isoDate(end)}`,
+        label: `${HEBREW_MONTHS_GEN[start.getMonth()]} ${start.getFullYear()}`,
+        startISO: isoDate(start),
+        endISO: isoDate(end),
+        start,
+        end,
+      })
+      cursor.setMonth(cursor.getMonth() + 1)
+    }
+  } else {
+    // Bi-monthly: 0/1, 2/3, 4/5, 6/7, 8/9, 10/11.
+    const bucket = (m: number) => Math.floor(m / 2) * 2
+    const cursor = new Date(eff.getFullYear(), bucket(eff.getMonth()), 1)
+    const stop = new Date(now.getFullYear(), bucket(now.getMonth()) + 2, 1)
+    while (cursor < stop) {
+      const start = new Date(cursor)
+      const end = new Date(cursor.getFullYear(), cursor.getMonth() + 2, 0)
+      end.setHours(23, 59, 59, 999)
+      periods.push({
+        key: `${isoDate(start)}_${isoDate(end)}`,
+        label: `${HEBREW_MONTHS_GEN[start.getMonth()]}-${HEBREW_MONTHS_GEN[start.getMonth() + 1]} ${start.getFullYear()}`,
+        startISO: isoDate(start),
+        endISO: isoDate(end),
+        start,
+        end,
+      })
+      cursor.setMonth(cursor.getMonth() + 2)
+    }
+  }
+
+  return periods
 }
 
 type IncomeRow = {
@@ -60,6 +138,7 @@ type ExpenseRow = {
 export default function TaxVatSection({
   effectiveDate,
   personUid,
+  vatReportPeriod,
   businesses,
   transactions,
   expCategoryMap,
@@ -68,8 +147,12 @@ export default function TaxVatSection({
   const [ypayDocs, setYpayDocs] = useState<YpayDocument[]>([])
   const [expenseDocs, setExpenseDocs] = useState<ExpenseDocument[]>([])
   const [projects, setProjects] = useState<Project[]>([])
+  const [vatPayments, setVatPayments] = useState<VatPayment[]>([])
   const [loading, setLoading] = useState(true)
   const [claudeApiKey, setClaudeApiKey] = useState<string>('')
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string>('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const cutoff = useMemo(() => {
     const d = new Date(effectiveDate)
@@ -77,19 +160,38 @@ export default function TaxVatSection({
     return d
   }, [effectiveDate])
 
+  const periods = useMemo(() => generatePeriods(effectiveDate, vatReportPeriod), [effectiveDate, vatReportPeriod])
+  // Default selection: the period containing today; falls back to the last one.
+  const currentPeriodKey = useMemo(() => {
+    const now = new Date()
+    const found = periods.find(p => p.start <= now && now <= p.end)
+    return found?.key || periods[periods.length - 1]?.key || ''
+  }, [periods])
+  const [selectedPeriodKey, setSelectedPeriodKey] = useState<string>('')
+  // Initialize / reset the selection when periods change.
+  useEffect(() => {
+    if (!selectedPeriodKey && currentPeriodKey) setSelectedPeriodKey(currentPeriodKey)
+  }, [currentPeriodKey, selectedPeriodKey])
+  const selectedPeriod = useMemo(
+    () => periods.find(p => p.key === selectedPeriodKey) || periods.find(p => p.key === currentPeriodKey),
+    [periods, selectedPeriodKey, currentPeriodKey],
+  )
+
   useEffect(() => {
     let alive = true
     void (async () => {
-      const [yp, ex, pj, claudeKey] = await Promise.all([
+      const [yp, ex, pj, vp, claudeKey] = await Promise.all([
         db.ypayDocuments.toArray(),
         db.expenseDocuments.toArray(),
         db.projects.toArray(),
+        db.vatPayments.toArray(),
         db.appSettings.where('key').equals('claudeApiKey').first(),
       ])
       if (!alive) return
       setYpayDocs(yp)
       setExpenseDocs(ex)
       setProjects(pj)
+      setVatPayments(vp)
       if (claudeKey?.value) setClaudeApiKey(claudeKey.value)
       setLoading(false)
     })()
@@ -110,14 +212,34 @@ export default function TaxVatSection({
     return names
   }, [businesses, projects])
 
+  // The VatPayment (if any) that matches the selected period's date range.
+  // Used to decide closed-vs-open and which tagged docs to show.
+  const selectedPayment = useMemo(
+    () => selectedPeriod
+      ? vatPayments.find(p => p.periodStart === selectedPeriod.startISO && p.periodEnd === selectedPeriod.endISO)
+      : undefined,
+    [vatPayments, selectedPeriod],
+  )
+  const isPeriodClosed = !!selectedPayment
+
   const incomeRows = useMemo<IncomeRow[]>(() => {
+    if (!selectedPeriod) return []
     const taxableTypes = new Set<number>([YpayDocType.TaxInvoice, YpayDocType.TaxInvoiceReceipt])
     const rows: IncomeRow[] = []
     for (const d of ypayDocs) {
       if (!taxableTypes.has(d.docType)) continue
-      const created = new Date(d.createdAt)
-      if (created < cutoff) continue
       if (d.projectName && !userProjectNames.has(d.projectName)) continue
+      const created = new Date(d.createdAt)
+      if (isPeriodClosed) {
+        // Closed period: show only docs that were tagged with this payment.
+        if (d.vatPaymentId !== selectedPayment!.id) continue
+      } else {
+        // Open period: untagged docs whose date falls inside the period
+        // and on/after the dealer-conversion cutoff.
+        if (d.vatPaymentId != null) continue
+        if (created < cutoff) continue
+        if (created < selectedPeriod.start || created > selectedPeriod.end) continue
+      }
       const amount = d.amount || 0
       const vatRate = getVatRateForDate(created)
       rows.push({
@@ -126,16 +248,20 @@ export default function TaxVatSection({
         serial: d.serialNumber,
         projectName: d.projectName || '—',
         amount,
-        outputVat: amount * vatInclusiveFactor(vatRate),
+        // YpayDocument.amount is the NET amount (lines are created with
+        // vatIncluded:false in ypayService). So output VAT is amount × rate,
+        // NOT the gross-inclusive factor.
+        outputVat: amount * vatRate,
         vatRate,
         docType: d.docType,
       })
     }
     rows.sort((a, b) => a.date.getTime() - b.date.getTime())
     return rows
-  }, [ypayDocs, cutoff, userProjectNames])
+  }, [ypayDocs, cutoff, userProjectNames, selectedPeriod, isPeriodClosed, selectedPayment])
 
   const expenseRows = useMemo<ExpenseRow[]>(() => {
+    if (!selectedPeriod) return []
     const deductibleCatNames = new Set<string>()
     for (const names of expCategoryMap.values()) names.forEach(n => deductibleCatNames.add(n))
 
@@ -148,7 +274,7 @@ export default function TaxVatSection({
     for (const t of transactions) {
       if (!t.category || !deductibleCatNames.has(t.category)) continue
       const txDate = parseDmy(t.date)
-      if (!txDate || txDate < cutoff) continue
+      if (!txDate) continue
       if (t.paidByUid && t.paidByUid !== personUid) continue
       const cat = categoryByName.get(t.category)
       // Resolve deductibility share:
@@ -162,6 +288,16 @@ export default function TaxVatSection({
       if (sharePercent <= 0) continue
       const eligibleAmount = Math.abs(t.amount || 0) * (sharePercent / 100)
       const linkedDoc = t.id != null ? docByTxId.get(t.id) : undefined
+      if (isPeriodClosed) {
+        // Closed period: only show docs tagged with this payment.
+        if (linkedDoc?.vatPaymentId !== selectedPayment!.id) continue
+      } else {
+        // Open period: untagged docs whose date falls inside the period
+        // and on/after the dealer-conversion cutoff.
+        if (linkedDoc?.vatPaymentId != null) continue
+        if (txDate < cutoff) continue
+        if (txDate < selectedPeriod.start || txDate > selectedPeriod.end) continue
+      }
       const vatRate = getVatRateForDate(txDate)
       // Input VAT is only what the linked document confirms. Without a doc we
       // cannot know if the vendor charged Israeli VAT (e.g. foreign vendors
@@ -188,7 +324,7 @@ export default function TaxVatSection({
     }
     rows.sort((a, b) => a.date.getTime() - b.date.getTime())
     return rows
-  }, [transactions, expCategoryMap, categoryByName, expenseDocs, cutoff, personUid])
+  }, [transactions, expCategoryMap, categoryByName, expenseDocs, cutoff, personUid, selectedPeriod, isPeriodClosed, selectedPayment])
 
   const totals = useMemo(() => {
     const output = incomeRows.reduce((s, r) => s + r.outputVat, 0)
@@ -208,18 +344,190 @@ export default function TaxVatSection({
     ? '—'
     : ratesInWindow.map(r => `${Math.round(r * 100)}%`).join(' / ')
 
+  const handleUploadVatPayment = async (file: File) => {
+    setUploadError('')
+    if (!claudeApiKey) {
+      setUploadError('חסר מפתח Anthropic בהגדרות — נדרש לקריאת אישור התשלום')
+      return
+    }
+    if (incomeRows.length === 0 && expenseRows.length === 0) {
+      setUploadError('אין רשומות פתוחות לסגירה')
+      return
+    }
+    setUploading(true)
+    try {
+      const buffer = await file.arrayBuffer()
+      const bytes = new Uint8Array(buffer)
+      let binary = ''
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+      const base64 = btoa(binary)
+
+      // Today as the folder bucket for the Drive upload (real period extracted below).
+      const today = new Date()
+      const ymd = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+      const uploaded = await uploadExpenseDocument(file, parseDateFolder(ymd))
+      if (!uploaded.webViewLink) throw new Error('העלאה ל-Drive נכשלה')
+
+      const extractRes = await fetch('/api/match-receipt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'extract-vat-payment',
+          pdfBase64: base64,
+          mediaType: file.type || 'application/pdf',
+          claudeApiKey,
+        }),
+      })
+      const extracted = await extractRes.json()
+      console.log('[VatPayment] extract →', extracted)
+      if (extracted?.error) throw new Error(extracted.error)
+
+      const now = new Date().toISOString()
+      // Period boundaries default to the SELECTED period (the one the user is
+      // closing). Claude's extracted values override when present.
+      const fallbackStart = selectedPeriod?.startISO || cutoff.toISOString().slice(0, 10)
+      const fallbackEnd = selectedPeriod?.endISO || ymd
+      const fallbackLabel = selectedPeriod?.label || 'תקופה לא ידועה'
+      const paymentId = await db.vatPayments.add({
+        userId: personUid,
+        periodLabel: extracted.periodLabel || fallbackLabel,
+        periodStart: extracted.periodStart || fallbackStart,
+        periodEnd: extracted.periodEnd || fallbackEnd,
+        paymentDate: extracted.paymentDate || ymd,
+        output: typeof extracted.output === 'number' ? extracted.output : totals.output,
+        input: typeof extracted.input === 'number' ? extracted.input : totals.input,
+        net: typeof extracted.net === 'number' ? extracted.net : totals.net,
+        confirmationNumber: extracted.confirmationNumber || undefined,
+        fileName: file.name,
+        driveFileId: uploaded.fileId,
+        driveWebViewLink: uploaded.webViewLink,
+        extractedData: extracted,
+        uploadedAt: now,
+      })
+
+      // Tag docs that fall WITHIN this payment's reporting period only —
+      // not everything currently visible. Otherwise next-period invoices
+      // already issued would get swept into this filing.
+      const periodStartDate = new Date(extracted.periodStart || cutoff.toISOString().slice(0, 10))
+      const periodEndDate = new Date(extracted.periodEnd || ymd)
+      periodStartDate.setHours(0, 0, 0, 0)
+      periodEndDate.setHours(23, 59, 59, 999)
+      const inPeriod = (d: Date) => d >= periodStartDate && d <= periodEndDate
+      await Promise.all([
+        ...incomeRows
+          .filter(r => inPeriod(r.date))
+          .map(r => db.ypayDocuments.update(r.id, { vatPaymentId: paymentId as number })),
+        ...expenseRows
+          .filter(r => inPeriod(r.date))
+          .map(r => expenseDocs.find(d => d.transactionId === r.transactionId))
+          .filter((d): d is ExpenseDocument => !!d && d.id != null)
+          .map(d => db.expenseDocuments.update(d.id!, { vatPaymentId: paymentId as number })),
+      ])
+
+      // Reload everything so the section reflects the closed period.
+      const [yp, ex, vp] = await Promise.all([
+        db.ypayDocuments.toArray(),
+        db.expenseDocuments.toArray(),
+        db.vatPayments.toArray(),
+      ])
+      setYpayDocs(yp)
+      setExpenseDocs(ex)
+      setVatPayments(vp)
+    } catch (err: any) {
+      console.error('[VatPayment] upload failed:', err)
+      setUploadError(err?.message || String(err))
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const handleVatFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) void handleUploadVatPayment(file)
+    e.target.value = ''
+  }
+
   if (loading) return <p style={{ color: '#94a3b8' }}>טוען נתוני מע״מ...</p>
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '1rem', flexWrap: 'wrap' }}>
-        <h3 style={{ margin: 0, fontSize: '1rem' }}>
-          מע״מ — מתאריך {formatDmy(cutoff)}
-        </h3>
-        <span style={{ fontSize: '0.85rem', color: '#64748b' }}>
-          שיעור מע״מ {rateLabel} (עוסק מורשה)
-        </span>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          <h3 style={{ margin: 0, fontSize: '1rem' }}>תקופה</h3>
+          <select
+            value={selectedPeriodKey}
+            onChange={e => setSelectedPeriodKey(e.target.value)}
+            style={{ padding: '0.3rem 0.5rem', borderRadius: '0.375rem', border: '1px solid #cbd5e1', fontSize: '0.9rem' }}
+          >
+            {periods.map(p => {
+              const paid = vatPayments.some(v => v.periodStart === p.startISO && v.periodEnd === p.endISO)
+              return (
+                <option key={p.key} value={p.key}>
+                  {p.label} {paid ? '✓ שולם' : ''}{p.key === currentPeriodKey ? ' (נוכחית)' : ''}
+                </option>
+              )
+            })}
+          </select>
+          {selectedPeriod && (
+            <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+              {selectedPeriod.startISO} → {selectedPeriod.endISO}
+            </span>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.85rem', color: '#64748b' }}>
+            שיעור מע״מ {rateLabel} (עוסק מורשה)
+          </span>
+          {!isPeriodClosed && (
+            <button
+              type="button"
+              disabled={uploading}
+              onClick={() => fileInputRef.current?.click()}
+              title="העלה אישור תשלום מע״מ — סוגר את התקופה הנבחרת"
+              style={{
+                padding: '0.3rem 0.75rem',
+                background: uploading ? '#94a3b8' : '#166534',
+                color: 'white', border: 'none', borderRadius: '0.375rem',
+                cursor: uploading ? 'wait' : 'pointer', fontSize: '0.85rem', fontWeight: 600,
+              }}
+            >
+              {uploading ? 'מעלה…' : 'העלה אישור תשלום'}
+            </button>
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,image/*"
+            onChange={handleVatFilePick}
+            style={{ display: 'none' }}
+          />
+        </div>
       </div>
+
+      {isPeriodClosed && selectedPayment && (
+        <div style={{
+          padding: '0.6rem 0.85rem', background: '#dcfce7', border: '1px solid #86efac',
+          borderRadius: '0.5rem', fontSize: '0.9rem', color: '#166534',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap',
+        }}>
+          <span>
+            ✓ תקופה סגורה — שולמה בתאריך {selectedPayment.paymentDate}
+            {selectedPayment.confirmationNumber ? ` · אסמכתא ${selectedPayment.confirmationNumber}` : ''}
+          </span>
+          {selectedPayment.driveWebViewLink && (
+            <a href={selectedPayment.driveWebViewLink} target="_blank" rel="noopener noreferrer"
+               style={{ color: '#166534', textDecoration: 'underline', fontWeight: 600 }}>
+              פתח אישור תשלום
+            </a>
+          )}
+        </div>
+      )}
+
+      {uploadError && (
+        <div style={{ padding: '0.5rem 0.75rem', background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', borderRadius: '0.375rem', fontSize: '0.85rem' }}>
+          {uploadError}
+        </div>
+      )}
 
       <SummaryStrip output={totals.output} input={totals.input} net={totals.net} />
 
@@ -233,7 +541,7 @@ export default function TaxVatSection({
                 <th style={thStyle}>תאריך</th>
                 <th style={thStyle}>סידורי</th>
                 <th style={thStyle}>פרויקט</th>
-                <th style={{ ...thStyle, textAlign: 'left' }}>סכום ברוטו</th>
+                <th style={{ ...thStyle, textAlign: 'left' }}>סכום ללא מע״מ</th>
                 <th style={{ ...thStyle, textAlign: 'left' }}>%</th>
                 <th style={{ ...thStyle, textAlign: 'left' }}>מס עסקאות</th>
               </tr>
@@ -320,6 +628,44 @@ export default function TaxVatSection({
           </table>
         )}
       </SectionBlock>
+
+      {vatPayments.length > 0 && (
+        <SectionBlock title={`תשלומי מע״מ שהוגשו (${vatPayments.length})`}>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={thStyle}>תקופה</th>
+                <th style={thStyle}>תאריך תשלום</th>
+                <th style={{ ...thStyle, textAlign: 'left' }}>מס עסקאות</th>
+                <th style={{ ...thStyle, textAlign: 'left' }}>מס תשומות</th>
+                <th style={{ ...thStyle, textAlign: 'left' }}>נטו</th>
+                <th style={thStyle}>אסמכתא</th>
+                <th style={thStyle}>מסמך</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...vatPayments].sort((a, b) => (b.paymentDate || '').localeCompare(a.paymentDate || '')).map(p => (
+                <tr key={p.id} style={trStyle}>
+                  <td style={tdStyle}>{p.periodLabel}</td>
+                  <td style={tdStyle}>{p.paymentDate}</td>
+                  <td style={{ ...tdStyle, textAlign: 'left' }}>{p.output != null ? ILS(p.output) : '—'}</td>
+                  <td style={{ ...tdStyle, textAlign: 'left' }}>{p.input != null ? ILS(p.input) : '—'}</td>
+                  <td style={{ ...tdStyle, textAlign: 'left', fontWeight: 600 }}>{p.net != null ? ILS(p.net) : '—'}</td>
+                  <td style={tdStyle}>{p.confirmationNumber || '—'}</td>
+                  <td style={tdStyle}>
+                    {p.driveWebViewLink ? (
+                      <a href={p.driveWebViewLink} target="_blank" rel="noopener noreferrer"
+                         style={{ color: '#2563eb', textDecoration: 'none' }}>
+                        אישור
+                      </a>
+                    ) : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </SectionBlock>
+      )}
     </div>
   )
 }

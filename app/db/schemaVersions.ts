@@ -538,4 +538,65 @@ export function defineSchemaVersions(db: Dexie): void {
     chats: '&id, syncId, uid, updatedAt, [uid+updatedAt]',
     chatMessages: '&id, syncId, chatId, uid, createdAt, [chatId+createdAt]',
   })
+
+  // v27: add credentials table — encrypted external-service logins (BTL, banks…).
+  // userCode/password fields hold AES-256-GCM ciphertext keyed off the cloud-sync password.
+  db.version(27).stores({
+    transactions: '++id, syncId, type, month, accountNumber, cardNumber, date, chargingDate, [type+month], [cardNumber+month], [accountNumber+month], fileId',
+    importedFiles: '++id, syncId, fileName, fileType, processingMonth, [fileType+processingMonth], [cardNumber+processingMonth]',
+    categories: '++id, syncId, name, type',
+    businessCategories: '++id, syncId, &business',
+    tasks: '++id, syncId, createdAt, priority, quadrant, deadline, delegatedTo, autoTaskId, botId, taskType, subject',
+    appSettings: '++id, syncId, &key',
+    businesses: '++id, syncId, &name, type, userId',
+    projects: '++id, syncId, businessId, name, archived',
+    harvestTasks: '++id, syncId, projectId, name, archived',
+    timeEntries: '++id, syncId, taskId, date, startTime, endTime, [taskId+date]',
+    capitalEntries: '++id, syncId, date, institution, accountNumber, description, assetType, currency, employer, investmentTrack, agent, soldDate, [institution+accountNumber+description], fileId',
+    financialInstitutions: '++id, syncId, name, type',
+    ypayDocuments: '++id, syncId, &transactionId, docType',
+    students: '++id, syncId, businessId, name, archived',
+    profileQAs: '++id, syncId, businessId, [businessId+answerType]',
+    scoutResults: '++id, syncId, businessId, status, [businessId+status]',
+    scoutConfigs: '++id, syncId, &businessId',
+    taxDocuments: '++id, syncId, businessId, userId, month, year, [businessId+year]',
+    expenseDocuments: '++id, syncId, transactionId, date, vendor, category, sourceType',
+    businessTasks: '++id, syncId, businessId, recurrence, archived',
+    advancePayments: '++id, syncId, businessId, month, type, [businessId+month+type]',
+    chats: '&id, syncId, uid, updatedAt, [uid+updatedAt]',
+    chatMessages: '&id, syncId, chatId, uid, createdAt, [chatId+createdAt]',
+    credentials: '++id, syncId, &service',
+  })
+
+  // v28: vatPayments table + vatPaymentId index on the doc tables it tags.
+  // Untagged docs surface in the open period; tagged docs disappear into
+  // their paid period. Late-arriving past-period invoices automatically
+  // land in the next open period (since they were never tagged).
+  db.version(28).stores({
+    transactions: '++id, syncId, type, month, accountNumber, cardNumber, date, chargingDate, [type+month], [cardNumber+month], [accountNumber+month], fileId',
+    importedFiles: '++id, syncId, fileName, fileType, processingMonth, [fileType+processingMonth], [cardNumber+processingMonth]',
+    categories: '++id, syncId, name, type',
+    businessCategories: '++id, syncId, &business',
+    tasks: '++id, syncId, createdAt, priority, quadrant, deadline, delegatedTo, autoTaskId, botId, taskType, subject',
+    appSettings: '++id, syncId, &key',
+    businesses: '++id, syncId, &name, type, userId',
+    projects: '++id, syncId, businessId, name, archived',
+    harvestTasks: '++id, syncId, projectId, name, archived',
+    timeEntries: '++id, syncId, taskId, date, startTime, endTime, [taskId+date]',
+    capitalEntries: '++id, syncId, date, institution, accountNumber, description, assetType, currency, employer, investmentTrack, agent, soldDate, [institution+accountNumber+description], fileId',
+    financialInstitutions: '++id, syncId, name, type',
+    ypayDocuments: '++id, syncId, &transactionId, docType, vatPaymentId',
+    students: '++id, syncId, businessId, name, archived',
+    profileQAs: '++id, syncId, businessId, [businessId+answerType]',
+    scoutResults: '++id, syncId, businessId, status, [businessId+status]',
+    scoutConfigs: '++id, syncId, &businessId',
+    taxDocuments: '++id, syncId, businessId, userId, month, year, [businessId+year]',
+    expenseDocuments: '++id, syncId, transactionId, date, vendor, category, sourceType, vatPaymentId',
+    businessTasks: '++id, syncId, businessId, recurrence, archived',
+    advancePayments: '++id, syncId, businessId, month, type, [businessId+month+type]',
+    chats: '&id, syncId, uid, updatedAt, [uid+updatedAt]',
+    chatMessages: '&id, syncId, chatId, uid, createdAt, [chatId+createdAt]',
+    credentials: '++id, syncId, &service',
+    vatPayments: '++id, syncId, userId, periodStart, periodEnd, paymentDate',
+  })
 }

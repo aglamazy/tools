@@ -1,11 +1,12 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useRef, useState } from 'react'
 import type { ExpenseDocument } from '@/app/db/financeDB'
-import { matchReceiptForTransaction } from '@/app/services/receiptMatchService'
+import { matchReceiptForTransaction, parseDateFolder } from '@/app/services/receiptMatchService'
 import { hasGmailAccess, requestGmailAccess } from '@/app/services/gmailService'
+import { uploadExpenseDocument } from '@/app/services/googleDriveService'
 
-type MatchStatus = 'idle' | 'searching' | 'matched' | 'no-match' | 'error'
+type MatchStatus = 'idle' | 'searching' | 'uploading' | 'matched' | 'no-match' | 'error'
 
 export type ExpenseMatchTxInput = {
   id: number
@@ -25,6 +26,7 @@ type ExpenseMatchCellProps = {
 export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey, onMatched }: ExpenseMatchCellProps) {
   const [status, setStatus] = useState<MatchStatus>('idle')
   const [errorMsg, setErrorMsg] = useState<string>('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // A doc only counts as truly linked if we have an independent stored copy
   // (driveWebViewLink). Anything else is a half-match from the older flow —
@@ -75,8 +77,85 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
     }
   }
 
+  const handleUpload = async (file: File) => {
+    setStatus('uploading')
+    setErrorMsg('')
+    if (!claudeApiKey) {
+      setErrorMsg('חסר מפתח Anthropic בהגדרות — נדרש לחילוץ נתוני הקבלה')
+      setStatus('error')
+      return
+    }
+    const isPdf = file.type === 'application/pdf'
+    const isImage = file.type.startsWith('image/')
+    if (!isPdf && !isImage) {
+      setErrorMsg('סוג קובץ לא נתמך (PDF/תמונה בלבד)')
+      setStatus('error')
+      return
+    }
+    try {
+      const buffer = await file.arrayBuffer()
+      const bytes = new Uint8Array(buffer)
+      let binary = ''
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+      const base64 = btoa(binary)
+
+      const uploaded = await uploadExpenseDocument(file, parseDateFolder(transaction.date))
+      if (!uploaded.webViewLink) {
+        setErrorMsg('העלאה ל-Drive נכשלה')
+        setStatus('error')
+        return
+      }
+
+      const extractRes = await fetch('/api/match-receipt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(isPdf ? {
+          action: 'extract-pdf', pdfBase64: base64,
+          transaction: { date: transaction.date, description: transaction.description, amount: transaction.amount },
+          claudeApiKey,
+        } : {
+          action: 'extract-image', imageBase64: base64, mediaType: file.type,
+          transaction: { date: transaction.date, description: transaction.description, amount: transaction.amount },
+          claudeApiKey,
+        }),
+      })
+      const extracted = await extractRes.json()
+      console.log('[ExpenseMatch] manual upload extract →', extracted)
+
+      const doc: ExpenseDocument = {
+        transactionId: transaction.id,
+        fileName: file.name,
+        vendor: extracted?.vendor,
+        amount: extracted?.amount,
+        vatAmount: extracted?.vatAmount,
+        date: extracted?.date,
+        description: extracted?.documentTitle || extracted?.description,
+        driveFileId: uploaded.fileId,
+        driveWebViewLink: uploaded.webViewLink,
+        extractedData: extracted?.error ? undefined : extracted,
+        sourceType: 'upload',
+        uploadedAt: new Date().toISOString(),
+      }
+      onMatched(doc)
+      setStatus('matched')
+    } catch (err: any) {
+      console.error('[ExpenseMatch] upload failed for tx', transaction.id, ':', err)
+      setErrorMsg(err?.message || String(err))
+      setStatus('error')
+    }
+  }
+
+  const handleFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) void handleUpload(file)
+    e.target.value = ''
+  }
+
   if (status === 'searching') {
     return <span style={{ color: '#64748b', fontSize: '0.8rem' }}>מחפש…</span>
+  }
+  if (status === 'uploading') {
+    return <span style={{ color: '#64748b', fontSize: '0.8rem' }}>מעלה…</span>
   }
 
   return (
@@ -97,6 +176,29 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
       >
         חפש ב-Gmail
       </button>
+      <button
+        type="button"
+        onClick={() => fileInputRef.current?.click()}
+        title="העלה קובץ PDF או תמונה של הקבלה"
+        style={{
+          padding: '0.2rem 0.55rem',
+          background: '#f0fdf4',
+          color: '#166534',
+          border: '1px solid #bbf7d0',
+          borderRadius: '0.375rem',
+          cursor: 'pointer',
+          fontSize: '0.8rem',
+        }}
+      >
+        העלה קובץ
+      </button>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".pdf,image/*"
+        onChange={handleFilePick}
+        style={{ display: 'none' }}
+      />
       {status === 'no-match' && <span style={{ color: '#b45309', fontSize: '0.75rem' }}>לא נמצא</span>}
       {status === 'error' && (
         <span

@@ -30,6 +30,8 @@ export async function POST(req: NextRequest) {
       return handleExtractPdf(body.pdfBase64, body.transaction, body.claudeApiKey)
     } else if (action === 'extract-image') {
       return handleExtractImage(body.imageBase64, body.mediaType, body.transaction, body.claudeApiKey)
+    } else if (action === 'extract-vat-payment') {
+      return handleExtractVatPayment(body.pdfBase64, body.mediaType, body.claudeApiKey)
     } else if (action === 'download-pdf') {
       return handleDownloadPdf(body.url)
     }
@@ -406,6 +408,74 @@ async function handleExtractImage(imageBase64: string, mediaType: string, transa
     const parsed = JSON.parse(cleaned)
     return NextResponse.json(parsed)
   } catch {
+    return NextResponse.json({ error: 'Failed to parse extraction response', raw: text }, { status: 502 })
+  }
+}
+
+/**
+ * Extract fields from an Israeli VAT payment confirmation (אישור תשלום מע״מ).
+ * Accepts PDF (preferred) or image. Used by the VAT section's payment-upload flow.
+ */
+async function handleExtractVatPayment(payloadBase64: string, mediaType: string | undefined, claudeApiKey?: string) {
+  if (!payloadBase64) {
+    return NextResponse.json({ error: 'Missing pdfBase64' }, { status: 400 })
+  }
+  if (!claudeApiKey) {
+    return NextResponse.json({ error: 'Missing Claude API key' }, { status: 400 })
+  }
+
+  const isPdf = !mediaType || mediaType === 'application/pdf'
+  const docPart = isPdf
+    ? { type: 'document' as const, source: { type: 'base64' as const, media_type: 'application/pdf', data: payloadBase64 } }
+    : { type: 'image' as const, source: { type: 'base64' as const, media_type: mediaType as 'image/png' | 'image/jpeg' | 'image/webp', data: payloadBase64 } }
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': claudeApiKey,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1024,
+      system: `אתה מומחה לחילוץ נתונים מאישור תשלום מע״מ של רשות המסים בישראל.
+חלץ את השדות הבאים והחזר JSON בלבד, ללא markdown, ללא הסברים.
+
+השדות:
+- periodLabel: תיאור התקופה כפי שכתוב במסמך (לדוגמה "מרץ-אפריל 2026", "אפריל 2026")
+- periodStart: תאריך תחילת התקופה בפורמט YYYY-MM-DD
+- periodEnd: תאריך סוף התקופה בפורמט YYYY-MM-DD
+- paymentDate: תאריך התשלום בפורמט YYYY-MM-DD
+- output: סך מס עסקאות (מספר)
+- input: סך מס תשומות (מספר)
+- net: סכום ששולם (חיובי) או חזר (שלילי)
+- confirmationNumber: מספר אסמכתא / קבלה (מחרוזת או null)
+
+החזר אך ורק JSON תקין.`,
+      messages: [{
+        role: 'user',
+        content: [
+          docPart,
+          { type: 'text', text: 'חלץ נתוני אישור תשלום מע״מ מהמסמך המצורף.' },
+        ],
+      }],
+    }),
+  })
+
+  if (!response.ok) {
+    const errorBody = await response.text()
+    console.error('[match-receipt] Claude VAT-payment extract error:', response.status, errorBody)
+    return NextResponse.json({ error: `Claude API error: ${response.status}` }, { status: response.status })
+  }
+
+  const data = await response.json()
+  const text = data.content?.[0]?.text ?? ''
+  try {
+    const cleaned = text.replace(/```json?\s*/g, '').replace(/```/g, '').trim()
+    return NextResponse.json(JSON.parse(cleaned))
+  } catch (parseErr) {
+    console.error('[match-receipt] Failed to parse VAT payment extract. Raw:', text.slice(0, 800), 'err:', parseErr)
     return NextResponse.json({ error: 'Failed to parse extraction response', raw: text }, { status: 502 })
   }
 }
