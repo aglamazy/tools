@@ -63,6 +63,54 @@ const VENDOR_STOPWORDS = new Set([
   'INC', 'LTD', 'LLC', 'CORP', 'CO', 'AB', 'GMBH', 'BV', 'SRL', 'SA', 'SAS',
   'COM', 'WWW', 'PAY', 'SUB', 'SUBS', 'SUBSCRIPTION',
 ])
+
+/**
+ * Senders that ship a "view document" CTA link instead of a PDF attachment.
+ * For these we persist the external URL on the ExpenseDocument and let the UI
+ * render an "open invoice" link — no PDF download attempt, no Drive copy.
+ * The matcher would otherwise silently skip these emails (no attachment +
+ * the URL points to a viewer that requires a logged-in session).
+ */
+const URL_ONLY_INVOICE_SENDERS = [
+  'no-reply@ypay.co.il',
+]
+
+function isUrlOnlyInvoiceSender(fromHeader: string | undefined): boolean {
+  if (!fromHeader) return false
+  const lower = fromHeader.toLowerCase()
+  return URL_ONLY_INVOICE_SENDERS.some(addr => lower.includes(addr))
+}
+
+/**
+ * Extract a "view document" CTA URL from an HTML email body.
+ * Prefers anchors whose visible text matches the Hebrew button label, then
+ * falls back to the first https URL in any anchor's href. Returns null when
+ * nothing usable is found.
+ */
+function extractCtaUrlFromHtml(html: string): string | null {
+  if (!html) return null
+  // Match <a ... href="..."> ... text ... </a>. The text content is checked
+  // against the canonical Hebrew button label first.
+  const anchorRe = /<a\s[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi
+  const fallbacks: string[] = []
+  let m: RegExpExecArray | null
+  while ((m = anchorRe.exec(html)) !== null) {
+    const href = m[1]
+    const text = m[2].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim()
+    if (!href.startsWith('http')) continue
+    // Hebrew "לצפייה במסמך" is the YPAY button; allow loose match in case of
+    // surrounding whitespace / minor wording differences.
+    if (/לצפייה\s+במסמך/.test(text)) return href
+    fallbacks.push(href)
+  }
+  // Fallback: any https link that looks invoice-shaped (skip tracking pixels
+  // and the "join YPAY" CTA in the same email).
+  for (const href of fallbacks) {
+    if (/register|signup|join|unsubscribe/i.test(href)) continue
+    return href
+  }
+  return null
+}
 function extractVendorTokens(desc: string): string[] {
   return desc
     .split(/[\s*.#,/\\]+/)
@@ -183,7 +231,7 @@ async function tryCandidate(
 ): Promise<ExpenseDocument | null> {
   log(`trying candidate ${msgId} ·`)
 
-  // Fetch email body
+  // Fetch email body (also returns From header so we can apply sender-based routing)
   const bodyResult = await fetchMessageBody(msgId)
   if (bodyResult.error || !bodyResult.body) {
     log(`  ↳ body fetch failed: ${bodyResult.error || 'empty body'} — skip`)
@@ -211,6 +259,32 @@ async function tryCandidate(
   if (extracted.matchesTransaction === false) {
     log(`  ↳ claude rejected: ${extracted.matchReason} — skip`)
     return null
+  }
+
+  // URL-only invoice senders (e.g. YPAY): no PDF attachment — the email body
+  // has a CTA button linking to the hosted document. Persist the URL and skip
+  // the PDF/Drive flow entirely. UI renders an "open invoice" link.
+  if (isUrlOnlyInvoiceSender(bodyResult.from)) {
+    const ctaUrl = extracted.documentUrl || (bodyResult.contentType === 'html' ? extractCtaUrlFromHtml(bodyResult.body) : null)
+    if (!ctaUrl) {
+      log('  ↳ url-only sender but no CTA url found — skip')
+      return null
+    }
+    log('  ↳ url-only invoice sender — saving externalUrl:', ctaUrl)
+    return {
+      transactionId: tx.id,
+      fileName: extracted.documentTitle || extracted.vendor || 'invoice',
+      vendor: extracted.vendor,
+      amount: extracted.amount,
+      vatAmount: extracted.vatAmount,
+      date: extracted.date,
+      description: extracted.documentTitle || extracted.description,
+      externalUrl: ctaUrl,
+      extractedData: extracted,
+      sourceType: 'gmail',
+      gmailMessageId: msgId,
+      uploadedAt: new Date().toISOString(),
+    }
   }
   // Prefer the email's actual PDF attachment when present — most receipts ship
   // the PDF attached, and that avoids Stripe-style URLs that serve an HTML

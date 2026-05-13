@@ -259,6 +259,7 @@ export interface ExpenseDocument {
   fileName: string
   driveFileId?: string // Google Drive file ID
   driveWebViewLink?: string // Google Drive view URL
+  externalUrl?: string // External URL to the original document (e.g. YPAY hosted invoice). Used when there is no PDF attachment to upload to Drive — UI renders "open in new tab" link.
   date?: string // DD/MM/YYYY - expense date
   vendor?: string // Vendor / merchant name
   amount?: number // Total amount from document

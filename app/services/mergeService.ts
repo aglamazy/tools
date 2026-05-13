@@ -12,15 +12,7 @@
  */
 
 import type { BackupData } from './backupService'
-import { SYNCED_DB_TABLES } from './syncedTables'
-
-// Tables that have unique constraints (besides id/syncId)
-const UNIQUE_KEY_TABLES: Record<string, string> = {
-  businesses: 'name',
-  appSettings: 'key',
-  businessCategories: 'business',
-  ypayDocuments: 'transactionId',
-}
+import { SYNCED_DB_TABLES, getUniqueKeyTables } from './syncedTables'
 
 // Parent→child FK relationships: child table → { fkField, parentTable, annotationField }
 const FK_RELATIONS: Record<string, { fkField: string; parentTable: string; annotationField: string }> = {
@@ -181,13 +173,14 @@ function mergeTable(
   localRecords: any[],
   cloudRecords: any[],
   deletedSyncIds: Set<string>,
+  uniqueKeyTables: Record<string, string>,
   cloudParentIdToSyncId?: Map<number, string>,
 ): { records: any[]; aliases: Map<string, string> } {
   const localBySyncId = buildSyncIdMap(localRecords)
   const cloudBySyncId = buildSyncIdMap(cloudRecords)
 
   // For unique constraint tables, also build unique-key maps
-  const uniqueKeyField = UNIQUE_KEY_TABLES[tableName]
+  const uniqueKeyField = uniqueKeyTables[tableName]
   const localByUniqueKey = uniqueKeyField ? buildUniqueKeyMap(localRecords, uniqueKeyField) : null
   const cloudByUniqueKey = uniqueKeyField ? buildUniqueKeyMap(cloudRecords, uniqueKeyField) : null
 
@@ -329,6 +322,9 @@ export function mergeBackups(local: BackupData, cloud: BackupData): BackupData {
   // Merge each DB table, collecting syncId aliases from content dedup
   const allAliases = new Map<string, string>()
 
+  // Compute (and cache) the derived unique-key map once before iterating.
+  const uniqueKeyTables = getUniqueKeyTables()
+
   for (const tableName of TABLE_ORDER) {
     const localRecords = (local.stores as any)[tableName] || []
     const cloudRecords = (cloud.stores as any)[tableName] || []
@@ -338,6 +334,7 @@ export function mergeBackups(local: BackupData, cloud: BackupData): BackupData {
       localRecords,
       cloudRecords,
       deletedSyncIds,
+      uniqueKeyTables,
       parentMaps[tableName],
     )
     ;(merged.stores as any)[tableName] = mergedRecords

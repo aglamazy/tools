@@ -646,16 +646,22 @@ export default function ExpenseDocumentsTab({ businessId }: Props) {
                 {/* File info */}
                 <div style={{ flex: 1, minWidth: '150px' }}>
                   <div style={{ fontWeight: 500, fontSize: '0.9rem' }}>
-                    {doc.driveWebViewLink ? (
-                      <a
-                        href={doc.driveWebViewLink}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ color: '#2563eb', textDecoration: 'none' }}
-                      >
-                        {doc.fileName}
-                      </a>
-                    ) : doc.fileName}
+                    {(() => {
+                      // Prefer the Drive-hosted copy; fall back to externalUrl
+                      // (e.g. YPAY hosted invoice with no PDF attachment).
+                      const href = doc.driveWebViewLink || doc.externalUrl
+                      return href ? (
+                        <a
+                          href={href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ color: '#2563eb', textDecoration: 'none' }}
+                          title={doc.externalUrl && !doc.driveWebViewLink ? 'מסמך חיצוני (אין עותק ב-Drive)' : undefined}
+                        >
+                          {doc.fileName}
+                        </a>
+                      ) : doc.fileName
+                    })()}
                   </div>
                   {doc.vendor && (
                     <div style={{ fontSize: '0.8rem', color: '#64748b' }}>

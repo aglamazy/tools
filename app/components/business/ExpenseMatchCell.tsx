@@ -28,17 +28,20 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
   const [errorMsg, setErrorMsg] = useState<string>('')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // A doc only counts as truly linked if we have an independent stored copy
-  // (driveWebViewLink). Anything else is a half-match from the older flow —
-  // treat it as not-yet-linked so the user can re-run the matcher.
-  if (linkedDoc?.driveWebViewLink) {
+  // A doc counts as truly linked if either:
+  //  - we have an independent stored copy on Drive (driveWebViewLink), or
+  //  - we captured an externalUrl (e.g. YPAY hosted invoice, no PDF attachment).
+  // Anything else is a half-match from the older flow — treat it as not-yet-
+  // linked so the user can re-run the matcher.
+  const docHref = linkedDoc?.driveWebViewLink || linkedDoc?.externalUrl
+  if (docHref) {
     return (
       <a
-        href={linkedDoc.driveWebViewLink}
+        href={docHref}
         target="_blank"
         rel="noopener noreferrer"
         style={{ color: '#2563eb', textDecoration: 'none', fontSize: '0.85rem' }}
-        title={linkedDoc.vendor || linkedDoc.fileName}
+        title={linkedDoc?.vendor || linkedDoc?.fileName}
       >
         מסמך
       </a>

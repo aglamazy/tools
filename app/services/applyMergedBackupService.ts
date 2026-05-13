@@ -16,15 +16,7 @@ import { db } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { initializeAppSettings } from '@/app/services/appSettingsService'
 import type { BackupData } from './backupService'
-import { SYNCED_DB_TABLES, getSyncedDexieTables } from './syncedTables'
-
-// Tables that have unique constraints (besides id/syncId)
-const UNIQUE_KEY_TABLES: Record<string, string> = {
-  businesses: 'name',
-  appSettings: 'key',
-  businessCategories: 'business',
-  ypayDocuments: 'transactionId',
-}
+import { SYNCED_DB_TABLES, getSyncedDexieTables, getUniqueKeyTables } from './syncedTables'
 
 // Content-based dedup keys (detect same record imported on two devices with different syncIds)
 const CONTENT_KEY_FNS: Record<string, (r: any) => string> = {
@@ -90,6 +82,10 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
     cloudIdToSyncId[parentTable] = map
   }
 
+  // Compute (and cache) the derived unique-key map once before entering the
+  // transaction — it reads db.tables which is safe outside rw context.
+  const uniqueKeyTables = getUniqueKeyTables()
+
   await db.transaction('rw',
     getSyncedDexieTables(),
     async () => {
@@ -115,7 +111,7 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
         }
 
         // Build unique key map for dedup
-        const uniqueKeyField = UNIQUE_KEY_TABLES[tableName]
+        const uniqueKeyField = uniqueKeyTables[tableName]
         const localByUniqueKey = new Map<string, any>()
         if (uniqueKeyField) {
           for (const rec of localRecords) {
@@ -161,8 +157,21 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
                 if (localParentId !== undefined) {
                   cloudRec[fkInfo.fkField] = localParentId
                 } else {
-                  // Parent not found locally — skip this orphan
-                  console.warn(`[ApplyCloud] Orphan ${tableName}: parent syncId ${parentSyncId} not in local`)
+                  // Parent not found locally. Two cases:
+                  //   (a) parent was deleted+tombstoned locally → child is officially
+                  //       orphaned. Tombstone the child too so cloud stops re-broadcasting
+                  //       it on every sync. The new ledger entry is persisted alongside
+                  //       the existing ones at the end of this transaction (see :244-257).
+                  //   (b) parent simply hasn't synced down yet → keep the warn so a
+                  //       genuine missing-pull bug stays visible.
+                  if (allDeletions[parentTable]?.has(parentSyncId)) {
+                    if (cloudRec.syncId) {
+                      if (!allDeletions[tableName]) allDeletions[tableName] = new Set()
+                      allDeletions[tableName].add(cloudRec.syncId)
+                    }
+                  } else {
+                    console.warn(`[ApplyCloud] Orphan ${tableName}: parent syncId ${parentSyncId} not in local`)
+                  }
                   continue
                 }
               }

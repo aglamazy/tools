@@ -319,7 +319,7 @@ export default function TaxVatSection({
         vatRate,
         sharePercent,
         hasDoc: !!linkedDoc,
-        docUrl: linkedDoc?.driveWebViewLink,
+        docUrl: linkedDoc?.driveWebViewLink || linkedDoc?.externalUrl,
       })
     }
     rows.sort((a, b) => a.date.getTime() - b.date.getTime())

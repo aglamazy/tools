@@ -256,47 +256,61 @@ function AnnualSummarySubTab() {
   const handleUploadReceipt = async (month: string, file: File) => {
     const seBiz = relevantBusinesses.filter(b => !b.isTaxFree)
     const businessId = seBiz[0]?.id
-    if (!businessId) return
+    if (!businessId) {
+      console.error('[AdvancePayment] upload aborted: no self-employed business found for', selectedUser)
+      return
+    }
 
+    // Drive upload is best-effort — never let it block the local "paid" save.
+    // If the token's expired / scope's missing / network's flaky, we still mark
+    // the row paid; user can re-upload the file later to attach the link.
     let driveFileId: string | undefined
     let driveWebViewLink: string | undefined
-    const token = await getAccessToken()
-    if (token) {
-      const result = await uploadAdvancePaymentReceipt(file, currentYear)
-      driveFileId = result.fileId
-      driveWebViewLink = result.webViewLink
+    try {
+      const token = await getAccessToken()
+      if (token) {
+        const result = await uploadAdvancePaymentReceipt(file, currentYear)
+        driveFileId = result.fileId
+        driveWebViewLink = result.webViewLink
+      }
+    } catch (err) {
+      console.error('[AdvancePayment] Drive upload failed, continuing with local save:', err)
     }
 
-    // Check for existing record
-    const existing = await db.advancePayments
-      .where('[businessId+month+type]')
-      .equals([businessId, month, 'incomeTax'])
-      .first()
+    try {
+      // Check for existing record
+      const existing = await db.advancePayments
+        .where('[businessId+month+type]')
+        .equals([businessId, month, 'incomeTax'])
+        .first()
 
-    if (existing) {
-      await db.advancePayments.update(existing.id!, {
-        paidAt: new Date().toISOString(),
-        driveFileId,
-        driveWebViewLink,
-        fileName: file.name,
-      })
-    } else {
-      await db.advancePayments.add({
-        businessId,
-        month,
-        type: 'incomeTax',
-        paidAt: new Date().toISOString(),
-        driveFileId,
-        driveWebViewLink,
-        fileName: file.name,
-        userId: getUser()?.uid,
-        createdAt: new Date().toISOString(),
-      })
+      if (existing) {
+        await db.advancePayments.update(existing.id!, {
+          paidAt: new Date().toISOString(),
+          driveFileId,
+          driveWebViewLink,
+          fileName: file.name,
+        })
+      } else {
+        await db.advancePayments.add({
+          businessId,
+          month,
+          type: 'incomeTax',
+          paidAt: new Date().toISOString(),
+          driveFileId,
+          driveWebViewLink,
+          fileName: file.name,
+          userId: getUser()?.uid,
+          createdAt: new Date().toISOString(),
+        })
+      }
+
+      // Reload
+      const advPay = await db.advancePayments.filter(p => p.month.endsWith(`/${currentYear}`)).toArray()
+      setAdvancePayments(advPay)
+    } catch (err) {
+      console.error('[AdvancePayment] local DB save failed:', err)
     }
-
-    // Reload
-    const advPay = await db.advancePayments.filter(p => p.month.endsWith(`/${currentYear}`)).toArray()
-    setAdvancePayments(advPay)
   }
 
   if (loading) return <p style={{ textAlign: 'center', color: '#94a3b8' }}>טוען...</p>

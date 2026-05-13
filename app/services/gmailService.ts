@@ -225,11 +225,13 @@ export async function fetchFirstPdfAttachment(
 }
 
 /**
- * Fetch the full body of a single message (HTML preferred, fallback to plain text)
+ * Fetch the full body of a single message (HTML preferred, fallback to plain text).
+ * Also returns the `From` / `Subject` headers so callers can apply sender-based
+ * routing (e.g. detecting YPAY URL-only invoices) without a second metadata fetch.
  */
 export async function fetchMessageBody(
   messageId: string
-): Promise<{ body: string; contentType: 'html' | 'text'; error?: string }> {
+): Promise<{ body: string; contentType: 'html' | 'text'; from?: string; subject?: string; error?: string }> {
   try {
     const token = await getToken()
 
@@ -244,6 +246,11 @@ export async function fetchMessageBody(
 
     const data = await response.json()
     const payload = data.payload
+    const headers: { name: string; value: string }[] = payload?.headers || []
+    const getHeader = (name: string) =>
+      headers.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value || undefined
+    const from = getHeader('From')
+    const subject = getHeader('Subject')
 
     function decodeBase64Utf8(b64: string): string {
       const binary = atob(b64.replace(/-/g, '+').replace(/_/g, '/'))
@@ -268,18 +275,18 @@ export async function fetchMessageBody(
     }
 
     const html = findPart(payload, 'text/html')
-    if (html) return { body: html, contentType: 'html' }
+    if (html) return { body: html, contentType: 'html', from, subject }
 
     const plain = findPart(payload, 'text/plain')
-    if (plain) return { body: plain, contentType: 'text' }
+    if (plain) return { body: plain, contentType: 'text', from, subject }
 
     if (payload.body?.data) {
       const decoded = decodeBase64Utf8(payload.body.data)
       const isHtml = payload.mimeType === 'text/html'
-      return { body: decoded, contentType: isHtml ? 'html' : 'text' }
+      return { body: decoded, contentType: isHtml ? 'html' : 'text', from, subject }
     }
 
-    return { body: data.snippet || '', contentType: 'text' }
+    return { body: data.snippet || '', contentType: 'text', from, subject }
   } catch (err: any) {
     console.error('[Gmail] Fetch body error:', err)
     return { body: '', contentType: 'text', error: err.message || 'שגיאת רשת בטעינת הודעה' }
