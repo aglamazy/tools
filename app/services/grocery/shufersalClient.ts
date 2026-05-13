@@ -87,15 +87,35 @@ interface ShuResponse {
   headers: { get: (name: string) => string | null }
 }
 
+const WIRE_LOG = process.env.SHUFERSAL_WIRE_LOG !== '0'
+
 /**
  * Route Shufersal HTTP calls: direct in dev, via Cloud Run proxy in production.
+ * One-line wire log per call (method, path, status, bodyLen, ms). Disable with SHUFERSAL_WIRE_LOG=0.
  */
 async function shuFetch(
   path: string,
   cookies: Record<string, string>,
   options: RequestInit = {},
 ): Promise<{ resp: ShuResponse; cookies: Record<string, string> }> {
-  return USE_PROXY ? shuFetchProxy(path, cookies, options) : shuFetchDirect(path, cookies, options)
+  const method = (options.method as string) || 'GET'
+  const route = USE_PROXY ? 'proxy' : 'direct'
+  const t0 = Date.now()
+  try {
+    const out = await (USE_PROXY ? shuFetchProxy(path, cookies, options) : shuFetchDirect(path, cookies, options))
+    if (WIRE_LOG) {
+      const bodyLen = out.resp.text().length
+      const loc = out.resp.headers.get('location')
+      console.log(`[Shufersal/wire] ${method} ${path} → ${out.resp.status} ${bodyLen}b ${Date.now() - t0}ms via=${route}${loc ? ` loc=${loc}` : ''}`)
+    }
+    return out
+  } catch (err) {
+    if (WIRE_LOG) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`[Shufersal/wire] ${method} ${path} → ERROR ${Date.now() - t0}ms via=${route}: ${msg}`)
+    }
+    throw err
+  }
 }
 
 /** Direct HTTP connection (local dev) */
@@ -1051,13 +1071,16 @@ function parseSlotsResponse(raw: Record<string, any[]>): DeliveryDay[] {
 
     const slots: DeliverySlot[] = daySlots
       .filter((s: any) => s.selectable)
-      .map((s: any) => ({
-        day: dayName,
-        date: dateStr,
-        time: fromStr.includes(' ') ? fromStr.split(' ').pop()! : '',
-        price: s.price?.formattedValue || '',
-        code: s.code,
-      }))
+      .map((s: any) => {
+        const slotFrom: string = s.fromHourString || ''
+        return {
+          day: dayName,
+          date: dateStr,
+          time: slotFrom.includes(' ') ? slotFrom.split(' ').pop()! : '',
+          price: s.price?.formattedValue || '',
+          code: s.code,
+        }
+      })
 
     if (slots.length > 0) days.push({ day: dayName, date: dateStr, slots })
   }

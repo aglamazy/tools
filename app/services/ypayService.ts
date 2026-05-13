@@ -99,10 +99,15 @@ export const ypayService = {
     // קבלה for exempt, חשבונית מס קבלה for authorized
     const docType = effectiveVatType === 'exempt' ? YpayDocType.Receipt : YpayDocType.TaxInvoiceReceipt
 
+    // vatIncluded=false → price is net, YPAY adds VAT on top for authorized
+    // dealers (docType 109). For exempt dealers (docType 108) the field is
+    // ignored. Without it, YPAY treats the line as VAT-exempt regardless of
+    // docType — that's the 2026-04-28 "didn't add VAT" incident.
     const items = [{
       description: transaction.description,
       quantity: 1,
       price: transaction.amount,
+      vatIncluded: false,
     }]
 
     const methods = [{
@@ -158,6 +163,7 @@ export const ypayService = {
       description: `${params.projectName} - ${params.monthName} (${params.totalHours.toFixed(2)} שעות × ${params.hourlyRate} ₪)`,
       quantity: 1,
       price: amount,
+      vatIncluded: false,
     }]
 
     const response = await fetch('/api/ypay', {
@@ -204,6 +210,11 @@ export const ypayService = {
 
     const amount = params.items.reduce((sum, it) => sum + it.quantity * it.price, 0)
 
+    // Each line gets `vatIncluded: false` (price is net, YPAY adds VAT for
+    // authorized dealers — docType 106). Without this field YPAY treats the
+    // line as VAT-exempt regardless of docType.
+    const items = params.items.map(it => ({ ...it, vatIncluded: false }))
+
     const response = await fetch('/api/ypay', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -211,7 +222,7 @@ export const ypayService = {
         ...credentials,
         action: 'createDocument',
         docType,
-        items: params.items,
+        items,
         date: params.date,
         ...(params.contact ? { contact: params.contact } : {}),
       }),

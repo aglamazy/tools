@@ -53,13 +53,31 @@ export async function getSharedBusinessIdsFromToken(): Promise<string[]> {
 }
 
 /**
+ * Read the locally-tombstoned business syncIds from the deletion ledger.
+ * The ledger structure is `{ businesses: [syncId, ...], ... }` per
+ * applyMergedBackupService.ts persistence shape.
+ */
+async function getLocallyDeletedBusinessSyncIds(): Promise<Set<string>> {
+  const entry = await db.appSettings.where('key').equals('deletedRecords').first()
+  const value = entry?.value as Record<string, string[]> | undefined
+  const list = value?.businesses
+  return new Set(Array.isArray(list) ? list : [])
+}
+
+/**
  * Export a single business and all its children as a mini BackupData.
  */
 async function exportBusinessData(businessSyncId: string): Promise<BackupData | null> {
   // Find the business
   const business = await db.businesses.where('syncId').equals(businessSyncId).first()
   if (!business) {
-    console.warn(`[SharedSync] Business with syncId ${businessSyncId} not found locally`)
+    // If the business was locally deleted+tombstoned, the share-claim entry is
+    // stale (claim is server-side and outlives local deletion). Skip silently —
+    // caller's contract treats `null` as "nothing to upload, sync OK".
+    const deleted = await getLocallyDeletedBusinessSyncIds()
+    if (!deleted.has(businessSyncId)) {
+      console.warn(`[SharedSync] Business with syncId ${businessSyncId} not found locally`)
+    }
     return null
   }
 
@@ -460,7 +478,13 @@ export async function syncAllSharedBusinesses(getPassword: (bizSyncId: string) =
   const sharedIds = await getSharedBusinessIdsFromToken()
   if (sharedIds.length === 0) return
 
-  for (const bizSyncId of sharedIds) {
+  // Filter out share-claim entries for businesses the user has already deleted
+  // locally — no point spinning up Firebase Storage round-trips + password
+  // prompts for businesses that are tombstoned.
+  const deleted = await getLocallyDeletedBusinessSyncIds()
+  const liveIds = sharedIds.filter(id => !deleted.has(id))
+
+  for (const bizSyncId of liveIds) {
     const password = await getPassword(bizSyncId)
     if (!password) {
       console.warn(`[SharedSync] No password for shared business ${bizSyncId}, skipping`)

@@ -66,21 +66,28 @@ async function notify(chatId: number | null, text: string): Promise<void> {
 }
 
 export async function GET(request: NextRequest) {
-  // Variant gate: when grocery automation is moved to a sibling deployment
-  // (e.g. Saliko), Aglamazo's deployment can disable its grocery cron via
-  // env without touching code. Default = enabled. Anything other than the
-  // exact string 'false' keeps the cron live.
-  if (process.env.GROCERY_CRON_ENABLED === 'false') {
-    return NextResponse.json({ ok: true, skipped: 'GROCERY_CRON_ENABLED=false' })
-  }
-
-  // Verify cron secret (Vercel sends this header)
+  // Verify cron secret (Vercel sends this header). Auth runs BEFORE any
+  // healthcheck ping so unauthenticated callers can't trip the probe.
   const authHeader = request.headers.get('authorization')
   if (CRON_SECRET && authHeader !== `Bearer ${CRON_SECRET}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const hcUrl = process.env.HEALTHCHECK_GROCERY_CRON_URL
+
+  // Variant gate: when grocery automation is moved to a sibling deployment
+  // (e.g. Saliko), Aglamazo's deployment can disable its grocery cron via
+  // env without touching code. Default = enabled. Anything other than the
+  // exact string 'false' keeps the cron live.
+  //
+  // We still ping success here: the probe monitors "is Vercel firing this
+  // route on schedule," not "did business work happen." Skipping the ping on
+  // the disabled path silently DOWNs the probe within one schedule window
+  // (root cause of the 2026-05 incident).
+  if (process.env.GROCERY_CRON_ENABLED === 'false') {
+    if (hcUrl) await fetch(hcUrl).catch(() => {})
+    return NextResponse.json({ ok: true, skipped: 'GROCERY_CRON_ENABLED=false' })
+  }
 
   try {
     return await runCron(hcUrl)
