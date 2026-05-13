@@ -10,6 +10,7 @@ import HouseholdTab from './settings/HouseholdTab'
 import ApiKeysTab from './settings/ApiKeysTab'
 import MyBotsSection from './settings/MyBotsSection'
 import TelegramTab from './settings/TelegramTab'
+import ExternalServicesTab from './settings/ExternalServicesTab'
 import { userTierStore, UserTier } from '@/app/stores/userTierStore'
 
 type TabItemWithTier = TabItem & { requiredTier?: UserTier }
@@ -22,6 +23,7 @@ const ALL_TABS: TabItemWithTier[] = [
   { id: 'telegram', label: 'טלגרם', icon: '📱', requiredTier: UserTier.FREE },
   { id: 'bots', label: 'בוטים', icon: '🤖', requiredTier: UserTier.HOME },
   { id: 'apikeys', label: 'מפתחות API', icon: '🔑', requiredTier: UserTier.PRO },
+  { id: 'vault', label: 'חיבורים חיצוניים', icon: '🔐', requiredTier: UserTier.FREE },
   { id: 'advanced', label: 'מתקדם', icon: '⚙️', requiredTier: UserTier.FREE },
 ]
 
@@ -59,6 +61,7 @@ export default function Settings() {
             {activeTab === 'bots' && <MyBotsSection />}
             {activeTab === 'sync' && <SyncTab />}
             {activeTab === 'apikeys' && <ApiKeysTab />}
+            {activeTab === 'vault' && <ExternalServicesTab />}
             {activeTab === 'advanced' && <AdvancedTab />}
           </>
         )}
