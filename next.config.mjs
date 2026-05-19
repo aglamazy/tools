@@ -1,5 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Per-flavor build dir so `dev` and `dev:saliko` can run in parallel
+  // without colliding on .next/dev/lock.
+  distDir: process.env.NEXT_DIST_DIR || '.next',
+
   // Mark firebase-admin as external to avoid bundling issues
   serverExternalPackages: ['firebase-admin'],
 

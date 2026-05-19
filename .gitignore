@@ -1,5 +1,6 @@
 node_modules
 .next
+.next-*
 out
 .DS_Store
 .idea/
@@ -14,6 +15,16 @@ firebase-debug.log
 .env.saliko.local
 # Machine-local — hardcoded chrome-devtools-mcp absolute path
 .mcp.json
+# Machine-local Claude Code config + Buddy worktrees
+.claude/
+# Ephemeral session/agent notes — kept in worktree but never committed
+/SESSION.md
+/TASKS.md
+/AGENT_REPORT.md
+/AGENT_RESULT
+/BANK-SCRAPE.md
+/SALIKO-OVERNIGHT.md
+/index.html
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
