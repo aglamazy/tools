@@ -4,6 +4,9 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { credentialStore } from '@/app/stores/credentialStore'
 import { CREDENTIAL_SERVICE_LABELS, type CredentialRow, type CredentialService } from '@/app/types/credential'
 import YesNoModal from '@/app/components/YesNoModal'
+import { VARIANT } from '@/app/config/variants'
+import { SALIKO_PRIVACY_TIER_BLURBS, SALIKO_PRIVACY_TIERS } from '@/app/saliko/privacy/privacyContent'
+import { getIdToken } from '@/app/services/firebaseAuthService'
 
 type FormState = {
   service: CredentialService
@@ -31,15 +34,69 @@ export default function ExternalServicesTab() {
   const [saved, setSaved] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<{ id: number; label: string } | null>(null)
 
+  // Saliko-only Tier-3 consent toggle. `null` = still loading from server,
+  // `false` = not granted, `true` = granted. We only fetch on Saliko variant
+  // (the API returns 404 elsewhere).
+  const [tier3Granted, setTier3Granted] = useState<boolean | null>(null)
+  const [tier3Busy, setTier3Busy] = useState(false)
+  const [tier3Error, setTier3Error] = useState<string | null>(null)
+  const [confirmRevoke, setConfirmRevoke] = useState(false)
+
+  const isSaliko = VARIANT === 'saliko'
+
   const refresh = useCallback(async () => {
     const list = await credentialStore.list()
     setRows(list)
     setLoading(false)
   }, [])
 
+  const refreshConsent = useCallback(async () => {
+    if (!isSaliko) return
+    try {
+      const token = await getIdToken()
+      if (!token) { setTier3Granted(false); return }
+      const res = await fetch('/api/consent/server-creds', {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const data = await res.json()
+      setTier3Granted(!!(data?.success && data?.consent))
+    } catch (err) {
+      console.error('[ExternalServicesTab] consent fetch failed:', err)
+      setTier3Granted(false)
+    }
+  }, [isSaliko])
+
   useEffect(() => {
     refresh()
   }, [refresh])
+
+  useEffect(() => {
+    refreshConsent()
+  }, [refreshConsent])
+
+  /** Push the just-saved credential to the server when Tier-3 is on. */
+  const syncCredentialToServer = useCallback(async (service: CredentialService, userCode: string, password: string) => {
+    if (!isSaliko || service !== 'shufersal' || !tier3Granted) return
+    try {
+      const token = await getIdToken()
+      if (!token) return
+      const res = await fetch('/api/credentials/shufersal', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ email: userCode, password }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!data?.success) {
+        console.warn('[ExternalServicesTab] server sync rejected:', data)
+        // Don't fail the save — Dexie copy is the master. Surface the issue
+        // so the user knows cron won't fire until they retry.
+        setError(`הסיסמה נשמרה במכשיר, אבל הסנכרון לשרת נכשל (${data?.error || 'unknown'}).`)
+      }
+    } catch (err) {
+      console.error('[ExternalServicesTab] server sync failed:', err)
+      setError('הסיסמה נשמרה במכשיר, אבל הסנכרון לשרת נכשל.')
+    }
+  }, [isSaliko, tier3Granted])
 
   const startNew = () => {
     setForm(emptyForm)
@@ -77,6 +134,9 @@ export default function ExternalServicesTab() {
         password: form.password,
         notes: form.notes || undefined,
       })
+      // Saliko Tier 3: also push to the encrypted server-side store so cron
+      // can use it. No-op when consent is off or variant is Aglamazo.
+      await syncCredentialToServer(form.service, form.userCode, form.password)
       setEditingId(null)
       setForm(emptyForm)
       setSaved(true)
@@ -84,6 +144,45 @@ export default function ExternalServicesTab() {
       await refresh()
     } catch (e) {
       setError((e as Error).message)
+    }
+  }
+
+  const handleGrantTier3 = async () => {
+    setTier3Busy(true); setTier3Error(null)
+    try {
+      const token = await getIdToken()
+      if (!token) throw new Error('לא מחובר')
+      const res = await fetch('/api/consent/server-creds', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const data = await res.json()
+      if (!data?.success) throw new Error(data?.error || 'שגיאה')
+      setTier3Granted(true)
+    } catch (err) {
+      setTier3Error((err as Error).message)
+    } finally {
+      setTier3Busy(false)
+    }
+  }
+
+  const handleRevokeTier3 = async () => {
+    setConfirmRevoke(false)
+    setTier3Busy(true); setTier3Error(null)
+    try {
+      const token = await getIdToken()
+      if (!token) throw new Error('לא מחובר')
+      const res = await fetch('/api/consent/server-creds', {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const data = await res.json()
+      if (!data?.success) throw new Error(data?.error || 'שגיאה')
+      setTier3Granted(false)
+    } catch (err) {
+      setTier3Error((err as Error).message)
+    } finally {
+      setTier3Busy(false)
     }
   }
 
@@ -105,6 +204,49 @@ export default function ExternalServicesTab() {
       <p style={{ color: '#64748b', fontSize: '0.85rem', margin: '0 0 1rem' }}>
         פרטי גישה לשירותים חיצוניים (ביטוח לאומי, בנקים…). נשמרים מקומית ב-IndexedDB ומסונכרנים מוצפנים דרך הגיבוי הענני הקיים.
       </p>
+
+      {isSaliko && (
+        <div
+          style={{
+            padding: '0.85rem 1rem',
+            border: '1px solid #cbd5e1',
+            borderRadius: '0.5rem',
+            background: tier3Granted ? '#ecfdf5' : '#f8fafc',
+            marginBottom: '1rem',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+            <div style={{ flex: 1 }}>
+              <strong style={{ fontSize: '0.95rem' }}>
+                אישור לשמירת פרטי חיבור בשרת (לפעולות אוטומטיות)
+              </strong>
+              <div style={{ color: '#475569', fontSize: '0.8rem', marginTop: '0.25rem' }}>
+                {SALIKO_PRIVACY_TIER_BLURBS[SALIKO_PRIVACY_TIERS.loggedInWithServerCreds]}
+              </div>
+            </div>
+            <button
+              onClick={tier3Granted ? () => setConfirmRevoke(true) : handleGrantTier3}
+              disabled={tier3Busy || tier3Granted === null}
+              style={{
+                padding: '0.45rem 1rem',
+                fontSize: '0.85rem',
+                background: tier3Granted ? '#dc2626' : '#16a34a',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '0.375rem',
+                cursor: tier3Busy ? 'wait' : 'pointer',
+                opacity: tier3Busy || tier3Granted === null ? 0.6 : 1,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {tier3Granted === null ? '...' : tier3Granted ? 'בטל אישור' : 'אשר Tier 3'}
+            </button>
+          </div>
+          {tier3Error && (
+            <div style={{ color: '#dc2626', fontSize: '0.8rem', marginTop: '0.5rem' }}>{tier3Error}</div>
+          )}
+        </div>
+      )}
 
       {error && (
         <div style={{ color: '#dc2626', fontSize: '0.85rem', marginBottom: '0.75rem' }}>{error}</div>
@@ -206,6 +348,13 @@ export default function ExternalServicesTab() {
         question={confirmDelete ? `למחוק את פרטי הגישה ל-${confirmDelete.label}?` : ''}
         onYes={handleDelete}
         onNo={() => setConfirmDelete(null)}
+      />
+
+      <YesNoModal
+        isOpen={confirmRevoke}
+        question={'לבטל אישור Tier 3? כל פרטי החיבור המוצפנים יימחקו מהשרת מיידית. הזמנות אוטומטיות (cron) ייפסקו עד האישור הבא. הסיסמאות במכשיר שלך לא יושפעו.'}
+        onYes={handleRevokeTier3}
+        onNo={() => setConfirmRevoke(false)}
       />
     </div>
   )
