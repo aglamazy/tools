@@ -284,12 +284,18 @@ function AnnualSummarySubTab() {
         .equals([businessId, month, 'incomeTax'])
         .first()
 
+      // Dexie's update({k: undefined}) deletes the key. If this re-upload's
+      // Drive step failed (no token / network), we'd wipe a link saved by a
+      // previous successful upload. Only include the Drive fields when we
+      // actually have a fresh link.
+      const driveFields = driveWebViewLink
+        ? { driveFileId, driveWebViewLink, fileName: file.name }
+        : {}
+
       if (existing) {
         await db.advancePayments.update(existing.id!, {
           paidAt: new Date().toISOString(),
-          driveFileId,
-          driveWebViewLink,
-          fileName: file.name,
+          ...driveFields,
         })
       } else {
         await db.advancePayments.add({
@@ -297,9 +303,7 @@ function AnnualSummarySubTab() {
           month,
           type: 'incomeTax',
           paidAt: new Date().toISOString(),
-          driveFileId,
-          driveWebViewLink,
-          fileName: file.name,
+          ...driveFields,
           userId: getUser()?.uid,
           createdAt: new Date().toISOString(),
         })
