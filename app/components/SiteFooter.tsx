@@ -30,6 +30,14 @@ export default function SiteFooter() {
           </div>
         )}
 
+        {isSaliko && (
+          <div className="site-footer-section">
+            <h4>משפטי</h4>
+            <Link href="/privacy">מדיניות פרטיות</Link>
+            <Link href={routes.publicTerms}>תנאי שימוש</Link>
+          </div>
+        )}
+
         <div className="site-footer-section">
           <h4>צור קשר</h4>
           {!isSaliko && <Link href={routes.contact}>שלח הודעה</Link>}
