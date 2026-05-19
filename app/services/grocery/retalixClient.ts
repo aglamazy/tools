@@ -10,6 +10,9 @@
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import { gunzipSync } from 'zlib'
 import type { RetalixStoreConfig, OtpStorePlugin, StoreSearchResult, StoreCheckoutResult, StoreOrder, StoreOrderItem, StoreSlotDay, CheckoutItem, CheckoutOptions, OrderModification, OrderModificationResult } from './storeTypes'
+import { encryptCred, decryptCred, looksEncrypted } from '@/app/services/security/credEncryption'
+import { hasCurrentServerCredsConsent } from '@/app/services/consentService'
+import { getRexailStore } from './rexailStores'
 
 // Default config for Makor Hashefa
 const DEFAULT_CONFIG: RetalixStoreConfig = {
@@ -19,6 +22,17 @@ const DEFAULT_CONFIG: RetalixStoreConfig = {
   xWebsite: 'eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2In0..Fd0IKxSrb6gyMYWl9-qHPg.WSJZnBSChp-7D5pYeQquVKjZeJFhEFzCJ-IhvfBDBmcg19uvWecP2vIieRGGu0nOzAaE11WxQCTI3zdhIqNaTNCJ3fMFCQDCmztsqs1VE_asLSV375uK1qYdL6uquuuF.9jmt8tegsAQI0rfz6O4A8w',
   storeId: 180,
   deliveryAreaId: 10038,
+  deliveryMethod: 'deliveryByStore',
+  preferredDay: 'thursday',
+  preferredHour: 18,
+}
+
+// Shared baseline for ad-hoc Rexail chains (anon Tier 1 callers and the
+// createRexailPlugin factory). siteOrigin/xWebsite/storeId are per-chain.
+const SHARED_REXAIL_DEFAULTS: Omit<RetalixStoreConfig, 'siteOrigin' | 'xWebsite' | 'storeId'> = {
+  apiBase: 'https://client-il.rexail.com/client',
+  deviceId: '96b94189f7353d93283bf995265b5737',
+  deliveryAreaId: 0,           // user picks at connect time
   deliveryMethod: 'deliveryByStore',
   preferredDay: 'thursday',
   preferredHour: 18,
@@ -129,11 +143,35 @@ async function rexailFetch(
 // scope under groceries/{uid}/stores/{storeId} so multiple Rexail-powered
 // chains can coexist for the same user without colliding. Each plugin
 // instance binds its own storeId via createRexailPlugin().
+//
+// Saliko Tier 1 (anonymous one-shot OTP order): anon callers MUST NOT touch
+// Firestore at all — their creds live exclusively in browser sessionStorage
+// and travel through the chat request body. This module exposes parallel
+// `*WithCreds` helpers (sendOtpWithCreds, verifyOtpWithCreds, checkoutWithCreds,
+// searchCatalogWithCreds) that accept the cred in-args; the executor calls
+// those for `anon:`-prefixed uids and skips the Firestore-backed path below.
+// Do not re-introduce an `anon:` branch into credRef/readCredDoc — that
+// design (anonSessions/{sessionId} TTL doc) was the c1 v1 model and was
+// rejected because Tier 1 means "nothing on our server, ever," not
+// "short-lived on our server."
 
 function credRef(uid: string, storeId: string) {
   return getAdminFirestore().collection('groceries').doc(uid)
     .collection('stores').doc(storeId)
     .collection('private').doc('credentials')
+}
+
+/** Read the doc. Logged-in (Tier 3) only — anon callers never hit this. */
+async function readCredDoc(uid: string, storeId: string): Promise<RetalixCredentials | null> {
+  const doc = await credRef(uid, storeId).get()
+  if (!doc.exists) return null
+  const raw = doc.data() as RetalixCredentials
+  // Logged-in (Tier 3): phone + token are stored encrypted. Decrypt on read so
+  // downstream callers (login, OTP, checkout) get plaintext. `looksEncrypted`
+  // is the rollout-safety sniff — pre-Tier-3 docs were plaintext.
+  const phone = typeof raw.phone === 'string' && looksEncrypted(raw.phone) ? decryptCred(raw.phone) : raw.phone
+  const token = typeof raw.token === 'string' && looksEncrypted(raw.token) ? decryptCred(raw.token) : raw.token
+  return { ...raw, phone, token } as RetalixCredentials
 }
 
 /**
@@ -147,20 +185,29 @@ function catalogRef(storeId: string) {
 }
 
 export async function loadCredentials(uid: string, storeId: string): Promise<RetalixCredentials | null> {
-  const doc = await credRef(uid, storeId).get()
-  if (!doc.exists) return null
-  return doc.data() as RetalixCredentials
+  return readCredDoc(uid, storeId)
 }
 
 export async function saveRetalixCredentials(uid: string, storeId: string, phone: string, config: RetalixStoreConfig): Promise<void> {
-  const cred: RetalixCredentials = {
-    phone,
+  // Tier 3: encrypted-at-rest, gated by consent. Phone counts as PII per the
+  // privacy policy, so we encrypt it alongside the token. `config` is plain
+  // chain metadata (storeId / xWebsite / etc.) — not user-specific, not
+  // encrypted. Anon callers do NOT come through here — they use
+  // sendOtpWithCreds + verifyOtpWithCreds (no Firestore touch).
+  const consented = await hasCurrentServerCredsConsent(uid)
+  if (!consented) {
+    const { NoTier3ConsentError } = await import('@/app/services/consentService')
+    throw new NoTier3ConsentError(
+      `NO_TIER3_CONSENT: cannot persist Retalix credentials for store=${storeId} server-side without Tier-3 consent.`,
+    )
+  }
+  await credRef(uid, storeId).set({
+    phone: encryptCred(phone),
     token: null,
     config,
     verified: false,
     otpPending: false,
-  }
-  await credRef(uid, storeId).set(cred)
+  })
 }
 
 export async function isRetalixAuthenticated(uid: string, storeId: string): Promise<boolean> {
@@ -169,8 +216,9 @@ export async function isRetalixAuthenticated(uid: string, storeId: string): Prom
 }
 
 export async function hasRetalixCredentials(uid: string, storeId: string): Promise<boolean> {
-  const doc = await credRef(uid, storeId).get()
-  return doc.exists
+  // Use the same TTL-aware read path so expired anon sessions don't
+  // masquerade as "has creds."
+  return (await readCredDoc(uid, storeId)) !== null
 }
 
 // --- Auth (OTP) ---
@@ -210,15 +258,117 @@ export async function verifyOtp(uid: string, storeId: string, otp: string): Prom
   const token = resp.data?.second
   if (!token) throw new Error('No token in OTP response')
 
-  await credRef(uid, storeId).update({ token, verified: true, otpPending: false })
+  // Logged-in (Tier 3): encrypt the token at rest, same as phone in saveRetalixCredentials.
+  await credRef(uid, storeId).update({
+    token: encryptCred(token),
+    verified: true,
+    otpPending: false,
+  })
   console.log(`[Retalix] OTP verified for uid=${uid}`)
   return token
 }
 
-async function getToken(uid: string, storeId: string): Promise<{ token: string; config: RetalixStoreConfig }> {
+/**
+ * Resolve `{ token, config }` for an order operation.
+ *
+ * Two modes:
+ *   - Logged-in: load the encrypted cred doc from Firestore + decrypt.
+ *   - Anon (Tier 1): the caller passes `creds` in-args (from request-scope
+ *     sessionStorage state), no Firestore read.
+ */
+async function getToken(
+  uid: string,
+  storeId: string,
+  creds?: { token: string; config: RetalixStoreConfig },
+): Promise<{ token: string; config: RetalixStoreConfig }> {
+  if (creds) {
+    if (!creds.token) throw new Error('Retalix not authenticated. Send OTP first.')
+    return { token: creds.token, config: creds.config }
+  }
   const cred = await loadCredentials(uid, storeId)
   if (!cred?.token) throw new Error('Retalix not authenticated. Send OTP first.')
   return { token: cred.token, config: cred.config }
+}
+
+// --- Anon credential-pass-through helpers (Tier 1) ---
+//
+// Anon callers (sessionStorage-only model) hold the cred in the browser and
+// pass it through `/api/chat` on every request. These helpers do the same
+// Rexail HTTP calls the Firestore-backed functions above do, but the cred
+// comes in as an argument and the function returns the updated cred for the
+// executor to ship back to the client. No Firestore writes, no reads.
+
+/** In-memory cred shape that lives in the chat-request lifecycle for anon users. */
+export interface AnonRetalixCreds {
+  phone: string
+  token?: string | null
+  config: RetalixStoreConfig
+}
+
+/** Resolve a chain id (e.g. 'retalix', 'rexail_basra') to its static config. */
+export function getRetalixConfigForStore(storeId: string): RetalixStoreConfig | null {
+  // Legacy default — Makor HaShefa keeps the bare 'retalix' id.
+  if (storeId === 'retalix') return { ...DEFAULT_CONFIG }
+  // Other chains: look up the static REXAIL_STORES entry. No per-user state,
+  // safe to compute on-demand for anon Tier-1 callers.
+  const entry = getRexailStore(storeId)
+  if (!entry) return null
+  return {
+    ...SHARED_REXAIL_DEFAULTS,
+    siteOrigin: entry.siteOrigin,
+    xWebsite: entry.xWebsite,
+    storeId: entry.storeId,
+  }
+}
+
+/** Anon-side `sendOtp`: dispatch the SMS using only the cred-in-args. */
+export async function sendOtpWithCreds(creds: AnonRetalixCreds): Promise<void> {
+  const resp = await rexailFetch(creds.config, 'apply-for-authentication', {
+    body: JSON.stringify({ cellPhone: creds.phone }),
+  })
+  if (!resp.success) {
+    throw new Error(`OTP failed: ${resp.resolvedMessage || resp.message || 'unknown'}`)
+  }
+  console.log(`[Retalix:anon] OTP sent to ${creds.phone}`)
+}
+
+/** Anon-side `verifyOtp`: validate OTP and return the bearer token. */
+export async function verifyOtpWithCreds(creds: AnonRetalixCreds, otp: string): Promise<string> {
+  const resp = await rexailFetch(creds.config, 'authenticate', {
+    body: JSON.stringify({
+      authToken: otp,
+      cellPhone: creds.phone,
+      deviceId: creds.config.deviceId,
+    }),
+  })
+  if (!resp.success) {
+    throw new Error(`OTP verify failed: ${resp.resolvedMessage || resp.message || 'invalid code'}`)
+  }
+  const token = resp.data?.second
+  if (!token) throw new Error('No token in OTP response')
+  console.log(`[Retalix:anon] OTP verified for phone=${creds.phone}`)
+  return token
+}
+
+/**
+ * Anon-side `checkout`: place an order using token+config carried by the
+ * caller. Same end-to-end Rexail flow as the Firestore-backed `checkout`,
+ * just without the cred-doc read. The `uid` parameter is still required for
+ * log lines and for the shared logging contract — `creds` short-circuits
+ * the actual cred lookup inside getToken.
+ *
+ * Honors `SALIKO_DRY_RUN` identically (gate is inside the shared `checkout`
+ * function and runs before any state-mutating Rexail call).
+ */
+export async function checkoutWithCreds(
+  uid: string,
+  storeId: string,
+  items: { id: number; qty: number; sellingUnitId: number }[],
+  options: { day?: string; hour?: number; dryRun?: boolean; nearest?: boolean },
+  creds: AnonRetalixCreds,
+): Promise<RetalixOrderResult> {
+  if (!creds.token) throw new Error('Retalix not authenticated. Send OTP first.')
+  return checkout(uid, storeId, items, options, { token: creds.token, config: creds.config })
 }
 
 // --- Catalog (public — no user auth required) ---
@@ -355,8 +505,13 @@ function toEnglishDay(day: string): string | undefined {
 
 // --- Delivery Slots ---
 
-export async function getSlots(uid: string, storeId: string, dayName?: string): Promise<RetalixSlot[]> {
-  const { token, config } = await getToken(uid, storeId)
+export async function getSlots(
+  uid: string,
+  storeId: string,
+  dayName?: string,
+  creds?: { token: string; config: RetalixStoreConfig },
+): Promise<RetalixSlot[]> {
+  const { token, config } = await getToken(uid, storeId, creds)
 
   const resp = await rexailFetch(config,
     `client/stores/store-available-service-areas?storeId=${config.storeId}&allServiceHours=false`,
@@ -382,8 +537,13 @@ export async function getSlots(uid: string, storeId: string, dayName?: string): 
 
 // --- Order Flow ---
 
-export async function saveDrafts(uid: string, storeId: string, items: { id: number; qty: number; sellingUnitId: number }[]): Promise<void> {
-  const { token, config } = await getToken(uid, storeId)
+export async function saveDrafts(
+  uid: string,
+  storeId: string,
+  items: { id: number; qty: number; sellingUnitId: number }[],
+  creds?: { token: string; config: RetalixStoreConfig },
+): Promise<void> {
+  const { token, config } = await getToken(uid, storeId, creds)
   const now = Date.now()
 
   const cartItems = items.map(item => ({
@@ -405,8 +565,13 @@ export async function saveDrafts(uid: string, storeId: string, items: { id: numb
   console.log(`[Retalix] Drafts saved: ${items.length} items`)
 }
 
-async function prepareOrder(uid: string, storeId: string, slot: RetalixSlot): Promise<string> {
-  const { token, config } = await getToken(uid, storeId)
+async function prepareOrder(
+  uid: string,
+  storeId: string,
+  slot: RetalixSlot,
+  creds?: { token: string; config: RetalixStoreConfig },
+): Promise<string> {
+  const { token, config } = await getToken(uid, storeId, creds)
 
   const resp = await rexailFetch(config, 'client/orders/new/prepare-to-place-order', {
     body: JSON.stringify({
@@ -430,8 +595,12 @@ async function prepareOrder(uid: string, storeId: string, slot: RetalixSlot): Pr
   return orderToken
 }
 
-async function getPaymentMethod(uid: string, storeId: string): Promise<string> {
-  const { token, config } = await getToken(uid, storeId)
+async function getPaymentMethod(
+  uid: string,
+  storeId: string,
+  creds?: { token: string; config: RetalixStoreConfig },
+): Promise<string> {
+  const { token, config } = await getToken(uid, storeId, creds)
 
   const resp = await rexailFetch(config,
     `client/payments-methods/my-payment-options?storeId=${config.storeId}`,
@@ -452,11 +621,12 @@ export async function checkout(
   storeId: string,
   items: { id: number; qty: number; sellingUnitId: number }[],
   options: { day?: string; hour?: number; dryRun?: boolean; nearest?: boolean } = {},
+  creds?: { token: string; config: RetalixStoreConfig },
 ): Promise<RetalixOrderResult> {
-  const { config } = await getToken(uid, storeId)
+  const { config } = await getToken(uid, storeId, creds)
 
   // 1. Save drafts
-  await saveDrafts(uid, storeId, items)
+  await saveDrafts(uid, storeId, items, creds)
 
   // 2. Get delivery slot
   const rawDay = options.day || (options.nearest ? undefined : config.preferredDay)
@@ -470,7 +640,7 @@ export async function checkout(
     const [, d, m, y] = exactDateMatch
     // Normalize to YYYY-MM-DD for comparison (API may return with/without leading zeros)
     const targetDate = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
-    const allSlots = await getSlots(uid, storeId)
+    const allSlots = await getSlots(uid, storeId, undefined, creds)
     console.log(`[retalixClient] checkout exact date: rawDay=${rawDay} targetDate=${targetDate} allSlots[0].date=${allSlots[0]?.date}`)
     slots = allSlots.filter(s => {
       const m2 = s.date?.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
@@ -480,7 +650,7 @@ export async function checkout(
     slotErrorSuffix = ` לתאריך ${rawDay}`
   } else {
     const dayName = rawDay ? (toEnglishDay(rawDay) ?? rawDay) : undefined
-    slots = await getSlots(uid, storeId, dayName)
+    slots = await getSlots(uid, storeId, dayName, creds)
     slotErrorSuffix = dayName ? ` ליום ${dayName}` : ''
   }
   if (slots.length === 0) return { success: false, error: `אין משבצות משלוח${slotErrorSuffix}. נסה list_slots לראות מה זמין.` }
@@ -488,18 +658,21 @@ export async function checkout(
   const slot = slots.find(s => s.hour === preferredHour) || slots[0]
   const deliveryWindow = { day: slot.dayHebrew, date: slot.date, time: `${slot.hour}:00` }
 
-  if (options.dryRun) {
+  // Global kill-switch for the test pipeline: SALIKO_DRY_RUN=true forces every
+  // checkout to short-circuit before any state-mutating Rexail call.
+  // Applies identically to logged-in and anon flows — both paths converge here.
+  if (options.dryRun || process.env.SALIKO_DRY_RUN === 'true') {
     return { success: false, dryRun: true, deliveryWindow }
   }
 
   // 3. Prepare order (get encrypted token)
-  const orderToken = await prepareOrder(uid, storeId, slot)
+  const orderToken = await prepareOrder(uid, storeId, slot, creds)
 
   // 4. Get payment method
-  const paymentMethodId = await getPaymentMethod(uid, storeId)
+  const paymentMethodId = await getPaymentMethod(uid, storeId, creds)
 
   // 5. Place order
-  const { token } = await getToken(uid, storeId)
+  const { token } = await getToken(uid, storeId, creds)
   const now = Date.now()
   const cartItems = items.map(item => ({
     storeProduct: { id: item.id },
@@ -604,15 +777,6 @@ export interface RexailPluginEntry {
   config: Pick<RetalixStoreConfig, 'siteOrigin' | 'xWebsite' | 'storeId'> & Partial<RetalixStoreConfig>
   /** Optional extra keywords for fuzzy chain-name matching in chat. */
   keywords?: string[]
-}
-
-const SHARED_REXAIL_DEFAULTS: Omit<RetalixStoreConfig, 'siteOrigin' | 'xWebsite' | 'storeId'> = {
-  apiBase: 'https://client-il.rexail.com/client',
-  deviceId: '96b94189f7353d93283bf995265b5737',
-  deliveryAreaId: 0,           // user picks at connect time
-  deliveryMethod: 'deliveryByStore',
-  preferredDay: 'thursday',
-  preferredHour: 18,
 }
 
 export function createRexailPlugin(entry: RexailPluginEntry): OtpStorePlugin {

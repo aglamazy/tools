@@ -176,7 +176,7 @@ export const ACTION_DECLARATIONS: FunctionDeclaration[] = [
   },
   {
     name: 'set_credentials',
-    description: 'חבר חשבון שופרסל (אימייל וסיסמה)',
+    description: 'שמור פרטי שופרסל בשרת (Tier 3). דורש שאישור Tier 3 כבר נרשם בעבר (`grant_server_creds_consent`). אם אין אישור — השמירה תיכשל וההודעה למשתמש תכוון אותו או לאשר במפורש או לחבר דרך הגדרות → חיבורים חיצוניים (Tier 2). **אל תקרא לפעולה הזו אלא אם המשתמש אמר במפורש משפט שמסכים לשמירה בשרת.**',
     parameters: {
       type: 'object',
       properties: {
@@ -189,7 +189,7 @@ export const ACTION_DECLARATIONS: FunctionDeclaration[] = [
   },
   {
     name: 'set_otp_phone',
-    description: 'חבר חשבון Retalix (מקור השפע/רמי לוי) עם SMS',
+    description: 'שלח SMS אימות לטלפון לחיבור חנות Retalix (מקור השפע/הירקניה וכו׳). למשתמש אנונימי הפרטים נשמרים בדפדפן בלבד וזה אוטומטי. **למשתמש רשום: דורש אישור Tier 3 שכבר נרשם בעבר.** אם אין אישור — הקריאה תיכשל; אל תקרא לזה למשתמש רשום אלא אם הוא אמר במפורש משפט שמסכים לשמירה בשרת.',
     parameters: {
       type: 'object',
       properties: {
@@ -197,6 +197,14 @@ export const ACTION_DECLARATIONS: FunctionDeclaration[] = [
         store: { type: 'string' },
       },
       required: ['phone'],
+    },
+  },
+  {
+    name: 'grant_server_creds_consent',
+    description: 'רשום אישור Tier 3 של המשתמש לשמירת פרטי חיבור בשרת. **לקרוא רק כשהמשתמש אמר במפורש משפט שמסכים** (למשל "אני מאשר Tier 3", "תשמור בשרת", "אני רוצה הזמנות אוטומטיות"). **שליחת אימייל/סיסמה בצ׳אט לבד היא לא אישור.** אם הקריאה למלא Tier 3 + set_credentials באה ב-turn אחד — קודם תקרא לזה ורק אחר כך ל-set_credentials/set_otp_phone.',
+    parameters: {
+      type: 'object',
+      properties: {},
     },
   },
   {

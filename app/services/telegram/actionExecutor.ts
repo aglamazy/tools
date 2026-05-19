@@ -17,8 +17,18 @@ import {
   setCredentialsVerified,
   login as shufersalLogin,
 } from '@/app/services/grocery/shufersalClient'
+import { grantServerCredsConsent, NoTier3ConsentError } from '@/app/services/consentService'
 // Note: retalixClient functions are no longer imported directly — the OTP
 // flow goes through the resolved plugin (multi-store Rexail support).
+// Exception: the anon Tier-1 path bypasses the plugin contract and calls
+// `*WithCreds` helpers directly, because anon creds live in request memory
+// (passed in from sessionStorage on the client) rather than Firestore.
+import {
+  sendOtpWithCreds,
+  verifyOtpWithCreds,
+  checkoutWithCreds,
+  getRetalixConfigForStore,
+} from '@/app/services/grocery/retalixClient'
 import { getStore, getAllStores } from '@/app/services/grocery/storeRegistry'
 import { getUserStores, setDefaultStore, addActiveStore, getStoreData, addToStoreStanding, addStorePendingItems, removeFromStoreStanding, removeStorePendingItems, clearStorePending, movePendingToStanding as moveStorePendingToStanding, getStoreSchedule, setStoreSchedule } from '@/app/services/grocery/groceryStoreMulti'
 import type { OtpStorePlugin, CredentialsStorePlugin, StoreOrder } from '@/app/services/grocery/storeTypes'
@@ -42,13 +52,26 @@ const STORE_ACTIONS = new Set(['trigger_order', 'cancel_order', 're_search', 'li
  * Actions that fundamentally require a real signed-in account
  * (encrypted credentials, server-side cron registration, persistent state).
  * Anon visitors get a polite Hebrew response instead of execution.
+ *
+ * Saliko Tier 1 (anonymous OTP one-shot order) — per the privacy policy at
+ * `app/saliko/privacy/privacyContent.ts` (SALIKO_PRIVACY_TIERS.anonymous),
+ * anon visitors ARE allowed to:
+ *   - set_otp_phone + verify_otp (OTP flow against a Rexail chain)
+ *   - trigger_order (one shot — creds wiped at session end via TTL)
+ *   - show_cart (see what's about to be ordered)
+ * Persistent things (set_credentials/Shufersal, set_schedule, cancel_order,
+ * show_orders) stay gated — they need state that outlives the session.
  */
 const ACTIONS_REQUIRING_ACCOUNT = new Set([
-  'trigger_order', 'cancel_order', 'set_credentials', 'set_otp_phone',
-  'verify_otp', 'set_schedule', 'show_cart', 'show_orders',
+  'cancel_order', 'set_credentials', 'set_schedule', 'show_orders',
 ])
 
 const ANON_PREFIX = 'anon:'
+
+/** True iff the anon caller has a valid token for the requested chain. */
+function isAnonAuthedForStore(creds: AnonStoreCreds | null | undefined, storeId: string): boolean {
+  return !!creds && creds.storeId === storeId && !!creds.token
+}
 
 /** Resolve which store an action targets */
 async function resolveActionStore(uid: string, action: ChatAction, sessionStore?: string | null): Promise<string> {
@@ -163,11 +186,39 @@ async function pushToActiveCart(uid: string, catalogId: string, qty: number): Pr
   }
 }
 
+/**
+ * Anonymous Tier-1 cred state. Lives in the browser's sessionStorage (key
+ * `saliko.anonStoreCreds`) and traverses the server in-memory only — the
+ * server never persists it. The client reads it before each `/api/chat`
+ * POST, ships it in the request body, and writes back whatever the server
+ * returns on the response. On tab close: gone.
+ *
+ * `orderedOnce` enforces the Tier-1 "one-shot" guarantee: the server sets
+ * it to `true` after a successful `trigger_order` and refuses subsequent
+ * `trigger_order` calls — the user must register to keep ordering.
+ */
+export interface AnonStoreCreds {
+  /** Chain id, e.g. 'retalix', 'rexail_basra'. */
+  storeId: string
+  /** Phone number captured at `set_otp_phone`. */
+  phone: string
+  /** Bearer token set on successful `verify_otp`. Absent before verify. */
+  token?: string
+  /** True after a successful Tier-1 `trigger_order` — locks further orders. */
+  orderedOnce?: boolean
+}
+
 export interface ActionResult {
   /** Per-action results, in the same order as the input `actions` array — used to feed tool responses back to the LLM. */
   results: { name: string; result: string }[]
   /** Pending product searches that need user selection (stops the agentic loop — requires a callback). */
   pendingSelections?: PendingProductSelection[]
+  /**
+   * Updated anon-creds state to ship back to the client (only set when an
+   * action mutated it: `set_otp_phone`, `verify_otp`, or successful Tier-1
+   * `trigger_order`). When undefined, the client should keep whatever it had.
+   */
+  anonStoreCreds?: AnonStoreCreds | null
 }
 
 export interface PendingProductSelection {
@@ -180,13 +231,24 @@ export interface PendingProductSelection {
   results: { catalogId: string; name: string; brand: string; price: string; unitPrice: string; sellingUnitId?: number }[]
 }
 
-export async function executeActions(uid: string, actions: ChatAction[], sessionStore?: string | null): Promise<ActionResult> {
+export async function executeActions(
+  uid: string,
+  actions: ChatAction[],
+  sessionStore?: string | null,
+  inboundAnonCreds?: AnonStoreCreds | null,
+): Promise<ActionResult> {
   const results: { name: string; result: string }[] = []
   const allPending: PendingProductSelection[] = []
+  // Carry the anon cred forward across actions in the same batch. Each
+  // executeOne call may read it (current state) and/or return an updated
+  // version (set_otp_phone / verify_otp / successful trigger_order). The
+  // final value is what gets shipped back to the client.
+  let workingAnonCreds: AnonStoreCreds | null | undefined = inboundAnonCreds
+  let anonCredsTouched = false
 
   for (const action of actions) {
     try {
-      const r = await executeOne(uid, action, sessionStore)
+      const r = await executeOne(uid, action, sessionStore, workingAnonCreds)
       if (typeof r === 'string') {
         results.push({ name: action.action, result: r })
       } else if (r) {
@@ -194,6 +256,10 @@ export async function executeActions(uid: string, actions: ChatAction[], session
         if (r.followUp) results.push({ name: action.action, result: r.followUp })
         else results.push({ name: action.action, result: 'ok' })
         if (r.pendingSelections) allPending.push(...r.pendingSelections)
+        if (r.anonStoreCreds !== undefined) {
+          workingAnonCreds = r.anonStoreCreds
+          anonCredsTouched = true
+        }
       } else {
         results.push({ name: action.action, result: 'ok' })
       }
@@ -207,29 +273,58 @@ export async function executeActions(uid: string, actions: ChatAction[], session
   return {
     results,
     pendingSelections: allPending.length > 0 ? allPending : undefined,
+    // Only surface anonStoreCreds when an action actually mutated it. This
+    // keeps the response payload clean for the common no-op case and lets
+    // the client distinguish "nothing changed, keep current" (undefined)
+    // from "wipe it" (null).
+    anonStoreCreds: anonCredsTouched ? workingAnonCreds ?? null : undefined,
   }
 }
 
 interface ExecuteOneResult {
   followUp?: string | null
   pendingSelections?: PendingProductSelection[]
+  /**
+   * Updated anon Tier-1 cred state. `undefined` = unchanged, `null` = wipe.
+   * Set by `set_otp_phone`, `verify_otp`, and successful Tier-1 `trigger_order`.
+   */
+  anonStoreCreds?: AnonStoreCreds | null
 }
 
-async function executeOne(uid: string, action: ChatAction, sessionStore?: string | null): Promise<string | ExecuteOneResult | null> {
+async function executeOne(
+  uid: string,
+  action: ChatAction,
+  sessionStore?: string | null,
+  inboundAnonCreds?: AnonStoreCreds | null,
+): Promise<string | ExecuteOneResult | null> {
+  const isAnon = uid.startsWith(ANON_PREFIX)
+
   // Guard: anon visitors can chat freely with the LLM, but tools that need
   // a real account (encrypted creds, schedule, cron) get a friendly Hebrew
   // bounce. The LLM relays this back to the user verbatim.
-  if (uid.startsWith(ANON_PREFIX) && ACTIONS_REQUIRING_ACCOUNT.has(action.action)) {
+  if (isAnon && ACTIONS_REQUIRING_ACCOUNT.has(action.action)) {
     return 'כדי להפעיל את הסוכן (לחבר חנות, לקבוע לוח זמנים, או לפתוח הזמנה) צריך להתחבר. כל השאר זמין גם בלי התחברות.'
   }
 
-  // Guard: store actions require authenticated store
+  // Guard: store actions require authenticated store.
+  // For anon: "authenticated" means we have an unexpired token in the
+  // request-scope `inboundAnonCreds` (sessionStorage state). For logged-in
+  // users it's the standard Firestore-backed `isAuthenticated` check.
   if (STORE_ACTIONS.has(action.action)) {
     const storeId = await resolveActionStore(uid, action, sessionStore)
     const store = getStore(storeId)
     if (!store) return `חנות "${storeId}" לא מוכרת.`
-    const authenticated = await store.isAuthenticated(uid)
+    const authenticated = isAnon
+      ? isAnonAuthedForStore(inboundAnonCreds, storeId)
+      : await store.isAuthenticated(uid)
     if (!authenticated) {
+      if (isAnon) {
+        // For anon, "not authed" means either no cred at all (need OTP) or
+        // session-storage was wiped/lost between turns. Either way, restart
+        // the OTP flow.
+        if (store.authType === 'otp') return `${store.label} לא מחובר בסשן הזה. שלח מספר טלפון כדי לחבר.`
+        return `${store.label} לא תומך בחיבור אנונימי — נדרשת הרשמה.`
+      }
       if (store.authType === 'otp') return `${store.label} לא מחובר. שלח מספר טלפון כדי לחבר.`
       return `${store.label} לא מחובר. שלח אימייל וסיסמה כדי לחבר.`
     }
@@ -485,6 +580,59 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
         console.log(`[ActionExecutor] Ordering without unlinked: ${withoutId.map(i => i.name).join(', ')}`)
       }
 
+      const items = withId.map(i => ({ code: i.catalogId!, qty: i.qty, sellingUnitId: i.sellingUnitId }))
+      const actionDay = typeof action.day === 'string' ? action.day : undefined
+      const actionTime = typeof action.time === 'string' ? action.time : undefined
+      const schedule = data.schedule
+      const day = actionDay || schedule?.preferredSlot.day
+      const time = actionTime || schedule?.preferredSlot.time?.split('-')[0]
+
+      // --- Anon Tier-1 branch ---
+      // No safety gate (cron-only concern), no finalizeOrderSuccess writes.
+      // Enforce the policy's one-shot rule via the orderedOnce flag carried
+      // in sessionStorage. checkoutWithCreds bypasses the Firestore cred read.
+      if (isAnon) {
+        if (!inboundAnonCreds || inboundAnonCreds.storeId !== storeId || !inboundAnonCreds.token) {
+          return 'אבד החיבור — צריך להתחיל מחדש. שלח מספר טלפון כדי לחבר את החנות.'
+        }
+        if (inboundAnonCreds.orderedOnce === true) {
+          return 'כבר ביצעת הזמנה אחת באנונימי. כדי לבצע עוד — תתחבר (Google sign-in).'
+        }
+        const config = getRetalixConfigForStore(storeId)
+        if (!config) return `חנות "${storeId}" לא מוכרת.`
+        // Convert items to numeric ids (Rexail format) and pass through.
+        const numericItems = items.map(i => ({
+          id: parseInt(i.code, 10),
+          qty: i.qty,
+          sellingUnitId: i.sellingUnitId || 0,
+        }))
+        try {
+          const result = await checkoutWithCreds(
+            uid,
+            storeId,
+            numericItems,
+            { day, hour: time ? parseInt(time, 10) : undefined, nearest: !day },
+            { phone: inboundAnonCreds.phone, token: inboundAnonCreds.token, config },
+          )
+          if (result.success) {
+            // Lock further anon orders; ship the new state back to sessionStorage.
+            return {
+              followUp: `הזמנה בוצעה ב${store.label}! #${result.orderId || ''}\nמשלוח: ${result.deliveryWindow?.day} ${result.deliveryWindow?.date} ${result.deliveryWindow?.time}`,
+              anonStoreCreds: { ...inboundAnonCreds, orderedOnce: true },
+            }
+          }
+          if (result.dryRun) {
+            return `דמה-ריצה (SALIKO_DRY_RUN): לא בוצעה הזמנה אמיתית. חלון משלוח שזוהה: ${result.deliveryWindow?.day} ${result.deliveryWindow?.date} ${result.deliveryWindow?.time}.`
+          }
+          return `שגיאה בהזמנה ב${store.label}: ${result.error}`
+        } catch (checkoutErr) {
+          const msg = checkoutErr instanceof Error ? checkoutErr.message : String(checkoutErr)
+          console.error('[ActionExecutor] Anon checkout failed:', msg)
+          return `שגיאה בהזמנה ב${store.label}: ${msg}`
+        }
+      }
+
+      // --- Logged-in branch ---
       // Safety gate — same contract as grocery cron. Prevents duplicate
       // orders from a stale cycle doc, mid-flight race, or existing live
       // order that upstream logic missed.
@@ -500,13 +648,6 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
         }
         return `ריצה אחרת עובדת על ההזמנה ברגע זה. נסה שוב בעוד דקה.`
       }
-
-      const items = withId.map(i => ({ code: i.catalogId!, qty: i.qty, sellingUnitId: i.sellingUnitId }))
-      const actionDay = typeof action.day === 'string' ? action.day : undefined
-      const actionTime = typeof action.time === 'string' ? action.time : undefined
-      const schedule = data.schedule
-      const day = actionDay || schedule?.preferredSlot.day
-      const time = actionTime || schedule?.preferredSlot.time?.split('-')[0]
 
       try {
         const result = await store.checkout(uid, items, { day, time, nearest: !day })
@@ -723,11 +864,31 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
     }
 
     // --- Store connection ---
+    //
+    // Saliko Tier 3 — connecting a store from chat = persisting credentials
+    // server-side. Per the privacy policy
+    // (`app/saliko/privacy/privacyContent.ts`, SALIKO_PRIVACY_TIERS.loggedInWithServerCreds)
+    // consent MUST be on file BEFORE this call. The umbrella
+    // `acceptServerCredsConsent` flag was removed (B02 regression: the LLM
+    // interpreted "user sent creds in chat" as implicit consent and auto-flipped
+    // it, silently graduating Tier 2 users to Tier 3). The LLM must now emit
+    // `grant_server_creds_consent` as a SEPARATE action first — and only after
+    // the user explicitly said one of the recognized consent phrases (see the
+    // hard rule in `chatProcessor.ts`'s "🚨 כלל קשיח" section). If consent isn't
+    // on file, this throws NoTier3ConsentError and the caller routes the user
+    // to either the Settings vault (Tier 2) or explicit consent.
     case 'set_credentials': {
       const email = typeof action.email === 'string' ? action.email.trim() : ''
       const password = typeof action.password === 'string' ? action.password : ''
       if (!email || !password) return 'חסר אימייל או סיסמה.'
-      await saveCredentials(uid, email, password)
+      try {
+        await saveCredentials(uid, email, password)
+      } catch (err) {
+        if (err instanceof NoTier3ConsentError) {
+          return 'כדי לשמור פרטי שופרסל בשרת (כדי שהזמנות אוטומטיות יוכלו לרוץ כשאינך מחובר) צריך אישור מפורש שטרם נתת. שתי דרכים מקובלות: (1) שמירה מקומית בלבד דרך הגדרות → חיבורים חיצוניים (Tier 2 — הסיסמה נשארת רק בדפדפן שלך). (2) אם דווקא רוצה שמירה בשרת (Tier 3): תאמר במפורש "אני מאשר Tier 3" / "אני מאשר שמירה בשרת" ואז אחזור על הפעולה.'
+        }
+        throw err
+      }
       try {
         await shufersalLogin(uid)
         await setCredentialsVerified(uid, true)
@@ -739,6 +900,17 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
       }
     }
 
+    case 'grant_server_creds_consent': {
+      // Explicit Tier-3 consent grant (chat-side). Idempotent — re-granting
+      // simply re-stamps the current policy version. Anon users land here
+      // only if the LLM misroutes; we'd no-op rather than crash.
+      if (uid.startsWith(ANON_PREFIX)) {
+        return 'אישור Tier 3 רלוונטי רק למשתמשים רשומים. נסה להירשם דרך Google sign-in קודם.'
+      }
+      await grantServerCredsConsent(uid)
+      return 'אישור Tier 3 (שמירת פרטי חיבור בשרת) נרשם. עכשיו אפשר לחבר חנויות כך שהזמנות אוטומטיות יוכלו לפעול גם כשאינך מחובר.'
+    }
+
     case 'set_otp_phone': {
       const phone = typeof action.phone === 'string' ? action.phone.trim() : ''
       if (!phone) return 'חסר מספר טלפון.'
@@ -747,10 +919,40 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
       const targetStoreId = await resolveActionStore(uid, action, sessionStore).catch(() => 'retalix')
       const plugin = getStore(targetStoreId)
       if (!plugin || plugin.authType !== 'otp') return `חנות "${targetStoreId}" לא תומכת בחיבור עם SMS.`
+
+      // --- Anon Tier-1 branch ---
+      // Per privacy policy SALIKO_PRIVACY_TIERS.anonymous: do NOT touch
+      // Firestore. Resolve the chain config statically, dispatch the SMS
+      // via the cred-pass-through helper, and return the new anon cred
+      // state for the client to stash in sessionStorage. No `orderedOnce`
+      // yet — that gets set only after a successful trigger_order.
+      if (isAnon) {
+        const config = getRetalixConfigForStore(targetStoreId)
+        if (!config) return `חנות "${targetStoreId}" לא מוכרת.`
+        try {
+          await sendOtpWithCreds({ phone, config })
+          return {
+            followUp: `שלחתי קוד SMS ל-${plugin.label}. שלח לי את הקוד שקיבלת.`,
+            anonStoreCreds: { storeId: targetStoreId, phone },
+          }
+        } catch (err) {
+          console.error('[ActionExecutor] Anon Send OTP failed:', err)
+          return 'שגיאה בשליחת SMS. בדוק את מספר הטלפון.'
+        }
+      }
+
+      // --- Logged-in branch (Tier 2/3) ---
+      // Consent must already be on file. The umbrella `acceptServerCredsConsent`
+      // flag was removed (B02 regression — same reason as set_credentials).
+      // For Tier 3, the LLM must emit `grant_server_creds_consent` as a separate
+      // prior action after the user said one of the recognized consent phrases.
       try {
         await (plugin as OtpStorePlugin).sendOtp(uid, phone)
         return `שלחתי קוד SMS ל-${plugin.label}. שלח לי את הקוד שקיבלת.`
       } catch (err) {
+        if (err instanceof NoTier3ConsentError) {
+          return `כדי לחבר את ${plugin.label} בחשבון רשום צריך אישור Tier 3 שטרם נתת. תאמר במפורש "אני מאשר Tier 3" / "אני מאשר שמירה בשרת" ואחזור על הפעולה. לחלופין, חיבור Tier 2 דרך הגדרות → חיבורים חיצוניים שומר את הטלפון רק בדפדפן.`
+        }
         console.error('[ActionExecutor] Send OTP failed:', err)
         return 'שגיאה בשליחת SMS. בדוק את מספר הטלפון.'
       }
@@ -762,6 +964,31 @@ async function executeOne(uid: string, action: ChatAction, sessionStore?: string
       const targetStoreId = await resolveActionStore(uid, action, sessionStore).catch(() => 'retalix')
       const plugin = getStore(targetStoreId)
       if (!plugin || plugin.authType !== 'otp') return `חנות "${targetStoreId}" לא תומכת בחיבור עם SMS.`
+
+      // --- Anon Tier-1 branch ---
+      // The inbound creds carry `{storeId, phone}` from the previous
+      // set_otp_phone turn (round-tripped through sessionStorage). Validate
+      // OTP via the pass-through helper, then return the cred with the new
+      // token for the client to stash. Server keeps nothing.
+      if (isAnon) {
+        if (!inboundAnonCreds || inboundAnonCreds.storeId !== targetStoreId || !inboundAnonCreds.phone) {
+          return 'אבד החיבור — צריך להתחיל מחדש. שלח מספר טלפון.'
+        }
+        const config = getRetalixConfigForStore(targetStoreId)
+        if (!config) return `חנות "${targetStoreId}" לא מוכרת.`
+        try {
+          const token = await verifyOtpWithCreds({ phone: inboundAnonCreds.phone, config }, otp)
+          return {
+            followUp: `חשבון ${plugin.label} חובר בהצלחה! החיבור תקף לסשן הזה בלבד — מתאים להזמנה חד-פעמית. הרשמה תאפשר לשמור רשימות וקביעת לוח זמנים.`,
+            anonStoreCreds: { storeId: targetStoreId, phone: inboundAnonCreds.phone, token },
+          }
+        } catch (err) {
+          console.error('[ActionExecutor] Anon Verify OTP failed:', err)
+          return 'הקוד שגוי. נסה שוב או בקש קוד חדש.'
+        }
+      }
+
+      // --- Logged-in branch ---
       try {
         await (plugin as OtpStorePlugin).verifyOtp(uid, otp)
         await addActiveStore(uid, targetStoreId)

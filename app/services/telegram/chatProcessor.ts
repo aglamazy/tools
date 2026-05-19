@@ -10,6 +10,36 @@ import { VARIANT_CONFIG } from '@/app/config/variants'
 
 const gemini = new GeminiClient()
 
+/**
+ * When the default model jams (returns tool-call pseudocode as text instead of
+ * structured functionCalls), retry the same prompt with this heavier model.
+ * Pro is substantially more reliable on structured tool use. Cost impact is
+ * limited to the small fraction of turns that actually jam.
+ */
+const ESCALATION_MODEL = 'gemini-2.5-pro'
+
+/**
+ * Lazy-built regex that matches any line where the model wrote a tool call as
+ * text — either bare (`toolName(args)`) or with a leading `call:` prefix the
+ * model sometimes hallucinates from generic-pseudocode training. Both forms
+ * mean "the model knew which tool to call but didn't use the structured
+ * functionCalls channel."
+ */
+let _jamRegex: RegExp | null = null
+function getJamRegex(): RegExp {
+  if (_jamRegex) return _jamRegex
+  const names = ACTION_DECLARATIONS.map(a => a.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+  _jamRegex = new RegExp(`(?:call:\\s*)?\\b(?:${names})\\s*\\(`)
+  return _jamRegex
+}
+
+/** True iff the result has no structured functionCalls but its text contains tool-call pseudocode. */
+function detectToolJam(result: { text?: string; functionCalls?: { name: string }[] }): boolean {
+  if (result.functionCalls?.length) return false
+  if (!result.text) return false
+  return getJamRegex().test(result.text)
+}
+
 /** Persisted chat history shape — plain user/assistant text. Tool calls/results live only in the working in-turn conversation. */
 export interface ChatMessage {
   role: 'user' | 'assistant'
@@ -22,6 +52,13 @@ export interface StoreContext {
   connected: boolean
   /** Optional chain website URL — surfaced to the LLM so it can hand it out. */
   siteOrigin?: string
+  /**
+   * Short Hebrew specialty hint ("רשת חנויות בריאות", "חנות דגים", "סופרמרקט כללי").
+   * The LLM uses this to avoid wasted searches — e.g. user asks for Coke at a
+   * fruit-and-veg specialty store, the bot should redirect to Shufersal rather
+   * than wasting a catalog search that will return nothing useful.
+   */
+  description?: string
   standingList?: { name: string; qty: number; unit?: string }[]
   pendingChanges?: {
     add: { name: string; qty: number; unit?: string; validTo?: string }[]
@@ -37,12 +74,30 @@ export interface StoreContext {
   otpPending?: boolean
 }
 
+export type CurrentTier = 'tier-1' | 'tier-2' | 'tier-3'
+
 export interface UserContext {
   displayName?: string
+  /**
+   * Resolved privacy tier for THIS user, set by the chat caller (chatBrain).
+   * `tier-1` = anon (no account, no persistence — sessionStorage only).
+   * `tier-2` = logged-in, no server-side cred storage (browser-only Dexie + e2e backup).
+   * `tier-3` = logged-in WITH explicit server-creds consent (encrypted at rest, cron works).
+   * The LLM uses this to frame every privacy/credentials answer around the
+   * user's actual current state rather than reciting abstract tier definitions.
+   */
+  currentTier?: CurrentTier
   stores?: StoreContext[]
   defaultStore?: string
   session?: { activeStore?: string | null }
   tasks?: { id: string; title: string; completed: boolean; deadline?: string; priority?: string }[]
+  /**
+   * Saliko Tier-3 consent state. `null`/undefined = not asked / not applicable
+   * (e.g. anon user). Set by the chat caller (chatBrain) when context is built.
+   * The LLM reads this to decide whether a `set_credentials` / `set_otp_phone`
+   * call needs to walk the user through Tier-3 acceptance first.
+   */
+  serverCredsConsent?: { acceptedAt: string; policyVersion: string } | null
 
   // Legacy
   /** @deprecated use stores instead */
@@ -113,10 +168,56 @@ const SYSTEM_PROMPT = `אתה ${VARIANT_CONFIG.botName} — עוזר משפחת�
 המצב הנוכחי של הסשן מופיע למטה. כשמשהו משתנה, קרא ל-set_session כדי לעדכן.
 - activeStore: החנות הפעילה בשיחה (null = ברירת מחדל)
 
-## חיבור חנויות
-- שופרסל: דורש אימייל וסיסמה → set_credentials
-- מקור השפע (Retalix): דורש מספר טלפון → set_otp_phone → SMS → verify_otp
-- כשמשתמש שולח קוד מספרי והמצב מראה otpPending=true, זה קוד SMS → verify_otp
+## חיבור חנויות — סוג authentication
+- שופרסל: אימייל + סיסמה (set_credentials). **למשתמש מחובר** — דורש החלטת tier (ראה "פרטיות וסיסמאות" למטה).
+- מקור השפע ושאר רשת Rexail: מספר טלפון + קוד SMS (set_otp_phone → verify_otp). **משתמש אנונימי** יכול להזמין באופן חד-פעמי בלי חשבון.
+- כשמשתמש שולח קוד מספרי והמצב מראה otpPending=true, זה קוד SMS → verify_otp.
+
+## פרטיות וסיסמאות — קודם תקרא את "רמת פרטיות נוכחית" בהקשר
+**הרמה הנוכחית של המשתמש כתובה למטה בהקשר** ("## רמת פרטיות נוכחית של המשתמש הזה"). זה ה-single source of truth לכל שאלת פרטיות.
+- כשמשתמש שואל "איפה הסיסמה שלי?" / "מה נשמר עליי?" / "אתם רואים את הסיסמה?" — **תענה לפי הבלוק הזה בדיוק, לא לפי תיאור גנרי**. הזכר את שם הרמה הנוכחית (Tier 1/2/3) ואת המשמעות המוחשית שלה כפי שמופיעה בבלוק.
+- **אל תקפוץ ל-Tier 3** כברירת מחדל. Tier 2 = ברירת המחדל למשתמש מחובר. Tier 3 הוא שדרוג opt-in שמועיל רק למי שרוצה הזמנות אוטומטיות.
+- **כשהמשתמש ב-Tier 2 ושואל על אחסון סיסמאות:** ענה לפי בלוק Tier 2 ("הסיסמה רק בדפדפן שלך, השרת רואה רק טקסט מוצפן, אנחנו לא יכולים לראות אותה"). הזכר את Tier 3 רק אם נשאלת מה משתנה / איך אפשר לקבל הזמנות אוטומטיות.
+- **כשהמשתמש ב-Tier 3 ושואל על אחסון סיסמאות:** ענה לפי בלוק Tier 3 — חובה לכלול את האמירה הכנה שצוות עם גישת ייצור יכול עקרונית לפענח. **אל תרכך** ("אנחנו לא רואים את זה" / "רק במצב חירום" / וכו') — זה שקר ואסור.
+- **כשהמשתמש אנונימי (Tier 1) ושואל:** ענה לפי בלוק Tier 1 — השרת לא שומר כלום, sessionStorage בלבד, מתנקה בסגירת טאב. אל תזכיר TTL של שעתיים — זה תיאור ישן ולא נכון.
+
+## חיבור חנות חדשה — מתי לבקש אישור Tier 3
+כשמשתמש מחובר (Tier 2) מבקש לחבר חנות עם סיסמה (שופרסל) או טלפון (Rexail) — יש שתי דרכים תקפות:
+1. **Tier 2 דרך הגדרות → חיבורים חיצוניים:** הסיסמה נשארת בדפדפן בלבד. כל מה שעובד באונליין יעבוד. **אין הזמנות אוטומטיות.** זו ברירת המחדל וכך תציע ראשית.
+2. **Tier 3 דרך הצ'אט עם אישור מפורש:** אם המשתמש *רוצה* הזמנות אוטומטיות — אז כדאי לדבר על Tier 3.
+
+לכן השיחה האופיינית היא:
+- משתמש: "תחבר לי שופרסל". בוט: "אפשר בשתי דרכים — דרך ההגדרות (Tier 2, הסיסמה נשארת רק אצלך) או דרך הצ'אט עם שמירת עותק מוצפן בשרת שלנו (Tier 3, מאפשר הזמנות אוטומטיות בלילה כשאתה לא מחובר). מה מעדיף?"
+- אם בחר Tier 2 → "סבבה, פתח את הגדרות → חיבורים חיצוניים, הוסף שופרסל שם. אני לא רואה את הסיסמה ולא צריך."
+- אם בחר Tier 3 *באופן מפורש* (ראה הכלל הקשיח למטה) → קרא ל-set_credentials עם acceptServerCredsConsent=true (או, אם רוצה לאשר נפרד קודם, grant_server_creds_consent).
+- אם המשתמש מסרב לתת סיסמה בכלל: **תזכיר את חנויות ה-OTP (Rexail family — מקור השפע ועוד 10 חנויות)** — הן דורשות רק מספר טלפון, בלי סיסמה. רשימה מלאה בבלוק "חנויות נתמכות".
+
+### 🚨 כלל קשיח: מה זה "אישור Tier 3"
+**שליחת אימייל וסיסמה בצ׳אט היא לא אישור Tier 3.** המשתמש עשוי בכלל לחשוב שזה הולך ל-Tier 2 — מעולם לא הסכים לשמירה בשרת. **לעולם אל תפעיל acceptServerCredsConsent=true אלא אם המשתמש כתב במפורש משפט שמסכים לכך** — למשל אחד מאלה (לא ממצה):
+- "אני מאשר Tier 3" / "אני מאשר שמירה בשרת" / "כן, תשמור בשרת"
+- "תשמור את הסיסמה מוצפן בשרת" / "אני רוצה הזמנות אוטומטיות"
+- תשובה מפורשת "כן" / "אני מאשר" אחרי שהבוט שאל באופן ספציפי על Tier 3
+
+זה שהמשתמש כתב "תחבר לי שופרסל" + מסר פרטים = **רק** התחלת זרימת חיבור, *לא* הסכמה לשמירה בשרת. במצב כזה:
+1. **לא** לקרוא ל-set_credentials כלל בלי לשאול קודם.
+2. הציע את שתי הדרכים (Tier 2 דרך הגדרות, Tier 3 דרך הצ'אט עם אישור) ובקש החלטה.
+3. ברירת המחדל אם המשתמש לא הסכים מפורשות = Tier 2 (הפנייה להגדרות).
+
+**אם Tier 3 consent כבר granted (מופיע בהקשר):** אפשר לקרוא ישר ל-set_credentials/set_otp_phone בלי לשאול שוב — בלי acceptServerCredsConsent חוזר, כי הוא כבר נשמר במצב המשתמש.
+
+**ביטול Tier 3:** "תבטל אישור" → תפנה את המשתמש להגדרות → חיבורים חיצוניים, יש שם מתג שמוחק את העותק המוצפן מהשרת (הדפדפן נשאר).
+
+## משתמש אנונימי (Tier 1 — סשן חד-פעמי)
+משתמש שלא נכנס לחשבון יכול בכל זאת לבצע **הזמנה אחת** בחנויות OTP (מקור השפע, וכל חנות Rexail אחרת):
+1. שלח לי מספר טלפון → set_otp_phone (אני שולח SMS)
+2. שלח לי את הקוד → verify_otp (אני מתחבר לחנות בשמך)
+3. נחפש מוצרים יחד (search_product) ואז trigger_order
+4. show_cart זמין כדי לראות מה מסתדר בעגלה לפני אישור
+**מה כן עובד בלי חשבון:** חיפוש בקטלוג של כל חנות נתמכת, OTP, הזמנה חד-פעמית.
+**מה לא עובד בלי חשבון:** שמירת רשימה קבועה, לוח זמנים, הזמנות אוטומטיות (cron), צפייה בהזמנות ישנות, ביטול הזמנה, הזמנה שנייה (אחרי הראשונה — צריך להירשם). כדי לקבל את כל אלה — להציע למשתמש להירשם ל-Saliko דרך Google sign-in. **שים לב: Google sign-in זה רק כדי להיכנס ל-Saliko עצמה, לא קשור לסיסמת שופרסל. שופרסל היא חנות עצמאית שדורשת אימייל וסיסמה של חשבון שופרסל פרטי.**
+**הסבר ישר ומדויק:** פרטי החנות שהמשתמש נותן בסשן (טלפון + טוקן OTP) **לא נשמרים אצלנו בכלל** — הם חיים בלעדית ב-sessionStorage של הדפדפן שלו ונמחקים מיידית בסגירת הטאב. אין TTL בשרת, אין מסד נתונים, אין גיבוי. תהיה שקוף ומדויק: לא "נמחק תוך X שעות" אלא "לא נשמר אצלנו, חי רק אצלך בדפדפן".
+**אחרי trigger_order מוצלח באנונימי** — אי אפשר לבצע הזמנה נוספת באותו סשן. הסבר שזה מנגנון חד-פעמי לפי המדיניות וההפתרון היחיד הוא הרשמה.
+**שופרסל לא תומך ב-OTP** — חיבור לשופרסל מצריך אימייל וסיסמה של חשבון שופרסל פרטי (set_credentials), וזה דורש שהמשתמש יהיה מחובר ל-Saliko (Tier 2/3) — לכן משתמש אנונימי לא יכול להזמין משופרסל. הצעה אופיינית: "כדי לקנות בשופרסל צריך קודם להיכנס ל-Saliko (יש כפתור 'התחברות' למעלה — Google sign-in). אחר כך תוכל לחבר את חשבון השופרסל שלך עם אימייל וסיסמה. אם אתה רוצה להזמין עכשיו בלי הרשמה — מקור השפע, הירקנייה ושאר רשתות ה-Rexail עובדות עם קוד SMS בלבד."
 
 ## כללים
 - כשמישהו שולח רשימת מוצרים (חלב, לחם, ביצים), קרא ל-search_product **עבור כל מוצר בנפרד** באותה תגובה
@@ -242,7 +343,18 @@ export async function processChat(
   //   3. Tell the user via Telegram we're still trying, sleep 5s, retry WITHOUT
   //      tools + nudge prompt — forces a plain-text reply.
   // If all three fail, the caller queues the message for cron-driven retry.
+  //
+  // Separately from emptiness: Gemini-flash occasionally JAMS on tool use —
+  // returns the call as text pseudocode ("call: search_product(...)" or bare
+  // "search_product(...)") instead of using the structured functionCalls
+  // channel. The escalation path swaps to gemini-2.5-pro for the same prompt;
+  // Pro is far more reliable on structured tool use. We pay the Pro cost only
+  // on the small fraction of turns that jam.
   let result = await callLLM(cleanMessages, 0.7, /*withTools*/ true)
+  if (detectToolJam(result)) {
+    console.warn(`[ChatProcessor] Tool-jam detected on default model — escalating to ${ESCALATION_MODEL}.`)
+    result = await callLLM(cleanMessages, 0, /*withTools*/ true, ESCALATION_MODEL)
+  }
   if (isEmptyResponse(result)) {
     console.warn(`[ChatProcessor] Empty Gemini response (${result.error}). Retry 1: sleep 1s + temperature=0.`)
     await sleep(1000)
@@ -265,13 +377,14 @@ export async function processChat(
     result = await callLLM(nudged, 0, /*withTools*/ false)
   }
 
-  async function callLLM(msgs: LLMMessage[], temperature: number, withTools: boolean) {
+  async function callLLM(msgs: LLMMessage[], temperature: number, withTools: boolean, modelOverride?: string) {
     return gemini.chatWithTools({
       system: fullSystem,
       messages: msgs,
       maxTokens: 2048,
       tools: withTools ? ACTION_DECLARATIONS : undefined,
       temperature,
+      modelOverride,
     })
   }
 
@@ -293,10 +406,15 @@ export async function processChat(
     }
   }
 
-  // Map function calls directly to actions — no regex parsing needed
+  // Map function calls directly to actions — no regex parsing needed.
+  // `__sig` carries the Gemini thoughtSignature alongside each action so the
+  // chatBrain can echo it back on the next turn (required by flash-latest /
+  // 3.x — see geminiClient.ts). Double-underscore marks it as internal so the
+  // action executor knows to ignore it.
   const actions: ChatAction[] = (result.functionCalls || []).map(fc => ({
     action: fc.name,
     ...fc.args,
+    ...(fc.thoughtSignature ? { __sig: fc.thoughtSignature } : {}),
   }))
 
   // Gemini sometimes returns only function calls with no text. Also: when
@@ -329,14 +447,43 @@ function buildContextBlock(ctx: UserContext): string {
 
   if (ctx.displayName) parts.push(`משתמש: ${ctx.displayName}`)
 
+  // ============================================================
+  // Current privacy tier — the LLM MUST read this before every
+  // privacy / credentials answer. The blurbs are the SOLE source
+  // of truth for what to tell the user about where their data lives.
+  // Never invent or paraphrase claims that contradict the blurb.
+  // ============================================================
+  if (ctx.currentTier) {
+    parts.push('\n## רמת פרטיות נוכחית של המשתמש הזה')
+    if (ctx.currentTier === 'tier-1') {
+      parts.push('**Tier 1 — אנונימי (לא מחובר).**')
+      parts.push('מה זה אומר בפועל: השרת שלנו לא שומר שום דבר. פרטי החנות (טלפון/טוקן OTP) חיים *רק* ב-sessionStorage של הדפדפן ונמחקים בסגירת הטאב. אין מסד נתונים, אין TTL, אין גיבוי, אין סיכוי לגישת admin — כי אין מה לגשת.')
+      parts.push('מה לא עובד: שמירת רשימה קבועה, לוח זמנים, הזמנות אוטומטיות, היסטוריית הזמנות, הזמנה שנייה באותו סשן.')
+      parts.push('שדרוג: הרשמה (Google sign-in) → Tier 2.')
+    } else if (ctx.currentTier === 'tier-2') {
+      parts.push('**Tier 2 — מחובר, ללא שמירת פרטים בשרת (ברירת מחדל למשתמש מחובר).**')
+      parts.push('מה זה אומר בפועל: פרטי החנות (סיסמת שופרסל / טלפון Rexail) נשמרים *רק* בדפדפן של המשתמש (IndexedDB). יש גיבוי מוצפן end-to-end ל-Firebase Storage לסנכרון בין מכשירים — השרת רואה רק טקסט מוצפן שאי אפשר לפענח בלי המכשיר של המשתמש. הצוות שלנו לא יכול לראות את הסיסמה.')
+      parts.push('מה לא עובד: הזמנות אוטומטיות כשהמשתמש לא מחובר (cron). הכל אחר עובד כשהמשתמש פעיל.')
+      parts.push('שדרוג: אישור Tier 3 → השרת ישמור עותק מוצפן ויוכל לפתוח הזמנות אוטומטיות.')
+    } else {
+      parts.push('**Tier 3 — מחובר, עם אישור מפורש לשמירת פרטים מוצפנים בשרת.**')
+      parts.push('מה זה אומר בפועל: פרטי החנות נשמרים בדפדפן (כמו ב-Tier 2) **וגם** עותק מוצפן at-rest על השרת שלנו. ההצפנה at-rest מגינה מדליפת מסד נתונים, אבל השרת חייב לפענח בכל פעם שהוא נכנס לחנות בשמך — לכן צוות עם גישת ייצור יכול עקרונית לפענח. **תהיה כן לגבי זה כשמשתמש שואל — אסור להגיד "אנחנו לא יכולים לראות".**')
+      parts.push('מה כן עובד: הכל, כולל הזמנות אוטומטיות בלילה.')
+      parts.push('שינוי דעת: ניתן לבטל את האישור בכל רגע מהגדרות → חיבורים חיצוניים, וזה ימחק את העותק המוצפן מהשרת מיידית (העותק בדפדפן נשאר).')
+    }
+    parts.push('המדיניות המלאה: /privacy. **כשמשתמש שואל "איפה הסיסמה?" / "מה נשמר עליי?" — תענה לפי הבלוק הזה, לא לפי הזיכרון הכללי שלך על תיירים.**')
+  }
+
   // Supported stores — every Rexail-powered chain plus Shufersal. The LLM
   // should rely on this list verbatim rather than its training memory.
   // Includes the chain website so the LLM can hand it to users on request.
   parts.push('\n## חנויות נתמכות')
+  parts.push('הערה לבוט: התייחס לתיאור (מה החנות בעיקר מוכרת) לפני שאתה מחפש מוצר. למשל "קוקה קולה" לא יימצא בחנות פירות וירקות — הפנה לסופרמרקט כללי במקום לנסות.')
   if (ctx.stores?.length) {
     for (const s of ctx.stores) {
       const status = s.connected ? ' — מחובר' : ''
-      parts.push(`- ${s.label} (${s.id})${s.siteOrigin ? ` — ${s.siteOrigin}` : ''}${status}`)
+      const desc = s.description ? ` — ${s.description}` : ''
+      parts.push(`- ${s.label} (${s.id})${desc}${s.siteOrigin ? ` — ${s.siteOrigin}` : ''}${status}`)
     }
   }
 
@@ -344,6 +491,16 @@ function buildContextBlock(ctx: UserContext): string {
   const activeStore = ctx.session?.activeStore || ctx.defaultStore || null
   parts.push(`\n## סשן`)
   parts.push(`activeStore: ${activeStore || 'null'} (${activeStore ? 'חנות פעילה' : 'ברירת מחדל'})`)
+
+  // Tier-3 consent (shape: { acceptedAt, policyVersion } | null). The LLM
+  // uses this to decide whether to prompt before saving creds server-side.
+  if (ctx.serverCredsConsent !== undefined) {
+    if (ctx.serverCredsConsent) {
+      parts.push(`Tier 3 consent: granted (policy=${ctx.serverCredsConsent.policyVersion}, at=${ctx.serverCredsConsent.acceptedAt})`)
+    } else {
+      parts.push('Tier 3 consent: NOT granted (saving credentials server-side will be refused; ask the user before retrying)')
+    }
+  }
 
   if (ctx.stores?.length) {
     parts.push(`\nחנות ברירת מחדל: ${ctx.defaultStore || 'לא נבחרה'}`)

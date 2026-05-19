@@ -8,13 +8,14 @@
 
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import { processChat, type ChatMessage, type ChatStatusReporter, type UserContext } from '@/app/services/telegram/chatProcessor'
-import { executeActions, savePendingSearch, type PendingProductSelection } from '@/app/services/telegram/actionExecutor'
+import { executeActions, savePendingSearch, type PendingProductSelection, type AnonStoreCreds } from '@/app/services/telegram/actionExecutor'
 import { getUserStores, getStoreData } from '@/app/services/grocery/groceryStoreMulti'
 import { getAllStores } from '@/app/services/grocery/storeRegistry'
 import { initStores } from '@/app/services/grocery/initStores'
 import { isCredentialsVerified } from '@/app/services/grocery/shufersalClient'
 import { REXAIL_STORES } from '@/app/services/grocery/rexailStores'
 import { listTasks } from '@/app/services/taskFirestoreService'
+import { getServerCredsConsent } from '@/app/services/consentService'
 import type { LLMMessage } from '@/app/services/llm/types'
 
 const MAX_HISTORY = 10
@@ -47,6 +48,13 @@ export interface ChatBrainInput {
    * context. Ignored for authed uids (Firestore is authoritative).
    */
   seedHistory?: ChatMessage[]
+  /**
+   * Anon Tier-1 credential state from the client's sessionStorage. Server
+   * reads it in-memory only — never persisted. Pass-through to executeActions,
+   * which may mutate it (set_otp_phone, verify_otp, trigger_order) and return
+   * the new value for the client to write back.
+   */
+  anonStoreCreds?: AnonStoreCreds | null
 }
 
 export interface ChatBrainResult {
@@ -58,6 +66,13 @@ export interface ChatBrainResult {
   llmExhausted?: boolean
   /** Server-observed upstream error string (forwarded from chatProcessor). */
   upstreamError?: string
+  /**
+   * Updated anon Tier-1 cred state, when any action in this turn mutated it.
+   * `undefined` = no change (client keeps current). `null` = wipe (e.g. after
+   * a failed flow). The /api/chat route ships this back to the browser, which
+   * writes it to sessionStorage. Tab close = state gone.
+   */
+  anonStoreCreds?: AnonStoreCreds | null
 }
 
 // --- History + session helpers ---
@@ -96,19 +111,27 @@ async function buildContext(uid: string, displayName?: string, includeTasks = fa
   // talk about "we support Shufersal, מקור השפע, etc.") but everything
   // shows as not-connected, no standing list, no schedule. Tools that need
   // server-side state will return their own auth-required errors when called.
-  // Lookup table for chain website URL by plugin id (Rexail entries only —
-  // Shufersal's site is well-known to the LLM). Used to enrich the context.
+  // Lookup tables for chain website URL + specialty description by plugin id.
+  // Shufersal isn't in REXAIL_STORES (it has its own plugin) — its description
+  // is hardcoded since it's well-known.
   const siteByStoreId = new Map<string, string>()
-  for (const e of REXAIL_STORES) siteByStoreId.set(e.id, e.siteOrigin)
+  const descByStoreId = new Map<string, string>()
+  for (const e of REXAIL_STORES) {
+    siteByStoreId.set(e.id, e.siteOrigin)
+    descByStoreId.set(e.id, e.description)
+  }
+  descByStoreId.set('shufersal', 'סופרמרקט כללי — מזון, משקאות, ניקיון, תינוקות, וכו׳')
 
   if (isAnonUid(uid)) {
     return {
       displayName,
+      currentTier: 'tier-1',
       stores: getAllStores().map(s => ({
         id: s.id,
         label: s.label,
         connected: false,
         siteOrigin: siteByStoreId.get(s.id),
+        description: descByStoreId.get(s.id),
       })),
       defaultStore: 'shufersal',
       session,
@@ -117,10 +140,11 @@ async function buildContext(uid: string, displayName?: string, includeTasks = fa
     }
   }
 
-  const [hasCreds, userStores, tasks] = await Promise.all([
+  const [hasCreds, userStores, tasks, consent] = await Promise.all([
     isCredentialsVerified(uid).catch(() => false),
     getUserStores(uid).catch(() => ({ activeStores: [] as string[], defaultStore: 'shufersal' })),
     includeTasks ? listTasks(uid).catch(() => []) : Promise.resolve(undefined),
+    getServerCredsConsent(uid).catch(() => null),
   ])
 
   const storeContexts = await Promise.all(
@@ -132,6 +156,7 @@ async function buildContext(uid: string, displayName?: string, includeTasks = fa
         label: store.label,
         connected,
         siteOrigin: siteByStoreId.get(store.id),
+        description: descByStoreId.get(store.id),
         standingList: storeData?.standingList ? Object.values(storeData.standingList).map(i => ({ name: i.name, qty: i.qty, unit: i.unit })) : undefined,
         pendingChanges: storeData ? {
           add: Object.values(storeData.pendingChanges.add).map(e => ({
@@ -152,11 +177,18 @@ async function buildContext(uid: string, displayName?: string, includeTasks = fa
 
   return {
     displayName,
+    // Logged-in users land in Tier 2 by default; explicit consent on file
+    // promotes them to Tier 3. The bot leads with this in every privacy answer.
+    currentTier: consent?.acceptedAt ? 'tier-3' : 'tier-2',
     stores: storeContexts,
     defaultStore: userStores.defaultStore,
     session,
     tasks: tasks || undefined,
     hasCredentials: hasCreds,
+    // null = explicit "no consent on file", undefined = couldn't read. The
+    // chatProcessor reads both as "not granted" for prompt purposes; we use
+    // null for clarity in the wire log.
+    serverCredsConsent: consent,
   }
 }
 
@@ -184,7 +216,7 @@ export async function handleClear(uid: string): Promise<void> {
 export async function processChatMessage(input: ChatBrainInput): Promise<ChatBrainResult> {
   initStores()
 
-  const { uid, text, displayName, historyCollection, includeTasks, onStatus, seedHistory } = input
+  const { uid, text, displayName, historyCollection, includeTasks, onStatus, seedHistory, anonStoreCreds } = input
 
   const loaded = await loadChat(historyCollection, uid)
   // For anon visitors loadChat returns empty (no Firestore). Honor the
@@ -209,6 +241,11 @@ export async function processChatMessage(input: ChatBrainInput): Promise<ChatBra
   let pendingSelections: PendingProductSelection[] | undefined
   let llmExhausted = false
   let upstreamError: string | undefined
+  // Anon cred state carried across the agentic loop's tool calls. Starts
+  // from whatever the client shipped (sessionStorage), updates as tools
+  // mutate it, and the latest value is returned to the client at the end.
+  let workingAnonCreds: AnonStoreCreds | null | undefined = anonStoreCreds
+  let anonCredsTouched = false
 
   for (let step = 0; step < MAX_AGENTIC_STEPS; step++) {
     const result = await processChat(working, context, onStatus)
@@ -238,23 +275,33 @@ export async function processChatMessage(input: ChatBrainInput): Promise<ChatBra
     }
 
     // Record the assistant's tool-call turn on the working history so the next LLM call sees it.
+    // `__sig` is the Gemini thoughtSignature — strip from args (it's not a real
+    // arg) and hoist it to the toolCall envelope so the next round-trip carries
+    // it back to Gemini (required by flash-latest / 3.x; see geminiClient.ts).
     working.push({
       role: 'assistant',
       content: result.reply || undefined,
       toolCalls: executableActions.map(a => ({
         name: a.action,
-        args: Object.fromEntries(Object.entries(a).filter(([k]) => k !== 'action')),
+        args: Object.fromEntries(Object.entries(a).filter(([k]) => k !== 'action' && k !== '__sig')),
+        ...(typeof a.__sig === 'string' ? { thoughtSignature: a.__sig } : {}),
       })),
     })
 
     // Execute tools.
     let actionResult
     try {
-      actionResult = await executeActions(uid, executableActions, session.activeStore)
+      actionResult = await executeActions(uid, executableActions, session.activeStore, workingAnonCreds)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error('[ChatBrain] Action execution threw:', msg)
-      actionResult = { results: executableActions.map(a => ({ name: a.action, result: `error: ${msg}` })), pendingSelections: undefined }
+      actionResult = { results: executableActions.map(a => ({ name: a.action, result: `error: ${msg}` })), pendingSelections: undefined, anonStoreCreds: undefined }
+    }
+
+    // Thread anon-cred updates forward across agentic-loop iterations.
+    if (actionResult.anonStoreCreds !== undefined) {
+      workingAnonCreds = actionResult.anonStoreCreds
+      anonCredsTouched = true
     }
 
     // Record the tool responses so the next LLM iteration can reason over them.
@@ -308,5 +355,9 @@ export async function processChatMessage(input: ChatBrainInput): Promise<ChatBra
     pendingSelections: selectionsWithKeys,
     llmExhausted,
     upstreamError,
+    // Only surface the field when something in this turn changed it. The
+    // /api/chat route forwards undefined as omitted-from-response and null
+    // as explicit "wipe."
+    anonStoreCreds: anonCredsTouched ? workingAnonCreds ?? null : undefined,
   }
 }

@@ -69,6 +69,45 @@ function getOrCreateAnonUid(): string {
   return id
 }
 
+/**
+ * Tier-1 anon credential state — kept in sessionStorage so it's wiped on
+ * tab close. The server is stateless about this; we round-trip it on every
+ * /api/chat call. Shape mirrors `AnonStoreCreds` in actionExecutor.ts —
+ * keeping the types in lockstep is a load-bearing assumption of the wire
+ * contract. Browser-only (no SSR access).
+ */
+type AnonStoreCreds = { storeId: string; phone: string; token?: string; orderedOnce?: boolean }
+const ANON_CREDS_KEY = 'saliko.anonStoreCreds'
+
+function readAnonStoreCreds(): AnonStoreCreds | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = sessionStorage.getItem(ANON_CREDS_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<AnonStoreCreds>
+    if (!parsed || typeof parsed.storeId !== 'string' || typeof parsed.phone !== 'string') return null
+    return {
+      storeId: parsed.storeId,
+      phone: parsed.phone,
+      ...(typeof parsed.token === 'string' && parsed.token ? { token: parsed.token } : {}),
+      ...(parsed.orderedOnce === true ? { orderedOnce: true } : {}),
+    }
+  } catch {
+    return null
+  }
+}
+
+function writeAnonStoreCreds(next: AnonStoreCreds | null): void {
+  if (typeof window === 'undefined') return
+  try {
+    if (next === null) {
+      sessionStorage.removeItem(ANON_CREDS_KEY)
+    } else {
+      sessionStorage.setItem(ANON_CREDS_KEY, JSON.stringify(next))
+    }
+  } catch { /* private mode / quota */ }
+}
+
 function formatDelay(seconds: number): string {
   if (seconds < 60) return `${seconds} שניות`
   const min = Math.round(seconds / 60)
@@ -134,6 +173,10 @@ export default function AppChat() {
       if (user) {
         // One-time migration from the old single-thread localStorage key.
         await chatHistoryStore.migrateFromLocalStorageV1(user.uid)
+        // Logging in: any leftover anon Tier-1 cred is stale and would also
+        // be ignored by the server (anon creds only apply to anon: uids).
+        // Wipe defensively so subsequent tab reloads don't surface it.
+        writeAnonStoreCreds(null)
       }
 
       let chatId = chatHistoryStore.getActiveChatId(effectiveUid)
@@ -186,6 +229,11 @@ export default function AppChat() {
       const rows = await chatHistoryStore.listMessages(uid, nextId)
       setMessages(rows.map(toUIMessage))
       setPendingSelections([])
+      // New / switched chat = fresh anon Tier-1 session: wipe the cred so
+      // OTP starts from scratch. Without this, a user who switches chats
+      // mid-OTP would carry stale `{storeId, phone, token}` state into the
+      // new conversation.
+      if (uid.startsWith(ANON_PREFIX)) writeAnonStoreCreds(null)
       setTimeout(() => inputRef.current?.focus(), 100)
     })
     return unsub
@@ -228,7 +276,16 @@ export default function AppChat() {
         if (controller.signal.aborted) return
 
         let response: Response
-        let data: { success?: boolean; retryable?: boolean; reply?: string; thinking?: string; error?: string; pendingSelections?: PendingSelection[] }
+        let data: {
+          success?: boolean
+          retryable?: boolean
+          reply?: string
+          thinking?: string
+          error?: string
+          pendingSelections?: PendingSelection[]
+          /** Server-side update to Tier-1 anon creds. Present only when changed. `null` = wipe. */
+          anonStoreCreds?: AnonStoreCreds | null
+        }
         try {
           const token = await getIdToken()
           // Anon visitor: send the per-tab session id so the server can key
@@ -242,10 +299,19 @@ export default function AppChat() {
           // Anon visitors have no Firestore-backed thread, so we re-send the
           // recent messages with each request to preserve cross-turn context.
           // Cap to ~20 turns; older content rolls off (matches server cap).
-          const requestBody: { message: string; history?: { role: 'user' | 'assistant'; content: string }[] } = { message: text }
+          const requestBody: {
+            message: string
+            history?: { role: 'user' | 'assistant'; content: string }[]
+            anonStoreCreds?: AnonStoreCreds | null
+          } = { message: text }
           if (isAnon) {
             const recent = messages.slice(-20).map(m => ({ role: m.role, content: m.content }))
             requestBody.history = recent
+            // Round-trip Tier-1 cred state out of sessionStorage on every
+            // request. Server reads it in-memory, may update, and ships back
+            // the new state on the response (which we write below).
+            const creds = readAnonStoreCreds()
+            if (creds) requestBody.anonStoreCreds = creds
           }
           response = await fetch('/api/chat', {
             method: 'POST',
@@ -268,6 +334,11 @@ export default function AppChat() {
           await chatHistoryStore.appendMessage(uid, activeChatId, assistantMsg)
           if (data.pendingSelections?.length) {
             setPendingSelections(data.pendingSelections)
+          }
+          // Persist Tier-1 anon cred updates to sessionStorage. Server omits
+          // the key when nothing changed; sends null to explicitly wipe.
+          if (Object.prototype.hasOwnProperty.call(data, 'anonStoreCreds')) {
+            writeAnonStoreCreds(data.anonStoreCreds ?? null)
           }
           setRetryStatus(null)
           return

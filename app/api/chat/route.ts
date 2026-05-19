@@ -40,6 +40,36 @@ interface ChatRequestBody {
    * is the source of truth.
    */
   history?: { role: 'user' | 'assistant'; content: string }[]
+  /**
+   * Saliko Tier-1 anon credential state. Lives only in browser sessionStorage
+   * (`saliko.anonStoreCreds`), ships in on every request, server uses it
+   * in-memory for one HTTP request and forgets. Per privacy policy
+   * `SALIKO_PRIVACY_TIERS.anonymous`: nothing about an anon visitor is ever
+   * written to our server, including this. Shape validated by the executor
+   * before use — treat as untrusted input.
+   */
+  anonStoreCreds?: {
+    storeId?: unknown
+    phone?: unknown
+    token?: unknown
+    orderedOnce?: unknown
+  } | null
+}
+
+/** Narrow untrusted request-body shape to the executor's AnonStoreCreds. */
+function parseAnonStoreCreds(raw: ChatRequestBody['anonStoreCreds']): {
+  storeId: string; phone: string; token?: string; orderedOnce?: boolean
+} | null {
+  if (!raw || typeof raw !== 'object') return null
+  const storeId = typeof raw.storeId === 'string' ? raw.storeId : ''
+  const phone = typeof raw.phone === 'string' ? raw.phone : ''
+  if (!storeId || !phone) return null
+  return {
+    storeId,
+    phone,
+    ...(typeof raw.token === 'string' && raw.token ? { token: raw.token } : {}),
+    ...(raw.orderedOnce === true ? { orderedOnce: true } : {}),
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -68,6 +98,9 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    // Anon cred state is only meaningful for anon callers. For authed users
+    // it's silently ignored — they have Firestore-backed Tier-2/3 creds.
+    const inboundAnonCreds = isAnonUid(uid) ? parseAnonStoreCreds(body.anonStoreCreds) : null
     const result = await processChatMessage({
       uid,
       text,
@@ -78,6 +111,7 @@ export async function POST(request: NextRequest) {
       // get their persistent Firestore-backed thread, which is more reliable
       // and prevents an attacker-tampered history from polluting their context.
       seedHistory: isAnonUid(uid) ? body.history : undefined,
+      anonStoreCreds: inboundAnonCreds,
     })
 
     if (result.llmExhausted) {
@@ -110,6 +144,10 @@ export async function POST(request: NextRequest) {
       reply: result.reply,
       thinking: result.thinking,
       pendingSelections: result.pendingSelections,
+      // Echo back anon cred mutations so the browser can persist them to
+      // sessionStorage. `undefined` is dropped by JSON.stringify (no key in
+      // response = client keeps current); `null` means "wipe."
+      ...(result.anonStoreCreds !== undefined ? { anonStoreCreds: result.anonStoreCreds } : {}),
     })
   } catch (err) {
     console.error('[AppChat] Error:', err)

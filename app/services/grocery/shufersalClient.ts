@@ -11,6 +11,8 @@ import dns from 'dns'
 import https from 'https'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import * as cheerio from 'cheerio'
+import { encryptCred, decryptCred, looksEncrypted } from '@/app/services/security/credEncryption'
+import { hasCurrentServerCredsConsent, NoTier3ConsentError } from '@/app/services/consentService'
 
 const BASE_URL = 'https://www.shufersal.co.il/online/he'
 const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36'
@@ -258,12 +260,44 @@ async function loadCredentials(uid: string): Promise<ShufersalCredentials | null
   const doc = await getAdminFirestore().collection('groceries').doc(uid)
     .collection('private').doc('credentials').get()
   if (!doc.exists) return null
-  return doc.data() as ShufersalCredentials
+  const raw = doc.data() as { email?: string; password?: string; verified?: boolean }
+  if (!raw.email || !raw.password) return null
+  // Tier-3 docs are written as ciphertext (`encryptCred`); decrypt on read.
+  // During the rollout window plaintext docs may still exist — `looksEncrypted`
+  // is the sniff. Once everyone's been re-saved this branch becomes dead code
+  // but it's cheap and keeps the rollout safe.
+  const email = looksEncrypted(raw.email) ? decryptCred(raw.email) : raw.email
+  const password = looksEncrypted(raw.password) ? decryptCred(raw.password) : raw.password
+  return { email, password }
 }
 
+/**
+ * Persist Shufersal credentials server-side (Tier 3 only).
+ *
+ * Per the Saliko privacy policy (`SALIKO_PRIVACY_TIERS.loggedInWithServerCreds`)
+ * a logged-in user MUST have explicit consent on file before any plaintext
+ * credential leaves their browser. Without consent we throw `NoTier3ConsentError`
+ * and the caller is expected to walk the user through the consent prompt before
+ * retrying.
+ *
+ * Both email and password are encrypted at rest (AES-256-GCM via the env-key
+ * helper). Email is encrypted too: it's PII per the policy and there's no
+ * read-side need for plaintext here — `login()` decrypts on demand.
+ */
 export async function saveCredentials(uid: string, email: string, password: string): Promise<void> {
+  const consented = await hasCurrentServerCredsConsent(uid)
+  if (!consented) {
+    throw new NoTier3ConsentError(
+      'NO_TIER3_CONSENT: cannot persist Shufersal credentials server-side without Tier-3 consent. ' +
+      'Have the user accept the server-credentials consent prompt and retry.',
+    )
+  }
   await getAdminFirestore().collection('groceries').doc(uid)
-    .collection('private').doc('credentials').set({ email, password, verified: false })
+    .collection('private').doc('credentials').set({
+      email: encryptCred(email),
+      password: encryptCred(password),
+      verified: false,
+    })
 }
 
 export async function setCredentialsVerified(uid: string, verified: boolean): Promise<void> {
@@ -641,7 +675,9 @@ export async function checkout(
 
   const deliveryWindow = { day: slot.day, date: slot.date, time: slot.time }
 
-  if (options.dryRun) {
+  // Global kill-switch for the test pipeline: SALIKO_DRY_RUN=true forces every
+  // checkout to short-circuit before commit.
+  if (options.dryRun || process.env.SALIKO_DRY_RUN === 'true') {
     return { success: false, dryRun: true, deliveryWindow }
   }
 
