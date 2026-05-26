@@ -65,19 +65,36 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Create business share doc
-    const shareRef = firestore.collection('businessShares').doc()
+    // Create or reuse business share doc. A second accept (e.g. partner re-bootstrapping
+    // on a new device via a regenerated invite) must not duplicate the share row.
+    const existingShares = await firestore
+      .collection('businessShares')
+      .where('ownerUid', '==', invitation.ownerUid)
+      .where('businessSyncId', '==', invitation.businessSyncId)
+      .where('sharedWithUid', '==', uid)
+      .where('status', '==', 'active')
+      .limit(1)
+      .get()
 
-    await shareRef.set({
-      ownerUid: invitation.ownerUid,
-      businessSyncId: invitation.businessSyncId,
-      businessName: invitation.businessName,
-      sharedWithUid: uid,
-      sharedWithEmail: invitation.inviteeEmail,
-      status: 'active',
-      ...(typeof invitation.sharePercent === 'number' ? { sharePercent: invitation.sharePercent } : {}),
-      createdAt: new Date().toISOString(),
-    })
+    let shareRef: FirebaseFirestore.DocumentReference
+    if (!existingShares.empty) {
+      shareRef = existingShares.docs[0].ref
+      const patch: Record<string, unknown> = {}
+      if (typeof invitation.sharePercent === 'number') patch.sharePercent = invitation.sharePercent
+      if (Object.keys(patch).length > 0) await shareRef.update(patch)
+    } else {
+      shareRef = firestore.collection('businessShares').doc()
+      await shareRef.set({
+        ownerUid: invitation.ownerUid,
+        businessSyncId: invitation.businessSyncId,
+        businessName: invitation.businessName,
+        sharedWithUid: uid,
+        sharedWithEmail: invitation.inviteeEmail,
+        status: 'active',
+        ...(typeof invitation.sharePercent === 'number' ? { sharePercent: invitation.sharePercent } : {}),
+        createdAt: new Date().toISOString(),
+      })
+    }
 
     // Update custom claims on BOTH users — add businessSyncId to sharedBusinesses
     const ownerClaims = await getUserClaims(invitation.ownerUid)

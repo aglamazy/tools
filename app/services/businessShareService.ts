@@ -112,6 +112,16 @@ export async function cancelShareInvitation(invitationId: string): Promise<ApiRe
 }
 
 /**
+ * Create a fresh pending invitation for an already-active share.
+ * Lets the partner re-bootstrap on a new device — they click the new link,
+ * re-enter the shared password, and the accept route reuses the existing
+ * share row instead of duplicating it.
+ */
+export async function regenerateInviteForShare(shareId: string): Promise<InviteResponse> {
+  return apiRequest<InviteResponse>('regenerate-invite', 'POST', { shareId })
+}
+
+/**
  * Revoke a business share (owner only)
  */
 export async function revokeShare(shareId: string): Promise<ApiResponse> {

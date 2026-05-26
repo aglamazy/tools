@@ -5,6 +5,7 @@ import {
   inviteToShare,
   revokeShare,
   cancelShareInvitation,
+  regenerateInviteForShare,
   updateSharePercent,
   updateInvitationPercent,
   type BusinessShare,
@@ -217,6 +218,45 @@ export default function BusinessSharingSection({ business, ownerLabel, ownerShar
     }
   }
 
+  const handleRegenerateLink = async (share: BusinessShare) => {
+    setLoading(true)
+    setInviteLink(null)
+    try {
+      const result = await regenerateInviteForShare(share.id)
+      if (!result.success || !result.invitationId) {
+        setStatus({ type: 'error', message: result.error || 'שגיאה ביצירת קישור' })
+        return
+      }
+      const link = `${window.location.origin}/share-invite?id=${result.invitationId}`
+      setInviteLink(link)
+
+      const canSendEmail = await hasGmailAccess()
+      if (canSendEmail) {
+        const emailResult = await sendEmail(
+          share.sharedWithEmail,
+          `קישור התחברות מחדש — ${share.businessName || business.name}`,
+          `<div dir="rtl" style="font-family: sans-serif; max-width: 500px;">
+            <h2>קישור התחברות מחדש</h2>
+            <p>נוצר קישור התחברות חדש לעסק <strong>${share.businessName || business.name}</strong>.</p>
+            <p>השתמש בקישור כדי להתחבר מחדש ולהזין את סיסמת השיתוף:</p>
+            <p><a href="${link}" style="display: inline-block; padding: 0.75rem 1.5rem; background: #3b82f6; color: white; text-decoration: none; border-radius: 0.5rem; font-weight: 600;">התחבר מחדש</a></p>
+          </div>`,
+        )
+        setStatus({
+          type: 'success',
+          message: emailResult.success
+            ? 'קישור חדש נשלח במייל'
+            : 'קישור נוצר — שלח את הקישור ידנית',
+        })
+      } else {
+        setStatus({ type: 'success', message: 'קישור נוצר — שלח את הקישור למוזמן' })
+      }
+      refreshShares()
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleRevoke = async (shareId: string) => {
     setLoading(true)
     try {
@@ -263,18 +303,35 @@ export default function BusinessSharingSection({ business, ownerLabel, ownerShar
       {shares.map(share => (
         <div key={share.id} style={rowStyle}>
           <span style={{ flex: 1 }}>
-            {share.sharedWithDisplayName || share.sharedWithEmail}
+            {share.sharedWithDisplayName ? (
+              <>
+                {share.sharedWithDisplayName}
+                <span style={{ color: '#64748b', marginInlineStart: '0.5rem', fontSize: '0.8rem' }}>
+                  ({share.sharedWithEmail})
+                </span>
+              </>
+            ) : (
+              share.sharedWithEmail
+            )}
             <span style={{ color: '#64748b', marginInlineStart: '0.5rem' }}>
               · {share.sharePercent != null ? `${share.sharePercent}%` : '—'}
             </span>
           </span>
           <button
-            onClick={() => openEditModal('share', share.id, share.sharedWithDisplayName || share.sharedWithEmail, share.sharePercent)}
+            onClick={() => openEditModal('share', share.id, share.sharedWithDisplayName ? `${share.sharedWithDisplayName} (${share.sharedWithEmail})` : share.sharedWithEmail, share.sharePercent)}
             disabled={loading}
             title="ערוך אחוז שותפות"
             style={pencilBtn}
           >
             ✏️
+          </button>
+          <button
+            onClick={() => void handleRegenerateLink(share)}
+            disabled={loading}
+            title="צור קישור חדש להתחברות מחדש"
+            style={pencilBtn}
+          >
+            🔗
           </button>
           <button onClick={() => void handleRevoke(share.id)} disabled={loading} style={revokeBtn}>
             בטל שיתוף
@@ -422,25 +479,30 @@ export default function BusinessSharingSection({ business, ownerLabel, ownerShar
               <span style={{ fontSize: '0.75rem', color: '#64748b' }}>השותף יזדקק לסיסמה זו</span>
             </div>
           )}
-          {status.message && (
-            <span style={{ fontSize: '0.8rem', color: status.type === 'success' ? '#16a34a' : status.type === 'error' ? '#dc2626' : '#64748b' }}>
-              {status.message}
-            </span>
-          )}
-          {inviteLink && (
-            <div style={{
-              display: 'flex', gap: '0.5rem', alignItems: 'center',
-              padding: '0.4rem 0.6rem', background: '#f0f9ff', borderRadius: '0.375rem',
-              border: '1px solid #bae6fd', fontSize: '0.75rem',
-            }}>
-              <input readOnly value={inviteLink} onFocus={e => e.target.select()}
-                style={{ flex: 1, border: 'none', background: 'transparent', fontSize: '0.75rem', direction: 'ltr' }} />
-              <button
-                onClick={() => { void navigator.clipboard.writeText(inviteLink); setStatus({ type: 'success', message: 'הקישור הועתק' }) }}
-                style={{ padding: '0.2rem 0.5rem', fontSize: '0.7rem', border: '1px solid #d1d5db', borderRadius: '0.25rem', background: '#fff', cursor: 'pointer' }}
-              >העתק</button>
-            </div>
-          )}
+        </div>
+      )}
+
+      {/* Status + generated link — visible whether the invite form is open
+          (after handleInvite) or closed (after handleRegenerateLink on a
+          row). */}
+      {status.message && (
+        <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: status.type === 'success' ? '#16a34a' : status.type === 'error' ? '#dc2626' : '#64748b' }}>
+          {status.message}
+        </div>
+      )}
+      {inviteLink && (
+        <div style={{
+          marginTop: '0.5rem',
+          display: 'flex', gap: '0.5rem', alignItems: 'center',
+          padding: '0.4rem 0.6rem', background: '#f0f9ff', borderRadius: '0.375rem',
+          border: '1px solid #bae6fd', fontSize: '0.75rem',
+        }}>
+          <input readOnly value={inviteLink} onFocus={e => e.target.select()}
+            style={{ flex: 1, border: 'none', background: 'transparent', fontSize: '0.75rem', direction: 'ltr' }} />
+          <button
+            onClick={() => { void navigator.clipboard.writeText(inviteLink); setStatus({ type: 'success', message: 'הקישור הועתק' }) }}
+            style={{ padding: '0.2rem 0.5rem', fontSize: '0.7rem', border: '1px solid #d1d5db', borderRadius: '0.25rem', background: '#fff', cursor: 'pointer' }}
+          >העתק</button>
         </div>
       )}
     </section>
