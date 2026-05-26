@@ -1,36 +1,65 @@
 /**
- * Business Share Service
- * Client-side service for per-business sharing operations
+ * Business Share Service — client-side bindings for the partner / invitation
+ * / access-grant data model.
+ *
+ * Three entities:
+ *   - BusinessPartner     — durable identity + share %. Owns a slice of the 100%.
+ *   - BusinessShareInvitation — transient access link (pending|accepted|expired|cancelled).
+ *   - BusinessAccessGrant — current binding between a partner and a Firebase uid.
+ *                            Granted via accepting an invitation; revoking it
+ *                            removes the uid's access without deleting the partner.
  */
 
 import { collection, query, where, onSnapshot, type Unsubscribe } from 'firebase/firestore'
 import { getFirebaseFirestore, isFirebaseConfigured, getFirebaseAuth } from '@/app/lib/firebase'
 import { getIdToken } from './firebaseAuthService'
 
-export type BusinessShare = {
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export type BusinessPartner = {
   id: string
   ownerUid: string
   businessSyncId: string
   businessName: string
-  sharedWithUid: string
-  sharedWithEmail: string
-  sharedWithDisplayName?: string // Firebase Auth displayName, resolved server-side at list time
-  status: 'active' | 'revoked'
-  sharePercent?: number // partnership share % (0-100); undefined = legacy share with no % set
+  email: string
+  displayName: string | null
+  sharePercent: number
   createdAt: string
+  updatedAt: string
 }
 
 export type BusinessShareInvitation = {
   id: string
+  partnerId?: string
   ownerUid: string
   businessSyncId: string
   businessName: string
   inviteeEmail: string
   status: 'pending' | 'accepted' | 'expired' | 'cancelled'
-  sharePercent?: number // partnership share % (0-100); copied to BusinessShare on accept
   createdAt: string
   expiresAt: string
+  acceptedAt?: string
+  acceptedBy?: string
 }
+
+export type BusinessAccessGrant = {
+  id: string
+  partnerId: string
+  ownerUid: string
+  businessSyncId: string
+  uid: string
+  email: string
+  grantedAt: string
+  grantedViaInvitationId: string
+  /** Resolved server-side from Firebase Auth — display name of the granted user. */
+  grantedUserDisplayName?: string
+}
+
+// ---------------------------------------------------------------------------
+// API plumbing
+// ---------------------------------------------------------------------------
 
 type ApiResponse = {
   success: boolean
@@ -38,13 +67,16 @@ type ApiResponse = {
   errorCode?: string
 }
 
-type InviteResponse = ApiResponse & { invitationId?: string }
-type AcceptResponse = ApiResponse & { shareId?: string }
+type InviteResponse = ApiResponse & { invitationId?: string; partnerId?: string }
+type AcceptResponse = ApiResponse & { grantId?: string; partnerId?: string }
+type AddPartnerResponse = ApiResponse & { partnerId?: string }
 
-type ListResponse = ApiResponse & {
-  ownedShares?: BusinessShare[]
-  receivedShares?: BusinessShare[]
-  pendingInvitations?: BusinessShareInvitation[]
+export type ListResponse = ApiResponse & {
+  partners?: BusinessPartner[]
+  ownedInvitations?: BusinessShareInvitation[]
+  receivedInvitations?: BusinessShareInvitation[]
+  grantsToMe?: BusinessAccessGrant[]
+  grantsFromMe?: BusinessAccessGrant[]
 }
 
 const API_BASE = '/api/business-share'
@@ -62,82 +94,82 @@ async function apiRequest<T>(endpoint: string, method: 'GET' | 'POST', body?: Re
       'Authorization': `Bearer ${idToken}`,
     },
   }
-
-  if (body && method === 'POST') {
-    options.body = JSON.stringify(body)
-  }
+  if (body && method === 'POST') options.body = JSON.stringify(body)
 
   const response = await fetch(`${API_BASE}/${endpoint}`, options)
   return response.json()
 }
 
+// ---------------------------------------------------------------------------
+// Partner CRUD
+// ---------------------------------------------------------------------------
+
+export async function addPartner(args: {
+  businessSyncId: string
+  businessName: string
+  email: string
+  displayName?: string
+  sharePercent: number
+}): Promise<AddPartnerResponse> {
+  return apiRequest<AddPartnerResponse>('partner/add', 'POST', args as unknown as Record<string, unknown>)
+}
+
+export async function updatePartner(
+  partnerId: string,
+  patch: { sharePercent?: number; displayName?: string | null },
+): Promise<ApiResponse> {
+  return apiRequest<ApiResponse>('partner/update', 'POST', { partnerId, ...patch })
+}
+
+export async function removePartner(partnerId: string): Promise<ApiResponse> {
+  return apiRequest<ApiResponse>('partner/remove', 'POST', { partnerId })
+}
+
+// ---------------------------------------------------------------------------
+// Invitations
+// ---------------------------------------------------------------------------
+
 /**
- * Invite someone to share a business
+ * Send a new pending invitation. Either:
+ *   - reuse an existing partner: pass `{ partnerId }`
+ *   - or create-on-the-fly: pass `{ businessSyncId, businessName, email, ... }`
+ *     and the route will look up or create the partner record first.
  */
-export async function inviteToShare(
-  businessSyncId: string,
-  businessName: string,
-  email: string,
-  sharePercent?: number,
+export async function sendInvite(args:
+  | { partnerId: string }
+  | { businessSyncId: string; businessName: string; email: string; displayName?: string; sharePercent?: number }
 ): Promise<InviteResponse> {
-  return apiRequest<InviteResponse>('invite', 'POST', { businessSyncId, businessName, email, sharePercent })
+  return apiRequest<InviteResponse>('invite', 'POST', args as unknown as Record<string, unknown>)
 }
 
-/**
- * Update partnership share % on an active business share
- */
-export async function updateSharePercent(shareId: string, sharePercent: number): Promise<ApiResponse> {
-  return apiRequest<ApiResponse>('update-percent', 'POST', { shareId, sharePercent })
-}
-
-/**
- * Update partnership share % on a pending invitation (before it's accepted)
- */
-export async function updateInvitationPercent(invitationId: string, sharePercent: number): Promise<ApiResponse> {
-  return apiRequest<ApiResponse>('update-percent', 'POST', { invitationId, sharePercent })
-}
-
-/**
- * Accept a business share invitation
- */
 export async function acceptShareInvitation(invitationId: string): Promise<AcceptResponse> {
   return apiRequest<AcceptResponse>('accept', 'POST', { invitationId })
 }
 
-/**
- * Cancel a pending business share invitation (owner only)
- */
 export async function cancelShareInvitation(invitationId: string): Promise<ApiResponse> {
   return apiRequest<ApiResponse>('cancel', 'POST', { invitationId })
 }
 
-/**
- * Create a fresh pending invitation for an already-active share.
- * Lets the partner re-bootstrap on a new device — they click the new link,
- * re-enter the shared password, and the accept route reuses the existing
- * share row instead of duplicating it.
- */
-export async function regenerateInviteForShare(shareId: string): Promise<InviteResponse> {
-  return apiRequest<InviteResponse>('regenerate-invite', 'POST', { shareId })
+// ---------------------------------------------------------------------------
+// Access grants
+// ---------------------------------------------------------------------------
+
+export async function revokeAccess(grantId: string): Promise<ApiResponse> {
+  return apiRequest<ApiResponse>('access/revoke', 'POST', { grantId })
 }
 
-/**
- * Revoke a business share (owner only)
- */
-export async function revokeShare(shareId: string): Promise<ApiResponse> {
-  return apiRequest<ApiResponse>('revoke', 'POST', { shareId })
-}
+// ---------------------------------------------------------------------------
+// List
+// ---------------------------------------------------------------------------
 
-/**
- * List all shares for the current user
- */
 export async function listShares(): Promise<ListResponse> {
   return apiRequest<ListResponse>('list', 'GET')
 }
 
-/**
- * Subscribe to pending business share invitations for the current user (as invitee)
- */
+// ---------------------------------------------------------------------------
+// Realtime — invitee subscribes to pending invitations addressed to them.
+// ---------------------------------------------------------------------------
+
 export function subscribeToPendingShareInvitations(
   callback: (invitations: BusinessShareInvitation[]) => void,
 ): Unsubscribe {
@@ -168,6 +200,7 @@ export function subscribeToPendingShareInvitations(
         const data = doc.data()
         return {
           id: doc.id,
+          partnerId: data.partnerId,
           ownerUid: data.ownerUid,
           businessSyncId: data.businessSyncId,
           businessName: data.businessName,

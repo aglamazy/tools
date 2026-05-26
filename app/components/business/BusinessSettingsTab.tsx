@@ -5,7 +5,7 @@ import { projectStore } from '@/app/stores/projectStore'
 import { harvestTaskStore } from '@/app/stores/harvestTaskStore'
 import { businessStore } from '@/app/stores/businessStore'
 import type { Project, HarvestTask } from '@/app/db/financeDB'
-import { listShares, type BusinessShare } from '@/app/services/businessShareService'
+import { listShares, type BusinessPartner } from '@/app/services/businessShareService'
 import { getUser } from '@/app/stores/authStore'
 import { subscribeToAuthState } from '@/app/services/firebaseAuthService'
 import FormModal, { FormField, inputStyle } from '../FormModal'
@@ -96,12 +96,12 @@ export default function BusinessSettingsTab({ businessId }: BusinessSettingsTabP
     try {
       const result = await listShares()
       if (result.success) {
-        const bizShares = (result.ownedShares || []).filter(
-          (s: BusinessShare) => s.businessSyncId === business.syncId && s.status === 'active',
+        const bizPartners = (result.partners || []).filter(
+          (p: BusinessPartner) => p.businessSyncId === business.syncId,
         )
-        for (const share of bizShares) {
-          if (!members.some(m => m.email === share.sharedWithEmail)) {
-            members.push({ email: share.sharedWithEmail })
+        for (const partner of bizPartners) {
+          if (!members.some(m => m.email === partner.email)) {
+            members.push({ email: partner.email })
           }
         }
         // If I'm a sharee, add owner info from share

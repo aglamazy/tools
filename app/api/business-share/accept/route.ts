@@ -1,6 +1,12 @@
 /**
- * Business Share Accept API Route
- * Accepts a business sharing invitation
+ * Accept a pending invitation. Creates (or reuses) the BusinessAccessGrant
+ * that binds the current Firebase uid to the invitation's partner record.
+ * The partner record itself is unchanged.
+ *
+ * Idempotent — accepting a regenerated invite reuses an existing grant
+ * instead of duplicating it.
+ *
+ * Body: { invitationId }
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -22,111 +28,101 @@ export async function POST(request: NextRequest) {
     }
 
     const firestore = getAdminFirestore()
-
-    // Get invitation
     const invitationRef = firestore.collection('businessShareInvitations').doc(invitationId)
     const invitationDoc = await invitationRef.get()
 
     if (!invitationDoc.exists) {
-      return NextResponse.json({
-        success: false,
-        error: 'הזמנה לא נמצאה',
-        errorCode: 'invitation-not-found',
-      })
+      return NextResponse.json({ success: false, error: 'הזמנה לא נמצאה', errorCode: 'invitation-not-found' })
     }
-
     const invitation = invitationDoc.data()!
 
-    // Verify invitation is pending
     if (invitation.status !== 'pending') {
-      return NextResponse.json({
-        success: false,
-        error: 'הזמנה כבר נוצלה או בוטלה',
-        errorCode: 'invitation-invalid',
-      })
+      return NextResponse.json({ success: false, error: 'הזמנה כבר נוצלה או בוטלה', errorCode: 'invitation-invalid' })
     }
-
-    // Check expiration
     if (new Date(invitation.expiresAt) < new Date()) {
       await invitationRef.update({ status: 'expired' })
-      return NextResponse.json({
-        success: false,
-        error: 'ההזמנה פגה',
-        errorCode: 'invitation-expired',
-      })
+      return NextResponse.json({ success: false, error: 'ההזמנה פגה', errorCode: 'invitation-expired' })
     }
-
-    // Verify email matches
     if (userEmail && invitation.inviteeEmail !== userEmail) {
-      return NextResponse.json({
-        success: false,
-        error: 'ההזמנה נשלחה לאימייל אחר',
-        errorCode: 'email-mismatch',
-      })
+      return NextResponse.json({ success: false, error: 'ההזמנה נשלחה לאימייל אחר', errorCode: 'email-mismatch' })
     }
 
-    // Create or reuse business share doc. A second accept (e.g. partner re-bootstrapping
-    // on a new device via a regenerated invite) must not duplicate the share row.
-    const existingShares = await firestore
-      .collection('businessShares')
-      .where('ownerUid', '==', invitation.ownerUid)
-      .where('businessSyncId', '==', invitation.businessSyncId)
-      .where('sharedWithUid', '==', uid)
-      .where('status', '==', 'active')
+    // Resolve / backfill partnerId on the invitation. Pre-migration invitations
+    // (created before the partner-record split) may not have it yet.
+    let partnerId: string | undefined = invitation.partnerId
+    if (!partnerId) {
+      const partnerSnap = await firestore
+        .collection('businessPartners')
+        .where('ownerUid', '==', invitation.ownerUid)
+        .where('businessSyncId', '==', invitation.businessSyncId)
+        .where('email', '==', invitation.inviteeEmail)
+        .limit(1)
+        .get()
+      if (!partnerSnap.empty) {
+        partnerId = partnerSnap.docs[0].id
+        await invitationRef.update({ partnerId })
+      } else {
+        return NextResponse.json({ success: false, error: 'שותף לא נמצא — נא רענן ונסה שוב', errorCode: 'partner-not-found' })
+      }
+    }
+
+    // Upsert the access grant for (partnerId, uid).
+    const existingGrants = await firestore
+      .collection('businessAccessGrants')
+      .where('partnerId', '==', partnerId)
+      .where('uid', '==', uid)
       .limit(1)
       .get()
 
-    let shareRef: FirebaseFirestore.DocumentReference
-    if (!existingShares.empty) {
-      shareRef = existingShares.docs[0].ref
-      const patch: Record<string, unknown> = {}
-      if (typeof invitation.sharePercent === 'number') patch.sharePercent = invitation.sharePercent
-      if (Object.keys(patch).length > 0) await shareRef.update(patch)
+    let grantRef: FirebaseFirestore.DocumentReference
+    if (!existingGrants.empty) {
+      grantRef = existingGrants.docs[0].ref
+      await grantRef.update({
+        grantedViaInvitationId: invitationId,
+        grantedAt: new Date().toISOString(),
+      })
     } else {
-      shareRef = firestore.collection('businessShares').doc()
-      await shareRef.set({
+      grantRef = firestore.collection('businessAccessGrants').doc()
+      await grantRef.set({
+        partnerId,
         ownerUid: invitation.ownerUid,
         businessSyncId: invitation.businessSyncId,
-        businessName: invitation.businessName,
-        sharedWithUid: uid,
-        sharedWithEmail: invitation.inviteeEmail,
-        status: 'active',
-        ...(typeof invitation.sharePercent === 'number' ? { sharePercent: invitation.sharePercent } : {}),
-        createdAt: new Date().toISOString(),
+        uid,
+        email: invitation.inviteeEmail,
+        grantedAt: new Date().toISOString(),
+        grantedViaInvitationId: invitationId,
       })
     }
 
-    // Update custom claims on BOTH users — add businessSyncId to sharedBusinesses
+    // Refresh claims on BOTH users so they can talk to shared storage.
     const ownerClaims = await getUserClaims(invitation.ownerUid)
     const ownerShared = Array.isArray(ownerClaims.sharedBusinesses) ? [...ownerClaims.sharedBusinesses] : []
-    if (!ownerShared.includes(invitation.businessSyncId)) ownerShared.push(invitation.businessSyncId)
-    await setUserClaims(invitation.ownerUid, { sharedBusinesses: ownerShared })
+    if (!ownerShared.includes(invitation.businessSyncId)) {
+      ownerShared.push(invitation.businessSyncId)
+      await setUserClaims(invitation.ownerUid, { sharedBusinesses: ownerShared })
+    }
 
     const recipientClaims = await getUserClaims(uid)
     const recipientShared = Array.isArray(recipientClaims.sharedBusinesses) ? [...recipientClaims.sharedBusinesses] : []
-    if (!recipientShared.includes(invitation.businessSyncId)) recipientShared.push(invitation.businessSyncId)
-    await setUserClaims(uid, { sharedBusinesses: recipientShared })
+    if (!recipientShared.includes(invitation.businessSyncId)) {
+      recipientShared.push(invitation.businessSyncId)
+      await setUserClaims(uid, { sharedBusinesses: recipientShared })
+    }
 
-    // Mark invitation as accepted
     await invitationRef.update({
       status: 'accepted',
       acceptedAt: new Date().toISOString(),
       acceptedBy: uid,
     })
 
-    console.log(`[BusinessShare] User ${uid} accepted share for business ${invitation.businessSyncId}`)
+    console.log(`[BusinessShare] User ${uid} accepted invitation ${invitationId} (partner ${partnerId}, grant ${grantRef.id})`)
 
-    return NextResponse.json({
-      success: true,
-      shareId: shareRef.id,
-    })
+    return NextResponse.json({ success: true, grantId: grantRef.id, partnerId })
   } catch (error: any) {
     console.error('[BusinessShare] Accept failed:', error)
-
     if (error.code === 'auth/id-token-expired') {
       return NextResponse.json({ success: false, error: 'פג תוקף ההתחברות', errorCode: 'token-expired' })
     }
-
     return NextResponse.json({ success: false, error: 'שגיאת שרת', errorCode: 'unknown' })
   }
 }

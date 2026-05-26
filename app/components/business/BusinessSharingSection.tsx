@@ -1,15 +1,32 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+/**
+ * Business sharing UI.
+ *
+ * Data model (current — see businessShareService.ts):
+ *   - BusinessPartner       — durable identity + share %. Each partner gets a row.
+ *   - BusinessShareInvitation — pending link, attached to a partner via partnerId.
+ *   - BusinessAccessGrant   — current uid binding for a partner. Drives whether
+ *                              the partner actually has access right now.
+ *
+ * Each row in the UI is a partner. The row's "access state" is derived:
+ *   grant present  → ✓ נגיש          + 🚫 בטל גישה
+ *   no grant, pending invite → 📧 הזמנה ממתינה + 📋 העתק קישור + ✖ בטל הזמנה
+ *   no grant, no invite      → 📤 שלח הזמנה
+ * "🔗 חדש קישור" is always available — creates a fresh invitation (cancels stale).
+ * "🗑 הסר שותף" deletes the partner entirely, freeing their % back to the owner.
+ */
+
+import React, { useEffect, useMemo, useState } from 'react'
 import {
-  inviteToShare,
-  revokeShare,
+  sendInvite,
+  removePartner,
+  revokeAccess,
   cancelShareInvitation,
-  regenerateInviteForShare,
-  updateSharePercent,
-  updateInvitationPercent,
-  type BusinessShare,
+  updatePartner,
+  type BusinessPartner,
   type BusinessShareInvitation,
+  type BusinessAccessGrant,
 } from '@/app/services/businessShareService'
 import { partnerStore } from '@/app/stores/partnerStore'
 import Modal from '@/app/components/Modal'
@@ -17,7 +34,6 @@ import {
   setupSharedPassword,
   getSharedPassword,
   saveSharedPassword,
-  syncSharedBusiness,
 } from '@/app/services/sharedBusinessSyncService'
 import type { Business } from '@/app/db/financeDB'
 import { refreshIdToken, subscribeToAuthState } from '@/app/services/firebaseAuthService'
@@ -31,23 +47,32 @@ type Props = {
 }
 
 export default function BusinessSharingSection({ business, ownerLabel, ownerSharePercent, onEditOwner }: Props) {
-  // Shares + invitations come from partnerStore (cached in localStorage). Initial render uses
-  // the cache synchronously, then a background refresh updates everyone via subscribe.
-  const [shares, setShares] = useState<BusinessShare[]>(() =>
-    typeof window !== 'undefined' ? partnerStore.getCachedShares(business.syncId) : []
+  // ---------------------------------------------------------------------------
+  // Cache reads — first paint comes from localStorage, then refresh() updates.
+  // ---------------------------------------------------------------------------
+  const [partners, setPartners] = useState<BusinessPartner[]>(() =>
+    typeof window !== 'undefined' ? partnerStore.getCachedPartners(business.syncId) : []
   )
-  const [pendingInvitations, setPendingInvitations] = useState<BusinessShareInvitation[]>(() =>
+  const [invitations, setInvitations] = useState<BusinessShareInvitation[]>(() =>
     typeof window !== 'undefined' ? partnerStore.getCachedInvitations(business.syncId) : []
+  )
+  const [grants, setGrants] = useState<BusinessAccessGrant[]>(() =>
+    typeof window !== 'undefined' ? partnerStore.getCachedGrants(business.syncId) : []
   )
   // Track whether partner data has been loaded at least once for this business —
   // suppresses the "must be 100%" warning during the brief window before refresh() lands.
   const [partnersLoaded, setPartnersLoaded] = useState(() =>
     typeof window !== 'undefined' && business.syncId !== undefined
-      ? partnerStore.getCachedShares(business.syncId).length > 0
+      ? partnerStore.getCachedPartners(business.syncId).length > 0
         || partnerStore.getCachedInvitations(business.syncId).length > 0
       : false
   )
+
+  // ---------------------------------------------------------------------------
+  // Add-partner form state
+  // ---------------------------------------------------------------------------
   const [email, setEmail] = useState('')
+  const [displayName, setDisplayName] = useState('')
   const [password, setPassword] = useState('')
   const [needsPassword, setNeedsPassword] = useState(false)
   const [status, setStatus] = useState<{ type: 'idle' | 'success' | 'error'; message: string }>({ type: 'idle', message: '' })
@@ -55,22 +80,28 @@ export default function BusinessSharingSection({ business, ownerLabel, ownerShar
   const [inviteLink, setInviteLink] = useState<string | null>(null)
   const [invitePercent, setInvitePercent] = useState<string>('')
   const [showInviteForm, setShowInviteForm] = useState(false)
-  // Modal state for editing % on a single share or invitation
-  const [editingTarget, setEditingTarget] = useState<{ kind: 'share' | 'invitation'; id: string; label: string; current: number | undefined } | null>(null)
+
+  // ---------------------------------------------------------------------------
+  // Edit-percent modal state (works for partners — invitations no longer carry %)
+  // ---------------------------------------------------------------------------
+  const [editingPartnerId, setEditingPartnerId] = useState<string | null>(null)
+  const [editingPartnerLabel, setEditingPartnerLabel] = useState<string>('')
   const [editingValue, setEditingValue] = useState<string>('')
 
+  // ---------------------------------------------------------------------------
+  // Initial load + subscription
+  // ---------------------------------------------------------------------------
   useEffect(() => {
     if (!business.syncId) return
     const syncId = business.syncId
-    // Initial sync read — cached values land in state immediately for instant render.
-    setShares(partnerStore.getCachedShares(syncId))
-    setPendingInvitations(partnerStore.getCachedInvitations(syncId))
-    // Subscribe to cache updates so this component re-renders when refresh() lands fresh data.
+    setPartners(partnerStore.getCachedPartners(syncId))
+    setInvitations(partnerStore.getCachedInvitations(syncId))
+    setGrants(partnerStore.getCachedGrants(syncId))
     const unsubStore = partnerStore.subscribe(() => {
-      setShares(partnerStore.getCachedShares(syncId))
-      setPendingInvitations(partnerStore.getCachedInvitations(syncId))
+      setPartners(partnerStore.getCachedPartners(syncId))
+      setInvitations(partnerStore.getCachedInvitations(syncId))
+      setGrants(partnerStore.getCachedGrants(syncId))
     })
-    // Wait for Firebase auth to be ready before triggering a refresh + checking shared-password state.
     const unsubAuth = subscribeToAuthState((user) => {
       if (user) {
         void partnerStore.refresh(syncId).then(() => setPartnersLoaded(true))
@@ -81,22 +112,50 @@ export default function BusinessSharingSection({ business, ownerLabel, ownerShar
     return () => { unsubStore(); unsubAuth() }
   }, [business.id, business.syncId])
 
-  // Default the invite-form % to an equal split based on current participant count.
+  // Default the add-form % to an equal split based on current participant count.
   useEffect(() => {
-    const participantCount = 1 + shares.length + pendingInvitations.length + 1
+    const participantCount = 1 + partners.length + 1
     setInvitePercent(String(Math.floor(100 / participantCount)))
-  }, [shares.length, pendingInvitations.length])
+  }, [partners.length])
 
-  // After any mutation (invite/revoke/cancel/update %), call this to repopulate from the source of truth.
-  const refreshShares = () => { void partnerStore.refresh(business.syncId) }
+  // ---------------------------------------------------------------------------
+  // Derived maps — pending invitation by partner, current grant by partner.
+  // ---------------------------------------------------------------------------
+  const invitationByPartner = useMemo(() => {
+    const map = new Map<string, BusinessShareInvitation>()
+    for (const inv of invitations) {
+      if (inv.status !== 'pending' || !inv.partnerId) continue
+      const existing = map.get(inv.partnerId)
+      if (!existing || inv.createdAt > existing.createdAt) {
+        map.set(inv.partnerId, inv)
+      }
+    }
+    return map
+  }, [invitations])
 
-  const openEditModal = (kind: 'share' | 'invitation', id: string, label: string, current: number | undefined) => {
-    setEditingTarget({ kind, id, label, current })
-    setEditingValue(String(current ?? ''))
+  const grantByPartner = useMemo(() => {
+    const map = new Map<string, BusinessAccessGrant>()
+    for (const g of grants) {
+      if (!g.partnerId) continue
+      map.set(g.partnerId, g)
+    }
+    return map
+  }, [grants])
+
+  const refreshAll = () => { void partnerStore.refresh(business.syncId) }
+
+  // ---------------------------------------------------------------------------
+  // Mutations
+  // ---------------------------------------------------------------------------
+
+  const openEditPartner = (partner: BusinessPartner) => {
+    setEditingPartnerId(partner.id)
+    setEditingPartnerLabel(partner.displayName ? `${partner.displayName} (${partner.email})` : partner.email)
+    setEditingValue(String(partner.sharePercent ?? ''))
   }
 
   const handleSaveEditedPercent = async () => {
-    if (!editingTarget) return
+    if (!editingPartnerId) return
     const n = Number(editingValue)
     if (!Number.isFinite(n) || n < 0 || n > 100) {
       setStatus({ type: 'error', message: 'אחוז חייב להיות בין 0 ל-100' })
@@ -104,13 +163,11 @@ export default function BusinessSharingSection({ business, ownerLabel, ownerShar
     }
     setLoading(true)
     try {
-      const result = editingTarget.kind === 'share'
-        ? await updateSharePercent(editingTarget.id, n)
-        : await updateInvitationPercent(editingTarget.id, n)
+      const result = await updatePartner(editingPartnerId, { sharePercent: n })
       if (result.success) {
         setStatus({ type: 'success', message: 'אחוז שותפות עודכן' })
-        setEditingTarget(null)
-        refreshShares()
+        setEditingPartnerId(null)
+        refreshAll()
       } else {
         setStatus({ type: 'error', message: result.error || 'שגיאה' })
       }
@@ -119,7 +176,7 @@ export default function BusinessSharingSection({ business, ownerLabel, ownerShar
     }
   }
 
-  const handleInvite = async () => {
+  const handleAddPartnerAndInvite = async () => {
     if (!email.trim()) {
       setStatus({ type: 'error', message: 'נדרש אימייל' })
       return
@@ -129,7 +186,6 @@ export default function BusinessSharingSection({ business, ownerLabel, ownerShar
       return
     }
 
-    // Check if shared password exists for this business, if not require it
     const existingPassword = await getSharedPassword(business.syncId)
     if (!existingPassword && !password.trim()) {
       setNeedsPassword(true)
@@ -138,23 +194,26 @@ export default function BusinessSharingSection({ business, ownerLabel, ownerShar
     }
 
     setLoading(true)
+    setInviteLink(null)
     try {
-      // 1. Create the invitation (also sets owner's sharedBusinesses claim)
-      const percentNum = invitePercent.trim() === '' ? undefined : Number(invitePercent)
-      const validPercent = typeof percentNum === 'number' && Number.isFinite(percentNum) && percentNum >= 0 && percentNum <= 100
-        ? percentNum
-        : undefined
-      const result = await inviteToShare(business.syncId, business.name, email.trim(), validPercent)
-      if (!result.success) {
+      const percentNum = invitePercent.trim() === '' ? 0 : Number(invitePercent)
+      const validPercent = Number.isFinite(percentNum) && percentNum >= 0 && percentNum <= 100 ? percentNum : 0
+
+      const result = await sendInvite({
+        businessSyncId: business.syncId,
+        businessName: business.name,
+        email: email.trim(),
+        displayName: displayName.trim() || undefined,
+        sharePercent: validPercent,
+      })
+      if (!result.success || !result.invitationId) {
         setStatus({ type: 'error', message: result.error || 'שגיאה' })
         setLoading(false)
         return
       }
 
-      // 2. Refresh token to pick up the new sharedBusinesses claim
+      // Refresh token + ensure shared password is set up so the partner can decrypt.
       await refreshIdToken()
-
-      // 3. Setup shared encryption password if needed (requires the claim for storage access)
       const sharePassword = existingPassword || password
       if (!existingPassword && sharePassword) {
         const setupResult = await setupSharedPassword(business.syncId, sharePassword)
@@ -166,39 +225,50 @@ export default function BusinessSharingSection({ business, ownerLabel, ownerShar
         await saveSharedPassword(business.syncId, sharePassword)
       }
 
-      // Send invitation email via Gmail
       const link = `${window.location.origin}/share-invite?id=${result.invitationId}`
       setInviteLink(link)
+      await sendInviteEmail(email.trim(), business.name, link, 'first')
 
-      const canSendEmail = await hasGmailAccess()
-      if (canSendEmail) {
-        const emailResult = await sendEmail(
-          email.trim(),
-          `הזמנה לשיתוף עסק — ${business.name}`,
-          `<div dir="rtl" style="font-family: sans-serif; max-width: 500px;">
-            <h2>הוזמנת לשיתוף עסק</h2>
-            <p>הוזמנת לשתף את העסק <strong>${business.name}</strong> באפליקציית Aglamazo.</p>
-            <p>לחץ על הקישור כדי לקבל את ההזמנה:</p>
-            <p><a href="${link}" style="display: inline-block; padding: 0.75rem 1.5rem; background: #3b82f6; color: white; text-decoration: none; border-radius: 0.5rem; font-weight: 600;">קבל הזמנה</a></p>
-            <p style="color: #64748b; font-size: 0.85rem;">אם אין לך חשבון עדיין, תוכל להירשם דרך הקישור.</p>
-          </div>`,
-        )
-        if (emailResult.success) {
-          setStatus({ type: 'success', message: 'הזמנה נשלחה במייל' })
-        } else {
-          setStatus({ type: 'success', message: 'הזמנה נוצרה — לא הצלחתי לשלוח מייל, שלח את הקישור ידנית' })
-        }
-      } else {
-        setStatus({ type: 'success', message: 'הזמנה נוצרה — שלח את הקישור למוזמן' })
-      }
-
+      setStatus({ type: 'success', message: 'שותף נוסף והזמנה נשלחה' })
       setEmail('')
+      setDisplayName('')
       setPassword('')
       setNeedsPassword(false)
       setShowInviteForm(false)
-      refreshShares()
+      refreshAll()
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleSendOrRegenerateInvite = async (partner: BusinessPartner) => {
+    setLoading(true)
+    setInviteLink(null)
+    try {
+      const result = await sendInvite({ partnerId: partner.id })
+      if (!result.success || !result.invitationId) {
+        setStatus({ type: 'error', message: result.error || 'שגיאה' })
+        return
+      }
+      const link = `${window.location.origin}/share-invite?id=${result.invitationId}`
+      setInviteLink(link)
+      await sendInviteEmail(partner.email, partner.businessName, link, 'reconnect')
+      setStatus({ type: 'success', message: 'קישור חדש נוצר' })
+      refreshAll()
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleCopyInvitationLink = async (inv: BusinessShareInvitation) => {
+    const link = `${window.location.origin}/share-invite?id=${inv.id}`
+    try {
+      await navigator.clipboard.writeText(link)
+      setInviteLink(link)
+      setStatus({ type: 'success', message: 'הקישור הועתק' })
+    } catch {
+      setInviteLink(link)
+      setStatus({ type: 'success', message: 'קישור מוכן להעתקה ידנית' })
     }
   }
 
@@ -209,7 +279,7 @@ export default function BusinessSharingSection({ business, ownerLabel, ownerShar
       if (result.success) {
         setStatus({ type: 'success', message: 'הזמנה בוטלה' })
         setInviteLink(null)
-        refreshShares()
+        refreshAll()
       } else {
         setStatus({ type: 'error', message: result.error || 'שגיאה' })
       }
@@ -218,52 +288,13 @@ export default function BusinessSharingSection({ business, ownerLabel, ownerShar
     }
   }
 
-  const handleRegenerateLink = async (share: BusinessShare) => {
-    setLoading(true)
-    setInviteLink(null)
-    try {
-      const result = await regenerateInviteForShare(share.id)
-      if (!result.success || !result.invitationId) {
-        setStatus({ type: 'error', message: result.error || 'שגיאה ביצירת קישור' })
-        return
-      }
-      const link = `${window.location.origin}/share-invite?id=${result.invitationId}`
-      setInviteLink(link)
-
-      const canSendEmail = await hasGmailAccess()
-      if (canSendEmail) {
-        const emailResult = await sendEmail(
-          share.sharedWithEmail,
-          `קישור התחברות מחדש — ${share.businessName || business.name}`,
-          `<div dir="rtl" style="font-family: sans-serif; max-width: 500px;">
-            <h2>קישור התחברות מחדש</h2>
-            <p>נוצר קישור התחברות חדש לעסק <strong>${share.businessName || business.name}</strong>.</p>
-            <p>השתמש בקישור כדי להתחבר מחדש ולהזין את סיסמת השיתוף:</p>
-            <p><a href="${link}" style="display: inline-block; padding: 0.75rem 1.5rem; background: #3b82f6; color: white; text-decoration: none; border-radius: 0.5rem; font-weight: 600;">התחבר מחדש</a></p>
-          </div>`,
-        )
-        setStatus({
-          type: 'success',
-          message: emailResult.success
-            ? 'קישור חדש נשלח במייל'
-            : 'קישור נוצר — שלח את הקישור ידנית',
-        })
-      } else {
-        setStatus({ type: 'success', message: 'קישור נוצר — שלח את הקישור למוזמן' })
-      }
-      refreshShares()
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleRevoke = async (shareId: string) => {
+  const handleRevokeAccess = async (grantId: string) => {
     setLoading(true)
     try {
-      const result = await revokeShare(shareId)
+      const result = await revokeAccess(grantId)
       if (result.success) {
-        setStatus({ type: 'success', message: 'שיתוף בוטל' })
-        refreshShares()
+        setStatus({ type: 'success', message: 'גישה בוטלה — השותף נשאר במערכת ללא גישה' })
+        refreshAll()
       } else {
         setStatus({ type: 'error', message: result.error || 'שגיאה' })
       }
@@ -272,25 +303,92 @@ export default function BusinessSharingSection({ business, ownerLabel, ownerShar
     }
   }
 
+  const handleRemovePartner = async (partner: BusinessPartner) => {
+    setLoading(true)
+    try {
+      const result = await removePartner(partner.id)
+      if (result.success) {
+        setStatus({ type: 'success', message: `${partner.displayName || partner.email} הוסר משותפים` })
+        refreshAll()
+      } else {
+        setStatus({ type: 'error', message: result.error || 'שגיאה' })
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Email helper
+  // ---------------------------------------------------------------------------
+
+  const sendInviteEmail = async (
+    toEmail: string,
+    businessName: string,
+    link: string,
+    kind: 'first' | 'reconnect',
+  ) => {
+    const canSendEmail = await hasGmailAccess()
+    if (!canSendEmail) return
+    const subject = kind === 'first'
+      ? `הזמנה לשיתוף עסק — ${businessName}`
+      : `קישור התחברות מחדש — ${businessName}`
+    const heading = kind === 'first' ? 'הוזמנת לשיתוף עסק' : 'קישור התחברות מחדש'
+    const body = kind === 'first'
+      ? `הוזמנת לשתף את העסק <strong>${businessName}</strong> באפליקציית Aglamazo.`
+      : `נוצר קישור התחברות חדש לעסק <strong>${businessName}</strong>.`
+    const cta = kind === 'first' ? 'קבל הזמנה' : 'התחבר מחדש'
+    await sendEmail(
+      toEmail,
+      subject,
+      `<div dir="rtl" style="font-family: sans-serif; max-width: 500px;">
+        <h2>${heading}</h2>
+        <p>${body}</p>
+        <p>לחץ על הקישור כדי לבצע את הפעולה ולהזין את סיסמת השיתוף:</p>
+        <p><a href="${link}" style="display: inline-block; padding: 0.75rem 1.5rem; background: #3b82f6; color: white; text-decoration: none; border-radius: 0.5rem; font-weight: 600;">${cta}</a></p>
+      </div>`,
+    )
+  }
+
+  // ---------------------------------------------------------------------------
+  // Styles
+  // ---------------------------------------------------------------------------
   const rowStyle: React.CSSProperties = {
     display: 'flex', alignItems: 'center', gap: '0.5rem',
     padding: '0.5rem 0.75rem', background: '#fff', borderRadius: '0.375rem',
     border: '1px solid #e2e8f0', marginBottom: '0.25rem', fontSize: '0.9rem',
+    flexWrap: 'wrap',
   }
   const pencilBtn: React.CSSProperties = {
     padding: '0.2rem 0.5rem', fontSize: '0.85rem', borderRadius: '0.25rem',
     border: '1px solid #e2e8f0', background: '#f8fafc', cursor: 'pointer',
   }
-  const revokeBtn: React.CSSProperties = {
+  const dangerBtn: React.CSSProperties = {
     padding: '0.2rem 0.55rem', fontSize: '0.75rem', borderRadius: '0.25rem',
     border: '1px solid #fca5a5', background: '#fef2f2', color: '#dc2626', cursor: 'pointer',
   }
+  const accessBadgeGranted: React.CSSProperties = {
+    padding: '0.1rem 0.5rem', fontSize: '0.7rem', borderRadius: '0.25rem',
+    background: '#dcfce7', color: '#166534', border: '1px solid #86efac',
+  }
+  const accessBadgePending: React.CSSProperties = {
+    padding: '0.1rem 0.5rem', fontSize: '0.7rem', borderRadius: '0.25rem',
+    background: '#fef3c7', color: '#a16207', border: '1px solid #fde047',
+  }
+  const accessBadgeNone: React.CSSProperties = {
+    padding: '0.1rem 0.5rem', fontSize: '0.7rem', borderRadius: '0.25rem',
+    background: '#f1f5f9', color: '#64748b', border: '1px solid #cbd5e1',
+  }
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
 
   return (
     <section style={{ padding: '1rem', border: '1px solid #e2e8f0', borderRadius: '0.75rem' }}>
       <h3 style={{ margin: '0 0 0.75rem', fontSize: '1rem', fontWeight: 600 }}>שותפים</h3>
 
-      {/* Owner row — show 100% when unset (matches the Splid math default). */}
+      {/* Owner row */}
       <div style={rowStyle}>
         <span style={{ flex: 1 }}>
           {ownerLabel || 'לא משויך'}
@@ -299,76 +397,105 @@ export default function BusinessSharingSection({ business, ownerLabel, ownerShar
         <button onClick={onEditOwner} disabled={loading} title="ערוך בעלים ואחוז" style={pencilBtn}>✏️</button>
       </div>
 
-      {/* Active shares */}
-      {shares.map(share => (
-        <div key={share.id} style={rowStyle}>
-          <span style={{ flex: 1 }}>
-            {share.sharedWithDisplayName ? (
-              <>
-                {share.sharedWithDisplayName}
-                <span style={{ color: '#64748b', marginInlineStart: '0.5rem', fontSize: '0.8rem' }}>
-                  ({share.sharedWithEmail})
-                </span>
-              </>
-            ) : (
-              share.sharedWithEmail
-            )}
-            <span style={{ color: '#64748b', marginInlineStart: '0.5rem' }}>
-              · {share.sharePercent != null ? `${share.sharePercent}%` : '—'}
+      {/* Partner rows */}
+      {partners.map(partner => {
+        const grant = grantByPartner.get(partner.id)
+        const invitation = invitationByPartner.get(partner.id)
+        return (
+          <div key={partner.id} style={rowStyle}>
+            <span style={{ flex: '1 1 200px', minWidth: 0 }}>
+              {partner.displayName ? (
+                <>
+                  {partner.displayName}
+                  <span style={{ color: '#64748b', marginInlineStart: '0.5rem', fontSize: '0.8rem' }}>
+                    ({partner.email})
+                  </span>
+                </>
+              ) : (
+                partner.email
+              )}
+              <span style={{ color: '#64748b', marginInlineStart: '0.5rem' }}>· {partner.sharePercent}%</span>
             </span>
-          </span>
-          <button
-            onClick={() => openEditModal('share', share.id, share.sharedWithDisplayName ? `${share.sharedWithDisplayName} (${share.sharedWithEmail})` : share.sharedWithEmail, share.sharePercent)}
-            disabled={loading}
-            title="ערוך אחוז שותפות"
-            style={pencilBtn}
-          >
-            ✏️
-          </button>
-          <button
-            onClick={() => void handleRegenerateLink(share)}
-            disabled={loading}
-            title="צור קישור חדש להתחברות מחדש"
-            style={pencilBtn}
-          >
-            🔗
-          </button>
-          <button onClick={() => void handleRevoke(share.id)} disabled={loading} style={revokeBtn}>
-            בטל שיתוף
-          </button>
-        </div>
-      ))}
 
-      {/* Pending invitations */}
-      {pendingInvitations.map(inv => (
-        <div key={inv.id} style={{ ...rowStyle, background: '#fefce8', borderColor: '#fde047' }}>
-          <span style={{ flex: 1 }}>
-            {inv.inviteeEmail}
-            <span style={{ color: '#a16207', marginInlineStart: '0.5rem' }}>
-              · {inv.sharePercent != null ? `${inv.sharePercent}%` : '—'}
-            </span>
-            <span style={{ color: '#a16207', marginInlineStart: '0.5rem', fontSize: '0.75rem' }}>(ממתין לאישור)</span>
-          </span>
-          <button
-            onClick={() => openEditModal('invitation', inv.id, inv.inviteeEmail, inv.sharePercent)}
-            disabled={loading}
-            title="ערוך אחוז שותפות"
-            style={pencilBtn}
-          >
-            ✏️
-          </button>
-          <button onClick={() => void handleCancelInvitation(inv.id)} disabled={loading} style={revokeBtn}>
-            בטל הזמנה
-          </button>
-        </div>
-      ))}
+            {/* Access state badge */}
+            {grant ? (
+              <span style={accessBadgeGranted}>✓ נגיש</span>
+            ) : invitation ? (
+              <span style={accessBadgePending}>📧 הזמנה ממתינה</span>
+            ) : (
+              <span style={accessBadgeNone}>אין גישה</span>
+            )}
+
+            {/* Edit percent */}
+            <button
+              onClick={() => openEditPartner(partner)}
+              disabled={loading}
+              title="ערוך אחוז שותפות"
+              style={pencilBtn}
+            >
+              ✏️
+            </button>
+
+            {/* Access-specific actions */}
+            {grant ? (
+              <button
+                onClick={() => void handleRevokeAccess(grant.id)}
+                disabled={loading}
+                title="בטל גישה — השותף נשאר במערכת"
+                style={dangerBtn}
+              >
+                בטל גישה
+              </button>
+            ) : invitation ? (
+              <>
+                <button
+                  onClick={() => void handleCopyInvitationLink(invitation)}
+                  disabled={loading}
+                  title="העתק קישור הזמנה"
+                  style={pencilBtn}
+                >
+                  📋
+                </button>
+                <button
+                  onClick={() => void handleCancelInvitation(invitation.id)}
+                  disabled={loading}
+                  title="בטל הזמנה"
+                  style={dangerBtn}
+                >
+                  בטל הזמנה
+                </button>
+              </>
+            ) : null}
+
+            {/* Regenerate / send invite — always available */}
+            <button
+              onClick={() => void handleSendOrRegenerateInvite(partner)}
+              disabled={loading}
+              title={invitation ? 'צור קישור חדש (יבטל את הקודם)' : grant ? 'שלח קישור חדש להתחברות מחדש' : 'שלח הזמנה'}
+              style={pencilBtn}
+            >
+              🔗
+            </button>
+
+            {/* Remove partner entirely */}
+            <button
+              onClick={() => void handleRemovePartner(partner)}
+              disabled={loading}
+              title="הסר שותף לחלוטין (האחוז יחזור לבעלים)"
+              style={dangerBtn}
+            >
+              🗑
+            </button>
+          </div>
+        )
+      })}
 
       {/* Edit-percent modal */}
-      <Modal isOpen={editingTarget !== null} onClose={() => setEditingTarget(null)} maxWidth="400px">
-        {editingTarget && (
+      <Modal isOpen={editingPartnerId !== null} onClose={() => setEditingPartnerId(null)} maxWidth="400px">
+        {editingPartnerId && (
           <div style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>אחוז שותפות</h3>
-            <div style={{ fontSize: '0.85rem', color: '#64748b' }}>{editingTarget.label}</div>
+            <div style={{ fontSize: '0.85rem', color: '#64748b' }}>{editingPartnerLabel}</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <input
                 type="number"
@@ -384,7 +511,7 @@ export default function BusinessSharingSection({ business, ownerLabel, ownerShar
             </div>
             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
               <button
-                onClick={() => setEditingTarget(null)}
+                onClick={() => setEditingPartnerId(null)}
                 disabled={loading}
                 style={{
                   padding: '0.5rem 1rem', fontSize: '0.85rem', borderRadius: '0.375rem',
@@ -406,13 +533,11 @@ export default function BusinessSharingSection({ business, ownerLabel, ownerShar
         )}
       </Modal>
 
-      {/* Total share % — only show when it's wrong AND partners have loaded
-          (otherwise the warning flashes during the load before shares arrive). */}
+      {/* Total % warning */}
       {partnersLoaded && (() => {
-        const ownerPct = business.ownerSharePercent ?? 100
-        const sharesPct = shares.reduce((sum, s) => sum + (s.sharePercent ?? 0), 0)
-        const invitesPct = pendingInvitations.reduce((sum, i) => sum + (i.sharePercent ?? 0), 0)
-        const total = ownerPct + sharesPct + invitesPct
+        const ownerPct = business.ownerSharePercent ?? (100 - partners.reduce((s, p) => s + p.sharePercent, 0))
+        const partnersPct = partners.reduce((s, p) => s + p.sharePercent, 0)
+        const total = ownerPct + partnersPct
         if (total === 100) return null
         return (
           <div style={{
@@ -442,13 +567,20 @@ export default function BusinessSharingSection({ business, ownerLabel, ownerShar
         </button>
       ) : (
         <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
             <input
               type="email"
               value={email}
               onChange={e => setEmail(e.target.value)}
               placeholder="אימייל של השותף"
-              style={{ flex: 1, padding: '0.5rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', fontSize: '0.9rem' }}
+              style={{ flex: '2 1 200px', padding: '0.5rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', fontSize: '0.9rem' }}
+            />
+            <input
+              type="text"
+              value={displayName}
+              onChange={e => setDisplayName(e.target.value)}
+              placeholder="שם להצגה (לא חובה)"
+              style={{ flex: '2 1 160px', padding: '0.5rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', fontSize: '0.9rem' }}
             />
             <input
               type="number" min={0} max={100} step={1}
@@ -457,11 +589,11 @@ export default function BusinessSharingSection({ business, ownerLabel, ownerShar
               placeholder="%" title="אחוז שותפות"
               style={{ width: '70px', padding: '0.5rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', fontSize: '0.9rem', textAlign: 'center' }}
             />
-            <button onClick={() => void handleInvite()} disabled={loading} className="file-picker" style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}>
-              הזמן
+            <button onClick={() => void handleAddPartnerAndInvite()} disabled={loading} className="file-picker" style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}>
+              הוסף ושלח הזמנה
             </button>
             <button
-              onClick={() => { setShowInviteForm(false); setEmail(''); setStatus({ type: 'idle', message: '' }) }}
+              onClick={() => { setShowInviteForm(false); setEmail(''); setDisplayName(''); setStatus({ type: 'idle', message: '' }) }}
               disabled={loading}
               style={{ padding: '0.5rem 0.75rem', fontSize: '0.85rem', borderRadius: '0.375rem', border: '1px solid #e2e8f0', background: '#fff', cursor: 'pointer' }}
             >
@@ -482,9 +614,8 @@ export default function BusinessSharingSection({ business, ownerLabel, ownerShar
         </div>
       )}
 
-      {/* Status + generated link — visible whether the invite form is open
-          (after handleInvite) or closed (after handleRegenerateLink on a
-          row). */}
+      {/* Status + generated link — visible whether the invite form is open or
+          a per-row "regenerate link" action surfaced one. */}
       {status.message && (
         <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: status.type === 'success' ? '#16a34a' : status.type === 'error' ? '#dc2626' : '#64748b' }}>
           {status.message}

@@ -1,15 +1,15 @@
 /**
- * Partner Store — cached list of partner candidates per business.
+ * Partner Store — cached partner / invitation / access-grant state per business.
  *
  * A "partner" is anyone who can be assigned as owner of a business or as the
- * payer/receiver of one of its transactions: household members + users this
- * business is explicitly shared with.
+ * payer/receiver of one of its transactions: household members + users who
+ * currently have access to this business via a BusinessAccessGrant.
  *
  * Why a cache: the candidate list is fetched from two endpoints
  * (/api/household/info + /api/business-share/list) and used by multiple tabs
- * (BizSettingsTab, ExpenseTab, IncomeTab). Refetching on every mount caused
- * visible "empty dropdown" flashes. Names + uids are non-sensitive static
- * data, so localStorage is fine.
+ * (BizSettingsTab, ExpenseTab, IncomeTab, SettlementSummary). Refetching on
+ * every mount caused visible "empty dropdown" flashes. Names + uids are
+ * non-sensitive static data, so localStorage is fine.
  *
  * Pattern: components read getCached(syncId) synchronously for instant
  * render, then call refresh(syncId) on mount to update from API. Subscribe()
@@ -17,18 +17,27 @@
  */
 
 import { getHouseholdInfo } from '@/app/services/householdService'
-import { listShares, type BusinessShare, type BusinessShareInvitation } from '@/app/services/businessShareService'
+import {
+  listShares,
+  type BusinessPartner,
+  type BusinessShareInvitation,
+  type BusinessAccessGrant,
+} from '@/app/services/businessShareService'
 import { getUser } from '@/app/stores/authStore'
 
-export type Partner = { uid: string; label: string; sharePercent?: number }
+export type Participant = { uid: string; label: string; sharePercent?: number }
+/** Legacy alias — many call sites import as `Partner`. */
+export type Partner = Participant
+
 export type CachedBusinessPartners = {
-  participants: Partner[]
-  shares: BusinessShare[]
+  participants: Participant[]
+  partners: BusinessPartner[]
   invitations: BusinessShareInvitation[]
+  grants: BusinessAccessGrant[]
 }
 type CacheShape = Record<string /*businessSyncId*/, CachedBusinessPartners>
 
-const STORAGE_KEY = 'aglamazo_partners_v1'
+const STORAGE_KEY = 'aglamazo_partners_v2'
 
 const listeners = new Set<() => void>()
 
@@ -51,7 +60,7 @@ function saveToStorage(c: CacheShape) {
 let cache: CacheShape = loadFromStorage()
 
 async function fetchAll(businessSyncId: string): Promise<CachedBusinessPartners> {
-  const participants: Partner[] = []
+  const participants: Participant[] = []
   const currentUser = getUser()
 
   // Fetch household + shares in parallel — they're independent endpoints.
@@ -74,42 +83,75 @@ async function fetchAll(businessSyncId: string): Promise<CachedBusinessPartners>
     participants.push({ uid: currentUser.uid, label: currentUser.displayName || currentUser.email || currentUser.uid })
   }
 
-  const shares = sharesResult?.success ? (sharesResult.ownedShares || []).filter(s => s.businessSyncId === businessSyncId) : []
-  const invitations = sharesResult?.success ? (sharesResult.pendingInvitations || []).filter(i => i.businessSyncId === businessSyncId) : []
+  const partners = sharesResult?.success
+    ? (sharesResult.partners || []).filter(p => p.businessSyncId === businessSyncId)
+    : []
+  const invitations = sharesResult?.success
+    ? (sharesResult.ownedInvitations || []).filter(i => i.businessSyncId === businessSyncId)
+    : []
+  const grants = sharesResult?.success
+    ? (sharesResult.grantsFromMe || []).filter(g => g.businessSyncId === businessSyncId)
+    : []
 
-  // Share-with users for this business — server-resolved displayName via list endpoint.
-  for (const s of shares) {
-    if (!participants.find(p => p.uid === s.sharedWithUid)) {
+  // Build a partner-uid → sharePercent map so participants entries (uids) can
+  // surface the % of the partner record they're bound to.
+  const partnerById = new Map(partners.map(p => [p.id, p]))
+  for (const g of grants) {
+    const partner = partnerById.get(g.partnerId)
+    if (!partner) continue
+    if (!participants.find(p => p.uid === g.uid)) {
       participants.push({
-        uid: s.sharedWithUid,
-        label: s.sharedWithDisplayName || s.sharedWithEmail,
-        sharePercent: s.sharePercent,
+        uid: g.uid,
+        label: g.grantedUserDisplayName || partner.displayName || partner.email,
+        sharePercent: partner.sharePercent,
       })
+    } else {
+      // Existing participant (e.g., household member who also has a grant) —
+      // backfill the partner's sharePercent.
+      const existing = participants.find(p => p.uid === g.uid)
+      if (existing && existing.sharePercent === undefined) {
+        existing.sharePercent = partner.sharePercent
+      }
     }
   }
 
-  return { participants, shares, invitations }
+  return { participants, partners, invitations, grants }
 }
 
-const EMPTY: CachedBusinessPartners = { participants: [], shares: [], invitations: [] }
+const EMPTY: CachedBusinessPartners = { participants: [], partners: [], invitations: [], grants: [] }
 
 export const partnerStore = {
-  /** Synchronous read — returns the merged participants list (Partner[]). */
-  getCached(businessSyncId: string | undefined): Partner[] {
+  /** Synchronous read — returns the merged participants list (Participant[]). */
+  getCached(businessSyncId: string | undefined): Participant[] {
     if (!businessSyncId) return []
     return (cache[businessSyncId] || EMPTY).participants
   },
 
-  /** Synchronous read — raw active shares for this business. */
-  getCachedShares(businessSyncId: string | undefined): BusinessShare[] {
+  /** Synchronous read — raw partner records for this business (durable identities). */
+  getCachedPartners(businessSyncId: string | undefined): BusinessPartner[] {
     if (!businessSyncId) return []
-    return (cache[businessSyncId] || EMPTY).shares
+    return (cache[businessSyncId] || EMPTY).partners
   },
 
   /** Synchronous read — pending invitations for this business. */
   getCachedInvitations(businessSyncId: string | undefined): BusinessShareInvitation[] {
     if (!businessSyncId) return []
     return (cache[businessSyncId] || EMPTY).invitations
+  },
+
+  /** Synchronous read — access grants for this business (who currently has access). */
+  getCachedGrants(businessSyncId: string | undefined): BusinessAccessGrant[] {
+    if (!businessSyncId) return []
+    return (cache[businessSyncId] || EMPTY).grants
+  },
+
+  /**
+   * Legacy alias used by SettlementSummary etc. — historically returned
+   * `BusinessShare[]` which conflated partner + grant. Now returns grants,
+   * which is what callers actually need (the uid bindings).
+   */
+  getCachedShares(businessSyncId: string | undefined): BusinessAccessGrant[] {
+    return this.getCachedGrants(businessSyncId)
   },
 
   /** Fetch from API, update cache + notify subscribers. Idempotent and safe to call repeatedly. */

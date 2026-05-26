@@ -26,11 +26,31 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Business shares collection - read for owner or recipient
+    // Legacy business shares collection - read for owner or recipient.
+    // Writes are server-side only (kept around during the businessPartners
+    // migration window so we can roll back; will be removed once stable).
     match /businessShares/{shareId} {
       allow read: if request.auth != null
                   && (resource.data.ownerUid == request.auth.uid
                       || resource.data.sharedWithUid == request.auth.uid);
+      allow write: if false;
+    }
+
+    // Business partners — owner-readable. Recipient does NOT read the partner
+    // doc directly; the /list endpoint surfaces partner data via the access
+    // grant join.
+    match /businessPartners/{partnerId} {
+      allow read: if request.auth != null
+                  && resource.data.ownerUid == request.auth.uid;
+      allow write: if false;
+    }
+
+    // Business access grants — owner sees all their grants; granted user sees
+    // their own grants (to check what they have access to).
+    match /businessAccessGrants/{grantId} {
+      allow read: if request.auth != null
+                  && (resource.data.ownerUid == request.auth.uid
+                      || resource.data.uid == request.auth.uid);
       allow write: if false;
     }
 

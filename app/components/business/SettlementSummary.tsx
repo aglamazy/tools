@@ -5,7 +5,7 @@ import { db, type Transaction, type Business } from '@/app/db/financeDB'
 import { businessStore } from '@/app/stores/businessStore'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { partnerStore, type Partner as Participant } from '@/app/stores/partnerStore'
-import type { BusinessShare } from '@/app/services/businessShareService'
+import type { BusinessAccessGrant } from '@/app/services/businessShareService'
 import { appSettingsStore, type AccountOwners } from '@/app/stores/appSettingsStore'
 import { getTaxProfile } from '@/app/components/TaxProfileSection'
 import { VAT_RATE_AUTHORIZED_DEALER, type VatType } from '@/app/lib/vat'
@@ -38,7 +38,7 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
   const [participants, setParticipants] = useState<Participant[]>(() =>
     typeof window !== 'undefined' ? partnerStore.getCached(undefined) : []
   )
-  const [shares, setShares] = useState<BusinessShare[]>([])
+  const [shares, setShares] = useState<BusinessAccessGrant[]>([])
   const [ownerVatType, setOwnerVatType] = useState<VatType | undefined>(undefined)
   const [accountOwners, setAccountOwners] = useState<AccountOwners>({})
   const [loading, setLoading] = useState(true)
@@ -115,7 +115,7 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
     // members (e.g., a spouse who isn't a sharee here) aren't partners — their
     // attributed txs collapse to the owner side.
     const shareeUids = shares
-      .map(s => s.sharedWithUid)
+      .map(s => s.uid)
       .filter((u): u is string => typeof u === 'string')
     const partnerUids = new Set<string>([ownerUid, ...shareeUids])
     const partnerParticipants = participants.filter(p => partnerUids.has(p.uid))
@@ -216,7 +216,7 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
   // Render-scope partnerUids — same derivation as inside `rows` useMemo, used
   // by the per-row list to compute VAT-clean amounts per row.
   const renderShareeUids = shares
-    .map(s => s.sharedWithUid)
+    .map(s => s.uid)
     .filter((u): u is string => typeof u === 'string')
   const renderPartnerUids = new Set<string>(ownerUid ? [ownerUid, ...renderShareeUids] : renderShareeUids)
   const vatTypeForTx = (resolvedUid: string | undefined): VatType | undefined => {
