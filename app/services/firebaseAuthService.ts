@@ -6,6 +6,7 @@
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  signInWithCredential,
   signInWithPopup,
   GoogleAuthProvider,
   signOut as firebaseSignOut,
@@ -19,6 +20,7 @@ import {
   type Unsubscribe,
 } from 'firebase/auth'
 import { getFirebaseAuth, isFirebaseConfigured } from '@/app/lib/firebase'
+import { requestGoogleAccess } from '@/app/services/googleTokenService'
 
 export type AuthUser = {
   uid: string
@@ -167,7 +169,20 @@ export async function signInWithEmail(
 }
 
 /**
- * Sign in with Google
+ * Sign in with Google — single-popup, all-scopes-at-once flow.
+ *
+ * Uses one OAuth code-flow popup that requests both:
+ *   - openid + email + profile  (for Firebase sign-in via id_token)
+ *   - calendar.readonly, drive.file, gmail.modify, gmail.settings.basic
+ *     (for the Google APIs we use — stored as access + refresh tokens
+ *     in IndexedDB by googleTokenService.requestGoogleAccess).
+ *
+ * Net effect: one user gesture grants everything. The Gmail/Drive/Calendar
+ * actions later in the session don't need a second consent popup.
+ *
+ * Falls back to the basic Firebase signInWithPopup if the bundled flow
+ * fails (e.g. server-side OAuth env missing). The fallback works but
+ * any later Gmail send will need a mid-session consent popup.
  */
 export async function signInWithGoogle(): Promise<AuthResult> {
   if (!isFirebaseConfigured()) {
@@ -175,23 +190,42 @@ export async function signInWithGoogle(): Promise<AuthResult> {
   }
 
   try {
+    // Bundled flow: one popup grants Firebase auth + all Google API scopes.
+    const result = await requestGoogleAccess()
+    if (result.success && result.idToken) {
+      const auth = getFirebaseAuth()
+      const credential = GoogleAuthProvider.credential(result.idToken)
+      const userCred = await signInWithCredential(auth, credential)
+
+      // Best-effort: claim any pre-provisioned tier for this email
+      try {
+        const idToken = await userCred.user.getIdToken()
+        await fetch('/api/auth/claim-provision', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${idToken}` },
+        })
+      } catch { /* non-blocking */ }
+
+      return { success: true, user: toAuthUser(userCred.user) }
+    }
+
+    // Bundled flow failed (no id_token came back, server misconfigured, etc.).
+    // Fall back to plain Firebase popup — sign-in works, but Gmail/Drive/
+    // Calendar will need a mid-session second consent later.
+    console.warn('[Auth] Bundled Google sign-in failed; falling back to basic Firebase popup:', result.error)
     const auth = getFirebaseAuth()
     const provider = new GoogleAuthProvider()
-    const credential = await signInWithPopup(auth, provider)
+    const cred = await signInWithPopup(auth, provider)
 
-    // Best-effort: claim any pre-provisioned tier for this email
     try {
-      const idToken = await credential.user.getIdToken()
+      const idToken = await cred.user.getIdToken()
       await fetch('/api/auth/claim-provision', {
         method: 'POST',
         headers: { Authorization: `Bearer ${idToken}` },
       })
     } catch { /* non-blocking */ }
 
-    return {
-      success: true,
-      user: toAuthUser(credential.user),
-    }
+    return { success: true, user: toAuthUser(cred.user) }
   } catch (err: any) {
     console.error('[Auth] Google sign in failed:', err.code, err.message)
     return {

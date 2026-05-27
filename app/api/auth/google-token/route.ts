@@ -54,6 +54,10 @@ export async function POST(request: NextRequest) {
         accessToken: data.access_token,
         refreshToken: data.refresh_token,
         expiresIn: data.expires_in,
+        // id_token is included when the OAuth scope set contains `openid`; the
+        // client uses it to sign in to Firebase via signInWithCredential, so a
+        // single popup grants both Firebase auth AND Gmail/Drive/Calendar tokens.
+        idToken: data.id_token,
       })
     }
 
@@ -76,8 +80,14 @@ export async function POST(request: NextRequest) {
 
       if (!response.ok) {
         console.error('[google-token] Refresh failed:', data)
+        // Surface Google's structured error code so the client can distinguish
+        // a permanent failure (`invalid_grant` — refresh token revoked) from
+        // transient ones (rate limits, 5xx, network blips).
         return NextResponse.json(
-          { error: data.error_description || data.error || 'Token refresh failed' },
+          {
+            error: data.error_description || data.error || 'Token refresh failed',
+            errorCode: data.error || null,
+          },
           { status: response.status }
         )
       }

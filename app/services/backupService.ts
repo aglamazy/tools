@@ -21,6 +21,17 @@ import { timerStore } from '@/app/stores/timerStore'
 import { initializeAppSettings } from '@/app/services/appSettingsService'
 import { SYNCED_DB_TABLES } from './syncedTables'
 
+// Keys we must never ship to cloud backup. Refresh tokens are device-scoped
+// (and security-sensitive); if they get synced and then merged back over a
+// fresh device's tokens, the active session loses its silent-refresh path
+// and Gmail/Drive/Calendar surface a "please log in again" popup mid-session.
+// The `google_` prefix matches the keys defined in googleTokenService.ts
+// (KEY_ACCESS_TOKEN, KEY_REFRESH_TOKEN, KEY_TOKEN_EXPIRY).
+function shouldSkipAppSettingForBackup(row: any): boolean {
+  const key = String(row?.key || '')
+  return key.startsWith('google_')
+}
+
 
 export interface BackupData {
   version: string
@@ -53,12 +64,20 @@ export interface BackupData {
  */
 export async function exportAllStores(): Promise<BackupData> {
   try {
-    // Export all synced DB tables (single source of truth: syncedTables.ts)
+    // Export all synced DB tables (single source of truth: syncedTables.ts).
+    // Strip device-local Google OAuth tokens from appSettings — they must
+    // never travel through cloud backup (see shouldSkipAppSettingForBackup).
     const tableArrays = await Promise.all(
       SYNCED_DB_TABLES.map((name) => (db as any)[name].toArray())
     )
     const stores: any = {}
-    SYNCED_DB_TABLES.forEach((name, i) => { stores[name] = tableArrays[i] })
+    SYNCED_DB_TABLES.forEach((name, i) => {
+      if (name === 'appSettings') {
+        stores[name] = tableArrays[i].filter((r: any) => !shouldSkipAppSettingForBackup(r))
+      } else {
+        stores[name] = tableArrays[i]
+      }
+    })
 
     // Let stores export their own data
     const [subjectStoreData, timerStoreData] = await Promise.all([
@@ -107,17 +126,38 @@ export async function importAllStores(backup: BackupData): Promise<void> {
       console.warn('[BackupRestore] Cloud backup missing core data (transactions/importedFiles). Importing other tables only.', counts)
     }
 
+    // Preserve local Google OAuth tokens across a full restore — the
+    // clear()+bulkAdd cycle below would otherwise wipe them and force the
+    // user to re-grant Gmail/Drive/Calendar consent. Tokens are device-local;
+    // they must never travel through backup (see shouldSkipAppSettingForBackup).
+    const localGoogleRows = (await db.appSettings.toArray())
+      .filter((r: any) => shouldSkipAppSettingForBackup(r))
+
     // Clear and import all synced IndexedDB tables
     // Skip tables whose backup is empty (preserves local data)
     // Skip core tables (transactions/importedFiles) if backup looks incomplete
     const skipCore = counts.transactions === 0 || counts.importedFiles === 0
     const coreTables = new Set(['transactions', 'importedFiles'])
     for (const name of SYNCED_DB_TABLES) {
-      const data = (stores as any)[name]
+      let data = (stores as any)[name]
       if (!data || data.length === 0) continue
       if (skipCore && coreTables.has(name)) continue
+      // Defensive: scrub google_* keys from a legacy backup that still has them.
+      if (name === 'appSettings') {
+        data = data.filter((r: any) => !shouldSkipAppSettingForBackup(r))
+      }
       await (db as any)[name].clear()
       await (db as any)[name].bulkAdd(data)
+    }
+
+    // Restore the local Google tokens after the clear cycle.
+    if (localGoogleRows.length > 0) {
+      // bulkAdd would conflict on the (now-stale) auto-increment ids; use put
+      // by key to upsert by the row content.
+      for (const row of localGoogleRows) {
+        const { id: _drop, ...rest } = row
+        await db.appSettings.add(rest as any)
+      }
     }
 
     // Let stores import their own data

@@ -91,7 +91,13 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
     async () => {
       for (const tableName of SYNCED_DB_TABLES) {
         const table = (db as any)[tableName]
-        const cloudRecords: any[] = (cloud.stores as any)[tableName] || []
+        let cloudRecords: any[] = (cloud.stores as any)[tableName] || []
+        // Defensive filter: legacy cloud backups (written before we filtered
+        // google_* keys at export) may still carry stale Google OAuth tokens.
+        // Strip them on import too — local tokens win.
+        if (tableName === 'appSettings') {
+          cloudRecords = cloudRecords.filter((r: any) => !String(r?.key || '').startsWith('google_'))
+        }
         const deletedSyncIds = allDeletions[tableName] || new Set<string>()
 
         // Read local state

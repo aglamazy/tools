@@ -4,13 +4,19 @@
  * Tokens are stored in IndexedDB via the existing appSettings table.
  *
  * NOTE: The refresh token is stored with key 'google_refresh_token' in appSettings.
- * The backupService filters out keys starting with 'google_' to prevent
- * refresh tokens from leaking into sync/backup exports.
+ * backupService.ts filters out keys starting with 'google_' on both export AND
+ * import paths, and applyMergedBackupService strips them from incoming cloud
+ * records — so the tokens stay strictly device-local and don't get clobbered
+ * by a CloudSync that ran on a different device with no consent yet.
  */
 
 import { db } from '@/app/db/financeDB'
 
-const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic'
+// All Google API scopes Aglamazo ever needs are bundled into the login popup
+// (see signInWithGoogleAndScopes in firebaseAuthService.ts). Listing `openid
+// email profile` first means the same popup also returns an id_token that we
+// use to sign Firebase in — single user gesture, no mid-session re-auth.
+const SCOPES = 'openid email profile https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic'
 
 // Keys used in appSettings
 const KEY_ACCESS_TOKEN = 'google_access_token'
@@ -99,9 +105,15 @@ export async function getAccessToken(): Promise<string | null> {
     })
 
     if (!res.ok) {
-      console.error('[GoogleToken] Refresh failed:', res.status)
-      // If refresh token is revoked / invalid, clear everything
-      if (res.status === 400 || res.status === 401) {
+      // Only clear tokens on a definite "your refresh token is dead" signal
+      // from Google. Transient 4xx/5xx (rate limits, network blips, server
+      // hiccups) used to nuke the refresh token too — which forced the user
+      // to re-grant Gmail consent next time, which surfaced as "Google auth
+      // popup keeps appearing." Keep tokens; the next call will retry.
+      const body = await res.json().catch(() => ({} as any))
+      const isInvalidGrant = body?.errorCode === 'invalid_grant'
+      console.error('[GoogleToken] Refresh failed:', res.status, body, 'invalidGrant=', isInvalidGrant)
+      if (isInvalidGrant) {
         await clearGoogleAccess()
       }
       return null
@@ -126,8 +138,13 @@ export async function getAccessToken(): Promise<string | null> {
  * Trigger the one-time OAuth consent popup.
  * Opens Google's authorization URL in a popup window, receives the code
  * via postMessage from the callback page, then exchanges it for tokens.
+ *
+ * The exchange now also returns an `idToken` (because SCOPES includes
+ * `openid`) — callers that want to bundle this with Firebase sign-in
+ * (see signInWithGoogleBundled in firebaseAuthService.ts) can use it
+ * directly. Plain "I just need Gmail scopes" callers can ignore it.
  */
-export async function requestGoogleAccess(): Promise<{ success: boolean; error?: string }> {
+export async function requestGoogleAccess(): Promise<{ success: boolean; error?: string; idToken?: string }> {
   const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID
   if (!clientId) {
     return { success: false, error: 'Google Client ID not configured' }
@@ -204,7 +221,7 @@ export async function requestGoogleAccess(): Promise<{ success: boolean; error?:
           ...(data.refreshToken ? [putSetting(KEY_REFRESH_TOKEN, data.refreshToken)] : []),
         ])
 
-        resolve({ success: true })
+        resolve({ success: true, idToken: data.idToken })
       } catch (err: any) {
         console.error('[GoogleToken] Code exchange error:', err)
         resolve({ success: false, error: 'Failed to exchange authorization code' })
