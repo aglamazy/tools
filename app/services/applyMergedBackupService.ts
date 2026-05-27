@@ -33,6 +33,15 @@ const FK_RELATIONS: Record<string, { fkField: string; parentTable: string }> = {
   projects: { fkField: 'businessId', parentTable: 'businesses' },
   harvestTasks: { fkField: 'projectId', parentTable: 'projects' },
   timeEntries: { fkField: 'taskId', parentTable: 'harvestTasks' },
+  // ypayDocuments stores transactionId as STRING (`String(t.id)`). expenseDocuments
+  // stores it as NUMBER. The lookup logic below coerces string-numeric keys to
+  // number for the cloud-id map (transactions have numeric ids), then writes
+  // the resolved local id back in the same shape the field originally had.
+  ypayDocuments: { fkField: 'transactionId', parentTable: 'transactions' },
+  expenseDocuments: { fkField: 'transactionId', parentTable: 'transactions' },
+  taxDocuments: { fkField: 'businessId', parentTable: 'businesses' },
+  advancePayments: { fkField: 'businessId', parentTable: 'businesses' },
+  businessTasks: { fkField: 'businessId', parentTable: 'businesses' },
 }
 
 function getTimestamp(record: any): string {
@@ -157,11 +166,20 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
             const parentMap = syncIdToLocalId[parentTable]
             const cloudParentMap = cloudIdToSyncId[parentTable]
             if (parentMap && cloudParentMap) {
-              const parentSyncId = cloudParentMap.get(cloudRec[fkInfo.fkField])
+              // Some FK columns store the parent id as a string (e.g.
+              // ypayDocuments.transactionId = String(t.id)). The cloud-id map
+              // is keyed by the parent's raw id type (number for transactions),
+              // so coerce numeric-strings to number for the lookup. Preserve
+              // the FK's original type when we write the resolved id back so
+              // downstream code (UI maps, etc.) keeps working.
+              const fkRaw = cloudRec[fkInfo.fkField]
+              const fkWasString = typeof fkRaw === 'string'
+              const lookupKey = fkWasString && /^\d+$/.test(fkRaw) ? Number(fkRaw) : fkRaw
+              const parentSyncId = cloudParentMap.get(lookupKey)
               if (parentSyncId) {
                 const localParentId = parentMap.get(parentSyncId)
                 if (localParentId !== undefined) {
-                  cloudRec[fkInfo.fkField] = localParentId
+                  cloudRec[fkInfo.fkField] = fkWasString ? String(localParentId) : localParentId
                 } else {
                   // Parent not found locally. Two cases:
                   //   (a) parent was deleted+tombstoned locally → child is officially

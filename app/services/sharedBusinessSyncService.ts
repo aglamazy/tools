@@ -66,6 +66,21 @@ async function getLocallyDeletedBusinessSyncIds(): Promise<Set<string>> {
 
 /**
  * Export a single business and all its children as a mini BackupData.
+ *
+ * Scope — everything the business-view tabs read:
+ *   - business doc + businessCategories rows + Category rows for those names
+ *   - transactions tagged with any of the business's categories
+ *     (powers הכנסות / הוצאות / התחשבנות tabs)
+ *   - ypayDocuments linked to those transactions (חשבוניות tab)
+ *   - expenseDocuments linked to those transactions (מסמכים פתוחים tab)
+ *   - projects + harvestTasks + timeEntries (פרויקטים / תיעוד זמן)
+ *   - businessTasks (משימות), taxDocuments + advancePayments (settings/tax)
+ *
+ * Out of scope (intentionally not shared):
+ *   - tasks (personal Eisenhower todos)
+ *   - importedFiles (raw bank/CC source files — privacy boundary)
+ *   - capitalEntries / financialInstitutions (cross-business)
+ *   - vatPayments (per-user filing record, owner-scoped)
  */
 async function exportBusinessData(businessSyncId: string): Promise<BackupData | null> {
   // Find the business
@@ -103,29 +118,61 @@ async function exportBusinessData(businessSyncId: string): Promise<BackupData | 
     ? await db.timeEntries.where('taskId').anyOf(taskIds).toArray()
     : []
 
-  // Collect businessCategories by business name
-  const bizCategory = await db.businessCategories
-    .where('business').equals(business.name).first()
-  const businessCategories = bizCategory ? [bizCategory] : []
+  // Collect ALL businessCategories for this business (a business typically has
+  // multiple — income/expense pairs, VAT categories, etc.). The IncomeTab and
+  // ExpensesTab key transactions off these names, so we have to ship the full
+  // set or sharee sees nothing.
+  const businessCategories = await db.businessCategories
+    .where('business').equals(business.name).toArray()
+  const categoryNames = Array.from(new Set(
+    businessCategories.map(bc => bc.category).filter(Boolean)
+  ))
 
-  // Collect categories used by this business
-  const categoryName = bizCategory?.category
-  const categories = categoryName
-    ? await db.categories.where('name').equals(categoryName).toArray()
+  // Collect Category rows matching those names
+  const categories = categoryNames.length > 0
+    ? await db.categories.where('name').anyOf(categoryNames).toArray()
     : []
 
-  // Build mini backup — only include tables with data for this business
+  // Collect transactions tagged with any of those categories. Filtering in JS
+  // (rather than via Dexie .where().anyOf()) because Transaction.category is
+  // unindexed and the in-memory pass over the user's transaction table is
+  // small enough not to matter (typically a few thousand rows).
+  const allTransactions = await db.transactions.toArray()
+  const categorySet = new Set(categoryNames)
+  const transactions = categorySet.size > 0
+    ? allTransactions.filter(t => t.category && categorySet.has(t.category))
+    : []
+
+  // Collect documents linked to those transactions. ypayDocuments.transactionId
+  // is stored as String(t.id); expenseDocuments.transactionId is a number.
+  const transactionIds = transactions.map(t => t.id!).filter(Boolean)
+  const transactionIdStrSet = new Set(transactionIds.map(String))
+  const transactionIdNumSet = new Set(transactionIds)
+
+  const [allYpayDocs, allExpenseDocs] = await Promise.all([
+    db.ypayDocuments.toArray(),
+    db.expenseDocuments.toArray(),
+  ])
+  const ypayDocuments = allYpayDocs.filter(d => transactionIdStrSet.has(d.transactionId))
+  const expenseDocuments = allExpenseDocs.filter(d =>
+    d.transactionId !== undefined && transactionIdNumSet.has(d.transactionId)
+  )
+
+  // Build mini backup — every field the business-view tabs read for this
+  // business. Tables NOT relevant to a single business (importedFiles,
+  // capitalEntries, etc.) are left empty so the merge doesn't touch them.
   const stores: any = {
     businesses: [business],
     categories,
     appSettings: [],
     businessCategories,
     importedFiles: [],
-    transactions: [],
+    transactions,
     tasks: [],
     financialInstitutions: [],
     capitalEntries: [],
-    ypayDocuments: [],
+    ypayDocuments,
+    expenseDocuments,
     projects,
     harvestTasks,
     timeEntries,

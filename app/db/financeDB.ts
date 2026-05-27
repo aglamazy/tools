@@ -378,7 +378,7 @@ class FinanceDB extends Dexie {
     const syncedTables = new Set([
       'businesses', 'categories', 'appSettings', 'businessCategories',
       'importedFiles', 'transactions', 'tasks', 'financialInstitutions',
-      'capitalEntries', 'ypayDocuments', 'projects', 'harvestTasks',
+      'capitalEntries', 'ypayDocuments', 'expenseDocuments', 'projects', 'harvestTasks',
       'timeEntries', 'taxDocuments', 'advancePayments', 'businessTasks',
       'chats', 'chatMessages', 'credentials', 'vatPayments',
     ])

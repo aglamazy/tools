@@ -23,6 +23,7 @@ export const SYNCED_DB_TABLES = [
   'financialInstitutions',
   'capitalEntries',
   'ypayDocuments',
+  'expenseDocuments',
   'projects',
   'harvestTasks',
   'timeEntries',
