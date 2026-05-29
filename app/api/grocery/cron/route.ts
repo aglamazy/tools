@@ -50,6 +50,36 @@ export const maxDuration = 300
 const CRON_SECRET = process.env.CRON_SECRET
 
 /**
+ * Best-effort healthchecks.io ping with a small retry.
+ *
+ * The ping must never break the cron, so failures are swallowed — but a single
+ * transient blip on the ping `fetch` used to silently drop the success signal
+ * and flip the 'Aglamazo Cron' probe DOWN even though the run itself succeeded.
+ * Retry a few times (with a short per-attempt timeout) before giving up.
+ *
+ * NOTE (2026-05-29 incident): the probe also went DOWN after Vercel SKIPPED a
+ * single scheduled invocation (02:00 UTC) — the function never ran, so nothing
+ * here could fire. The run before (00:00 UTC) and after were healthy 200s. That
+ * class of false-positive is handled on the monitor side: the healthchecks
+ * grace was widened from 1h to 2.5h so one missed/delayed 2h cycle is tolerated
+ * while 2+ consecutive misses still alert. This retry only hardens the ping
+ * leg; it can't resurrect an invocation Vercel never delivered.
+ */
+async function pingHealthcheck(url: string | undefined, suffix = ''): Promise<void> {
+  if (!url) return
+  const target = `${url}${suffix}`
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(target, { signal: AbortSignal.timeout(8000) })
+      if (res.ok) return
+    } catch {
+      // transient — fall through to retry
+    }
+  }
+  console.warn(`[Grocery Cron] healthcheck ping failed after retries: ${target}`)
+}
+
+/**
  * Best-effort Telegram notification. A stale chatId ("chat not found", user
  * blocked bot, etc.) is a per-user state issue, not a cron infrastructure
  * failure — log it, but don't let it propagate into `results` and trip the
@@ -85,7 +115,7 @@ export async function GET(request: NextRequest) {
   // the disabled path silently DOWNs the probe within one schedule window
   // (root cause of the 2026-05 incident).
   if (process.env.GROCERY_CRON_ENABLED === 'false') {
-    if (hcUrl) await fetch(hcUrl).catch(() => {})
+    await pingHealthcheck(hcUrl)
     return NextResponse.json({ ok: true, skipped: 'GROCERY_CRON_ENABLED=false' })
   }
 
@@ -95,7 +125,7 @@ export async function GET(request: NextRequest) {
     // Infra-level failure: the cron route itself blew up before it could
     // iterate users. Surface this to healthchecks.io as a real /fail.
     console.error('[Grocery Cron] Infra error:', err)
-    if (hcUrl) await fetch(`${hcUrl}/fail`).catch(() => {})
+    await pingHealthcheck(hcUrl, '/fail')
     throw err
   }
 }
@@ -293,7 +323,7 @@ async function runCron(hcUrl: string | undefined) {
   // ("is the cron firing on schedule?") under per-user noise.
   // Real infra failures (Firestore unreachable, route crash) are caught by
   // the outer try/catch in GET() and routed to /fail.
-  if (hcUrl) await fetch(hcUrl).catch(() => {})
+  await pingHealthcheck(hcUrl)
 
   return NextResponse.json({ ok: true, results })
 }
