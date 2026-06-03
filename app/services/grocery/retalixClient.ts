@@ -21,7 +21,8 @@ const DEFAULT_CONFIG: RetalixStoreConfig = {
   deviceId: '96b94189f7353d93283bf995265b5737',
   xWebsite: 'eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2In0..Fd0IKxSrb6gyMYWl9-qHPg.WSJZnBSChp-7D5pYeQquVKjZeJFhEFzCJ-IhvfBDBmcg19uvWecP2vIieRGGu0nOzAaE11WxQCTI3zdhIqNaTNCJ3fMFCQDCmztsqs1VE_asLSV375uK1qYdL6uquuuF.9jmt8tegsAQI0rfz6O4A8w',
   storeId: 180,
-  deliveryAreaId: 10038,
+  // deliveryAreaId intentionally NOT hardcoded — it belongs to the user's account
+  // and must be discovered at runtime from the API (see getSlots).
   deliveryMethod: 'deliveryByStore',
   preferredDay: 'thursday',
   preferredHour: 18,
@@ -32,7 +33,7 @@ const DEFAULT_CONFIG: RetalixStoreConfig = {
 const SHARED_REXAIL_DEFAULTS: Omit<RetalixStoreConfig, 'siteOrigin' | 'xWebsite' | 'storeId'> = {
   apiBase: 'https://client-il.rexail.com/client',
   deviceId: '96b94189f7353d93283bf995265b5737',
-  deliveryAreaId: 0,           // user picks at connect time
+  // deliveryAreaId: comes from the user's account; never hardcoded.
   deliveryMethod: 'deliveryByStore',
   preferredDay: 'thursday',
   preferredHour: 18,
@@ -258,13 +259,19 @@ export async function verifyOtp(uid: string, storeId: string, otp: string): Prom
   const token = resp.data?.second
   if (!token) throw new Error('No token in OTP response')
 
+  // Surface the full response shape so we can discover where the user's
+  // delivery area / address / customer id actually surfaces. Strip the token
+  // before logging — keys + sibling values are enough to learn the schema.
+  const responseShape = resp.data ? { ...resp.data, second: '[redacted-token]' } : null
+  console.log(`[Retalix] OTP verified for uid=${uid}; authenticate response shape:`,
+    JSON.stringify(responseShape, null, 2))
+
   // Logged-in (Tier 3): encrypt the token at rest, same as phone in saveRetalixCredentials.
   await credRef(uid, storeId).update({
     token: encryptCred(token),
     verified: true,
     otpPending: false,
   })
-  console.log(`[Retalix] OTP verified for uid=${uid}`)
   return token
 }
 
@@ -521,11 +528,57 @@ export async function getSlots(
   if (!resp.success) throw new Error(`Slots failed: ${resp.resolvedMessage}`)
 
   const areas = resp.data?.availableDeliveryAreas?.data || []
-  const area = areas.find((a: any) => a.serviceArea?.id === config.deliveryAreaId)
-  if (!area) throw new Error(`Delivery area ${config.deliveryAreaId} not found`)
 
-  let slots: any[] = area.availableHours || []
-  if (dayName) slots = slots.filter((s: any) => s.dayOfWeek?.name === dayName)
+  // Log the raw shape so we can discover which fields surface the user's
+  // account default (e.g. `isCustomerArea`, `isDefault`, `serviceArea.address`,
+  // etc). Once known, swap the discovery below to read that field.
+  console.log('[Retalix:getSlots] available areas:',
+    JSON.stringify(areas.map((a: any) => ({
+      id: a.serviceArea?.id,
+      name: a.serviceArea?.name ?? a.serviceArea?.resolvedName,
+      keys: Object.keys(a),
+      serviceAreaKeys: a.serviceArea ? Object.keys(a.serviceArea) : [],
+    })), null, 2))
+
+  if (areas.length === 0) {
+    throw new Error('אין אזורי משלוח זמינים לחשבון הזה — נסה להתחבר מחדש')
+  }
+
+  // API is the source of truth for the user's area, not the persisted config
+  // (which may carry legacy bad data, e.g. 0 from an older code path).
+  // `serviceArea.matchesClientCity === true` is Rexail's "this is your area" marker.
+  let area: any = areas.find((a: any) => a.serviceArea?.matchesClientCity === true)
+  if (!area && areas.length === 1) {
+    area = areas[0]  // single area returned = unambiguous user area
+  }
+  if (!area) {
+    const ids = areas.map((a: any) => a.serviceArea?.id).join(', ')
+    throw new Error(`לחשבון שלך יש כמה אזורי משלוח (${ids}) ולא נמצא ברירת מחדל — התחבר מחדש`)
+  }
+
+  // Self-heal: if persisted config disagrees with the API-declared area,
+  // overwrite it (in-memory for the rest of THIS request via the config
+  // mutation; in Firestore for future requests via credRef.update).
+  const discoveredAreaId = area.serviceArea?.id as number | undefined
+  if (discoveredAreaId !== undefined && config.deliveryAreaId !== discoveredAreaId) {
+    config.deliveryAreaId = discoveredAreaId
+    if (!creds) {
+      // Authed user — persist back to creds doc. (Anon Tier-1 has no
+      // Firestore doc; the mutation above is enough for this request.)
+      await credRef(uid, storeId).update({
+        'config.deliveryAreaId': discoveredAreaId,
+      })
+      console.log(`[Retalix] Persisted deliveryAreaId=${discoveredAreaId} (was ${config.deliveryAreaId === discoveredAreaId ? 'unset' : 'stale'}) for uid=${uid}`)
+    }
+  }
+
+  const rawSlots: any[] = area.availableHours || []
+  const slots = dayName ? rawSlots.filter((s: any) => s.dayOfWeek?.name === dayName) : rawSlots
+  console.log(`[Retalix:getSlots] area=${area.serviceArea?.id} rawSlots=${rawSlots.length} dayFilter=${dayName ?? 'none'} returned=${slots.length}`)
+  if (rawSlots.length > 0 && slots.length === 0) {
+    const availableDays = [...new Set(rawSlots.map((s: any) => s.dayOfWeek?.name).filter(Boolean))]
+    console.log(`[Retalix:getSlots] availableDays for area ${area.serviceArea?.id}:`, availableDays)
+  }
 
   return slots.map((s: any) => ({
     date: s.date,
@@ -572,6 +625,10 @@ async function prepareOrder(
   creds?: { token: string; config: RetalixStoreConfig },
 ): Promise<string> {
   const { token, config } = await getToken(uid, storeId, creds)
+
+  if (config.deliveryAreaId === undefined) {
+    throw new Error('אזור משלוח לא הוגדר — בדוק זמני הספקה (getSlots) קודם כדי לגלות אותו')
+  }
 
   const resp = await rexailFetch(config, 'client/orders/new/prepare-to-place-order', {
     body: JSON.stringify({
@@ -658,10 +715,10 @@ export async function checkout(
   const slot = slots.find(s => s.hour === preferredHour) || slots[0]
   const deliveryWindow = { day: slot.dayHebrew, date: slot.date, time: `${slot.hour}:00` }
 
-  // Global kill-switch for the test pipeline: SALIKO_DRY_RUN=true forces every
-  // checkout to short-circuit before any state-mutating Rexail call.
-  // Applies identically to logged-in and anon flows — both paths converge here.
-  if (options.dryRun || process.env.SALIKO_DRY_RUN === 'true') {
+  // Test-only dryRun: explicit `options.dryRun` from a test caller short-circuits
+  // before any state-mutating Rexail call. The legacy SALIKO_DRY_RUN env-var
+  // kill-switch was removed — too easy to leave on in dev and trigger silently.
+  if (options.dryRun) {
     return { success: false, dryRun: true, deliveryWindow }
   }
 
@@ -801,15 +858,33 @@ export function createRexailPlugin(entry: RexailPluginEntry): OtpStorePlugin {
     search: (_uid, query): Promise<StoreSearchResult[]> => searchCatalog(storeId, fullConfig, query),
 
     checkout: async (uid, items: CheckoutItem[], options: CheckoutOptions): Promise<StoreCheckoutResult> => {
-      // Resolve missing sellingUnitIds from cached catalog (per-chain, public).
+      // Two failure modes Rexail will reject for: catalogId not numeric
+      // (parseInt → NaN — e.g. a Shufersal-shaped id got into a retalix cart)
+      // OR sellingUnitId unresolved (0 sentinel from resolveSellingUnitId).
+      // Diagnose BOTH before sending; surface the original code so the user
+      // can spot which item is broken without parsing logs.
+      const invalidIds: { code: string }[] = []
       const retalixItems = await Promise.all(items.map(async i => {
         const id = parseInt(i.code, 10)
+        if (!Number.isFinite(id)) {
+          invalidIds.push({ code: i.code })
+          return { id: NaN, qty: i.qty, sellingUnitId: 0 }
+        }
         const stored = i.sellingUnitId
         const resolved = await resolveSellingUnitId(storeId, fullConfig, id)
         const sellingUnitId = stored || resolved
-        console.log(`[Rexail:${storeId}] checkout item id=${id} stored=${stored} resolved=${resolved} using=${sellingUnitId}`)
+        console.log(`[Rexail:${storeId}] checkout item id=${id} code=${i.code} qty=${i.qty} stored=${stored} resolved=${resolved} using=${sellingUnitId}`)
         return { id, qty: i.qty, sellingUnitId }
       }))
+      if (invalidIds.length > 0) {
+        const codes = invalidIds.map(i => `"${i.code}"`).join(', ')
+        throw new Error(`חלק מהפריטים בעגלה במקור השפע יש להם מזהה שלא תקין ל-Rexail (כנראה הוספו במקור מחנות אחרת): ${codes}. הסר אותם ובחר מחדש דרך חיפוש.`)
+      }
+      const missingUnits = retalixItems.filter(i => !i.sellingUnitId)
+      if (missingUnits.length > 0) {
+        const ids = missingUnits.map(i => `#${i.id}`).join(', ')
+        throw new Error(`חסר sellingUnitId לפריטים — הסר ותוסיף מחדש דרך חיפוש: ${ids}`)
+      }
       const hour = options.hour || (options.time ? parseInt(options.time, 10) : undefined)
       return checkout(uid, storeId, retalixItems, { day: options.day, hour, dryRun: options.dryRun })
     },

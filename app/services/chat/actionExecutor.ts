@@ -662,11 +662,21 @@ async function executeOne(
           await sweepStorePending(uid, storeId, safetyNow)
           return `הזמנה בוצעה ב${store.label}! #${result.orderId || ''}\nמשלוח: ${result.deliveryWindow?.day} ${result.deliveryWindow?.date} ${result.deliveryWindow?.time}`
         }
+        if (result.dryRun) {
+          // dryRun short-circuits before the real place-order call. Release
+          // the safety-gate lock so subsequent attempts aren't blocked by a
+          // 'race' verdict from a previous dryRun that never finalized.
+          await finalizeOrderFailure({
+            uid, storeId, idempotencyKey: gate.idempotencyKey, cycle: gate.cycle, now: safetyNow,
+            error: 'dry-run',
+          })
+          return `דמה-ריצה: לא בוצעה הזמנה אמיתית. חלון משלוח שזוהה: ${result.deliveryWindow?.day} ${result.deliveryWindow?.date} ${result.deliveryWindow?.time}.`
+        }
         await finalizeOrderFailure({
           uid, storeId, idempotencyKey: gate.idempotencyKey, cycle: gate.cycle, now: safetyNow,
           error: result.error || 'unknown',
         })
-        return `שגיאה בהזמנה ב${store.label}: ${result.error}`
+        return `שגיאה בהזמנה ב${store.label}: ${result.error || 'שגיאה לא ידועה'}`
       } catch (checkoutErr) {
         const msg = checkoutErr instanceof Error ? checkoutErr.message : String(checkoutErr)
         await finalizeOrderFailure({

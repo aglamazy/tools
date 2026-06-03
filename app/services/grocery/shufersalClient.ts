@@ -675,9 +675,9 @@ export async function checkout(
 
   const deliveryWindow = { day: slot.day, date: slot.date, time: slot.time }
 
-  // Global kill-switch for the test pipeline: SALIKO_DRY_RUN=true forces every
-  // checkout to short-circuit before commit.
-  if (options.dryRun || process.env.SALIKO_DRY_RUN === 'true') {
+  // Test-only dryRun: explicit `options.dryRun` short-circuits before commit.
+  // The SALIKO_DRY_RUN env-var kill-switch was removed — too easy to leave on.
+  if (options.dryRun) {
     return { success: false, dryRun: true, deliveryWindow }
   }
 

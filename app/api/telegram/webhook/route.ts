@@ -9,7 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import { sendMessage, sendWithKeyboard, answerCallbackQuery } from '@/app/services/telegram/telegramClient'
-import { selectProduct } from '@/app/services/telegram/actionExecutor'
+import { selectProduct } from '@/app/services/chat/actionExecutor'
 import { processChatMessage, handleReset, handleClear } from '@/app/services/chatBrain'
 import { enqueueChatMessage } from '@/app/services/chatQueue'
 import { panicAdmin } from '@/app/services/adminPanic'

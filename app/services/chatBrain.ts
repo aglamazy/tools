@@ -1,14 +1,67 @@
 /**
- * Shared chat brain — single processing pipeline used by all channels
- * (Telegram webhook, in-app chat widget, test CLI).
+ * Aglamazo grocery chat agent — entry point.
  *
- * Handles: history management, session state, context building, LLM call,
- * action execution, auto-continue for info-gathering actions, pending search persistence.
+ * Replaces the legacy hand-rolled agentic loop with `agents-ai`'s `processChat`.
+ * Channel-neutral: the same `processChatMessage` drives the in-app widget
+ * (/api/chat), the Telegram webhook, and the test CLI. Channel adapters
+ * translate their inbound shape into ChatBrainInput.
  */
 
+import { processChat, type HistoryStore, type StoredMessage } from 'agents-ai'
+
+// --- onEmptyTurn synthesis: Hebrew fallback when tools ran but the LLM didn't narrate. ---
+// Picker case: enumerate options as a numbered list (no UI to click — text only).
+// Other actions: one-liner per mutation. Empty string = "LLM was expected to narrate";
+// if everything synth'd to empty, we emit a generic acknowledgement.
+
+function formatHebrewPicker(sel: PendingProductSelection): string {
+  const head = `חיפשתי "${sel.query}". בחר מספר:`
+  const lines = sel.results.slice(0, 5).map((r, i) => {
+    const price = r.unitPrice || r.price
+    return `${i + 1}. ${r.name} — ${price}`
+  })
+  return [head, ...lines].join('\n')
+}
+
+function summarizeAction(name: string, args: Record<string, unknown>): string {
+  const itemList = (k: string) => (Array.isArray(args[k]) ? (args[k] as string[]).join(', ') : '')
+  switch (name) {
+    case 'search_product':
+    case 're_search':
+      return args.query ? `חיפשתי "${args.query}".` : ''
+    case 'remove_items':
+      return itemList('items') ? `הסרתי: ${itemList('items')}.` : 'הסרתי פריטים.'
+    case 'remove_standing':
+      return itemList('items') ? `הסרתי מהקבועה: ${itemList('items')}.` : 'הסרתי מהקבועה.'
+    case 'move_to_standing':
+      return itemList('items') ? `העברתי לקבועה: ${itemList('items')}.` : 'העברתי לקבועה.'
+    case 'clear_pending':
+      return 'ניקיתי את המתנה.'
+    case 'set_schedule':
+      return 'קבעתי לוח זמנים.'
+    case 'create_task':
+      return 'יצרתי משימה.'
+    case 'complete_task':
+      return 'סימנתי משימה כהושלמה.'
+    case 'delete_task':
+      return 'מחקתי משימה.'
+    case 'set_default_store':
+      return 'עדכנתי חנות ברירת מחדל.'
+    default:
+      return ''
+  }
+}
+
+function synthesizeHebrewFromTools(
+  toolCalls: { name: string; args: Record<string, unknown>; result: unknown }[],
+): string {
+  const summaries = toolCalls.map(c => summarizeAction(c.name, c.args)).filter(Boolean)
+  return summaries.length ? summaries.join(' ') : ''
+}
+
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
-import { processChat, type ChatMessage, type ChatStatusReporter, type UserContext } from '@/app/services/telegram/chatProcessor'
-import { executeActions, savePendingSearch, type PendingProductSelection, type AnonStoreCreds } from '@/app/services/telegram/actionExecutor'
+import { buildContextBlock, SYSTEM_PROMPT, type UserContext } from '@/app/services/chat/chatProcessor'
+import { savePendingSearch, type PendingProductSelection, type AnonStoreCreds } from '@/app/services/chat/actionExecutor'
 import { getUserStores, getStoreData } from '@/app/services/grocery/groceryStoreMulti'
 import { getAllStores } from '@/app/services/grocery/storeRegistry'
 import { initStores } from '@/app/services/grocery/initStores'
@@ -16,22 +69,17 @@ import { isCredentialsVerified } from '@/app/services/grocery/shufersalClient'
 import { REXAIL_STORES } from '@/app/services/grocery/rexailStores'
 import { listTasks } from '@/app/services/taskFirestoreService'
 import { getServerCredsConsent } from '@/app/services/consentService'
-import type { LLMMessage } from '@/app/services/llm/types'
+import {
+  ANON_PREFIX,
+  createChatHistoryStore,
+  isAnonUid,
+  type SessionState,
+} from '@/app/services/chat/history'
+import { createAglamazoLLMClient } from '@/app/services/chat/client'
+import { createAglamazoToolRegistry, type AglamazoToolContext } from '@/app/services/chat/toolRegistry'
 
-const MAX_HISTORY = 10
-
-/**
- * Anon-uid prefix for visitor sessions. Routes that hit chatBrain without
- * a real Firebase uid generate `anon:<sessionId>` and pass it through —
- * the brain treats anon ids as ephemeral (no Firestore reads/writes for
- * chat history, no auth-required tools).
- */
-export const ANON_PREFIX = 'anon:'
-export function isAnonUid(uid: string): boolean { return uid.startsWith(ANON_PREFIX) }
-
-export interface SessionState {
-  activeStore?: string | null
-}
+export { ANON_PREFIX, isAnonUid }
+export type { SessionState }
 
 export interface ChatBrainInput {
   uid: string
@@ -39,21 +87,10 @@ export interface ChatBrainInput {
   displayName?: string
   historyCollection: string
   includeTasks?: boolean
-  /** Optional progress notifier used by the LLM recovery ladder. */
-  onStatus?: ChatStatusReporter
-  /**
-   * Optional client-supplied conversation history. Used for anon visitors
-   * whose threads aren't persisted server-side — the client (Dexie) holds
-   * the truth and re-sends recent turns with each request so the LLM has
-   * context. Ignored for authed uids (Firestore is authoritative).
-   */
-  seedHistory?: ChatMessage[]
-  /**
-   * Anon Tier-1 credential state from the client's sessionStorage. Server
-   * reads it in-memory only — never persisted. Pass-through to executeActions,
-   * which may mutate it (set_otp_phone, verify_otp, trigger_order) and return
-   * the new value for the client to write back.
-   */
+  /** Unused since the retry ladder was dropped on agents-ai adoption. Kept for
+   *  call-site signature compat; safe to remove once all sites stop passing it. */
+  onStatus?: (msg: string) => Promise<void>
+  seedHistory?: StoredMessage[]
   anonStoreCreds?: AnonStoreCreds | null
 }
 
@@ -62,58 +99,14 @@ export interface ChatBrainResult {
   thinking?: string
   actions: { action: string; [key: string]: unknown }[]
   pendingSelections?: (PendingProductSelection & { searchKey: string })[]
-  /** True when the LLM gave up after the in-line retry ladder. */
   llmExhausted?: boolean
-  /** Server-observed upstream error string (forwarded from chatProcessor). */
   upstreamError?: string
-  /**
-   * Updated anon Tier-1 cred state, when any action in this turn mutated it.
-   * `undefined` = no change (client keeps current). `null` = wipe (e.g. after
-   * a failed flow). The /api/chat route ships this back to the browser, which
-   * writes it to sessionStorage. Tab close = state gone.
-   */
   anonStoreCreds?: AnonStoreCreds | null
 }
 
-// --- History + session helpers ---
-
-interface StoredChat {
-  messages: ChatMessage[]
-  session?: SessionState
-}
-
-async function loadChat(collection: string, uid: string): Promise<StoredChat> {
-  // Anon visitors don't have server-side history — Dexie holds it client-side.
-  if (isAnonUid(uid)) return { messages: [], session: {} }
-  const doc = await getAdminFirestore().collection(collection).doc(uid).get()
-  if (!doc.exists) return { messages: [], session: {} }
-  const data = doc.data()!
-  return {
-    messages: (data.messages as ChatMessage[]) || [],
-    session: (data.session as SessionState) || {},
-  }
-}
-
-async function saveChat(collection: string, uid: string, messages: ChatMessage[], session: SessionState): Promise<void> {
-  if (isAnonUid(uid)) return // anon session — no Firestore writes
-  const trimmed = messages.slice(-MAX_HISTORY)
-  await getAdminFirestore().collection(collection).doc(uid).set({
-    messages: trimmed,
-    session,
-    updatedAt: new Date().toISOString(),
-  })
-}
-
-// --- Context builder ---
+// --- Context builder (per-turn server state injected into the system prompt) ---
 
 async function buildContext(uid: string, displayName?: string, includeTasks = false, session?: SessionState): Promise<UserContext> {
-  // Anon visitors: minimal context — list stores by name (so the LLM can
-  // talk about "we support Shufersal, מקור השפע, etc.") but everything
-  // shows as not-connected, no standing list, no schedule. Tools that need
-  // server-side state will return their own auth-required errors when called.
-  // Lookup tables for chain website URL + specialty description by plugin id.
-  // Shufersal isn't in REXAIL_STORES (it has its own plugin) — its description
-  // is hardcoded since it's well-known.
   const siteByStoreId = new Map<string, string>()
   const descByStoreId = new Map<string, string>()
   for (const e of REXAIL_STORES) {
@@ -172,33 +165,30 @@ async function buildContext(uid: string, displayName?: string, includeTasks = fa
         } : undefined,
         schedule: storeData?.schedule,
       }
-    })
+    }),
   )
 
   return {
     displayName,
-    // Logged-in users land in Tier 2 by default; explicit consent on file
-    // promotes them to Tier 3. The bot leads with this in every privacy answer.
     currentTier: consent?.acceptedAt ? 'tier-3' : 'tier-2',
     stores: storeContexts,
     defaultStore: userStores.defaultStore,
     session,
     tasks: tasks || undefined,
     hasCredentials: hasCreds,
-    // null = explicit "no consent on file", undefined = couldn't read. The
-    // chatProcessor reads both as "not granted" for prompt purposes; we use
-    // null for clarity in the wire log.
     serverCredsConsent: consent,
   }
 }
 
-// --- Main brain ---
-
-/** Safety cap on the agentic loop — prevents infinite tool loops. */
-const MAX_AGENTIC_STEPS = 5
+// --- One-shot resets exposed to /api/chat/reset and /api/chat/clear-list ---
 
 export async function handleReset(collection: string, uid: string): Promise<void> {
-  await saveChat(collection, uid, [], {})
+  if (isAnonUid(uid)) return
+  await getAdminFirestore().collection(collection).doc(uid).set({
+    messages: [],
+    session: {},
+    updatedAt: new Date().toISOString(),
+  })
 }
 
 export async function handleClear(uid: string): Promise<void> {
@@ -213,151 +203,90 @@ export async function handleClear(uid: string): Promise<void> {
   }
 }
 
+// --- Main entry ---
+
 export async function processChatMessage(input: ChatBrainInput): Promise<ChatBrainResult> {
   initStores()
 
-  const { uid, text, displayName, historyCollection, includeTasks, onStatus, seedHistory, anonStoreCreds } = input
+  const { uid, text, displayName, historyCollection, includeTasks, seedHistory, anonStoreCreds } = input
 
-  const loaded = await loadChat(historyCollection, uid)
-  // For anon visitors loadChat returns empty (no Firestore). Honor the
-  // client-supplied seedHistory (Dexie source-of-truth) so context survives
-  // across turns. Cap to last 20 messages to bound LLM token usage.
-  const persistedHistory = (isAnonUid(uid) && seedHistory?.length)
-    ? seedHistory.slice(-20)
-    : loaded.messages
-  const session: SessionState = loaded.session || {}
+  // Shared session — mutated by `set_session` tool, persisted on history.save.
+  const session: SessionState = {}
 
-  const context = await buildContext(uid, displayName, includeTasks, session)
+  // Tool context — shared mutable state across all tool calls in the turn.
+  const toolCtx: AglamazoToolContext = {
+    uid,
+    session,
+    anonStoreCreds: anonStoreCreds ?? null,
+    anonCredsTouched: false,
+    pendingSelections: [],
+  }
 
-  // Working conversation for this turn. Starts with persisted text history,
-  // adds the new user message, and — during the agentic loop — accumulates
-  // assistant tool-call and tool-result messages that the LLM will see on
-  // subsequent iterations. Only user/assistant text is persisted back to Firestore.
-  const working: LLMMessage[] = [...persistedHistory, { role: 'user', content: text }]
+  // History store wraps the Firestore implementation but honors anon seedHistory.
+  // Crucially, the returned session is the SAME reference as `session` above so
+  // tool mutations to activeStore land on the object processChat persists.
+  const baseStore = createChatHistoryStore(historyCollection)
+  const history: HistoryStore<SessionState> = {
+    async load(conversationId) {
+      const loaded = await baseStore.load(conversationId)
+      const messages =
+        isAnonUid(conversationId) && seedHistory?.length
+          ? seedHistory.slice(-20)
+          : loaded.messages
+      Object.assign(session, loaded.session ?? {})
+      return { messages, session }
+    },
+    save: baseStore.save,
+  }
 
-  let replyText = ''
-  let thinking: string | undefined
-  let allActions: ChatBrainResult['actions'] = []
-  let pendingSelections: PendingProductSelection[] | undefined
-  let llmExhausted = false
-  let upstreamError: string | undefined
-  // Anon cred state carried across the agentic loop's tool calls. Starts
-  // from whatever the client shipped (sessionStorage), updates as tools
-  // mutate it, and the latest value is returned to the client at the end.
-  let workingAnonCreds: AnonStoreCreds | null | undefined = anonStoreCreds
-  let anonCredsTouched = false
+  const { declarations, dispatch } = createAglamazoToolRegistry()
+  const client = createAglamazoLLMClient()
 
-  for (let step = 0; step < MAX_AGENTIC_STEPS; step++) {
-    const result = await processChat(working, context, onStatus)
-    thinking = thinking ?? result.thinking
-    if (result.llmExhausted) {
-      llmExhausted = true
-      upstreamError = result.upstreamError
-    }
-
-    // set_session is a sentinel hint, not a real tool call — update session and exclude it from tool execution.
-    for (const action of result.actions) {
-      if (action.action === 'set_session' && action.activeStore !== undefined) {
-        session.activeStore = action.activeStore as string | null
-      } else if (typeof action.store === 'string') {
-        session.activeStore = action.store
+  const result = await processChat<SessionState, AglamazoToolContext>({
+    conversationId: uid,
+    userText: text,
+    client,
+    systemPrompt: async (s) => {
+      const ctx = await buildContext(uid, displayName, includeTasks, s)
+      return `${SYSTEM_PROMPT}\n\n## מצב נוכחי\n${buildContextBlock(ctx)}`
+    },
+    tools: declarations,
+    dispatch,
+    toolContext: toolCtx,
+    history,
+    maxSteps: 5,
+    maxHistory: 10,
+    logger: console,
+    onEmptyTurn: ({ hadToolCalls, toolCalls }) => {
+      if (toolCtx.pendingSelections.length > 0) {
+        return formatHebrewPicker(toolCtx.pendingSelections[0])
       }
-    }
-    const executableActions = result.actions.filter(a => a.action !== 'set_session')
-    allActions = [...allActions, ...executableActions]
+      if (!hadToolCalls) {
+        return 'לא הבנתי. תוכל לנסח אחרת?'
+      }
+      return synthesizeHebrewFromTools(toolCalls) || 'בוצע.'
+    },
+  })
 
-    console.log(`[ChatBrain] step=${step} uid=${uid} text=${(result.reply || '').slice(0, 40)} calls=${executableActions.map(a => a.action).join(',') || 'none'} session=${JSON.stringify(session)}`)
-
-    // LLM returned only text (or set_session hints) — that's the final reply.
-    if (executableActions.length === 0) {
-      replyText = result.reply
-      break
-    }
-
-    // Record the assistant's tool-call turn on the working history so the next LLM call sees it.
-    // `__sig` is the Gemini thoughtSignature — strip from args (it's not a real
-    // arg) and hoist it to the toolCall envelope so the next round-trip carries
-    // it back to Gemini (required by flash-latest / 3.x; see geminiClient.ts).
-    working.push({
-      role: 'assistant',
-      content: result.reply || undefined,
-      toolCalls: executableActions.map(a => ({
-        name: a.action,
-        args: Object.fromEntries(Object.entries(a).filter(([k]) => k !== 'action' && k !== '__sig')),
-        ...(typeof a.__sig === 'string' ? { thoughtSignature: a.__sig } : {}),
-      })),
-    })
-
-    // Execute tools.
-    let actionResult
-    try {
-      actionResult = await executeActions(uid, executableActions, session.activeStore, workingAnonCreds)
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      console.error('[ChatBrain] Action execution threw:', msg)
-      actionResult = { results: executableActions.map(a => ({ name: a.action, result: `error: ${msg}` })), pendingSelections: undefined, anonStoreCreds: undefined }
-    }
-
-    // Thread anon-cred updates forward across agentic-loop iterations.
-    if (actionResult.anonStoreCreds !== undefined) {
-      workingAnonCreds = actionResult.anonStoreCreds
-      anonCredsTouched = true
-    }
-
-    // Record the tool responses so the next LLM iteration can reason over them.
-    working.push({
-      role: 'tool',
-      toolResults: actionResult.results,
-    })
-
-    // Product picker requires a user button press — stop the agentic loop here.
-    // The reply is whatever the LLM already said plus the search prompt text.
-    if (actionResult.pendingSelections?.length) {
-      pendingSelections = actionResult.pendingSelections
-      const extraText = actionResult.results.map(r => r.result).filter(Boolean).join('\n\n')
-      replyText = [result.reply, extraText].filter(Boolean).join('\n\n') || '...'
-      break
-    }
-  }
-
-  if (!replyText) {
-    // Hit the safety cap with no text response — surface a generic acknowledgment.
-    replyText = allActions.length > 0 ? '✓' : 'לא הבנתי, נסה שוב.'
-  }
-
-  // Persist only user + final-assistant text (tool calls/results are transient).
-  // When the LLM exhausted, we DON'T persist either — the user message is
-  // still pending a real reply. The webhook will enqueue (Telegram) or the
-  // web client will poll for retry. Persisting now would mean: (a) the user
-  // message gets a fake assistant ack baked into history; (b) the cron retry
-  // sees the duplicate user line and produces a confusing trace.
-  if (!llmExhausted) {
-    persistedHistory.push({ role: 'user', content: text })
-    persistedHistory.push({ role: 'assistant', content: replyText })
-    await saveChat(historyCollection, uid, persistedHistory, session)
-  }
-
-  // Persist pending searches
+  // Persist pending searches separately (Firestore subcollection) so the
+  // callback flow can look them up by their generated 6-char key.
   let selectionsWithKeys: ChatBrainResult['pendingSelections']
-  if (pendingSelections?.length) {
+  if (toolCtx.pendingSelections.length) {
     selectionsWithKeys = await Promise.all(
-      pendingSelections.map(async (sel) => {
+      toolCtx.pendingSelections.map(async (sel) => {
         const searchKey = await savePendingSearch(uid, sel)
         return { ...sel, searchKey }
-      })
+      }),
     )
   }
 
   return {
-    reply: replyText,
-    thinking,
-    actions: allActions,
+    reply: result.reply,
+    thinking: result.thinking,
+    actions: result.toolCalls.map((c) => ({ action: c.name, ...c.args })),
     pendingSelections: selectionsWithKeys,
-    llmExhausted,
-    upstreamError,
-    // Only surface the field when something in this turn changed it. The
-    // /api/chat route forwards undefined as omitted-from-response and null
-    // as explicit "wipe."
-    anonStoreCreds: anonCredsTouched ? workingAnonCreds ?? null : undefined,
+    llmExhausted: false,
+    upstreamError: undefined,
+    anonStoreCreds: toolCtx.anonCredsTouched ? (toolCtx.anonStoreCreds ?? null) : undefined,
   }
 }

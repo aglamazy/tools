@@ -141,7 +141,8 @@ export interface RetalixStoreConfig {
   deviceId: string
   xWebsite: string
   storeId: number
-  deliveryAreaId: number
+  /** Optional — sourced from the user's account on first slot/checkout, not hardcoded. */
+  deliveryAreaId?: number
   deliveryMethod: string
   preferredDay: string
   preferredHour: number

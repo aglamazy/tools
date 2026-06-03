@@ -42,7 +42,7 @@ const PROD_HISTORY = [
 type LLMMessage = import('../app/services/llm/types').LLMMessage
 
 async function main() {
-  const { processChat } = await import('../app/services/telegram/chatProcessor')
+  const { processChat } = await import('../app/services/chat/chatProcessor')
 
   // Synthetic context — minimal but realistic for a Shufersal-active session.
   const ctx = {
@@ -89,7 +89,7 @@ interface SimpleCtx { displayName?: string; defaultStore?: string; session?: { a
 
 async function runScenario(label: string, messages: LLMMessage[], ctx: SimpleCtx, runs: number) {
   console.log(`\n========== ${label} ==========`)
-  const { processChat } = await import('../app/services/telegram/chatProcessor')
+  const { processChat } = await import('../app/services/chat/chatProcessor')
   let empties = 0
   let texts = 0
   let calls = 0

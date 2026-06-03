@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireTc } from '@/app/lib/apiGuard'
-import { selectProduct } from '@/app/services/telegram/actionExecutor'
+import { selectProduct } from '@/app/services/chat/actionExecutor'
 import { initStores } from '@/app/services/grocery/initStores'
 
 export async function POST(request: NextRequest) {
