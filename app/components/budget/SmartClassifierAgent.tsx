@@ -177,30 +177,52 @@ export default function SmartClassifierAgent({ month, onClose, onApplied }: Prop
           txByTxIdRef.current.set(t.id, t)
         }
 
-        if (!cancelled) setLoadingStep(`שולח ל-Claude (${unclassified.length} עסקאות)...`)
+        // Client-side chunking so the UI can report real "סבב X מתוך Y" progress
+        // between Claude calls. The server-side route still accepts any size and
+        // chunks internally as a safety net for other callers — keeping chunks
+        // here at 50 means the server-side path is a no-op in practice.
+        const CHUNK_SIZE = 50
+        const totalChunks = Math.max(1, Math.ceil(unclassified.length / CHUNK_SIZE))
+        const allConfident: ConfidentItem[] = []
+        const allAskUser: AskUserItem[] = []
 
-        const res = await fetch('/api/classify-transactions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            apiKey,
-            monthStr: month,
-            transactions: unclassified,
-            categories,
-            history,
-          }),
-        })
+        for (let i = 0; i < totalChunks; i++) {
+          if (cancelled) return
+          const chunk = unclassified.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE)
+          if (!cancelled) {
+            setLoadingStep(
+              totalChunks === 1
+                ? `שולח ל-Claude (${chunk.length} עסקאות)...`
+                : `שולח ל-Claude (סבב ${i + 1} מתוך ${totalChunks}, ${chunk.length} עסקאות)...`,
+            )
+          }
 
-        if (!res.ok) {
-          const body = await res.text()
-          throw new Error(`Claude error ${res.status}: ${body.slice(0, 200)}`)
+          const res = await fetch('/api/classify-transactions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              apiKey,
+              monthStr: month,
+              transactions: chunk,
+              categories,
+              history,
+            }),
+          })
+
+          if (!res.ok) {
+            const body = await res.text()
+            throw new Error(`Claude error ${res.status}: ${body.slice(0, 200)}`)
+          }
+
+          const data = (await res.json()) as ClassifyResponse
+          if (cancelled) return
+
+          if (Array.isArray(data.confident)) allConfident.push(...data.confident)
+          if (Array.isArray(data.askUser)) allAskUser.push(...data.askUser)
         }
 
-        const data = (await res.json()) as ClassifyResponse
-        if (cancelled) return
-
-        const safeConfident = Array.isArray(data.confident) ? data.confident : []
-        const safeAskUser = Array.isArray(data.askUser) ? data.askUser : []
+        const safeConfident = allConfident
+        const safeAskUser = allAskUser
 
         setConfident(safeConfident)
         const initSel: Record<string, boolean> = {}
