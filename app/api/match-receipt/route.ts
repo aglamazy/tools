@@ -1,6 +1,7 @@
 // CALLER-KEYED ROUTE — uses platform Gemini key + caller's Claude API key
 import { NextRequest, NextResponse } from 'next/server'
 import { getLLMClient } from '@/app/services/llm'
+import { parseClaudeJson } from '@/app/utils/parseClaudeJson'
 
 type Candidate = {
   messageId: string
@@ -179,9 +180,7 @@ async function handleExtract(emailBody: string, transaction: TransactionInfo, cl
   const text = data.content?.[0]?.text ?? ''
 
   try {
-    const cleaned = text.replace(/```json?\s*/g, '').replace(/```/g, '').trim()
-    const parsed = JSON.parse(cleaned)
-    return NextResponse.json(parsed)
+    return NextResponse.json(parseClaudeJson(text))
   } catch (parseErr) {
     console.error('[match-receipt] Failed to parse extract response. Raw text (first 800 chars):', text.slice(0, 800))
     console.error('[match-receipt] Parse error:', parseErr)
@@ -333,8 +332,7 @@ async function handleExtractPdf(pdfBase64: string, transaction: TransactionInfo,
   const text = data.content?.[0]?.text ?? ''
 
   try {
-    const cleaned = text.replace(/```json?\s*/g, '').replace(/```/g, '').trim()
-    const parsed = JSON.parse(cleaned)
+    const parsed = parseClaudeJson(text)
     return NextResponse.json(parsed)
   } catch {
     return NextResponse.json({ error: 'Failed to parse extraction response', raw: text }, { status: 502 })
@@ -404,8 +402,7 @@ async function handleExtractImage(imageBase64: string, mediaType: string, transa
   const text = data.content?.[0]?.text ?? ''
 
   try {
-    const cleaned = text.replace(/```json?\s*/g, '').replace(/```/g, '').trim()
-    const parsed = JSON.parse(cleaned)
+    const parsed = parseClaudeJson(text)
     return NextResponse.json(parsed)
   } catch {
     return NextResponse.json({ error: 'Failed to parse extraction response', raw: text }, { status: 502 })
@@ -472,8 +469,7 @@ async function handleExtractVatPayment(payloadBase64: string, mediaType: string 
   const data = await response.json()
   const text = data.content?.[0]?.text ?? ''
   try {
-    const cleaned = text.replace(/```json?\s*/g, '').replace(/```/g, '').trim()
-    return NextResponse.json(JSON.parse(cleaned))
+    return NextResponse.json(parseClaudeJson(text))
   } catch (parseErr) {
     console.error('[match-receipt] Failed to parse VAT payment extract. Raw:', text.slice(0, 800), 'err:', parseErr)
     return NextResponse.json({ error: 'Failed to parse extraction response', raw: text }, { status: 502 })

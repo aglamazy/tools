@@ -35,12 +35,16 @@ export function createAglamazoToolRegistry(): {
           typeof args.activeStore === "string" || args.activeStore === null
             ? (args.activeStore as string | null)
             : undefined;
-        if (newStore !== undefined) {
-          context.session.activeStore = newStore;
+        // No-op when the LLM re-asserts the current store (common when the
+        // user simply mentions the store they're already in). Stay silent
+        // instead of surfacing "עברתי ל..." — that became user-visible noise.
+        if (newStore === undefined || newStore === context.session.activeStore) {
+          return { result: "ok" };
         }
+        context.session.activeStore = newStore;
         return {
           result: "ok",
-          replyText: `עברתי ל${storeLabel(newStore ?? context.session.activeStore)}.`,
+          replyText: `עברתי ל${storeLabel(newStore)}.`,
         };
       }
 

@@ -78,7 +78,16 @@ askUser: עסקאות אמביוולנטיות שצריך לשאול את המש
 - הקפד שכל txId שאתה מחזיר מופיע ב-confident או ב-askUser, לא בשניהם.
 - כל עסקה חייבת להיות מסווגת באחת משתי הרשימות. אל תשמיט עסקאות.`
 
-    const userMessage = `חודש: ${monthStr}
+    // Cap how many txs go in one Claude call. The 8k output-token budget
+    // comfortably fits ~50 txs with the verbose Hebrew "reasoning"/"why"
+    // fields; larger batches truncated mid-JSON. We chunk server-side so
+    // the client passes the full list as one request.
+    const CHUNK_SIZE = 50
+
+    const callClaude = async (
+      batch: typeof slimTransactions,
+    ): Promise<{ confident: unknown[]; askUser: unknown[] }> => {
+      const userMessage = `חודש: ${monthStr}
 
 נושאים זמינים:
 ${JSON.stringify(slimCategories, null, 2)}
@@ -87,53 +96,73 @@ ${JSON.stringify(slimCategories, null, 2)}
 ${JSON.stringify(slimHistory, null, 2)}
 
 עסקאות לסיווג:
-${JSON.stringify(slimTransactions, null, 2)}
+${JSON.stringify(batch, null, 2)}
 
 החזר JSON בלבד בפורמט:
 {"confident": [...], "askUser": [...]}`
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        // Bumped from 4096 — for ~50 txs the verbose Hebrew "reasoning"/"why"
-        // fields can exceed 4096 and truncate mid-JSON, causing JSON.parse
-        // failures. 8192 gives comfortable headroom; sonnet-4-6 supports up
-        // to 64k output tokens.
-        max_tokens: 8192,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userMessage }],
-      }),
-    })
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 8192,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userMessage }],
+        }),
+      })
 
-    if (!response.ok) {
-      const errorBody = await response.text()
-      console.error('[classify-transactions] Claude API error:', response.status, errorBody)
-      return NextResponse.json(
-        { error: `Claude API error: ${response.status}`, details: errorBody },
-        { status: response.status },
-      )
-    }
+      if (!response.ok) {
+        const errorBody = await response.text()
+        console.error('[classify-transactions] Claude API error:', response.status, errorBody)
+        throw new Error(`Claude API ${response.status}: ${errorBody.slice(0, 200)}`)
+      }
 
-    const data = await response.json()
-    const text: string = data.content?.[0]?.text ?? ''
+      const data = await response.json()
+      const text: string = data.content?.[0]?.text ?? ''
+      const stopReason: string | undefined = data.stop_reason
+      if (stopReason === 'max_tokens') {
+        // Shouldn't happen at CHUNK_SIZE=50, but if it does the chunk is
+        // too big for the model — surface as a hard error so we shrink the
+        // cap rather than silently dropping txs.
+        throw new Error(`Claude response truncated (max_tokens) on a ${batch.length}-tx chunk; shrink CHUNK_SIZE`)
+      }
 
-    try {
-      // Use shared helper — tolerates ```json fences and surrounding preamble.
       const parsed = parseClaudeJson<{ confident?: unknown; askUser?: unknown }>(text)
-      // Defensive defaults so callers never crash on missing arrays.
-      return NextResponse.json({
+      return {
         confident: Array.isArray(parsed.confident) ? parsed.confident : [],
         askUser: Array.isArray(parsed.askUser) ? parsed.askUser : [],
-      })
-    } catch {
+      }
+    }
+
+    // Chunk the txs and classify each chunk. Sequential keeps it predictable
+    // under Anthropic rate limits; parallelize later only if measured slow.
+    const chunks: (typeof slimTransactions)[] = []
+    for (let i = 0; i < slimTransactions.length; i += CHUNK_SIZE) {
+      chunks.push(slimTransactions.slice(i, i + CHUNK_SIZE))
+    }
+
+    try {
+      const merged = { confident: [] as unknown[], askUser: [] as unknown[] }
+      for (let i = 0; i < chunks.length; i++) {
+        const partial = await callClaude(chunks[i])
+        merged.confident.push(...partial.confident)
+        merged.askUser.push(...partial.askUser)
+        console.log(
+          `[classify-transactions] chunk ${i + 1}/${chunks.length} ` +
+          `(${chunks[i].length} txs) → confident=${partial.confident.length} ` +
+          `askUser=${partial.askUser.length}`,
+        )
+      }
+      return NextResponse.json(merged)
+    } catch (chunkErr: unknown) {
+      const msg = chunkErr instanceof Error ? chunkErr.message : 'Unknown chunk error'
       return NextResponse.json(
-        { error: 'Failed to parse Claude response as JSON', raw: text },
+        { error: 'Failed to classify transactions', details: msg, chunkCount: chunks.length },
         { status: 502 },
       )
     }

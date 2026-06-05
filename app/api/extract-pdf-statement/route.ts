@@ -104,14 +104,33 @@ export async function POST(req: NextRequest) {
 
     let extraction: Extraction
     try {
-      const cleaned = text.replace(/```json?\s*/g, '').replace(/```/g, '').trim()
-      extraction = JSON.parse(cleaned) as Extraction
+      // The LLM sometimes wraps JSON in a ```json fence and/or prepends a
+      // Hebrew prose preamble (e.g. "זהו — המסמך אינו דף בנק...") explaining
+      // its reasoning. Strip the fence first, then extract the first balanced
+      // {...} block — tolerant of any prose around it.
+      const noFence = text.replace(/```json?\s*/gi, '').replace(/```/g, '')
+      const firstBrace = noFence.indexOf('{')
+      const lastBrace = noFence.lastIndexOf('}')
+      if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+        throw new Error('no JSON object found in response')
+      }
+      extraction = JSON.parse(noFence.slice(firstBrace, lastBrace + 1)) as Extraction
     } catch {
       return NextResponse.json({ error: 'Failed to parse extraction response', raw: text }, { status: 502 })
     }
 
     if (extraction.kind !== 'bank' && extraction.kind !== 'credit') {
-      return NextResponse.json({ error: 'Invalid kind in extraction', raw: extraction }, { status: 502 })
+      // The LLM returned valid JSON but classified the document as neither a
+      // bank statement nor a credit-card bill (kind=null). Surface a clear
+      // user-facing reason instead of "Invalid kind" — most likely the
+      // uploaded PDF was a T&C / contract / unrelated doc.
+      return NextResponse.json(
+        {
+          error: 'המסמך אינו דף בנק או פירוט כרטיס אשראי — אנא בדוק את הקובץ שהועלה.',
+          raw: extraction,
+        },
+        { status: 422 },
+      )
     }
 
     const rows = toSheetRows(extraction)

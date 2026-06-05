@@ -195,24 +195,54 @@ export async function signInWithGoogle(): Promise<AuthResult> {
     if (result.success && result.idToken) {
       const auth = getFirebaseAuth()
       const credential = GoogleAuthProvider.credential(result.idToken)
-      const userCred = await signInWithCredential(auth, credential)
-
-      // Best-effort: claim any pre-provisioned tier for this email
       try {
-        const idToken = await userCred.user.getIdToken()
-        await fetch('/api/auth/claim-provision', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${idToken}` },
-        })
-      } catch { /* non-blocking */ }
+        const userCred = await signInWithCredential(auth, credential)
 
-      return { success: true, user: toAuthUser(userCred.user) }
+        // Best-effort: claim any pre-provisioned tier for this email
+        try {
+          const idToken = await userCred.user.getIdToken()
+          await fetch('/api/auth/claim-provision', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${idToken}` },
+          })
+        } catch { /* non-blocking */ }
+
+        return { success: true, user: toAuthUser(userCred.user) }
+      } catch (credErr: any) {
+        // Firebase rejected the bundled-flow id_token (commonly: the
+        // bundled OAuth client is in a different GCP project than Firebase
+        // and isn't on Auth → Google → Web SDK whitelist — see task #39).
+        // The bundled popup ALREADY opened, so re-popping would surface
+        // a SECOND Google picker (task #40). Surface a clean error.
+        console.error(
+          '[Auth] Bundled-flow id_token rejected by Firebase (' + credErr?.code +
+          '). NOT falling back — bundled picker already shown. Fix: Firebase ' +
+          'Console → Auth → Google → Web SDK config → whitelist client ID (#39).',
+        )
+        return {
+          success: false,
+          error: 'שגיאה באימות עם Google',
+          errorCode: credErr?.code || 'bundled-credential-rejected',
+        }
+      }
     }
 
-    // Bundled flow failed (no id_token came back, server misconfigured, etc.).
-    // Fall back to plain Firebase popup — sign-in works, but Gmail/Drive/
-    // Calendar will need a mid-session second consent later.
-    console.warn('[Auth] Bundled Google sign-in failed; falling back to basic Firebase popup:', result.error)
+    // Bundled-popup-opened-but-no-idToken guard (per sub-agent #40 finding):
+    // SCOPES missing `openid`, Google flake — picker already shown, must NOT
+    // re-popup. Surface instead.
+    if (result.success && !result.idToken) {
+      console.error('[Auth] Bundled Google sign-in succeeded but returned no id_token; not falling back to avoid a second picker')
+      return {
+        success: false,
+        error: 'שגיאה בהתחברות עם Google',
+        errorCode: 'bundled-no-idtoken',
+      }
+    }
+
+    // Bundled flow failed BEFORE opening any picker (server OAuth env
+    // missing, client_id not configured, popup blocked). Safe to fall
+    // back to plain Firebase popup — no picker has been shown yet.
+    console.warn('[Auth] Bundled Google sign-in failed before opening picker; falling back to basic Firebase popup:', result.error)
     const auth = getFirebaseAuth()
     const provider = new GoogleAuthProvider()
     const cred = await signInWithPopup(auth, provider)
