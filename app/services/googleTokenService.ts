@@ -12,11 +12,22 @@
 
 import { db } from '@/app/db/financeDB'
 
-// All Google API scopes Aglamazo ever needs are bundled into the login popup
-// (see signInWithGoogleAndScopes in firebaseAuthService.ts). Listing `openid
-// email profile` first means the same popup also returns an id_token that we
-// use to sign Firebase in — single user gesture, no mid-session re-auth.
+// Per-feature Google data-access scopes. NO LONGER bundled into login —
+// login is identity-only (`openid email profile`) per #39. The feature
+// buttons (Drive upload, Gmail receipt-scrape, Calendar read) call
+// requestGoogleAccess() at the moment the user opts in, the popup shows
+// once per ~6-month refresh-token lifetime, and tokens live in Dexie
+// (browser-only — server never sees them).
+//
+// `openid` is still listed first so that the popup also returns an
+// id_token alongside the access+refresh pair — useful for verifying the
+// granting Google identity matches the logged-in Firebase user.
 const SCOPES = 'openid email profile https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic'
+
+// Refresh-token retention. Google's web refresh tokens are valid for ~6
+// months of inactivity; we don't proactively shorten that. Users can
+// revoke at any time via Google Account → Security → Third-party apps,
+// and clearGoogleAccess() wipes the local copy.
 
 // Keys used in appSettings
 const KEY_ACCESS_TOKEN = 'google_access_token'
