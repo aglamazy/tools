@@ -7,7 +7,7 @@ const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://aglamazo.com'
 
 export const metadata: Metadata = {
   title: `${branding.name} - ${branding.tagline}`,
-  description: `${branding.name} - ניהול פיננסי חכם לעסק שלך. תזרים מזומנים, תקציב, תחזית תשלומים ועוד - הכל בפרטיות מלאה.`,
+  description: `${branding.name} - ניהול פיננסי חכם לעסק שלך. תזרים מזומנים, תקציב, תחזית תשלומים ועוד - עם גיבוי ענן מוצפן בשליטתך ושיתוף מאובטח עם שותף לעסק.`,
   alternates: {
     canonical: '/',
     languages: {
@@ -68,7 +68,7 @@ export default function LandingPage() {
         <p className="landing-subtitle">
           ניהול פיננסי חכם - תזרים, תקציב ותובנות.
           <br />
-          הכל נשמר בדפדפן שלך, בפרטיות מלאה.
+          גיבוי ענן מוצפן שבשליטתך, ושיתוף עסק עם השותף - סיסמה נפרדת לעסק, בלי לחשוף את שאר החשבון.
         </p>
         <div className="landing-cta">
           <Link href={routes.dashboard} className="landing-btn-primary">
@@ -93,7 +93,7 @@ export default function LandingPage() {
           <div className="landing-step">
             <div className="landing-step-number">3</div>
             <h3>גבה את הנתונים</h3>
-            <p>המידע נשמר בדפדפן. הורד גיבוי בכל עת כדי לשמור על הנתונים שלך.</p>
+            <p>הנתונים מגובים אוטומטית בענן מוצפן. הורד עותק מקומי בכל עת.</p>
           </div>
         </div>
       </section>
@@ -116,8 +116,13 @@ export default function LandingPage() {
         </div>
         <div className="landing-feature">
           <div className="landing-feature-icon">&#x1F512;</div>
-          <h3>פרטיות מלאה</h3>
-          <p>כל המידע נשמר בדפדפן שלך בלבד. ללא שרתים, ללא ענן, ללא צדדים שלישיים.</p>
+          <h3>פרטיות בשליטתך</h3>
+          <p>הנתונים שלך לבדך, בהצפנה שבשליטתך. אינטגרציית Google אופציונלית, רק להרשאות שאתה מאשר.</p>
+        </div>
+        <div className="landing-feature">
+          <div className="landing-feature-icon">&#x1F91D;</div>
+          <h3>שיתוף עסק עם שותף</h3>
+          <p>כשיש שותף לעסק, ניתן לשתף איתו את העסק המשותף בסיסמה נפרדת. שאר הנתונים והעסקים שלך נשארים פרטיים.</p>
         </div>
       </section>
 

@@ -178,6 +178,15 @@
   font-size: 0.95rem;
 }
 
+/* When the feature count is odd, center the orphan last card across the row. */
+@media (min-width: 769px) {
+  .landing-feature:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+    max-width: calc((100% - 1.5rem) / 2);
+    margin-inline: auto;
+  }
+}
+
 .landing-privacy {
   background: #ecfdf5;
   border: 1px solid #10b981;
