@@ -39,3 +39,6 @@ next-env.d.ts
 run*log
 task-logs/
 .vercel
+
+# Per-machine BUDDY_QUEUE identity written by mr-cl on session start
+/.queue
