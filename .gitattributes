@@ -1,0 +1,9 @@
+# >>> ant-husky-sync (managed) — do not edit between markers >>>
+# When merging package.json / package-lock.json, keep the file with the
+# higher semver version.  dev→prod takes dev's (higher) version, and
+# prod→dev keeps dev's (already higher) version.  Equal versions fall back
+# to git's normal three-way merge.  Driver wired by ant_husky_sync.py via
+# `git config merge.higher-version.driver`.
+package.json merge=higher-version
+package-lock.json merge=higher-version
+# <<< ant-husky-sync (managed) <<<
