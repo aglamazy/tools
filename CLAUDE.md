@@ -1,3 +1,5 @@
+@~/.claude/ARCHITECTURE.md
+@~/.claude/VERCEL.md
 # Aglamazo — Financial Management App
 
 ## Build & Dev
