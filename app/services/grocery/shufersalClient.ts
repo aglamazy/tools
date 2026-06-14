@@ -11,7 +11,7 @@ import dns from 'dns'
 import https from 'https'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import * as cheerio from 'cheerio'
-import { encryptCred, decryptCred, looksEncrypted } from '@/app/services/security/credEncryption'
+import { encryptCred, decryptCred, looksEncrypted, CredsCorruptedError } from '@/app/services/security/credEncryption'
 import { hasCurrentServerCredsConsent, NoTier3ConsentError } from '@/app/services/consentService'
 
 const BASE_URL = 'https://www.shufersal.co.il/online/he'
@@ -266,9 +266,23 @@ async function loadCredentials(uid: string): Promise<ShufersalCredentials | null
   // During the rollout window plaintext docs may still exist — `looksEncrypted`
   // is the sniff. Once everyone's been re-saved this branch becomes dead code
   // but it's cheap and keeps the rollout safe.
-  const email = looksEncrypted(raw.email) ? decryptCred(raw.email) : raw.email
-  const password = looksEncrypted(raw.password) ? decryptCred(raw.password) : raw.password
-  return { email, password }
+  //
+  // If decryption throws (bad format / AES tag mismatch / a rotated
+  // SALIKO_CREDS_ENCRYPTION_KEY), surface it as a typed CredsCorruptedError so
+  // callers distinguish "couldn't decrypt the stored credential" from "the
+  // store rejected the credential" — different remediation, and never a silent
+  // success (C10).
+  try {
+    const email = looksEncrypted(raw.email) ? decryptCred(raw.email) : raw.email
+    const password = looksEncrypted(raw.password) ? decryptCred(raw.password) : raw.password
+    return { email, password }
+  } catch (err) {
+    console.error(`[ShufersalClient] credential decryption failed uid=${uid}:`, err instanceof Error ? err.message : String(err))
+    throw new CredsCorruptedError(
+      `CREDS_CORRUPTED: could not decrypt stored Shufersal credentials for uid=${uid} ` +
+      '(likely SALIKO_CREDS_ENCRYPTION_KEY changed since save)',
+    )
+  }
 }
 
 /**

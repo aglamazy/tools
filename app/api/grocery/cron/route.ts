@@ -36,6 +36,7 @@ import {
 } from '@/app/services/grocery/orderSafety'
 import { sendMessage } from '@/app/services/telegram/telegramClient'
 import { withTimeout } from '@/app/services/grocery/timeoutUtil'
+import { CredsCorruptedError } from '@/app/services/security/credEncryption'
 
 // 300 s is the Vercel Pro hard cap. Two stores × ~45 s iteration timeout
 // + the trailing /success ping does NOT fit in 60 s when one iteration
@@ -247,6 +248,17 @@ async function runCron(hcUrl: string | undefined) {
               uid, storeId, idempotencyKey: gate.idempotencyKey, cycle: gate.cycle, now,
               error: msg,
             })
+            // C10: a decryption failure here must NOT be silent. Without this
+            // the error re-throws to the cron summary and the user never hears
+            // that their stored credential is unreadable — they'd think all is
+            // well while every cron run quietly fails. Surface a specific,
+            // actionable alert instead of the generic checkout-failed path.
+            if (checkoutErr instanceof CredsCorruptedError) {
+              console.error(`[Grocery Cron] CREDS_CORRUPTED uid=${uid} store=${storeId}`)
+              await notify(chatId, `⚠️ נכשלתי לפענח את פרטי ${plugin.label} השמורים בשרת, ולכן ההזמנה האוטומטית לא רצה. תיכנס להגדרות → חיבורים חיצוניים ותכניס את הפרטים שוב (ייתכן שצריך גם לאשר שוב Tier 3).`)
+              results.push({ uid, storeId, action: 'creds_corrupted', ok: false, error: 'CREDS_CORRUPTED' })
+              return
+            }
             throw checkoutErr
           }
           return
