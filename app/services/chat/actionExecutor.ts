@@ -17,7 +17,8 @@ import {
   setCredentialsVerified,
   login as shufersalLogin,
 } from '@/app/services/grocery/shufersalClient'
-import { grantServerCredsConsent, NoTier3ConsentError } from '@/app/services/consentService'
+import { grantServerCredsConsent, hasCurrentServerCredsConsent, NoTier3ConsentError } from '@/app/services/consentService'
+import { assertConsentForTurn, credActionErrorMessage } from '@/app/services/chat/credGuards'
 // Note: retalixClient functions are no longer imported directly — the OTP
 // flow goes through the resolved plugin (multi-store Rexail support).
 // Exception: the anon Tier-1 path bypasses the plugin contract and calls
@@ -110,6 +111,17 @@ export async function deletePendingSearch(uid: string, key: string): Promise<voi
   const { FieldValue } = await import('firebase-admin/firestore')
   await getAdminFirestore().collection('groceries').doc(uid)
     .collection('private').doc('pendingSearches').update({ [key]: FieldValue.delete() })
+}
+
+/**
+ * Wipe ALL pending product-picker searches for this user. Called on greeting
+ * (soft-reset) — a stale picker from yesterday is the wrong context for a
+ * fresh "שלום" turn, and the user can't see+dismiss it from the floating
+ * widget. Cheap: one Firestore overwrite, zero reads.
+ */
+export async function clearAllPendingSearches(uid: string): Promise<void> {
+  await getAdminFirestore().collection('groceries').doc(uid)
+    .collection('private').doc('pendingSearches').set({})
 }
 
 /**
@@ -246,9 +258,14 @@ export async function executeActions(
   let workingAnonCreds: AnonStoreCreds | null | undefined = inboundAnonCreds
   let anonCredsTouched = false
 
+  // Same-turn consent defense (C01): snapshot whether Tier-3 consent existed
+  // BEFORE this batch. A server-side save must require consent from a PRIOR
+  // turn, so a bundled grant + set_credentials/set_otp_phone can't self-authorize.
+  const consentExistedBeforeBatch = !uid.startsWith(ANON_PREFIX) && await hasCurrentServerCredsConsent(uid)
+
   for (const action of actions) {
     try {
-      const r = await executeOne(uid, action, sessionStore, workingAnonCreds)
+      const r = await executeOne(uid, action, sessionStore, workingAnonCreds, consentExistedBeforeBatch)
       if (typeof r === 'string') {
         results.push({ name: action.action, result: r })
       } else if (r) {
@@ -264,9 +281,9 @@ export async function executeActions(
         results.push({ name: action.action, result: 'ok' })
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      console.error(`[ActionExecutor] Failed action=${action.action}:`, msg)
-      results.push({ name: action.action, result: `error: ${msg}` })
+      console.error(`[ActionExecutor] Failed action=${action.action}:`, err instanceof Error ? err.message : String(err))
+      // C10-aware: decryption failure → re-enter-cred message, else generic.
+      results.push({ name: action.action, result: credActionErrorMessage(err) })
     }
   }
 
@@ -295,7 +312,7 @@ async function executeOne(
   uid: string,
   action: ChatAction,
   sessionStore?: string | null,
-  inboundAnonCreds?: AnonStoreCreds | null,
+  inboundAnonCreds?: AnonStoreCreds | null, consentExistedBeforeBatch = false,
 ): Promise<string | ExecuteOneResult | null> {
   const isAnon = uid.startsWith(ANON_PREFIX)
 
@@ -891,6 +908,8 @@ async function executeOne(
       const email = typeof action.email === 'string' ? action.email.trim() : ''
       const password = typeof action.password === 'string' ? action.password : ''
       if (!email || !password) return 'חסר אימייל או סיסמה.'
+      // Same-turn defense: needs consent from a PRIOR turn (see executeActions).
+      assertConsentForTurn(isAnon || consentExistedBeforeBatch, 'shufersal')
       try {
         await saveCredentials(uid, email, password)
       } catch (err) {
@@ -956,6 +975,8 @@ async function executeOne(
       // flag was removed (B02 regression — same reason as set_credentials).
       // For Tier 3, the LLM must emit `grant_server_creds_consent` as a separate
       // prior action after the user said one of the recognized consent phrases.
+      // Same-turn defense (C01): require consent from a PRIOR turn.
+      assertConsentForTurn(consentExistedBeforeBatch, 'otp', plugin.label)
       try {
         await (plugin as OtpStorePlugin).sendOtp(uid, phone)
         return `שלחתי קוד SMS ל-${plugin.label}. שלח לי את הקוד שקיבלת.`

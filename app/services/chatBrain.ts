@@ -25,10 +25,15 @@ function formatHebrewPicker(sel: PendingProductSelection): string {
 
 function summarizeAction(name: string, args: Record<string, unknown>): string {
   const itemList = (k: string) => (Array.isArray(args[k]) ? (args[k] as string[]).join(', ') : '')
+  const str = (k: string) => (typeof args[k] === 'string' ? (args[k] as string) : '')
   switch (name) {
+    // Cart / list mutations
     case 'search_product':
+      return str('query') ? `חיפשתי "${str('query')}".` : 'חיפשתי מוצר.'
     case 're_search':
-      return args.query ? `חיפשתי "${args.query}".` : ''
+      return str('query') ? `חיפוש מחדש על "${str('query')}".` : 'חיפוש מחדש.'
+    case 'product_details':
+      return str('name') ? `פרטים על ${str('name')}.` : 'הצגתי פרטי מוצר.'
     case 'remove_items':
       return itemList('items') ? `הסרתי: ${itemList('items')}.` : 'הסרתי פריטים.'
     case 'remove_standing':
@@ -37,16 +42,63 @@ function summarizeAction(name: string, args: Record<string, unknown>): string {
       return itemList('items') ? `העברתי לקבועה: ${itemList('items')}.` : 'העברתי לקבועה.'
     case 'clear_pending':
       return 'ניקיתי את המתנה.'
+
+    // Read-only views (tool already produced the visible content)
+    case 'show_list':
+      return 'הצגתי את הרשימה.'
+    case 'show_cart':
+      return 'הצגתי את העגלה.'
+    case 'show_orders':
+      return 'הצגתי הזמנות פתוחות.'
+    case 'show_schedule':
+      return 'הצגתי את לוח הזמנים.'
+    case 'list_slots':
+      return 'בדקתי משבצות משלוח.'
+    case 'list_categories':
+      return 'הצגתי קטגוריות.'
+    case 'browse_category':
+      return str('categoryName') || str('name') || str('category')
+        ? `דפדפתי בקטגוריה "${str('categoryName') || str('name') || str('category')}".`
+        : 'דפדפתי בקטגוריה.'
+
+    // Order lifecycle
+    case 'trigger_order':
+      return 'פתחתי הזמנה.'
+    case 'cancel_order':
+      return 'ביטלתי את ההזמנה.'
+
+    // Schedule
     case 'set_schedule':
       return 'קבעתי לוח זמנים.'
-    case 'create_task':
-      return 'יצרתי משימה.'
-    case 'complete_task':
-      return 'סימנתי משימה כהושלמה.'
-    case 'delete_task':
-      return 'מחקתי משימה.'
+
+    // Auth / credentials — NEVER echo back the values
+    case 'set_credentials':
+      return 'שמרתי את פרטי ההתחברות.'
+    case 'set_otp_phone':
+      return 'שלחתי קוד SMS.'
+    case 'verify_otp':
+      return 'אימתתי את הקוד.'
+    case 'grant_server_creds_consent':
+      return 'אישרתי שמירה מוצפנת בשרת.'
+
+    // Store config
     case 'set_default_store':
       return 'עדכנתי חנות ברירת מחדל.'
+
+    // Tasks
+    case 'create_task':
+      return str('title') ? `יצרתי משימה: ${str('title')}.` : 'יצרתי משימה.'
+    case 'list_tasks':
+      return 'הצגתי משימות.'
+    case 'complete_task':
+      return 'סימנתי משימה כהושלמה.'
+    case 'update_task':
+      return 'עדכנתי משימה.'
+    case 'delete_task':
+      return 'מחקתי משימה.'
+
+    // set_session is silent (handled by the tool's own replyText)
+    case 'set_session':
     default:
       return ''
   }
@@ -59,9 +111,25 @@ function synthesizeHebrewFromTools(
   return summaries.length ? summaries.join(' ') : ''
 }
 
+/**
+ * First-word greeting detection (Hebrew + common English). A "שלום" on its
+ * own — or with a follow-up clause — signals the user is starting a fresh
+ * interaction. The greeting alone doesn't justify wiping chat history, but
+ * leftover product-picker selections from a previous session would push a
+ * stale "בחר מספר" back at them on the next turn. Soft-reset clears those.
+ */
+const GREETINGS = ['שלום', 'היי', 'הי', 'הלו', 'בוקר', 'ערב', 'צהריים', 'אהלן', 'hi', 'hello', 'hey']
+export function isFirstWordGreeting(text: string): boolean {
+  if (!text) return false
+  const cleaned = text.trim().replace(/^[!?.,:;"'״׳`(]+/, '').trim().toLowerCase()
+  if (!cleaned) return false
+  const firstWord = cleaned.split(/\s+/)[0]
+  return GREETINGS.includes(firstWord)
+}
+
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import { buildContextBlock, SYSTEM_PROMPT, type UserContext } from '@/app/services/chat/chatProcessor'
-import { savePendingSearch, type PendingProductSelection, type AnonStoreCreds } from '@/app/services/chat/actionExecutor'
+import { savePendingSearch, clearAllPendingSearches, type PendingProductSelection, type AnonStoreCreds } from '@/app/services/chat/actionExecutor'
 import { getUserStores, getStoreData } from '@/app/services/grocery/groceryStoreMulti'
 import { getAllStores } from '@/app/services/grocery/storeRegistry'
 import { initStores } from '@/app/services/grocery/initStores'
@@ -210,6 +278,18 @@ export async function processChatMessage(input: ChatBrainInput): Promise<ChatBra
 
   const { uid, text, displayName, historyCollection, includeTasks, seedHistory, anonStoreCreds } = input
 
+  // Greeting soft-reset: a first-word שלום/היי/בוקר/etc. signals the user is
+  // starting fresh. Wipe leftover product-picker selections so the next turn
+  // doesn't surface a stale "בחר מספר" from yesterday. Chat messages and the
+  // weekly cart (pendingChanges) are NOT touched — those are deliberate state.
+  if (!isAnonUid(uid) && isFirstWordGreeting(text)) {
+    try {
+      await clearAllPendingSearches(uid)
+    } catch (err) {
+      console.warn('[ChatBrain] clearAllPendingSearches failed (greeting soft-reset):', err)
+    }
+  }
+
   // Shared session — mutated by `set_session` tool, persisted on history.save.
   const session: SessionState = {}
 
@@ -280,8 +360,19 @@ export async function processChatMessage(input: ChatBrainInput): Promise<ChatBra
     )
   }
 
+  // When a picker is pending but processChat got only a stray status string
+  // ("ok", "...") as the LLM's incidental preamble alongside the tool call,
+  // override with the proper Hebrew picker prompt so no noise bubble appears.
+  let effectiveReply = result.reply
+  if (
+    toolCtx.pendingSelections.length > 0 &&
+    (!effectiveReply || effectiveReply === 'ok' || effectiveReply === '...')
+  ) {
+    effectiveReply = formatHebrewPicker(toolCtx.pendingSelections[0])
+  }
+
   return {
-    reply: result.reply,
+    reply: effectiveReply,
     thinking: result.thinking,
     actions: result.toolCalls.map((c) => ({ action: c.name, ...c.args })),
     pendingSelections: selectionsWithKeys,
