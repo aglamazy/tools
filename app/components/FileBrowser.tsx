@@ -1,10 +1,12 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import type { FilePreview } from '@/app/types/file-preview'
 import { FileType } from '@/app/types/file-type'
 import { requestDirectoryPermission } from '@/app/utils/directoryStorage'
 import { scanDirectoryForFiles } from '@/app/utils/folderScanner'
+import { transactionStore } from '@/app/stores/transactionStore'
+import type { ImportedFile } from '@/app/db/financeDB'
 
 type FileBrowserProps = {
   onFileSelect: (file: File) => void
@@ -14,6 +16,37 @@ type FileBrowserProps = {
   excludeFileNames?: string[]
   showDebug?: boolean
   onDebugInspect?: (preview: FilePreview, file: File) => void
+}
+
+type SortKey = 'fileName' | 'month' | 'account' | 'count' | 'modified'
+type SortDir = 'asc' | 'desc'
+
+const importedKey = (fileType: FileType | 'bank' | 'credit-card', month: string | null, account: string | null | undefined, card: string | null | undefined): string => {
+  // FileType enum + the importedFiles' raw 'bank' | 'credit-card' both stringify
+  // to the same value, so compare on the string form.
+  const isCard = String(fileType) === 'credit-card'
+  const t = isCard ? 'credit-card' : 'bank'
+  return `${t}|${month || ''}|${(isCard ? card : account) || ''}`
+}
+
+function SortHeader({ label, col, sortKey, sortDir, onClick }: {
+  label: string
+  col: SortKey
+  sortKey: SortKey
+  sortDir: SortDir
+  onClick: (k: SortKey) => void
+}) {
+  const active = sortKey === col
+  const arrow = active ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''
+  return (
+    <th
+      onClick={() => onClick(col)}
+      style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
+      title="לחץ למיון"
+    >
+      {label}{arrow}
+    </th>
+  )
 }
 
 export default function FileBrowser({
@@ -31,6 +64,9 @@ export default function FileBrowser({
   const [subfolders, setSubfolders] = useState<{ name: string; handle: FileSystemDirectoryHandle }[]>([])
   const [dirStack, setDirStack] = useState<{ name: string; handle: FileSystemDirectoryHandle }[]>([])
   const [currentDirHandle, setCurrentDirHandle] = useState<FileSystemDirectoryHandle | null>(null)
+  const [importedFiles, setImportedFiles] = useState<ImportedFile[]>([])
+  const [sortKey, setSortKey] = useState<SortKey>('modified')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
 
   // Auto-load files when modal opens using the saved directory from settings
   useEffect(() => {
@@ -61,6 +97,68 @@ export default function FileBrowser({
     run()
   }, [isOpen, savedDirHandle])
 
+  // Pull the imported-files index so we can mark folder files that already
+  // landed in the DB. Cheap (single Dexie read); re-run on open so a fresh
+  // import done elsewhere reflects without remounting the modal.
+  useEffect(() => {
+    if (!isOpen) return
+    let cancelled = false
+    transactionStore.getImportedFiles()
+      .then(data => { if (!cancelled) setImportedFiles(data?.files || []) })
+      .catch(() => { if (!cancelled) setImportedFiles([]) })
+    return () => { cancelled = true }
+  }, [isOpen])
+
+  const importedKeys = useMemo(() => {
+    const keys = new Set<string>()
+    for (const f of importedFiles) {
+      keys.add(importedKey(f.fileType, f.processingMonth, f.accountNumber, f.cardNumber))
+    }
+    return keys
+  }, [importedFiles])
+
+  const isImported = (p: FilePreview): boolean =>
+    importedKeys.has(importedKey(p.fileType, p.processingMonth, p.accountNumber, p.cardNumber))
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir(prev => prev === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortKey(key)
+      // Sensible default per column: text asc, numeric/date desc.
+      setSortDir(key === 'fileName' || key === 'account' ? 'asc' : 'desc')
+    }
+  }
+
+  const sortedPreviews = useMemo(() => {
+    const parseMonthYear = (monthStr: string | null): number => {
+      if (!monthStr) return 0
+      const [month, year] = monthStr.split('/').map(v => parseInt(v, 10))
+      return year * 12 + month
+    }
+    const sign = sortDir === 'asc' ? 1 : -1
+    const arr = [...previews]
+    arr.sort((a, b) => {
+      switch (sortKey) {
+        case 'fileName':
+          return sign * a.fileName.localeCompare(b.fileName)
+        case 'month':
+          return sign * (parseMonthYear(a.processingMonth) - parseMonthYear(b.processingMonth))
+        case 'account': {
+          const aA = a.accountNumber || a.cardNumber || ''
+          const bA = b.accountNumber || b.cardNumber || ''
+          return sign * aA.localeCompare(bA)
+        }
+        case 'count':
+          return sign * (a.transactionCount - b.transactionCount)
+        case 'modified':
+        default:
+          return sign * (a.lastModified - b.lastModified)
+      }
+    })
+    return arr
+  }, [previews, sortKey, sortDir])
+
   const loadFilesFromDirectory = async (dirHandle: FileSystemDirectoryHandle) => {
     setLoading(true)
     setError('')
@@ -74,29 +172,7 @@ export default function FileBrowser({
 
       const exclude = new Set((excludeFileNames || []).map((n) => n.toLowerCase()))
       const validPreviews = files.filter((p) => !exclude.has(p.fileName.toLowerCase()))
-
-      // Sort by month (descending), then by account
-      validPreviews.sort((a, b) => {
-        // Parse month/year for comparison
-        const parseMonthYear = (monthStr: string | null): number => {
-          if (!monthStr) return 0
-          const [month, year] = monthStr.split('/').map(v => parseInt(v, 10))
-          return year * 12 + month
-        }
-
-        const aMonth = parseMonthYear(a.processingMonth)
-        const bMonth = parseMonthYear(b.processingMonth)
-
-        if (aMonth !== bMonth) {
-          return bMonth - aMonth // Descending (newest first)
-        }
-
-        // Same month - sort by account/card number
-        const aAccount = a.accountNumber || a.cardNumber || ''
-        const bAccount = b.accountNumber || b.cardNumber || ''
-        return aAccount.localeCompare(bAccount)
-      })
-
+      // Order applied at render via sortedPreviews — load order is irrelevant.
       setPreviews(validPreviews)
       setLoading(false)
     } catch (err: any) {
@@ -151,6 +227,25 @@ export default function FileBrowser({
     const parent = dirStack[dirStack.length - 1]
     setDirStack((prev) => prev.slice(0, -1))
     await loadFilesFromDirectory(parent.handle)
+  }
+
+  const formatRelativeHe = (ts: number): string => {
+    if (!ts) return '—'
+    const diff = Date.now() - ts
+    if (diff < 0) return 'עכשיו'
+    const min = Math.floor(diff / 60_000)
+    if (min < 1) return 'עכשיו'
+    if (min < 60) return `לפני ${min} דק׳`
+    const hr = Math.floor(min / 60)
+    if (hr < 24) return `לפני ${hr} שע׳`
+    const d = Math.floor(hr / 24)
+    if (d === 1) return 'אתמול'
+    if (d < 7) return `לפני ${d} ימים`
+    const w = Math.floor(d / 7)
+    if (w < 5) return `לפני ${w} שב׳`
+    const mo = Math.floor(d / 30)
+    if (mo < 12) return `לפני ${mo} חוד׳`
+    return `לפני ${Math.floor(d / 365)} שנ׳`
   }
 
   const formatMonthDisplay = (monthStr: string | null): string => {
@@ -254,19 +349,23 @@ export default function FileBrowser({
           <table>
             <thead>
               <tr>
-                <th>שם קובץ</th>
-                <th>תאריך</th>
-                <th>חשבון</th>
-                <th>מספר עסקה</th>
+                <SortHeader label="שם קובץ" col="fileName" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                <SortHeader label="תאריך" col="month" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                <SortHeader label="חשבון" col="account" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                <SortHeader label="מספר עסקה" col="count" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                <SortHeader label="שונה לאחרונה" col="modified" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                <th>סטטוס</th>
                 {showDebug && <th>Dev</th>}
               </tr>
             </thead>
             <tbody>
-              {previews.map((preview, index) => (
+              {sortedPreviews.map((preview, index) => {
+                const imported = isImported(preview)
+                return (
                 <tr
                   key={index}
                   onClick={() => handleSelectFile(preview)}
-                  style={{ cursor: 'pointer' }}
+                  style={{ cursor: 'pointer', opacity: imported ? 0.65 : 1 }}
                   onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f8fafc'}
                   onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                 >
@@ -279,6 +378,24 @@ export default function FileBrowser({
                   <td>{formatMonthDisplay(preview.processingMonth)}</td>
                   <td>{preview.accountNumber || preview.cardNumber || '—'}</td>
                   <td>{preview.transactionCount}</td>
+                  <td title={new Date(preview.lastModified).toLocaleString('he-IL')}>
+                    {formatRelativeHe(preview.lastModified)}
+                  </td>
+                  <td>
+                    {imported ? (
+                      <span style={{
+                        display: 'inline-block',
+                        padding: '0.125rem 0.5rem',
+                        background: '#dcfce7',
+                        color: '#166534',
+                        borderRadius: '0.375rem',
+                        fontSize: '0.75rem',
+                        fontWeight: 500,
+                      }}>✓ יובא</span>
+                    ) : (
+                      <span style={{ color: '#94a3b8', fontSize: '0.75rem' }}>חדש</span>
+                    )}
+                  </td>
                   {showDebug && (
                     <td>
                       <button
@@ -295,7 +412,7 @@ export default function FileBrowser({
                     </td>
                   )}
                 </tr>
-              ))}
+              )})}
             </tbody>
           </table>
         </div>

@@ -8,4 +8,7 @@ export type FilePreview = {
   transactionCount: number
   accountNumber: string | null
   cardNumber: string | null
+  /** OS file modification time (ms). Default sort key for the picker so the
+   *  most recently downloaded statement floats to the top. */
+  lastModified: number
 }

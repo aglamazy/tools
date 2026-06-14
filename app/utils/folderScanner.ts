@@ -50,6 +50,7 @@ export async function scanDirectoryForFiles(dirHandle: FileSystemDirectoryHandle
         transactionCount: metadata.transactionCount,
         accountNumber: metadata.accountNumber || null,
         cardNumber: metadata.cardNumber || null,
+        lastModified: file.lastModified,
       }
     } catch {
       return null
