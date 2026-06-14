@@ -1,7 +1,127 @@
-# Rebuild extension zip if any extension files are staged
-if git diff --cached --name-only | grep -q '^extension/'; then
-  bash extension/build.sh
-  git add public/extension/aglamaz-form-assistant-*.zip
+#!/usr/bin/env bash
+#
+# Org-canonical pre-commit hook — owned by Ant.
+# DO NOT EDIT IN PLACE: this file is overwritten on every Ant daily run
+# from ~/develop/Ant/config/org-husky/.husky/pre-commit.
+# To change the org-wide rule, edit the canonical file and the next sync
+# will propagate everywhere.
+#
+# Checks (in order, fail-fast):
+#   1. git diff --check     — whitespace errors and merge markers in staged content
+#   2. agents-* pin check   — block staged package.json / lockfile that pins an
+#                             internal agents-* dep to a branch (#main, #master,
+#                             #develop, #feat/…) instead of a tag or SHA
+#   3. npx lint-staged      — eslint/prettier on staged files (per repo's .lintstagedrc / package.json#lint-staged)
+#   4. npx tsc --noEmit     — only if a top-level tsconfig.json exists
+#   5. version bump         — Importa-style yy.mm.# bump of package.json (+ lock),
+#                             then re-stage so the bump rides this commit. The
+#                             bumper (scripts/bump-version.js) and the merge
+#                             driver (.githooks/merge-higher-version.js +
+#                             .gitattributes + git config) are also owned by Ant
+#                             and propagated by ant_husky_sync.py.
+
+set -e
+
+# Resolve repo root (works whether the hook is run from a subdir or not).
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+# 1. Whitespace / merge-marker check against staged content.
+#    --cached makes this look at the index, not the working tree.
+if ! git diff --check --cached; then
+  echo "[ant pre-commit] whitespace or merge-marker issue in staged content — aborting." >&2
+  exit 1
 fi
 
-npx lint-staged
+# 2. agents-* pin check — only inspects staged manifests, only flags agents-*
+#    deps that point to a branch ref. Tags (#v1.2.3, #release-…) and SHAs
+#    (7-40 char hex) pass. See ~/develop/Ant/docs/agents-pin-rule.md.
+STAGED_MANIFESTS=$(git diff --cached --name-only --diff-filter=ACMR \
+  | grep -E '(^|/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$' || true)
+if [ -n "$STAGED_MANIFESTS" ]; then
+  PIN_VIOLATIONS=$(
+    git diff --cached --no-color -U0 -- $STAGED_MANIFESTS \
+      | grep -E '^\+[^+]' \
+      | grep -oE '"agents-[a-zA-Z0-9_.-]+"[[:space:]]*:[[:space:]]*"[^"]+"' \
+      | python3 -c '
+import re, sys
+TAG = re.compile(r"^v?\d|^release[-/]|^rel[-/]|^tag[-/]", re.I)
+SHA = re.compile(r"^[0-9a-f]{7,40}$", re.I)
+BRANCH_NAMES = {"main", "master", "develop", "dev", "trunk", "next", "staging", "prod", "production"}
+out = []
+for line in sys.stdin:
+    line = line.strip()
+    m = re.match(r"\"(agents-[a-zA-Z0-9_.-]+)\"\s*:\s*\"([^\"]+)\"", line)
+    if not m:
+        continue
+    name, spec = m.group(1), m.group(2)
+    # Only git/github specs have a # ref to inspect.
+    if "#" not in spec:
+        continue  # plain semver range, npm: spec, etc — not our concern
+    ref = spec.rsplit("#", 1)[1]
+    if SHA.match(ref):
+        continue
+    if TAG.match(ref):
+        continue
+    if ref.lower() in BRANCH_NAMES or "/" in ref:
+        out.append((name, spec))
+        continue
+    # Unknown — be conservative: anything that does not look like a tag
+    # and is not a sha is treated as a branch.
+    out.append((name, spec))
+for n, s in out:
+    print(f"{n}\t{s}")
+'
+  )
+  if [ -n "$PIN_VIOLATIONS" ]; then
+    echo "[ant pre-commit] agents-* dep pinned to a branch — aborting." >&2
+    # POSIX-portable read loop: husky sources this via /bin/sh, so bash
+    # here-strings (<<<) and $'\t' escapes fail on dash. Use a pipeline +
+    # printf tab instead.
+    TAB=$(printf '\t')
+    printf '%s\n' "$PIN_VIOLATIONS" | while IFS="$TAB" read -r name spec; do
+      [ -z "$name" ] && continue
+      ref="${spec##*#}"
+      echo "  ✗ $name is pinned to #$ref — pin to a tag or SHA instead" >&2
+      echo "    (current pin: $spec)" >&2
+    done
+    echo "  see ~/develop/Ant/docs/agents-pin-rule.md for why" >&2
+    exit 1
+  fi
+fi
+
+# 3. lint-staged (only if installed locally — the canonical config snippet
+#    is at ~/develop/Ant/config/org-husky/lint-staged-config.snippet.json
+#    and should be merged into each repo's package.json as a follow-up).
+if [ -f package.json ] && grep -q '"lint-staged"' package.json 2>/dev/null \
+   || [ -f .lintstagedrc.json ] || [ -f .lintstagedrc ]; then
+  npx --no-install lint-staged || {
+    echo "[ant pre-commit] lint-staged failed — aborting." >&2
+    exit 1
+  }
+fi
+
+# 4. TypeScript typecheck (only if the repo has a top-level tsconfig.json).
+if [ -f tsconfig.json ]; then
+  npx --no-install tsc --noEmit || {
+    echo "[ant pre-commit] tsc --noEmit failed — aborting." >&2
+    exit 1
+  }
+fi
+
+# 5. Auto-bump package version before commit so version changes are captured.
+#    Mirrors ~/develop/Importa/importa-server: yy.mm.# via scripts/bump-version.cjs,
+#    then re-stage package.json + lockfile so the bump is part of THIS commit
+#    (and a repeated bump isn't generated on the next one).
+#    NOTE: the bumper is .cjs (forced CommonJS) because most agents-* repos set
+#    "type":"module" in package.json — a plain .js with require()/__dirname
+#    crashes there with "require is not defined in ES module scope".
+if [ -f package.json ] && [ -f scripts/bump-version.cjs ] && command -v node >/dev/null 2>&1; then
+  node scripts/bump-version.cjs || {
+    echo "[ant pre-commit] version bump failed — aborting." >&2
+    exit 1
+  }
+  git add package.json package-lock.json 2>/dev/null || true
+fi
+
+exit 0
