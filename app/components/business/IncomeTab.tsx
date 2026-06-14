@@ -47,7 +47,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [profileVatType, setProfileVatType] = useState<'exempt' | 'authorized' | undefined>(undefined)
   const [participants, setParticipants] = useState<Participant[]>(() =>
-    typeof window !== 'undefined' ? partnerStore.getCached(undefined) : []
+    typeof window !== 'undefined' ? partnerStore.getCachedByBusinessId(businessId) : []
   )
   const [accountOwners, setAccountOwners] = useState<AccountOwners>({})
 
@@ -63,6 +63,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
   useEffect(() => {
     if (!business) return
     const syncId = business.syncId
+    partnerStore.recordBusiness(business.id, syncId)
     setParticipants(partnerStore.getCached(syncId))
     const unsub = partnerStore.subscribe(() => setParticipants(partnerStore.getCached(syncId)))
     void partnerStore.refresh(syncId)

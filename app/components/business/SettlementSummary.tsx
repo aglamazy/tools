@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useEffect, useMemo, useState } from 'react'
-import { db, type Transaction, type Business } from '@/app/db/financeDB'
+import { db, type Transaction, type Business, type ExpenseDocument } from '@/app/db/financeDB'
 import { businessStore } from '@/app/stores/businessStore'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { partnerStore, type Partner as Participant } from '@/app/stores/partnerStore'
@@ -35,8 +35,16 @@ function netOfVat(gross: number, vatType: VatType | undefined): number {
 export default function SettlementSummary({ businessId }: SettlementSummaryProps) {
   const [business, setBusiness] = useState<Business | null>(null)
   const [transactions, setTransactions] = useState<Transaction[]>([])
+  // Partner-paid invoices for this business (no bank tx, paidByUid set) —
+  // imported via the Expenses-tab modal. Counted as expenses in the splid
+  // math here so settlement reflects Nadar's out-of-band invoice payments.
+  const [partnerPaidDocs, setPartnerPaidDocs] = useState<ExpenseDocument[]>([])
+  // Synchronously pre-populate from localStorage (#L) so the "2+ partners"
+  // empty state doesn't flash while the Business loads from Dexie. First
+  // visit to this business returns [] and is filled by the subscribe/refresh
+  // flow below.
   const [participants, setParticipants] = useState<Participant[]>(() =>
-    typeof window !== 'undefined' ? partnerStore.getCached(undefined) : []
+    typeof window !== 'undefined' ? partnerStore.getCachedByBusinessId(businessId) : []
   )
   const [shares, setShares] = useState<BusinessAccessGrant[]>([])
   const [ownerVatType, setOwnerVatType] = useState<VatType | undefined>(undefined)
@@ -80,6 +88,13 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
       const all = await db.transactions.toArray()
       if (cancelled) return
       setTransactions(all.filter(t => t.category && catNames.has(t.category)))
+
+      // Load partner-paid expense docs for this business.
+      const docs = await db.expenseDocuments
+        .filter((d) => d.businessId === businessId && !d.transactionId && !!d.paidByUid)
+        .toArray()
+      if (cancelled) return
+      setPartnerPaidDocs(docs)
       setLoading(false)
     }
     void load()
@@ -89,6 +104,9 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
   useEffect(() => {
     if (!business) return
     const syncId = business.syncId
+    // Record the businessId↔syncId pairing so the next mount can resolve
+    // synchronously (covers the cold-start latency Agla flagged).
+    partnerStore.recordBusiness(business.id, syncId)
     setParticipants(partnerStore.getCached(syncId))
     setShares(partnerStore.getCachedShares(syncId))
     const unsub = partnerStore.subscribe(() => {
@@ -117,7 +135,16 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
     const shareeUids = shares
       .map(s => s.uid)
       .filter((u): u is string => typeof u === 'string')
-    const partnerUids = new Set<string>([ownerUid, ...shareeUids])
+    // Also count participants who carry a sharePercent — that's how sibling
+    // partners (e.g. Nadar from y25131's perspective) reach the partner set
+    // even though their grant isn't in the sharee's grantsToMe view. The
+    // partnerStore enriches partners with email-resolved uids; without this
+    // line they'd be visible in `participants` but excluded from the
+    // settlement table.
+    const partnerSharedUids = participants
+      .filter(p => p.uid && p.sharePercent !== undefined)
+      .map(p => p.uid)
+    const partnerUids = new Set<string>([ownerUid, ...shareeUids, ...partnerSharedUids])
     const partnerParticipants = participants.filter(p => partnerUids.has(p.uid))
     if (partnerParticipants.length === 0) return []
 
@@ -157,6 +184,15 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
         else paid += net
       }
 
+      // Partner-paid invoices (no bank tx) always count as expense, attributed
+      // by paidByUid directly. VAT-cleaned with the same per-partner vatType.
+      for (const d of partnerPaidDocs) {
+        const partnerUid = toPartnerUid(d.paidByUid)
+        if (partnerUid !== p.uid) continue
+        const gross = Math.abs(d.amount ?? 0)
+        paid += netOfVat(gross, vatType)
+      }
+
       return { uid: p.uid, label: p.label, sharePercent, paid, received,
                netActual: received - paid, fairShare: 0, balance: 0, vatType }
     }).map((r, _, arr) => {
@@ -165,7 +201,7 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
       const fairShare = totalNet * (r.sharePercent / 100)
       return { ...r, fairShare, balance: r.netActual - fairShare }
     })
-  }, [business, participants, shares, transactions, ownerVatType, incomeCatNames, accountOwners])
+  }, [business, participants, shares, transactions, partnerPaidDocs, ownerVatType, incomeCatNames, accountOwners])
 
   const settlementLine = useMemo(() => {
     if (rows.length < 2) return null
@@ -224,17 +260,29 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
     return partnerUid === ownerUid ? ownerVatType : 'exempt'
   }
 
-  // Sort transactions by date (DD/MM/YYYY) descending — newest first
-  const sortedTransactions = [...transactions].sort((a, b) => {
-    const [aD, aM, aY] = a.date.split('/')
-    const [bD, bM, bY] = b.date.split('/')
-    const aT = new Date(`${aY}-${aM}-${aD}`).getTime()
-    const bT = new Date(`${bY}-${bM}-${bD}`).getTime()
-    return bT - aT
-  })
+  // Merge bank txs + partner-paid invoices into one display list, sorted by
+  // date (DD/MM/YYYY) descending — newest first. Discriminator `kind` lets
+  // the renderer treat them differently (partner-paid skips the auto-
+  // attribution select since paidByUid is the canonical field).
+  type DisplayRow =
+    | { kind: 'tx'; date: string; tx: Transaction }
+    | { kind: 'doc'; date: string; doc: ExpenseDocument }
+  const parseHebDate = (s: string): number => {
+    const [d, m, y] = s.split('/')
+    if (!d || !m || !y) return 0
+    return new Date(`${y}-${m}-${d}`).getTime()
+  }
+  const displayRows: DisplayRow[] = [
+    ...transactions.map((t) => ({ kind: 'tx' as const, date: t.date, tx: t })),
+    ...partnerPaidDocs.map((d) => ({ kind: 'doc' as const, date: d.date || '', doc: d })),
+  ].sort((a, b) => parseHebDate(b.date) - parseHebDate(a.date))
+  const sortedTransactions = displayRows.filter((r): r is Extract<DisplayRow, { kind: 'tx' }> => r.kind === 'tx').map((r) => r.tx)
 
   return (
     <div style={{ padding: '1rem 0' }}>
+      <h3 style={{ fontSize: '1rem', fontWeight: 600, color: '#0f172a', marginBottom: '0.5rem' }}>
+        סיכום תנועות
+      </h3>
       <div style={{ marginBottom: '1rem', fontSize: '0.85rem', color: '#475569' }}>
         חישוב נטו (ללא מע״מ) עבור שותפים מסוג עוסק מורשה. עוסק פטור — סכום ברוטו.
       </div>
@@ -292,7 +340,7 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
         <h3 style={{ fontSize: '1rem', fontWeight: 600, color: '#0f172a', marginBottom: '0.75rem' }}>
           רשימת תנועות
         </h3>
-        {noActivity || sortedTransactions.length === 0 ? (
+        {noActivity || displayRows.length === 0 ? (
           <p style={{ color: '#64748b', fontSize: '0.85rem', padding: '1rem 0' }}>
             אין תנועות לעסק זה.
           </p>
@@ -309,7 +357,48 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
               </tr>
             </thead>
             <tbody>
-              {sortedTransactions.map(t => {
+              {displayRows.map((row) => {
+                if (row.kind === 'doc') {
+                  const d = row.doc
+                  const resolvedUid = d.paidByUid
+                  const resolvedLabel = resolvedUid
+                    ? participants.find((p) => p.uid === resolvedUid)?.label ?? '—'
+                    : '—'
+                  const vatType = vatTypeForTx(resolvedUid)
+                  const amount = netOfVat(Math.abs(d.amount ?? 0), vatType)
+                  return (
+                    <tr key={`pp-${d.id}`} style={{ borderBottom: '1px solid #f1f5f9', background: '#fffbeb' }}>
+                      <td style={{ padding: '0.5rem 0.5rem', color: '#475569', whiteSpace: 'nowrap' }}>{d.date || '—'}</td>
+                      <td style={{ padding: '0.5rem 0.5rem' }}>
+                        <span style={{
+                          display: 'inline-block',
+                          padding: '0.15rem 0.5rem',
+                          fontSize: '0.7rem',
+                          borderRadius: '0.25rem',
+                          background: '#fef2f2',
+                          color: '#dc2626',
+                          border: '1px solid #fecaca',
+                        }}>
+                          הוצאה
+                        </span>
+                      </td>
+                      <td style={{ padding: '0.5rem 0.5rem', color: '#0f172a' }}>
+                        <div>{d.vendor || d.fileName}</div>
+                        <div style={{ fontSize: '0.7rem', color: '#92400e' }}>
+                          🧾 חשבונית ששולמה ע״י שותף
+                        </div>
+                      </td>
+                      <td style={{ padding: '0.5rem 0.5rem', textAlign: 'left', whiteSpace: 'nowrap', fontWeight: 500, color: '#dc2626' }}>
+                        {fmt(amount)}
+                      </td>
+                      <td style={{ padding: '0.5rem 0.5rem', color: '#475569' }}>
+                        {resolvedLabel}
+                      </td>
+                      <td style={{ padding: '0.5rem 0.5rem', color: '#94a3b8', fontSize: '0.75rem' }}>—</td>
+                    </tr>
+                  )
+                }
+                const t = row.tx
                 const isIncome = incomeCatNames.has(t.category ?? '')
                 const resolvedUid = getTransactionAttributedUid(t, accountOwners, ownerUid)
                 const resolvedLabel = resolvedUid

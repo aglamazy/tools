@@ -13,6 +13,7 @@ import { matchReceiptForTransaction, parseDateFolder } from '@/app/services/rece
 import { partnerStore, type Partner as Participant } from '@/app/stores/partnerStore'
 import { getUser } from '@/app/stores/authStore'
 import type { Category } from '@/app/types/category'
+import PartnerPaidImportModal from '@/app/components/business/PartnerPaidImportModal'
 
 type ExpenseTabProps = {
   businessId: number
@@ -249,8 +250,13 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
   const [cashFile, setCashFile] = useState<File | null>(null)
   const [cashSaving, setCashSaving] = useState(false)
   const [cashPaidByUid, setCashPaidByUid] = useState<string>('')
+  const [showPartnerImportModal, setShowPartnerImportModal] = useState(false)
+  // Partner-paid invoices for this business (no transactionId, paidByUid set).
+  // Loaded from db.expenseDocuments; surfaced in the Splid summary alongside
+  // bank txs that carry paidByUid. (#44)
+  const [partnerPaidDocs, setPartnerPaidDocs] = useState<ExpenseDocument[]>([])
   const [participants, setParticipants] = useState<Participant[]>(() =>
-    typeof window !== 'undefined' ? partnerStore.getCached(undefined) : []
+    typeof window !== 'undefined' ? partnerStore.getCachedByBusinessId(businessId) : []
   )
   const [accountOwners, setAccountOwners] = useState<AccountOwners>({})
 
@@ -258,11 +264,26 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
   useEffect(() => {
     if (!business) return
     const syncId = business.syncId
+    partnerStore.recordBusiness(business.id, syncId)
     setParticipants(partnerStore.getCached(syncId))
     const unsub = partnerStore.subscribe(() => setParticipants(partnerStore.getCached(syncId)))
     void partnerStore.refresh(syncId)
     return unsub
   }, [business?.id, business?.syncId])
+
+  // Load partner-paid expense docs (no bank tx, paidByUid set) for this business.
+  const loadPartnerPaidDocs = async () => {
+    if (!business?.id) return
+    const docs = await db.expenseDocuments
+      .filter(
+        (d) => d.businessId === business.id && !d.transactionId && !!d.paidByUid,
+      )
+      .toArray()
+    setPartnerPaidDocs(docs)
+  }
+  useEffect(() => {
+    void loadPartnerPaidDocs()
+  }, [business?.id])
 
   useEffect(() => {
     void appSettingsStore.getAccountOwners().then(setAccountOwners)
@@ -563,6 +584,22 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
         >
           + מזומן
         </button>
+        {participants.length > 1 && (
+          <button
+            onClick={() => setShowPartnerImportModal(true)}
+            title="ייבוא מרובה של חשבוניות ששילם שותף — בחר מי שילם וקבצים מרובים, ערוך פרטים, אשר"
+            style={{
+              padding: '0.4rem 0.8rem',
+              borderRadius: '0.375rem',
+              border: '1px solid #e2e8f0',
+              background: '#fff',
+              cursor: 'pointer',
+              fontSize: '0.85rem',
+            }}
+          >
+            + ייבוא חשבוניות מ-שותף
+          </button>
+        )}
       </div>
 
       {showCashForm && (
@@ -610,68 +647,13 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
         </div>
       )}
 
-      {/* Splid summary — only when there are 2+ participants and at least one expense has paidByUid */}
-      {participants.length > 1 && transactions.some(t => t.paidByUid) && (() => {
-        const totalSpent = transactions.reduce((sum, t) => sum + Math.abs(t.amount), 0)
-        const sharePctSum = participants.reduce((sum, p) => sum + (p.sharePercent ?? 0), 0)
-        const validShares = sharePctSum > 0
-        const rows = participants.map(p => {
-          const paid = transactions
-            .filter(t => t.paidByUid === p.uid)
-            .reduce((sum, t) => sum + Math.abs(t.amount), 0)
-          const sharePct = p.sharePercent ?? 0
-          const owesEqualShare = totalSpent * (sharePct / 100)
-          const balance = validShares ? (paid - owesEqualShare) : 0
-          return { ...p, paid, owesEqualShare, balance }
-        })
-        return (
-          <div style={{
-            marginBottom: '1rem', padding: '0.75rem 1rem',
-            background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '0.5rem',
-            fontSize: '0.85rem',
-          }}>
-            <div style={{ fontWeight: 600, marginBottom: '0.4rem', color: '#075985' }}>חלוקת תשלומים בין השותפים</div>
-            <table style={{ width: '100%', fontSize: '0.85rem', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid #bae6fd', color: '#0369a1' }}>
-                  <th style={{ textAlign: 'right', padding: '0.25rem 0.5rem', fontWeight: 500 }}>שותף</th>
-                  <th style={{ textAlign: 'right', padding: '0.25rem 0.5rem', fontWeight: 500 }}>אחוז</th>
-                  <th style={{ textAlign: 'left', padding: '0.25rem 0.5rem', fontWeight: 500 }}>שילם</th>
-                  <th style={{ textAlign: 'left', padding: '0.25rem 0.5rem', fontWeight: 500 }}>חלקו</th>
-                  <th style={{ textAlign: 'left', padding: '0.25rem 0.5rem', fontWeight: 500 }}>מאזן</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map(r => (
-                  <tr key={r.uid}>
-                    <td style={{ padding: '0.25rem 0.5rem' }}>{r.label}</td>
-                    <td style={{ padding: '0.25rem 0.5rem', color: '#64748b' }}>
-                      {r.sharePercent != null ? `${r.sharePercent}%` : '—'}
-                    </td>
-                    <td style={{ padding: '0.25rem 0.5rem', textAlign: 'left' }}>₪{r.paid.toLocaleString()}</td>
-                    <td style={{ padding: '0.25rem 0.5rem', textAlign: 'left', color: '#64748b' }}>
-                      ₪{Math.round(r.owesEqualShare).toLocaleString()}
-                    </td>
-                    <td style={{
-                      padding: '0.25rem 0.5rem', textAlign: 'left', fontWeight: 500,
-                      color: r.balance > 0 ? '#16a34a' : r.balance < 0 ? '#dc2626' : '#64748b',
-                    }}>
-                      {r.balance > 0 ? '+' : ''}₪{Math.round(r.balance).toLocaleString()}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {!validShares && (
-              <div style={{ marginTop: '0.4rem', fontSize: '0.75rem', color: '#dc2626' }}>
-                אחוזי שותפות לא הוגדרו — קבע אותם בלשונית ההגדרות
-              </div>
-            )}
-          </div>
-        )
-      })()}
+      {/* Splid summary intentionally removed from Expenses tab (per Agla
+          2026-06-05): it duplicated the Settlement tab. Share % lives in
+          Settings; the Settlement tab is the single place to see split
+          math. Partner-paid rows are merged into the transactions table
+          below so they're visible in context. */}
 
-      {/* Transactions table */}
+      {/* Transactions table — bank txs + partner-paid docs as inline rows */}
       {transactions.length === 0 ? (
         <p style={{ color: '#64748b', textAlign: 'center', padding: '2rem' }}>
           אין הוצאות בתקופה זו
@@ -849,10 +831,63 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
                   </tr>
                 )
               })}
+              {/* Partner-paid invoices (no bank tx) appended as regular rows
+                  (#44 follow-up) so they're visible alongside transactions in
+                  the same table. Distinguished only by the "שולם ע״י" column
+                  + a small badge in the description. */}
+              {partnerPaidDocs.map((d) => {
+                const payerLabel =
+                  participants.find((p) => p.uid === d.paidByUid)?.label || d.paidByUid || '?'
+                return (
+                  <tr key={`pp-${d.id}`} style={{ borderBottom: '1px solid #f1f5f9', background: '#fffbeb' }}>
+                    <td style={{ padding: '0.6rem 0.5rem' }}>{d.date || '—'}</td>
+                    <td style={{ padding: '0.6rem 0.5rem' }}>
+                      {d.vendor || d.fileName}
+                      <span style={{ display: 'block', fontSize: '0.75rem', color: '#92400e' }}>
+                        🧾 חשבונית ששולמה ע״י שותף (אין רישום בנק)
+                      </span>
+                    </td>
+                    <td style={{ padding: '0.6rem 0.5rem', color: '#64748b' }}>{d.category || '—'}</td>
+                    {participants.length > 1 && (
+                      <td style={{ padding: '0.6rem 0.5rem' }}>{payerLabel}</td>
+                    )}
+                    <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left' }}>
+                      ₪{(d.amount ?? 0).toLocaleString()}
+                    </td>
+                    <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', color: '#64748b' }}>
+                      {d.vatAmount != null ? `₪${d.vatAmount.toLocaleString()}` : '—'}
+                    </td>
+                    <td style={{ padding: '0.6rem 0.5rem', textAlign: 'center' }}>
+                      {d.driveWebViewLink ? (
+                        <a href={d.driveWebViewLink} target="_blank" rel="noreferrer" style={{ color: '#0ea5e9' }}>
+                          קובץ
+                        </a>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                    <td />
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
       )}
+
+      <PartnerPaidImportModal
+        open={showPartnerImportModal}
+        onClose={() => setShowPartnerImportModal(false)}
+        businessId={businessId}
+        participants={participants}
+        categories={subjectStore.getAll()}
+        selfUid={getUser()?.uid}
+        claudeApiKey={claudeApiKey}
+        onImported={(count) => {
+          console.log(`[ExpenseTab] Imported ${count} partner-paid invoices`)
+          void loadPartnerPaidDocs()
+        }}
+      />
     </div>
   )
 }
