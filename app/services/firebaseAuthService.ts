@@ -53,6 +53,17 @@ export async function getIdToken(): Promise<string | null> {
   if (!isFirebaseConfigured()) return null
 
   const auth = getFirebaseAuth()
+  // On cold-start, `auth.currentUser` may be null while Firebase finishes
+  // restoring the session from IndexedDB. Without awaiting, every early
+  // API call (partnerStore.refresh, household/info, business-share/list)
+  // returns "not-authenticated" and the call cache locks at empty until
+  // the user manually navigates. authStateReady() resolves on first user
+  // hydration (or no-user) — typically ~50–300ms.
+  try {
+    if (typeof (auth as any).authStateReady === 'function') {
+      await (auth as any).authStateReady()
+    }
+  } catch { /* fallthrough to currentUser check */ }
   const user = auth.currentUser
   if (!user) return null
 
