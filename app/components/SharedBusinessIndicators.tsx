@@ -1,0 +1,297 @@
+'use client'
+
+import { useCallback, useEffect, useState } from 'react'
+import { db, type Business } from '@/app/db/financeDB'
+import {
+  getSharedBusinessIdsFromToken,
+  getSharedPassword,
+  saveSharedPassword,
+  syncSharedBusiness,
+} from '@/app/services/sharedBusinessSyncService'
+
+type IndicatorStatus = 'no-password' | 'idle' | 'syncing' | 'ok' | 'error'
+
+type Indicator = {
+  bizSyncId: string
+  shortLabel: string         // 2-letter abbreviation for the chip
+  fullName: string           // tooltip text
+  status: IndicatorStatus
+  errorMessage?: string
+}
+
+const STATUS_COLOR: Record<IndicatorStatus, string> = {
+  'no-password': '#94a3b8', // gray
+  idle: '#94a3b8',
+  syncing: '#3b82f6',       // blue
+  ok: '#22c55e',            // green
+  error: '#dc2626',         // red
+}
+
+const STATUS_TITLE: Record<IndicatorStatus, string> = {
+  'no-password': 'אין סיסמה — לחץ להזין',
+  idle: 'מחכה לסנכרון — לחץ להפעיל',
+  syncing: 'מסנכרן…',
+  ok: 'סנכרון פעיל',
+  error: 'שגיאה בסנכרון — לחץ לפתוח',
+}
+
+function shortFromSyncId(syncId: string, localName: string | null): string {
+  if (localName) {
+    const parts = localName.split(/\s+/).filter(Boolean)
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase()
+    return localName.slice(0, 2).toUpperCase()
+  }
+  // Fallback: first two hex chars of the syncId
+  return syncId.slice(0, 2).toUpperCase()
+}
+
+export default function SharedBusinessIndicators() {
+  const [indicators, setIndicators] = useState<Indicator[]>([])
+  const [openModalFor, setOpenModalFor] = useState<Indicator | null>(null)
+  const [password, setPassword] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [modalError, setModalError] = useState('')
+
+  const loadIndicators = useCallback(async () => {
+    const ids = await getSharedBusinessIdsFromToken()
+    if (ids.length === 0) {
+      setIndicators([])
+      return
+    }
+    const allBiz: Business[] = await db.businesses.toArray()
+    const next = await Promise.all(
+      ids.map(async (bizSyncId) => {
+        const local = allBiz.find((b) => b.syncId === bizSyncId) ?? null
+        const pwd = await getSharedPassword(bizSyncId)
+        const status: IndicatorStatus = !pwd
+          ? 'no-password'
+          : local
+            ? 'ok'
+            : 'idle'
+        return {
+          bizSyncId,
+          shortLabel: shortFromSyncId(bizSyncId, local?.name ?? null),
+          fullName: local?.name ?? `עסק משותף — ${bizSyncId.slice(0, 8)}…`,
+          status,
+        } satisfies Indicator
+      }),
+    )
+    setIndicators(next)
+  }, [])
+
+  // Reload on mount + after every modal close (in case sync ran).
+  useEffect(() => {
+    void loadIndicators()
+    // Also re-poll every 5s — sync state can change underneath us.
+    const t = setInterval(() => void loadIndicators(), 5000)
+    return () => clearInterval(t)
+  }, [loadIndicators])
+
+  const openModal = (ind: Indicator) => {
+    setOpenModalFor(ind)
+    setPassword('')
+    setModalError('')
+  }
+  const closeModal = () => {
+    setOpenModalFor(null)
+    setPassword('')
+    setModalError('')
+    setSubmitting(false)
+  }
+
+  const handleSubmit = async () => {
+    if (!openModalFor) return
+    if (!password.trim()) {
+      setModalError('יש להזין סיסמה')
+      return
+    }
+    setSubmitting(true)
+    setModalError('')
+    // Optimistic indicator update
+    setIndicators((prev) =>
+      prev.map((i) => (i.bizSyncId === openModalFor.bizSyncId ? { ...i, status: 'syncing' as const } : i)),
+    )
+    try {
+      await saveSharedPassword(openModalFor.bizSyncId, password)
+      const result = await syncSharedBusiness(openModalFor.bizSyncId, password)
+      if (!result.success) {
+        setIndicators((prev) =>
+          prev.map((i) =>
+            i.bizSyncId === openModalFor.bizSyncId
+              ? { ...i, status: 'error' as const, errorMessage: result.error || result.errorCode || 'שגיאה' }
+              : i,
+          ),
+        )
+        setModalError(`סנכרון נכשל: ${result.error || result.errorCode || 'שגיאה'}`)
+        setSubmitting(false)
+        return
+      }
+      // Success — reload indicators (the business is now in local Dexie).
+      await loadIndicators()
+      closeModal()
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'שגיאה לא ידועה'
+      setIndicators((prev) =>
+        prev.map((i) =>
+          i.bizSyncId === openModalFor.bizSyncId ? { ...i, status: 'error' as const, errorMessage: msg } : i,
+        ),
+      )
+      setModalError(`שגיאה: ${msg}`)
+      setSubmitting(false)
+    }
+  }
+
+  if (indicators.length === 0) return null
+
+  return (
+    <>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.4rem',
+          marginInlineEnd: '0.5rem',
+        }}
+      >
+        {indicators.map((ind) => (
+          <button
+            key={ind.bizSyncId}
+            onClick={() => openModal(ind)}
+            title={`${ind.fullName} — ${STATUS_TITLE[ind.status]}`}
+            style={{
+              position: 'relative',
+              width: 32,
+              height: 32,
+              borderRadius: '50%',
+              border: '2px solid #e0e7ff',
+              background: '#f8fafc',
+              cursor: 'pointer',
+              padding: 0,
+              fontSize: '0.7rem',
+              fontWeight: 600,
+              color: '#475569',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            aria-label={`${ind.fullName} — ${STATUS_TITLE[ind.status]}`}
+          >
+            🏢
+            <span style={{ position: 'absolute', bottom: -1, left: -1, fontSize: '0.55rem', fontWeight: 700, background: '#fff', borderRadius: 3, padding: '0 2px', border: '1px solid #e2e8f0', lineHeight: 1 }}>
+              {ind.shortLabel}
+            </span>
+            <span
+              style={{
+                position: 'absolute',
+                top: -2,
+                right: -2,
+                width: 12,
+                height: 12,
+                borderRadius: '50%',
+                background: STATUS_COLOR[ind.status],
+                border: '2px solid white',
+                boxShadow: '0 1px 2px rgba(0,0,0,0.2)',
+              }}
+            />
+          </button>
+        ))}
+      </div>
+
+      {openModalFor && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !submitting) closeModal()
+          }}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15,23,42,0.6)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: '1rem',
+          }}
+        >
+          <div
+            style={{
+              background: '#fff',
+              width: 'min(420px, 100%)',
+              borderRadius: '0.75rem',
+              padding: '1.25rem',
+              direction: 'rtl',
+              boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+              <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#0f172a' }}>
+                סיסמת סנכרון — {openModalFor.fullName}
+              </h2>
+              <button
+                onClick={closeModal}
+                disabled={submitting}
+                style={{ border: 'none', background: 'transparent', fontSize: '1.3rem', cursor: submitting ? 'wait' : 'pointer', color: '#64748b' }}
+                aria-label="סגור"
+              >
+                ×
+              </button>
+            </div>
+            <p style={{ fontSize: '0.85rem', color: '#475569', marginBottom: '0.75rem' }}>
+              הסיסמה שהוגדרה ע״י בעל העסק לפענוח הגיבוי המשותף.
+            </p>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoFocus
+              placeholder="הזן סיסמה"
+              style={{
+                width: '100%',
+                padding: '0.5rem 0.75rem',
+                border: '1px solid #cbd5e1',
+                borderRadius: '0.375rem',
+                fontSize: '0.95rem',
+                marginBottom: '0.75rem',
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !submitting) void handleSubmit()
+              }}
+            />
+            {modalError && (
+              <div style={{ fontSize: '0.85rem', color: '#dc2626', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '0.375rem', padding: '0.5rem 0.75rem', marginBottom: '0.75rem' }}>
+                ✗ {modalError}
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-start', gap: '0.5rem' }}>
+              <button
+                onClick={closeModal}
+                disabled={submitting}
+                style={{ padding: '0.5rem 1rem', border: '1px solid #cbd5e1', background: '#fff', color: '#475569', borderRadius: '0.375rem', cursor: submitting ? 'wait' : 'pointer', fontSize: '0.85rem' }}
+              >
+                ביטול
+              </button>
+              <button
+                onClick={handleSubmit}
+                disabled={submitting || !password.trim()}
+                style={{
+                  padding: '0.5rem 1.25rem',
+                  border: 'none',
+                  background: submitting || !password.trim() ? '#93c5fd' : '#3b82f6',
+                  color: '#fff',
+                  borderRadius: '0.375rem',
+                  cursor: submitting || !password.trim() ? 'not-allowed' : 'pointer',
+                  fontSize: '0.85rem',
+                  fontWeight: 500,
+                }}
+              >
+                {submitting ? 'מסנכרן…' : 'שמור וסנכרן'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}

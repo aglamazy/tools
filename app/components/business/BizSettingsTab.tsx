@@ -20,7 +20,7 @@ export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
   const [ypayClientSecret, setYpayClientSecret] = useState('')
   const [ypayStatus, setYpayStatus] = useState<{ type: 'idle' | 'success' | 'error'; message: string }>({ type: 'idle', message: '' })
   const [householdMembers, setHouseholdMembers] = useState<Partner[]>(() =>
-    typeof window !== 'undefined' ? partnerStore.getCached(undefined) : []
+    typeof window !== 'undefined' ? partnerStore.getCachedByBusinessId(businessId) : []
   )
   const [selectedUserId, setSelectedUserId] = useState<string>('')
   const [ownerSaved, setOwnerSaved] = useState(false)
@@ -35,6 +35,7 @@ export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
     // Initial sync read: show cached partners immediately to avoid empty-dropdown flash.
     void businessStore.getById(businessId).then(b => {
       syncIdForBiz = b?.syncId
+      partnerStore.recordBusiness(b?.id, b?.syncId)
       setHouseholdMembers(partnerStore.getCached(syncIdForBiz))
     })
     const unsubStore = partnerStore.subscribe(() => {

@@ -42,6 +42,14 @@ const FK_RELATIONS: Record<string, { fkField: string; parentTable: string }> = {
   taxDocuments: { fkField: 'businessId', parentTable: 'businesses' },
   advancePayments: { fkField: 'businessId', parentTable: 'businesses' },
   businessTasks: { fkField: 'businessId', parentTable: 'businesses' },
+  // categories.businessId points at the owner's local int business.id; without
+  // remap, sharees couldn't see ExpenseTab/IncomeTab/SettlementSummary content
+  // because all of those filter by `c.businessId === businessId`. Sharee's
+  // local Dexie int id differs from owner's — the parentTable lookup rewrites
+  // it to the sharee's matching business.id by syncId. Bug surfaced when
+  // y25131 received the Agents Head shared backup but expenses + settlement
+  // tabs rendered empty (incomes worked because of a different code path).
+  categories: { fkField: 'businessId', parentTable: 'businesses' },
 }
 
 function getTimestamp(record: any): string {
@@ -213,7 +221,23 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
               await table.update(existingLocal.id, updates)
               updated++
             } else {
-              skipped++
+              // Timestamp says local wins for content — but if the FK we
+              // just re-resolved differs from what local has, force-patch
+              // the FK alone. FKs are structural (point to local int ids
+              // that vary per device); a stale one breaks all the by-
+              // business filters in ExpenseTab/IncomeTab/SettlementSummary.
+              // Surfaced after #54 added categories to FK_RELATIONS: the
+              // remap was computed on cloudRec but discarded when local
+              // timestamp won. Sharees re-synced after #54 still saw
+              // empty Expenses + Settlement because their local categories
+              // carried the owner's int businessId.
+              if (fkInfo && cloudRec[fkInfo.fkField] !== undefined &&
+                  cloudRec[fkInfo.fkField] !== existingLocal[fkInfo.fkField]) {
+                await table.update(existingLocal.id, { [fkInfo.fkField]: cloudRec[fkInfo.fkField] })
+                updated++
+              } else {
+                skipped++
+              }
             }
             tableIdMap.set(cloudRec.syncId, existingLocal.id)
           } else {

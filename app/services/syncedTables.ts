@@ -34,6 +34,7 @@ export const SYNCED_DB_TABLES = [
   'chatMessages',
   'credentials',
   'vatPayments',
+  'blogPosts',
 ] as const
 
 export type SyncedTableName = (typeof SYNCED_DB_TABLES)[number]

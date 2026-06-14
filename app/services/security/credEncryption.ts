@@ -85,6 +85,22 @@ export function decryptCred(ciphertext: string): string {
   return dec.toString('utf8')
 }
 
+/**
+ * Sentinel thrown when a stored credential cannot be decrypted — bad format,
+ * AES tag mismatch, or (most commonly) the `SALIKO_CREDS_ENCRYPTION_KEY`
+ * changed since the credential was saved. Distinct from a "credentials wrong
+ * at the store" failure: corruption means the user must re-enter the
+ * credential (Settings vault) or re-grant Tier 3, NOT that their password is
+ * wrong. Callers (login, cron) catch this to surface the real state instead of
+ * silently reporting success.
+ */
+export class CredsCorruptedError extends Error {
+  constructor(message = 'CREDS_CORRUPTED') {
+    super(message)
+    this.name = 'CredsCorruptedError'
+  }
+}
+
 /** True if the value looks like an `encryptCred` output. Used during the
  *  rollout window to safely read mixed plaintext / ciphertext docs. */
 export function looksEncrypted(value: unknown): boolean {

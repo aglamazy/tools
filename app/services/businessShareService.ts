@@ -28,6 +28,10 @@ export type BusinessPartner = {
   sharePercent: number
   createdAt: string
   updatedAt: string
+  /** Resolved server-side from email when available — lets sharee-side code
+   *  attribute settlement balances to sibling partners (e.g. Nadar) that
+   *  don't have a grant in the current user's grantsToMe. */
+  uid?: string
 }
 
 export type BusinessShareInvitation = {

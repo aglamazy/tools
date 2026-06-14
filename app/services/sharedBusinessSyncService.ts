@@ -21,6 +21,7 @@ import { encrypt, decrypt, generateVerificationToken, verifyPasswordWithToken } 
 import { db } from '@/app/db/financeDB'
 import type { BackupData } from './backupService'
 import { applyCloudBackup } from './applyMergedBackupService'
+import { subjectStore } from '@/app/stores/subjectStore'
 
 const BACKUP_FILE_NAME = 'backup.enc'
 const VERIFICATION_FILE_NAME = 'verify.enc'
@@ -118,20 +119,26 @@ async function exportBusinessData(businessSyncId: string): Promise<BackupData | 
     ? await db.timeEntries.where('taskId').anyOf(taskIds).toArray()
     : []
 
-  // Collect ALL businessCategories for this business (a business typically has
-  // multiple — income/expense pairs, VAT categories, etc.). The IncomeTab and
-  // ExpensesTab key transactions off these names, so we have to ship the full
-  // set or sharee sees nothing.
-  const businessCategories = await db.businessCategories
-    .where('business').equals(business.name).toArray()
+  // Source of truth for "categories scoped to this business" is the in-app
+  // subjectStore (localStorage `finance-categories`) — that's where Category
+  // rows carry their `businessId`. The IndexedDB `categories` table is a
+  // sync mirror whose rows currently all have `businessId = null` (the
+  // [[project_business_attribution_hole]]), so a businessId-filter against it
+  // returns 0 — which is why pre-fix sharees got empty Expenses/Income tabs.
+  //
+  // We pull AH-scoped categories straight from subjectStore, derive the name
+  // list, and also keep any legacy `businessCategories` rows that genuinely
+  // mention this business (mostly empty in current data, harmless to ship).
+  const scopedCategories = subjectStore.getForBusiness(businessId)
   const categoryNames = Array.from(new Set(
-    businessCategories.map(bc => bc.category).filter(Boolean)
+    scopedCategories.map(c => c.name).filter(Boolean)
   ))
+  const categories = scopedCategories
 
-  // Collect Category rows matching those names
-  const categories = categoryNames.length > 0
-    ? await db.categories.where('name').anyOf(categoryNames).toArray()
-    : []
+  const allBusinessCategories = await db.businessCategories.toArray()
+  const businessCategories = allBusinessCategories.filter(
+    bc => bc.business === business.name
+  )
 
   // Collect transactions tagged with any of those categories. Filtering in JS
   // (rather than via Dexie .where().anyOf()) because Transaction.category is
@@ -153,10 +160,26 @@ async function exportBusinessData(businessSyncId: string): Promise<BackupData | 
     db.ypayDocuments.toArray(),
     db.expenseDocuments.toArray(),
   ])
-  const ypayDocuments = allYpayDocs.filter(d => transactionIdStrSet.has(d.transactionId))
-  const expenseDocuments = allExpenseDocs.filter(d =>
-    d.transactionId !== undefined && transactionIdNumSet.has(d.transactionId)
+  // ypayDocuments belong to the business via either a linked transaction (paid)
+  // OR via their `projectName` matching one of the business's projects (open /
+  // unpaid invoice). OpenDocumentsTab + InvoicesTab read by projectName, so
+  // sharee needs both shapes.
+  const projectNameSet = new Set(projects.map(p => p.name).filter(Boolean))
+  const ypayDocuments = allYpayDocs.filter(d =>
+    transactionIdStrSet.has(d.transactionId) ||
+    (d.projectName && projectNameSet.has(d.projectName))
   )
+  // Include two flavors of expenseDocument:
+  //   (a) linked to one of our transactions (standard receipt-on-bank-charge)
+  //   (b) partner-paid for THIS business (no transactionId, paidByUid set,
+  //       businessId matches owner-side AH). ExpenseTab.tsx:279 surfaces (b)
+  //       as "partner-paid" rows; sharee needs them to compute the
+  //       "~1000 at Nadar's side" figure and the Settlement balance.
+  const expenseDocuments = allExpenseDocs.filter(d => {
+    if (d.transactionId !== undefined && transactionIdNumSet.has(d.transactionId)) return true
+    if (!d.transactionId && d.paidByUid && d.businessId === businessId) return true
+    return false
+  })
 
   // Build mini backup — every field the business-view tabs read for this
   // business. Tables NOT relevant to a single business (importedFiles,
@@ -181,6 +204,14 @@ async function exportBusinessData(businessSyncId: string): Promise<BackupData | 
     businessTasks,
     subjectStore: null,
     timerStore: null,
+    // Business-scoped Category rows the sharee must add to their subjectStore
+    // (localStorage `finance-categories`) so IncomeTab/ExpenseTab — which read
+    // from subjectStore, not the IndexedDB mirror — can see them. We carry
+    // them out-of-band (not in `subjectStore`) because the standard
+    // subjectStore import path is overwrite-not-merge and would clobber the
+    // sharee's own household categories. Sharee-side merge in
+    // applySharedBackup() does the safe add.
+    sharedSubjectCategories: scopedCategories,
   }
 
   return {
@@ -239,6 +270,55 @@ async function applySharedBackup(
 
   // Use the existing merge logic — it handles syncId matching, dedup, FK resolution
   await applyCloudBackup(cloud)
+
+  // Sharee-side: remap businessId on partner-paid expenseDocuments. The
+  // FK_RELATIONS table at applyMergedBackupService.ts:41 declares only
+  // `transactionId` for expenseDocuments (because that's the primary FK for
+  // bank-receipt matching), but partner-paid docs (`!transactionId`) carry the
+  // owner's local businessId instead. ExpenseTab.tsx:279 filters them by
+  // `d.businessId === business.id`, so without remap the sharee sees 0
+  // partner-paid rows even though the docs are in their DB.
+  if (!isOwner) {
+    const ownerBizId = cloud.stores.businesses?.[0]?.id
+    const localBiz = await db.businesses.where('syncId').equals(businessSyncId).first()
+    const localBizId = localBiz?.id
+    if (ownerBizId != null && localBizId != null && ownerBizId !== localBizId) {
+      // businessId is not a Dexie index on expenseDocuments, so `.where`
+      // throws; scan in-memory then patch by primary key.
+      const all = await db.expenseDocuments.toArray()
+      const toFix = all.filter(d => d.businessId === ownerBizId)
+      for (const d of toFix) {
+        if (d.id != null) {
+          await db.expenseDocuments.update(d.id, { businessId: localBizId })
+        }
+      }
+    }
+  }
+
+  // Sharee-side: merge the owner's business-scoped categories into the local
+  // subjectStore (localStorage). Owner-side: skip — owner already authored them.
+  //
+  // Categories carry the OWNER's local businessId (e.g. 5); the sharee's local
+  // AH business has its own auto-incremented id (e.g. 1). We remap by looking
+  // up the sharee's local business via the businessSyncId after the IndexedDB
+  // merge has landed it — same FK strategy applyMergedBackupService uses for
+  // its remap relations (#54).
+  if (!isOwner) {
+    const incomingCats: any[] = (cloud.stores as any).sharedSubjectCategories || []
+    if (incomingCats.length > 0) {
+      const localBiz = await db.businesses.where('syncId').equals(businessSyncId).first()
+      const localBizId = localBiz?.id
+      const raw = subjectStore.getRaw() || { categories: [], classifications: [] }
+      const existing: any[] = Array.isArray(raw.categories) ? raw.categories : []
+      const byId = new Map<string, any>()
+      for (const c of existing) if (c?.id) byId.set(String(c.id), c)
+      for (const c of incomingCats) {
+        if (!c?.id) continue
+        byId.set(String(c.id), localBizId != null ? { ...c, businessId: localBizId } : c)
+      }
+      subjectStore.saveAll(Array.from(byId.values()))
+    }
+  }
 
   // Refresh any open business UI
   if (typeof window !== 'undefined') {
@@ -312,7 +392,10 @@ export async function verifySharedPassword(
     const verifyRef = ref(storage, verifyPath)
     const bytes = await getBytes(verifyRef)
     const token = new TextDecoder().decode(bytes)
-    return await verifyPasswordWithToken(password, token)
+    // verifyPasswordWithToken signature is (token, password) — passing the
+    // args in the wrong order always returned false, so the password test
+    // could never succeed regardless of the actual password.
+    return await verifyPasswordWithToken(token, password)
   } catch {
     return false
   }
@@ -339,6 +422,48 @@ export async function saveSharedPassword(businessSyncId: string, password: strin
   } else {
     await db.appSettings.add({ key, value: password, updatedAt: new Date().toISOString() })
   }
+}
+
+/**
+ * Owner-side: reset the shared-business encryption password.
+ *
+ * Used when the owner has lost the old password OR wants to rotate. Skips
+ * the normal download-merge-upload dance (which needs the old password)
+ * and instead:
+ *
+ *   1. Overwrites the verification token with the new password.
+ *   2. Exports the owner's CURRENT local Dexie state for this business
+ *      and re-uploads it encrypted with the new password (no generation
+ *      check — this is a force overwrite).
+ *   3. Saves the new password locally so subsequent sync calls use it.
+ *
+ * Effect on sharees: their cached old password is now wrong. They need
+ * the new password to decrypt subsequent backups — exactly the rotation
+ * UX. Their old cached decrypted data is unaffected; only the next
+ * download fails until they enter the new password.
+ */
+export async function resetSharedPassword(
+  businessSyncId: string,
+  newPassword: string,
+): Promise<SyncResult> {
+  if (!newPassword?.trim()) {
+    return { success: false, error: 'סיסמה ריקה', errorCode: 'empty-password' }
+  }
+  const setup = await setupSharedPassword(businessSyncId, newPassword)
+  if (!setup.success) return setup
+
+  const localBackup = await exportBusinessData(businessSyncId)
+  if (!localBackup) {
+    // No local data to upload — verification token alone is enough for now;
+    // any future local edits will sync up.
+    await saveSharedPassword(businessSyncId, newPassword)
+    return { success: true }
+  }
+  const upload = await uploadSharedBackup(businessSyncId, localBackup, newPassword)
+  if (!upload.success) return upload
+
+  await saveSharedPassword(businessSyncId, newPassword)
+  return { success: true }
 }
 
 /**

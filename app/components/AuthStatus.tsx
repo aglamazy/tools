@@ -15,6 +15,7 @@ import AuthModal from './AuthModal'
 import Link from 'next/link'
 import { routes, config } from '@/app/config'
 import { userTierStore, UserTier } from '@/app/stores/userTierStore'
+import SharedBusinessIndicators from '@/app/components/SharedBusinessIndicators'
 
 type SyncIndicatorStatus = 'syncing' | 'inactive' | 'hidden'
 
@@ -244,7 +245,9 @@ export default function AuthStatus() {
   }
 
   return (
-    <div style={{ position: 'relative' }}>
+    <div style={{ display: 'flex', alignItems: 'center' }}>
+      <SharedBusinessIndicators />
+      <div style={{ position: 'relative' }}>
       <button
         onClick={() => setShowMenu(!showMenu)}
         title={user.email || ''}
@@ -425,6 +428,7 @@ export default function AuthStatus() {
           </div>
         </>
       )}
+      </div>
     </div>
   )
 }

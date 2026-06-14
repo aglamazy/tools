@@ -34,6 +34,8 @@ import {
   setupSharedPassword,
   getSharedPassword,
   saveSharedPassword,
+  verifySharedPassword,
+  resetSharedPassword,
 } from '@/app/services/sharedBusinessSyncService'
 import type { Business } from '@/app/db/financeDB'
 import { refreshIdToken, subscribeToAuthState } from '@/app/services/firebaseAuthService'
@@ -74,6 +76,28 @@ export default function BusinessSharingSection({ business, ownerLabel, ownerShar
   const [email, setEmail] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [password, setPassword] = useState('')
+  // Track the signed-in user's uid so we can gate the owner-only verify +
+  // reset buttons. Non-owners (sharees) must not be able to overwrite the
+  // verification token or rotate the password — that's destructive to the
+  // whole partnership.
+  const [currentUid, setCurrentUid] = useState<string | null>(null)
+  const isOwner = !!currentUid && business.userId === currentUid
+  // Owner-side password validation. Lets the owner test that the password
+  // they hand to a sharee actually decrypts the encrypted backup, without
+  // leaving Settings. Calls verifySharedPassword which downloads the
+  // verification token from Storage and tries to decrypt.
+  const [showVerify, setShowVerify] = useState(false)
+  const [verifyPassword, setVerifyPassword] = useState('')
+  const [verifyStatus, setVerifyStatus] = useState<'idle' | 'checking' | 'ok' | 'wrong' | 'error'>('idle')
+  const [verifyError, setVerifyError] = useState<string>('')
+  // Owner-side password reset — overwrites the verification token + the
+  // encrypted backup with a freshly-encrypted snapshot of the local Dexie.
+  // Sharees need the new password for subsequent decrypts.
+  const [showReset, setShowReset] = useState(false)
+  const [resetNewPassword, setResetNewPassword] = useState('')
+  const [resetConfirm, setResetConfirm] = useState('')
+  const [resetStatus, setResetStatus] = useState<'idle' | 'working' | 'ok' | 'error'>('idle')
+  const [resetError, setResetError] = useState<string>('')
   const [needsPassword, setNeedsPassword] = useState(false)
   const [status, setStatus] = useState<{ type: 'idle' | 'success' | 'error'; message: string }>({ type: 'idle', message: '' })
   const [loading, setLoading] = useState(false)
@@ -105,6 +129,7 @@ export default function BusinessSharingSection({ business, ownerLabel, ownerShar
     })
     const unsubAuth = subscribeToAuthState((user) => {
       if (user) {
+        setCurrentUid(user.uid)
         void partnerStore.refresh(syncId).then(() => setPartnersLoaded(true))
         getSharedPassword(syncId).then(p => { if (!p) setNeedsPassword(true) })
         unsubAuth()
@@ -399,9 +424,225 @@ export default function BusinessSharingSection({ business, ownerLabel, ownerShar
   // Render
   // ---------------------------------------------------------------------------
 
+  const handleResetPassword = async () => {
+    if (!resetNewPassword.trim()) {
+      setResetStatus('error')
+      setResetError('סיסמה ריקה')
+      return
+    }
+    if (resetNewPassword !== resetConfirm) {
+      setResetStatus('error')
+      setResetError('סיסמה ואישור לא תואמים')
+      return
+    }
+    if (!business.syncId) {
+      setResetStatus('error')
+      setResetError('לעסק אין syncId — אי אפשר לאפס')
+      return
+    }
+    setResetStatus('working')
+    setResetError('')
+    try {
+      const result = await resetSharedPassword(business.syncId, resetNewPassword)
+      if (!result.success) {
+        setResetStatus('error')
+        setResetError(result.error || result.errorCode || 'שגיאה')
+        return
+      }
+      setResetStatus('ok')
+      setResetNewPassword('')
+      setResetConfirm('')
+    } catch (err: unknown) {
+      setResetStatus('error')
+      setResetError(err instanceof Error ? err.message : 'שגיאה לא ידועה')
+    }
+  }
+
+  const handleVerifyPassword = async () => {
+    if (!verifyPassword.trim()) {
+      setVerifyStatus('error')
+      setVerifyError('יש להזין סיסמה')
+      return
+    }
+    if (!business.syncId) {
+      setVerifyStatus('error')
+      setVerifyError('לעסק אין syncId — אי אפשר לבדוק')
+      return
+    }
+    setVerifyStatus('checking')
+    setVerifyError('')
+    try {
+      const ok = await verifySharedPassword(business.syncId, verifyPassword)
+      setVerifyStatus(ok ? 'ok' : 'wrong')
+      if (!ok) setVerifyError('הסיסמה לא מפענחת את הגיבוי. ייתכן שזו לא הסיסמה שהוגדרה לעסק זה.')
+    } catch (err: unknown) {
+      setVerifyStatus('error')
+      setVerifyError(err instanceof Error ? err.message : 'שגיאה לא ידועה')
+    }
+  }
+
   return (
     <section style={{ padding: '1rem', border: '1px solid #e2e8f0', borderRadius: '0.75rem' }}>
-      <h3 style={{ margin: '0 0 0.75rem', fontSize: '1rem', fontWeight: 600 }}>שותפים</h3>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>שותפים</h3>
+        {isOwner && (
+        <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => {
+              setShowVerify((v) => !v)
+              setVerifyStatus('idle')
+              setVerifyPassword('')
+              setVerifyError('')
+            }}
+            style={{
+              fontSize: '0.78rem',
+              padding: '0.3rem 0.7rem',
+              background: showVerify ? '#f1f5f9' : '#fff',
+              color: '#475569',
+              border: '1px solid #cbd5e1',
+              borderRadius: '0.375rem',
+              cursor: 'pointer',
+            }}
+            title="בדוק שהסיסמה שאתה נותן לשותף באמת מפענחת את הגיבוי המוצפן"
+          >
+            🔑 אמת סיסמת סנכרון
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setShowReset((v) => !v)
+              setResetStatus('idle')
+              setResetNewPassword('')
+              setResetConfirm('')
+              setResetError('')
+            }}
+            style={{
+              fontSize: '0.78rem',
+              padding: '0.3rem 0.7rem',
+              background: showReset ? '#fef2f2' : '#fff',
+              color: '#b91c1c',
+              border: '1px solid #fecaca',
+              borderRadius: '0.375rem',
+              cursor: 'pointer',
+            }}
+            title="קבע סיסמה חדשה — דורס את הגיבוי הקיים. שותפים יצטרכו להזין את הסיסמה החדשה לסנכרון."
+          >
+            🔄 אפס סיסמה
+          </button>
+        </div>
+        )}
+      </div>
+
+      {isOwner && showVerify && (
+        <div style={{ marginBottom: '0.75rem', padding: '0.6rem 0.75rem', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '0.5rem' }}>
+          <p style={{ fontSize: '0.78rem', color: '#475569', margin: '0 0 0.4rem' }}>
+            הקלד את הסיסמה — היא תיבדק מול קובץ האימות של הגיבוי המוצפן. לא נשמר שינוי בצד השרת.
+          </p>
+          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              type="password"
+              value={verifyPassword}
+              onChange={(e) => setVerifyPassword(e.target.value)}
+              placeholder="סיסמה לבדיקה"
+              disabled={verifyStatus === 'checking'}
+              onKeyDown={(e) => { if (e.key === 'Enter') void handleVerifyPassword() }}
+              style={{
+                flex: '1 1 220px',
+                padding: '0.35rem 0.6rem',
+                border: '1px solid #cbd5e1',
+                borderRadius: '0.375rem',
+                fontSize: '0.85rem',
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => void handleVerifyPassword()}
+              disabled={verifyStatus === 'checking' || !verifyPassword.trim()}
+              style={{
+                padding: '0.35rem 0.9rem',
+                background: verifyStatus === 'checking' || !verifyPassword.trim() ? '#93c5fd' : '#3b82f6',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '0.375rem',
+                fontSize: '0.85rem',
+                cursor: verifyStatus === 'checking' || !verifyPassword.trim() ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {verifyStatus === 'checking' ? 'בודק...' : 'בדוק'}
+            </button>
+          </div>
+          {verifyStatus === 'ok' && (
+            <div style={{ marginTop: '0.4rem', fontSize: '0.85rem', color: '#16a34a' }}>
+              ✓ הסיסמה תקפה — מפענחת את הגיבוי המוצפן
+            </div>
+          )}
+          {verifyStatus === 'wrong' && (
+            <div style={{ marginTop: '0.4rem', fontSize: '0.85rem', color: '#dc2626' }}>
+              ✗ {verifyError || 'הסיסמה שגויה'}
+            </div>
+          )}
+          {verifyStatus === 'error' && (
+            <div style={{ marginTop: '0.4rem', fontSize: '0.85rem', color: '#dc2626' }}>
+              ⚠ {verifyError || 'שגיאה בבדיקה'}
+            </div>
+          )}
+        </div>
+      )}
+
+      {isOwner && showReset && (
+        <div style={{ marginBottom: '0.75rem', padding: '0.6rem 0.75rem', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: '0.5rem' }}>
+          <p style={{ fontSize: '0.78rem', color: '#9a3412', margin: '0 0 0.4rem', fontWeight: 500 }}>
+            ⚠ פעולה הרסנית: דורסת את אסימון האימות ואת הגיבוי המוצפן בענן. השותפים יצטרכו להזין את הסיסמה החדשה כדי להמשיך לסנכרן.
+          </p>
+          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.4rem' }}>
+            <input
+              type="password"
+              value={resetNewPassword}
+              onChange={(e) => setResetNewPassword(e.target.value)}
+              placeholder="סיסמה חדשה"
+              disabled={resetStatus === 'working'}
+              style={{ flex: '1 1 220px', padding: '0.35rem 0.6rem', border: '1px solid #cbd5e1', borderRadius: '0.375rem', fontSize: '0.85rem' }}
+            />
+            <input
+              type="password"
+              value={resetConfirm}
+              onChange={(e) => setResetConfirm(e.target.value)}
+              placeholder="אישור סיסמה"
+              disabled={resetStatus === 'working'}
+              onKeyDown={(e) => { if (e.key === 'Enter') void handleResetPassword() }}
+              style={{ flex: '1 1 220px', padding: '0.35rem 0.6rem', border: '1px solid #cbd5e1', borderRadius: '0.375rem', fontSize: '0.85rem' }}
+            />
+            <button
+              type="button"
+              onClick={() => void handleResetPassword()}
+              disabled={resetStatus === 'working' || !resetNewPassword.trim() || !resetConfirm.trim()}
+              style={{
+                padding: '0.35rem 0.9rem',
+                background: resetStatus === 'working' || !resetNewPassword.trim() || !resetConfirm.trim() ? '#fca5a5' : '#dc2626',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '0.375rem',
+                fontSize: '0.85rem',
+                cursor: resetStatus === 'working' ? 'wait' : 'pointer',
+              }}
+            >
+              {resetStatus === 'working' ? 'מאפס...' : 'אפס + העלה'}
+            </button>
+          </div>
+          {resetStatus === 'ok' && (
+            <div style={{ marginTop: '0.4rem', fontSize: '0.85rem', color: '#16a34a' }}>
+              ✓ הסיסמה אופסה. הגיבוי המקומי עלה לענן עם הסיסמה החדשה. השותפים יצטרכו להזין אותה לסנכרון הבא.
+            </div>
+          )}
+          {resetStatus === 'error' && (
+            <div style={{ marginTop: '0.4rem', fontSize: '0.85rem', color: '#dc2626' }}>
+              ✗ {resetError || 'שגיאה'}
+            </div>
+          )}
+        </div>
+      )}
+
 
       {/* Owner row */}
       <div style={rowStyle}>

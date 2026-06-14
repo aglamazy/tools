@@ -272,6 +272,15 @@ export interface ExpenseDocument {
   sourceType?: 'upload' | 'gmail' // How the document was attached
   gmailMessageId?: string // Gmail message ID if attached from Gmail
   vatPaymentId?: number // FK → VatPayment.id once included in a filed VAT report
+  // Partner-paid invoice fields (#44). When transactionId is undefined and
+  // paidByUid is set, this row represents an expense paid by a partner
+  // out-of-band (no bank/credit statement to match against). Splid summary
+  // aggregates these alongside bank txs with paidByUid.
+  paidByUid?: string
+  externalTxRef?: string       // Vendor's own ID (Meta "Transaction ID", etc.) — best dedup key when available
+  referenceNumber?: string     // Payment processor reference (Mastercard ref, etc.)
+  docType?: 'invoice' | 'receipt' | 'receipt-invoice' | 'unknown'
+  businessId?: number          // For scoping the partner-paid query per business
   uploadedAt: string
   updatedAt?: string
 }
@@ -314,6 +323,20 @@ export interface VatPayment {
   driveWebViewLink?: string
   extractedData?: any                 // raw Claude extraction blob
   uploadedAt: string                  // ISO when row was created
+  updatedAt?: string
+}
+
+// Blog post — authored in Markdown, stored as Markdown, rendered as HTML.
+export interface BlogPost {
+  id?: number
+  syncId?: string
+  title: string
+  slug: string        // unique URL-safe slug
+  content: string     // Markdown source
+  status: 'draft' | 'published'
+  publishedAt?: string  // ISO when published
+  authorUid?: string    // Firebase UID
+  createdAt: string
   updatedAt?: string
 }
 
@@ -368,6 +391,7 @@ class FinanceDB extends Dexie {
   chats!: Table<Chat, string>
   chatMessages!: Table<ChatMessageRow, string>
   credentials!: Table<CredentialRow, number>
+  blogPosts!: Table<BlogPost, number>
 
   constructor() {
     super('FinanceDB')
@@ -380,7 +404,7 @@ class FinanceDB extends Dexie {
       'importedFiles', 'transactions', 'tasks', 'financialInstitutions',
       'capitalEntries', 'ypayDocuments', 'expenseDocuments', 'projects', 'harvestTasks',
       'timeEntries', 'taxDocuments', 'advancePayments', 'businessTasks',
-      'chats', 'chatMessages', 'credentials', 'vatPayments',
+      'chats', 'chatMessages', 'credentials', 'vatPayments', 'blogPosts',
     ])
 
     // Auto-inject syncId/updatedAt on create/update, and record deletions

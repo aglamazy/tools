@@ -38,6 +38,12 @@ export type CachedBusinessPartners = {
 type CacheShape = Record<string /*businessSyncId*/, CachedBusinessPartners>
 
 const STORAGE_KEY = 'aglamazo_partners_v2'
+// businessId (Dexie int auto-id) → businessSyncId (UUID). Lets callers that
+// only have businessId on mount (e.g. SettlementSummary/ExpenseTab/IncomeTab,
+// which receive businessId as prop) resolve syncId SYNCHRONOUSLY and
+// pre-populate participants from the existing cache — no flash of the
+// "fewer than 2 partners" empty state while business loads from Dexie.
+const ID_INDEX_KEY = 'aglamazo_business_sync_index_v1'
 
 const listeners = new Set<() => void>()
 
@@ -57,7 +63,24 @@ function saveToStorage(c: CacheShape) {
   } catch { /* quota — drop silently */ }
 }
 
+function loadIdIndex(): Record<string, string> {
+  if (typeof window === 'undefined') return {}
+  try {
+    return JSON.parse(localStorage.getItem(ID_INDEX_KEY) || '{}')
+  } catch {
+    return {}
+  }
+}
+
+function saveIdIndex(m: Record<string, string>) {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(ID_INDEX_KEY, JSON.stringify(m))
+  } catch { /* quota — drop silently */ }
+}
+
 let cache: CacheShape = loadFromStorage()
+let idIndex: Record<string, string> = loadIdIndex()
 
 async function fetchAll(businessSyncId: string): Promise<CachedBusinessPartners> {
   const participants: Participant[] = []
@@ -89,9 +112,37 @@ async function fetchAll(businessSyncId: string): Promise<CachedBusinessPartners>
   const invitations = sharesResult?.success
     ? (sharesResult.ownedInvitations || []).filter(i => i.businessSyncId === businessSyncId)
     : []
-  const grants = sharesResult?.success
+  // Combine owner-side grants (grantsFromMe) + sharee-side grants
+  // (grantsToMe). The sharee path is needed so that y25131 sees Nadar +
+  // yaakov as participants when viewing Agents Head — without this,
+  // SettlementSummary computed participants.length < 2 and showed the
+  // "add a partner in Settings" empty state.
+  const grantsFromMe = sharesResult?.success
     ? (sharesResult.grantsFromMe || []).filter(g => g.businessSyncId === businessSyncId)
     : []
+  const grantsToMe = sharesResult?.success
+    ? (sharesResult.grantsToMe || []).filter(g => g.businessSyncId === businessSyncId)
+    : []
+  // Dedupe by grant id (same grant could in principle appear in both,
+  // though the API today separates them).
+  const grantById = new Map<string, any>()
+  for (const g of grantsFromMe) grantById.set(g.id, g)
+  for (const g of grantsToMe) if (!grantById.has(g.id)) grantById.set(g.id, g)
+  const grants = Array.from(grantById.values())
+
+  // Add the business owner as a participant when viewing as a sharee — the
+  // owner is the source of `ownerUid` on every grant for this business.
+  // Without this, the owner row is missing from the participants list even
+  // though they're shown in BusinessSharingSection (which renders it from
+  // business.userId separately). Label falls back to uid when we have no
+  // friendlier resolution available client-side.
+  const anyGrant = grants[0]
+  if (anyGrant?.ownerUid && !participants.find(p => p.uid === anyGrant.ownerUid)) {
+    participants.push({
+      uid: anyGrant.ownerUid,
+      label: anyGrant.ownerEmail || anyGrant.ownerDisplayName || anyGrant.ownerUid,
+    })
+  }
 
   // Build a partner-uid → sharePercent map so participants entries (uids) can
   // surface the % of the partner record they're bound to.
@@ -115,6 +166,21 @@ async function fetchAll(businessSyncId: string): Promise<CachedBusinessPartners>
     }
   }
 
+  // Also add partners whose `uid` was resolved server-side via email lookup
+  // but who don't have a grant in this user's grantsToMe (because the grant
+  // lives on THAT partner's session). Without this the sharee sees Nadar in
+  // the partner row but not in participants → Settlement can't attribute
+  // Nadar's partner-paid expenses → balance shows ₪0 between partners.
+  for (const partner of partners) {
+    if (!partner.uid) continue
+    if (participants.find(p => p.uid === partner.uid)) continue
+    participants.push({
+      uid: partner.uid,
+      label: partner.displayName || partner.email || partner.uid,
+      sharePercent: partner.sharePercent,
+    })
+  }
+
   return { participants, partners, invitations, grants }
 }
 
@@ -125,6 +191,33 @@ export const partnerStore = {
   getCached(businessSyncId: string | undefined): Participant[] {
     if (!businessSyncId) return []
     return (cache[businessSyncId] || EMPTY).participants
+  },
+
+  /**
+   * Synchronous read by Dexie businessId — looks up syncId from the local
+   * id-index (recorded on prior visits) and returns cached participants.
+   * Returns [] on first-ever visit to this business; the existing
+   * `subscribe`/`refresh` flow fills the cache + index after the Business
+   * loads.
+   */
+  getCachedByBusinessId(businessId: number | undefined): Participant[] {
+    if (businessId === undefined) return []
+    const syncId = idIndex[String(businessId)]
+    if (!syncId) return []
+    return (cache[syncId] || EMPTY).participants
+  },
+
+  /**
+   * Register the businessId↔syncId pairing so subsequent mounts can do the
+   * lookup synchronously. Called once per Business load from any component
+   * that has both. Idempotent.
+   */
+  recordBusiness(businessId: number | undefined, businessSyncId: string | undefined): void {
+    if (businessId === undefined || !businessSyncId) return
+    const key = String(businessId)
+    if (idIndex[key] === businessSyncId) return
+    idIndex = { ...idIndex, [key]: businessSyncId }
+    saveIdIndex(idIndex)
   },
 
   /** Synchronous read — raw partner records for this business (durable identities). */
@@ -173,8 +266,10 @@ export const partnerStore = {
   /** Wipe — call on logout so the next user can't read stale household names. */
   clear(): void {
     cache = {}
+    idIndex = {}
     if (typeof window !== 'undefined') {
       try { localStorage.removeItem(STORAGE_KEY) } catch { /* ignore */ }
+      try { localStorage.removeItem(ID_INDEX_KEY) } catch { /* ignore */ }
     }
     listeners.forEach(l => l())
   },
