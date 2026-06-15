@@ -93,6 +93,47 @@ export default function SelfEmployedSummaryTable({ businesses, transactions, biz
     householdExpense: monthlyData.reduce((s, m) => s + m.householdExpense, 0),
   }
 
+  // Annual profit forecast — two projections per business. Profit per month =
+  // bizIncome - bizExpense (per-business expense column only; household-shared
+  // deductibles are NOT folded in here — they sit in their own column).
+  //   A) avgAll * 12   — naive: (sum so far / past months) extrapolated to 12.
+  //   B) sum + remain * avgRecent  — actuals to date + recent-trend (last
+  //      up-to-3 months) projected onto the remaining months. Catches a
+  //      late-year ramp or fall that the all-months average smooths over.
+  const forecast = useMemo(() => {
+    const pastMonths = monthlyData.length          // = currentMonth + 1
+    const remain = Math.max(0, 12 - pastMonths)
+    const recentN = Math.min(3, pastMonths)
+    const recentMonths = recentN > 0 ? monthlyData.slice(-recentN) : []
+
+    const profitOf = (m: typeof monthlyData[number], id: number) =>
+      (m.bizIncome[id] || 0) - (m.bizExpense[id] || 0)
+
+    const perBiz = businesses.map(biz => {
+      const id = biz.id!
+      const sumPast = monthlyData.reduce((s, m) => s + profitOf(m, id), 0)
+      const avgAll = pastMonths > 0 ? sumPast / pastMonths : 0
+      const recentSum = recentMonths.reduce((s, m) => s + profitOf(m, id), 0)
+      const avgRecent = recentN > 0 ? recentSum / recentN : 0
+      return {
+        biz,
+        figA: avgAll * 12,
+        figB: sumPast + remain * avgRecent,
+      }
+    })
+
+    return {
+      perBiz,
+      pastMonths,
+      remain,
+      recentN,
+      totals: {
+        figA: perBiz.reduce((s, r) => s + r.figA, 0),
+        figB: perBiz.reduce((s, r) => s + r.figB, 0),
+      },
+    }
+  }, [monthlyData, businesses])
+
   const [drillDown, setDrillDown] = useState<{ monthIdx: number; bizId: number | 'household'; kind: 'income' | 'expense' } | null>(null)
   const [editingBiz, setEditingBiz] = useState<BusinessUI | null>(null)
   const [expenseDocs, setExpenseDocs] = useState<ExpenseDocument[]>([])
@@ -395,6 +436,55 @@ export default function SelfEmployedSummaryTable({ businesses, transactions, biz
           </div>
         )
       })()}
+      {/* Annual income forecast */}
+      {forecast.pastMonths > 0 && (
+        <div style={{ marginTop: '2rem' }}>
+          <h3 style={{ fontSize: '1rem', marginBottom: '0.25rem' }}>תחזית רווח שנתית {currentYear}</h3>
+          <p style={{ fontSize: '0.8rem', color: '#64748b', marginTop: 0, marginBottom: '0.75rem' }}>
+            רווח לעסק (הכנסה − הוצאה לעסק) — מבוסס על {forecast.pastMonths} חודשים מתחילת השנה. נותרו {forecast.remain} חודשים. הוצאות משותפות למשק הבית לא כלולות בחישוב.
+          </p>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+            <thead>
+              <tr>
+                <th style={{ ...tHeaderStyle, textAlign: 'right', direction: 'rtl' }}>עסק</th>
+                <th style={tHeaderStyle}>
+                  ממוצע × 12
+                  <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 400 }}>
+                    (ממוצע על כל החודשים)
+                  </div>
+                </th>
+                <th style={tHeaderStyle}>
+                  עד עכשיו + נותר × ממוצע {forecast.recentN}
+                  <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 400 }}>
+                    ({forecast.recentN} חודשים אחרונים)
+                  </div>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {forecast.perBiz.map(({ biz, figA, figB }) => (
+                <tr key={biz.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                  <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl' }}>{biz.name}</td>
+                  <td style={{ ...cellStyle, background: incomeBg, color: '#16a34a' }}>{fmt(figA)}</td>
+                  <td style={{ ...cellStyle, background: incomeBg, color: '#16a34a' }}>{fmt(figB)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr style={{ borderTop: '2px solid #e2e8f0' }}>
+                <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 700 }}>סה&quot;כ</td>
+                <td style={{ ...cellStyle, background: incomeBg, color: '#16a34a', fontWeight: 700 }}>
+                  {fmt(forecast.totals.figA)}
+                </td>
+                <td style={{ ...cellStyle, background: incomeBg, color: '#16a34a', fontWeight: 700 }}>
+                  {fmt(forecast.totals.figB)}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+
       <Modal isOpen={!!editingBiz} onClose={() => setEditingBiz(null)} maxWidth="500px">
         {editingBiz && (
           <BusinessForm business={editingBiz} onChange={setEditingBiz} onSave={handleBizSave} onCancel={() => setEditingBiz(null)} isNew={false} />
