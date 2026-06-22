@@ -96,13 +96,15 @@ export const ypayService = {
       throw new Error('סוג עוסק לא הוגדר — הגדר בפרופיל')
     }
 
-    // קבלה for exempt, חשבונית מס קבלה for authorized
-    const docType = effectiveVatType === 'exempt' ? YpayDocType.Receipt : YpayDocType.TaxInvoiceReceipt
-
-    // vatIncluded=false → price is net, YPAY adds VAT on top for authorized
-    // dealers (docType 109). For exempt dealers (docType 108) the field is
-    // ignored. Without it, YPAY treats the line as VAT-exempt regardless of
-    // docType — that's the 2026-04-28 "didn't add VAT" incident.
+    // Always קבלה (Receipt, docType 108) — this button records a PAYMENT received.
+    // The tax invoice (חשבונית מס / חשבונית עסקה) is issued separately at billing
+    // time (createBusinessInvoice / createItemBasedInvoice), so issuing a
+    // חשבונית מס קבלה (109) here would DOUBLE-issue a tax invoice. A קבלה has no
+    // VAT line at all — it just acknowledges the amount received — so the same
+    // doc type works for both exempt and authorized dealers, and YPAY validates
+    // only that the receipt amount equals the payment-method total (no 3022, since
+    // there is no VAT to add/extract). `transaction.amount` is the gross received.
+    const docType = YpayDocType.Receipt
     const items = [{
       description: transaction.description,
       quantity: 1,
