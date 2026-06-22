@@ -28,20 +28,34 @@ const CONTENT_KEY_FNS: Record<string, (r: any) => string> = {
   taxDocuments: (r) => `${r.businessId}|${r.month}|${r.fileName}`,
 }
 
-// Parent→child FK relationships for cloud-only children
-const FK_RELATIONS: Record<string, { fkField: string; parentTable: string }> = {
-  projects: { fkField: 'businessId', parentTable: 'businesses' },
-  harvestTasks: { fkField: 'projectId', parentTable: 'projects' },
-  timeEntries: { fkField: 'taskId', parentTable: 'harvestTasks' },
+// Parent→child FK relationships for cloud-only children. Each table may have
+// multiple FK fields — the apply loop iterates over all of them and remaps each.
+//
+// Why this matters for partner-paid expenseDocuments (#74): a row carries both
+// `transactionId` AND `businessId`. For bank-tx-backed docs, transactionId is
+// the FK that matters and businessId is derived. For PARTNER-PAID docs
+// (transactionId undefined, paidByUid set), `businessId` is the ONLY anchor —
+// dropping it from the remap means the doc's businessId is written verbatim
+// on sync-in, and once the local `businesses` autoinc ids shift (re-create,
+// merge order, multi-device) the partner-paid row visibly migrates to whichever
+// business now owns the stale int. Both must be in this list, both get remapped.
+type FkRelation = { fkField: string; parentTable: string }
+const FK_RELATIONS: Record<string, FkRelation[]> = {
+  projects: [{ fkField: 'businessId', parentTable: 'businesses' }],
+  harvestTasks: [{ fkField: 'projectId', parentTable: 'projects' }],
+  timeEntries: [{ fkField: 'taskId', parentTable: 'harvestTasks' }],
   // ypayDocuments stores transactionId as STRING (`String(t.id)`). expenseDocuments
   // stores it as NUMBER. The lookup logic below coerces string-numeric keys to
   // number for the cloud-id map (transactions have numeric ids), then writes
   // the resolved local id back in the same shape the field originally had.
-  ypayDocuments: { fkField: 'transactionId', parentTable: 'transactions' },
-  expenseDocuments: { fkField: 'transactionId', parentTable: 'transactions' },
-  taxDocuments: { fkField: 'businessId', parentTable: 'businesses' },
-  advancePayments: { fkField: 'businessId', parentTable: 'businesses' },
-  businessTasks: { fkField: 'businessId', parentTable: 'businesses' },
+  ypayDocuments: [{ fkField: 'transactionId', parentTable: 'transactions' }],
+  expenseDocuments: [
+    { fkField: 'transactionId', parentTable: 'transactions' },
+    { fkField: 'businessId', parentTable: 'businesses' },
+  ],
+  taxDocuments: [{ fkField: 'businessId', parentTable: 'businesses' }],
+  advancePayments: [{ fkField: 'businessId', parentTable: 'businesses' }],
+  businessTasks: [{ fkField: 'businessId', parentTable: 'businesses' }],
   // categories.businessId points at the owner's local int business.id; without
   // remap, sharees couldn't see ExpenseTab/IncomeTab/SettlementSummary content
   // because all of those filter by `c.businessId === businessId`. Sharee's
@@ -49,7 +63,7 @@ const FK_RELATIONS: Record<string, { fkField: string; parentTable: string }> = {
   // it to the sharee's matching business.id by syncId. Bug surfaced when
   // y25131 received the Agents Head shared backup but expenses + settlement
   // tabs rendered empty (incomes worked because of a different code path).
-  categories: { fkField: 'businessId', parentTable: 'businesses' },
+  categories: [{ fkField: 'businessId', parentTable: 'businesses' }],
 }
 
 function getTimestamp(record: any): string {
@@ -89,9 +103,16 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
   // Track syncId → localId for FK resolution of cloud-only children
   const syncIdToLocalId: Record<string, Map<string, number>> = {}
 
-  // Pre-build cloud id→syncId maps for parent tables (for FK resolution)
+  // Pre-build cloud id→syncId maps for parent tables (for FK resolution).
+  // Deduplicate across all FK relations — multiple child tables may share the
+  // same parent (e.g. businesses), and multiple FKs on one child can also point
+  // to different parents.
   const cloudIdToSyncId: Record<string, Map<number, string>> = {}
-  for (const parentTable of Object.values(FK_RELATIONS).map(f => f.parentTable)) {
+  const allParentTables = new Set<string>()
+  for (const fks of Object.values(FK_RELATIONS)) {
+    for (const fk of fks) allParentTables.add(fk.parentTable)
+  }
+  for (const parentTable of allParentTables) {
     const map = new Map<number, string>()
     for (const rec of ((cloud.stores as any)[parentTable] || [])) {
       if (rec.id !== undefined && rec.syncId) map.set(rec.id, rec.syncId)
@@ -167,48 +188,51 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
           // Skip if in deletion ledger
           if (deletedSyncIds.has(cloudRec.syncId)) continue
 
-          // Resolve FK: cloud record's parent ID → local parent ID via syncId
-          const fkInfo = FK_RELATIONS[tableName]
-          if (fkInfo && cloudRec[fkInfo.fkField] !== undefined) {
+          // Resolve FK(s): each cloud parent ID → local parent ID via syncId.
+          // A table may have multiple FK fields (e.g. expenseDocuments carries
+          // both transactionId and businessId) — remap each independently.
+          const fkInfoList = FK_RELATIONS[tableName] || []
+          let orphaned = false
+          for (const fkInfo of fkInfoList) {
+            if (cloudRec[fkInfo.fkField] === undefined) continue
             const parentTable = fkInfo.parentTable
             const parentMap = syncIdToLocalId[parentTable]
             const cloudParentMap = cloudIdToSyncId[parentTable]
-            if (parentMap && cloudParentMap) {
-              // Some FK columns store the parent id as a string (e.g.
-              // ypayDocuments.transactionId = String(t.id)). The cloud-id map
-              // is keyed by the parent's raw id type (number for transactions),
-              // so coerce numeric-strings to number for the lookup. Preserve
-              // the FK's original type when we write the resolved id back so
-              // downstream code (UI maps, etc.) keeps working.
-              const fkRaw = cloudRec[fkInfo.fkField]
-              const fkWasString = typeof fkRaw === 'string'
-              const lookupKey = fkWasString && /^\d+$/.test(fkRaw) ? Number(fkRaw) : fkRaw
-              const parentSyncId = cloudParentMap.get(lookupKey)
-              if (parentSyncId) {
-                const localParentId = parentMap.get(parentSyncId)
-                if (localParentId !== undefined) {
-                  cloudRec[fkInfo.fkField] = fkWasString ? String(localParentId) : localParentId
-                } else {
-                  // Parent not found locally. Two cases:
-                  //   (a) parent was deleted+tombstoned locally → child is officially
-                  //       orphaned. Tombstone the child too so cloud stops re-broadcasting
-                  //       it on every sync. The new ledger entry is persisted alongside
-                  //       the existing ones at the end of this transaction (see :244-257).
-                  //   (b) parent simply hasn't synced down yet → keep the warn so a
-                  //       genuine missing-pull bug stays visible.
-                  if (allDeletions[parentTable]?.has(parentSyncId)) {
-                    if (cloudRec.syncId) {
-                      if (!allDeletions[tableName]) allDeletions[tableName] = new Set()
-                      allDeletions[tableName].add(cloudRec.syncId)
-                    }
-                  } else {
-                    console.warn(`[ApplyCloud] Orphan ${tableName}: parent syncId ${parentSyncId} not in local`)
-                  }
-                  continue
+            if (!parentMap || !cloudParentMap) continue
+            // Some FK columns store the parent id as a string (e.g.
+            // ypayDocuments.transactionId = String(t.id)). The cloud-id map
+            // is keyed by the parent's raw id type (number for transactions),
+            // so coerce numeric-strings to number for the lookup. Preserve
+            // the FK's original type when we write the resolved id back so
+            // downstream code (UI maps, etc.) keeps working.
+            const fkRaw = cloudRec[fkInfo.fkField]
+            const fkWasString = typeof fkRaw === 'string'
+            const lookupKey = fkWasString && /^\d+$/.test(fkRaw) ? Number(fkRaw) : fkRaw
+            const parentSyncId = cloudParentMap.get(lookupKey)
+            if (!parentSyncId) continue
+            const localParentId = parentMap.get(parentSyncId)
+            if (localParentId !== undefined) {
+              cloudRec[fkInfo.fkField] = fkWasString ? String(localParentId) : localParentId
+            } else {
+              // Parent not found locally. Two cases:
+              //   (a) parent was deleted+tombstoned locally → child is officially
+              //       orphaned. Tombstone the child too so cloud stops re-broadcasting
+              //       it on every sync.
+              //   (b) parent simply hasn't synced down yet → keep the warn so a
+              //       genuine missing-pull bug stays visible.
+              if (allDeletions[parentTable]?.has(parentSyncId)) {
+                if (cloudRec.syncId) {
+                  if (!allDeletions[tableName]) allDeletions[tableName] = new Set()
+                  allDeletions[tableName].add(cloudRec.syncId)
                 }
+              } else {
+                console.warn(`[ApplyCloud] Orphan ${tableName}: parent syncId ${parentSyncId} not in local (fk=${fkInfo.fkField})`)
               }
+              orphaned = true
+              break
             }
           }
+          if (orphaned) continue
 
           const existingLocal = localBySyncId.get(cloudRec.syncId)
 
@@ -221,19 +245,24 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
               await table.update(existingLocal.id, updates)
               updated++
             } else {
-              // Timestamp says local wins for content — but if the FK we
+              // Timestamp says local wins for content — but if any FK we
               // just re-resolved differs from what local has, force-patch
-              // the FK alone. FKs are structural (point to local int ids
-              // that vary per device); a stale one breaks all the by-
+              // those FK fields alone. FKs are structural (point to local int
+              // ids that vary per device); a stale one breaks all the by-
               // business filters in ExpenseTab/IncomeTab/SettlementSummary.
-              // Surfaced after #54 added categories to FK_RELATIONS: the
-              // remap was computed on cloudRec but discarded when local
-              // timestamp won. Sharees re-synced after #54 still saw
-              // empty Expenses + Settlement because their local categories
-              // carried the owner's int businessId.
-              if (fkInfo && cloudRec[fkInfo.fkField] !== undefined &&
-                  cloudRec[fkInfo.fkField] !== existingLocal[fkInfo.fkField]) {
-                await table.update(existingLocal.id, { [fkInfo.fkField]: cloudRec[fkInfo.fkField] })
+              // Surfaced after #54 added categories to FK_RELATIONS; extended
+              // in #74 to cover ALL FKs on a table (was a single fkInfo,
+              // which silently skipped the businessId remap for partner-paid
+              // expenseDocuments, causing them to drift between businesses).
+              const fkPatches: Record<string, any> = {}
+              for (const fkInfo of fkInfoList) {
+                if (cloudRec[fkInfo.fkField] !== undefined &&
+                    cloudRec[fkInfo.fkField] !== existingLocal[fkInfo.fkField]) {
+                  fkPatches[fkInfo.fkField] = cloudRec[fkInfo.fkField]
+                }
+              }
+              if (Object.keys(fkPatches).length > 0) {
+                await table.update(existingLocal.id, fkPatches)
                 updated++
               } else {
                 skipped++

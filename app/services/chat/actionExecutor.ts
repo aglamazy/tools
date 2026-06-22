@@ -247,7 +247,7 @@ export async function executeActions(
   uid: string,
   actions: ChatAction[],
   sessionStore?: string | null,
-  inboundAnonCreds?: AnonStoreCreds | null,
+  inboundAnonCreds?: AnonStoreCreds | null, consentExistedAtTurnStart?: boolean,
 ): Promise<ActionResult> {
   const results: { name: string; result: string }[] = []
   const allPending: PendingProductSelection[] = []
@@ -258,10 +258,12 @@ export async function executeActions(
   let workingAnonCreds: AnonStoreCreds | null | undefined = inboundAnonCreds
   let anonCredsTouched = false
 
-  // Same-turn consent defense (C01): snapshot whether Tier-3 consent existed
-  // BEFORE this batch. A server-side save must require consent from a PRIOR
-  // turn, so a bundled grant + set_credentials/set_otp_phone can't self-authorize.
-  const consentExistedBeforeBatch = !uid.startsWith(ANON_PREFIX) && await hasCurrentServerCredsConsent(uid)
+  // Same-turn consent defense (C01): use the turn-start consent snapshot threaded
+  // in by the caller — NOT a live read here, since toolRegistry calls executeActions
+  // once per tool-call, so re-reading would see a grant from a prior single-action
+  // call and let a bundled grant+save self-authorize. Live read only as a fallback
+  // when no turn-start value is supplied (e.g. a multi-action test caller).
+  const consentExistedBeforeBatch = consentExistedAtTurnStart ?? (!uid.startsWith(ANON_PREFIX) && (await hasCurrentServerCredsConsent(uid)))
 
   for (const action of actions) {
     try {

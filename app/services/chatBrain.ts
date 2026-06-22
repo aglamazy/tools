@@ -136,7 +136,7 @@ import { initStores } from '@/app/services/grocery/initStores'
 import { isCredentialsVerified } from '@/app/services/grocery/shufersalClient'
 import { REXAIL_STORES } from '@/app/services/grocery/rexailStores'
 import { listTasks } from '@/app/services/taskFirestoreService'
-import { getServerCredsConsent } from '@/app/services/consentService'
+import { getServerCredsConsent, hasCurrentServerCredsConsent } from '@/app/services/consentService'
 import {
   ANON_PREFIX,
   createChatHistoryStore,
@@ -293,6 +293,12 @@ export async function processChatMessage(input: ChatBrainInput): Promise<ChatBra
   // Shared session — mutated by `set_session` tool, persisted on history.save.
   const session: SessionState = {}
 
+  // C01 same-turn consent defense: snapshot Tier-3 consent ONCE, before any
+  // tool runs this turn. The dispatcher calls executeActions per-tool-call, so
+  // this turn-start value (not a per-call re-read) is what gates set_credentials/
+  // set_otp_phone — a bundled grant+save in one turn therefore can't self-authorize.
+  const consentExistedAtTurnStart = !isAnonUid(uid) && (await hasCurrentServerCredsConsent(uid))
+
   // Tool context — shared mutable state across all tool calls in the turn.
   const toolCtx: AglamazoToolContext = {
     uid,
@@ -300,6 +306,7 @@ export async function processChatMessage(input: ChatBrainInput): Promise<ChatBra
     anonStoreCreds: anonStoreCreds ?? null,
     anonCredsTouched: false,
     pendingSelections: [],
+    consentExistedAtTurnStart,
   }
 
   // History store wraps the Firestore implementation but honors anon seedHistory.

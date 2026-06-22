@@ -15,8 +15,8 @@
 #   4. npx tsc --noEmit     — only if a top-level tsconfig.json exists
 #   5. version bump         — Importa-style yy.mm.# bump of package.json (+ lock),
 #                             then re-stage so the bump rides this commit. The
-#                             bumper (scripts/bump-version.js) and the merge
-#                             driver (.githooks/merge-higher-version.js +
+#                             bumper (scripts/bump-version.cjs) and the merge
+#                             driver (.githooks/merge-higher-version.cjs +
 #                             .gitattributes + git config) are also owned by Ant
 #                             and propagated by ant_husky_sync.py.
 

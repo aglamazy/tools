@@ -13,6 +13,15 @@ export interface AglamazoToolContext {
   anonStoreCreds: AnonStoreCreds | null | undefined;
   anonCredsTouched: boolean;
   pendingSelections: PendingProductSelection[];
+  /**
+   * C01 same-turn consent defense: whether Tier-3 server-creds consent existed
+   * BEFORE this user turn began. Snapshotted once in processChatMessage and
+   * threaded into every per-tool-call executeActions so a turn that bundles
+   * `grant_server_creds_consent` + `set_credentials` can't self-authorize the
+   * save (the dispatcher calls executeActions once per tool, so a per-call
+   * re-snapshot would see the just-granted consent — that was the regression).
+   */
+  consentExistedAtTurnStart: boolean;
 }
 
 function storeLabel(storeId: string | null | undefined): string {
@@ -54,6 +63,7 @@ export function createAglamazoToolRegistry(): {
         [action],
         context.session.activeStore,
         context.anonStoreCreds,
+        context.consentExistedAtTurnStart,
       );
 
       if (out.anonStoreCreds !== undefined) {
