@@ -7,10 +7,12 @@ import { businessStore } from '@/app/stores/businessStore'
 import { projectStore } from '@/app/stores/projectStore'
 import { ypayService, YpayDocType } from '@/app/services/ypayService'
 import { hasGmailAccess, requestGmailAccess, sendEmail, type EmailAttachment } from '@/app/services/gmailService'
+import { getIdToken } from '@/app/services/firebaseAuthService'
 import { partnerStore, type Partner as Participant } from '@/app/stores/partnerStore'
 import { appSettingsStore, type AccountOwners } from '@/app/stores/appSettingsStore'
 import { getTransactionAttributedUid } from '@/app/utils/transactionAttribution'
 import ProjectEditModal from './ProjectEditModal'
+import PaymentLinkModal from './PaymentLinkModal'
 import Modal from '@/app/components/Modal'
 import type { Category } from '@/app/types/category'
 import { getTaxProfile } from '@/app/components/TaxProfileSection'
@@ -21,6 +23,15 @@ type IncomeTabProps = {
 
 type TransactionWithDoc = Transaction & {
   ypayDoc?: YpayDocument
+}
+
+type PaymentLinkRow = {
+  chargeIdentifier: string
+  contact?: { name?: string } | null
+  amount?: number | null
+  currency?: string | null
+  status?: string
+  createdAt?: string
 }
 
 export default function IncomeTab({ businessId }: IncomeTabProps) {
@@ -50,6 +61,10 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     typeof window !== 'undefined' ? partnerStore.getCachedByBusinessId(businessId) : []
   )
   const [accountOwners, setAccountOwners] = useState<AccountOwners>({})
+  // #73 — compose a YPAY payment page for a customer (forward billing, not a receipt).
+  const [showPaymentModal, setShowPaymentModal] = useState(false)
+  const [paymentLinks, setPaymentLinks] = useState<PaymentLinkRow[]>([])
+  const [copiedCid, setCopiedCid] = useState<string | null>(null)
 
   useEffect(() => {
     loadBusiness()
@@ -58,6 +73,8 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
       .then(p => setProfileVatType(p.vatType))
     void appSettingsStore.getAccountOwners().then(setAccountOwners)
   }, [businessId])
+
+  useEffect(() => { void loadPaymentLinks() }, [businessId])
 
   // Read partners from cache for instant render; refresh in background; subscribe to store updates.
   useEffect(() => {
@@ -75,6 +92,20 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
       loadTransactions()
     }
   }, [selectedMonth, selectedYear, filterMode, business])
+
+  const loadPaymentLinks = async () => {
+    try {
+      const token = await getIdToken()
+      if (!token) return
+      const res = await fetch(`/api/ypay/payment-links?businessId=${businessId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const data = await res.json()
+      if (data.success) setPaymentLinks((data.links || []) as PaymentLinkRow[])
+    } catch (err) {
+      console.error('[IncomeTab] loadPaymentLinks failed:', err)
+    }
+  }
 
   const loadBusiness = async () => {
     const b = await businessStore.getById(businessId)
@@ -270,6 +301,16 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     } catch (err: any) {
       setError(err.message || 'שגיאה בשמירת קבלה')
     }
+  }
+
+  // Remove the link between a transaction and its YPAY document in Aglamazo.
+  // Does NOT void the document in YPAY (that's a separate ביטול/תעודת זיכוי in the
+  // YPAY dashboard) — it only clears Aglamazo's reference so the row shows צור קבלה
+  // again. Used to detach a wrongly-created doc (e.g. the erroneous 109 #900000).
+  const handleUnlinkDoc = async (transaction: TransactionWithDoc) => {
+    if (transaction.id == null) return
+    await db.ypayDocuments.where('transactionId').equals(String(transaction.id)).delete()
+    await loadTransactions()
   }
 
   const handleSendReceipt = async (transaction: TransactionWithDoc) => {
@@ -520,6 +561,71 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
           </div>
         )
       })()}
+
+      {/* #73 — create a YPAY payment page to send a customer (compose line items) */}
+      <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: '1rem' }}>
+        <button
+          onClick={async () => {
+            setProjects(await projectStore.getActiveByBusinessId(businessId))
+            setShowPaymentModal(true)
+          }}
+          style={{ padding: '0.5rem 1rem', background: '#059669', color: 'white', border: 'none', borderRadius: '0.5rem', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}
+        >💳 צור דף תשלום ללקוח</button>
+      </div>
+
+      {/* #213 — payment links created for this business + their live status */}
+      {paymentLinks.length > 0 && (
+        <div style={{ border: '1px solid #e2e8f0', borderRadius: '0.5rem', overflow: 'hidden', marginBottom: '1rem' }}>
+          <div style={{ padding: '0.5rem 0.75rem', background: '#f8fafc', fontWeight: 600, fontSize: '0.85rem', color: '#334155', borderBottom: '1px solid #e2e8f0' }}>
+            קישורי תשלום
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+            <tbody>
+              {paymentLinks.map((lnk) => {
+                const paid = lnk.status === 'paid'
+                const failed = lnk.status === 'failed'
+                const payUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/pay/${lnk.chargeIdentifier}`
+                const badge = paid
+                  ? { t: '✓ שולם', c: '#166534', b: '#dcfce7' }
+                  : failed
+                    ? { t: 'נכשל', c: '#991b1b', b: '#fee2e2' }
+                    : { t: 'ממתין', c: '#92400e', b: '#fef3c7' }
+                return (
+                  <tr key={lnk.chargeIdentifier} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    <td style={{ padding: '0.5rem 0.75rem', color: '#0f172a' }}>{lnk.contact?.name || '—'}</td>
+                    <td style={{ padding: '0.5rem 0.75rem', color: '#475569', whiteSpace: 'nowrap' }}>
+                      {typeof lnk.amount === 'number' ? `₪${lnk.amount.toLocaleString('he-IL', { maximumFractionDigits: 2 })}` : '—'}
+                    </td>
+                    <td style={{ padding: '0.5rem 0.75rem', color: '#94a3b8', whiteSpace: 'nowrap' }}>
+                      {lnk.createdAt ? new Date(lnk.createdAt).toLocaleDateString('he-IL') : ''}
+                    </td>
+                    <td style={{ padding: '0.5rem 0.75rem' }}>
+                      <span style={{ background: badge.b, color: badge.c, padding: '0.1rem 0.5rem', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 600 }}>{badge.t}</span>
+                    </td>
+                    <td style={{ padding: '0.5rem 0.75rem', textAlign: 'left', whiteSpace: 'nowrap' }}>
+                      <button
+                        onClick={() => { void navigator.clipboard.writeText(payUrl); setCopiedCid(lnk.chargeIdentifier); setTimeout(() => setCopiedCid(null), 1500) }}
+                        style={{ padding: '0.25rem 0.6rem', background: '#0ea5e9', color: 'white', border: 'none', borderRadius: '0.35rem', cursor: 'pointer', fontSize: '0.75rem', marginInlineEnd: '0.4rem' }}
+                      >{copiedCid === lnk.chargeIdentifier ? 'הועתק ✓' : 'העתק קישור'}</button>
+                      <a href={payUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.75rem', color: '#0ea5e9' }}>פתח</a>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {showPaymentModal && business && (
+        <PaymentLinkModal
+          business={business}
+          projects={projects}
+          vatType={profileVatType}
+          onProjectAdded={async () => setProjects(await projectStore.getActiveByBusinessId(businessId))}
+          onClose={() => { setShowPaymentModal(false); void loadPaymentLinks() }}
+        />
+      )}
 
       {/* Transactions table */}
       {transactions.length === 0 ? (

@@ -147,6 +147,58 @@ export const ypayService = {
     return { url: data.url, serialNumber: data.serialNumber }
   },
 
+  // Credit-clearing payment link (#73). Builds a YPAY-hosted payment page for
+  // the given items and returns its shareable URL. `items[].vatIncluded` carries
+  // the per-line VAT toggle: false = price is net, YPAY adds VAT at the dealer's
+  // registered rate (the "not including VAT" default); true = price is gross.
+  // docType mirrors the dealer status (exempt→108 קבלה, authorized→109 חשבונית מס/קבלה)
+  // so YPAY issues the right receipt on a successful charge.
+  createPaymentLink: async (business: Business, params: {
+    items: Array<{ name?: string; description: string; price: number; quantity: number; vatIncluded: boolean }>
+    contact: YpayContact
+    payments?: number
+    vatType?: 'exempt' | 'authorized'
+    /** Gross total for display on our page + income list (YPAY computes its own;
+     *  this is what the user sees, VAT included). */
+    amount?: number
+  }): Promise<{ url: string; chargeIdentifier: string }> => {
+    const credentials = getCredentials(business)
+    const effectiveVatType = params.vatType || business.vatType
+    if (!effectiveVatType) {
+      throw new Error('סוג עוסק לא הוגדר — הגדר בפרופיל')
+    }
+    const docType = effectiveVatType === 'exempt' ? YpayDocType.Receipt : YpayDocType.TaxInvoiceReceipt
+    const chargeIdentifier = `agl-${business.id}-${crypto.randomUUID()}`
+    const appOrigin = typeof window !== 'undefined' ? window.location.origin : ''
+
+    const response = await fetch('/api/ypay', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...credentials,
+        action: 'createPayment',
+        chargeIdentifier,
+        docType,
+        mail: true,
+        items: params.items,
+        contact: params.contact,
+        ...(params.payments ? { payments: params.payments } : {}),
+        // For persistence + our branded page / income list:
+        businessId: business.id,
+        businessName: business.name,
+        ownerUserId: business.userId,
+        ...(params.amount !== undefined ? { amount: params.amount } : {}),
+        appOrigin,
+      }),
+    })
+
+    const data = await response.json()
+    if (!data.success) {
+      throw new Error(data.message || 'שגיאה ביצירת דף תשלום')
+    }
+    return { url: data.url, chargeIdentifier }
+  },
+
   createBusinessInvoice: async (business: Business, params: {
     projectName: string
     totalHours: number

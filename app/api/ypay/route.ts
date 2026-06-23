@@ -1,5 +1,6 @@
 // CALLER-KEYED ROUTE — authenticated via caller's YPAY credentials
 import { NextRequest, NextResponse } from 'next/server'
+import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 
 const BASE_URL = 'https://ypay.co.il/api/v1'
 
@@ -82,6 +83,103 @@ export async function POST(request: NextRequest) {
         url: docData.url,
         serialNumber: docData.serialNumber || docData.serial_number,
         responseCode: docData.responseCode,
+      })
+    }
+
+    // Create credit-clearing payment page (#73). Returns a YPAY-hosted payment
+    // page URL for the exact items we send — shareable link / iFrame. On a
+    // successful charge YPAY generates the receipt (docType 108/109), emails it
+    // (mail:true), and POSTs the result to notifyUrl (our payment-callback).
+    if (action === 'createPayment') {
+      const {
+        items, contact, chargeIdentifier, docType,
+        payments, mail, lang, currency, appOrigin,
+        businessId, businessName, ownerUserId, amount,
+      } = body
+
+      if (!items || !Array.isArray(items) || items.length === 0) {
+        return NextResponse.json({ success: false, message: 'חסרים פריטים לתשלום' })
+      }
+      if (!chargeIdentifier) {
+        return NextResponse.json({ success: false, message: 'חסר מזהה עסקה (chargeIdentifier)' })
+      }
+
+      // Build callback URLs server-side so the webhook secret never reaches the
+      // client. `appOrigin` is the browser's window.location.origin (correct
+      // public origin on both localhost and prod); the secret comes from env.
+      const origin = (typeof appOrigin === 'string' && appOrigin) ? appOrigin.replace(/\/+$/, '') : ''
+      const secret = process.env.YPAY_WEBHOOK_SECRET?.trim() || ''
+      const cidEnc = encodeURIComponent(chargeIdentifier)
+      const notifyUrl = origin
+        ? `${origin}/api/ypay/payment-callback?cid=${cidEnc}${secret ? `&k=${encodeURIComponent(secret)}` : ''}`
+        : undefined
+      // Branded public success/failure pages (rendered inside our iframe wrapper
+      // when YPAY redirects on completion). Public routes — the payer is anon.
+      const successUrl = origin ? `${origin}/pay/success?cid=${cidEnc}` : undefined
+      const failureUrl = origin ? `${origin}/pay/failure?cid=${cidEnc}` : undefined
+
+      const accessToken = await getAccessToken(clientId, clientSecret)
+
+      const payResponse = await fetch(`${BASE_URL}/payment`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          chargeIdentifier,
+          items,
+          ...(contact ? { contact } : {}),
+          ...(docType !== undefined ? { docType } : {}),
+          ...(payments !== undefined ? { payments } : {}),
+          ...(mail !== undefined ? { mail } : {}),
+          lang: lang || 'he',
+          currency: currency || 'ILS',
+          ...(notifyUrl ? { notifyUrl } : {}),
+          ...(successUrl ? { successUrl } : {}),
+          ...(failureUrl ? { failureUrl } : {}),
+        }),
+      })
+
+      if (!payResponse.ok) {
+        const text = await payResponse.text()
+        return NextResponse.json({ success: false, message: `שגיאה ביצירת דף תשלום: ${text}` })
+      }
+
+      const payData = await payResponse.json()
+      if (payData.responseCode && payData.responseCode >= 2000) {
+        return NextResponse.json({ success: false, message: payData.message || 'שגיאה ביצירת דף תשלום' })
+      }
+
+      // Persist the clearance info to a plaintext, server-readable doc keyed by
+      // chargeIdentifier. This is what our branded /pay/[cid] page reads (the
+      // payer is anon on another device — they can't see the owner's Dexie/backup)
+      // and what the income page lists. The webhook flips `status` on payment.
+      try {
+        await getAdminFirestore().collection('ypayPaymentLinks').doc(chargeIdentifier).set({
+          chargeIdentifier,
+          businessId: businessId ?? null,
+          businessName: businessName ?? null,
+          ownerUserId: ownerUserId ?? null,
+          docType: docType ?? null,
+          amount: typeof amount === 'number' ? amount : null,
+          currency: currency || 'ILS',
+          items: Array.isArray(items) ? items : [],
+          contact: contact ?? null,
+          paymentUrl: payData.url,
+          status: 'pending',
+          createdAt: new Date().toISOString(),
+        })
+      } catch (err) {
+        // Don't fail link creation on a persistence hiccup — the YPAY url still
+        // works; we just won't have it listed / wrapped. Log loudly.
+        console.error('[ypay/createPayment] persist ypayPaymentLinks failed:', err instanceof Error ? err.message : String(err), 'cid=', chargeIdentifier)
+      }
+
+      return NextResponse.json({
+        success: true,
+        url: payData.url,
+        responseCode: payData.responseCode,
       })
     }
 
