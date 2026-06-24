@@ -1,13 +1,6 @@
 import { db } from '@/app/db/financeDB'
 import type { SheetRow } from '@/app/types/transactions'
 
-export class MissingClaudeApiKeyError extends Error {
-  constructor() {
-    super('Missing Claude API key — set one under Settings → API Keys to import PDF statements.')
-    this.name = 'MissingClaudeApiKeyError'
-  }
-}
-
 const cache = new Map<string, Promise<SheetRow[]>>()
 
 function cacheKey(file: File) {
@@ -32,15 +25,17 @@ async function getClaudeApiKey(): Promise<string | null> {
 }
 
 async function fetchExtraction(file: File): Promise<SheetRow[]> {
+  // Claude key is OPTIONAL — if the user set one we use Claude (higher accuracy),
+  // otherwise the server falls back to the included Gemini provider. PDF import must
+  // work out-of-box on the default setup, so we never block on a missing Claude key.
   const apiKey = await getClaudeApiKey()
-  if (!apiKey) throw new MissingClaudeApiKeyError()
 
   const pdfBase64 = await fileToBase64(file)
 
   const response = await fetch('/api/extract-pdf-statement', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ pdfBase64, claudeApiKey: apiKey }),
+    body: JSON.stringify({ pdfBase64, ...(apiKey ? { claudeApiKey: apiKey } : {}) }),
   })
 
   if (!response.ok) {
@@ -57,7 +52,8 @@ async function fetchExtraction(file: File): Promise<SheetRow[]> {
 
 /**
  * Read a PDF financial statement and return SheetRow[] in the same shape as readExcelFile.
- * Calls Claude server-side via /api/extract-pdf-statement using the user's stored API key.
+ * Posts to /api/extract-pdf-statement, which uses the caller's Claude key when present
+ * and otherwise falls back to the included Gemini provider — so import works keyless.
  * Result is cached per (name, size, lastModified) so preview + import share one extraction.
  */
 export async function readPdfFile(file: File): Promise<SheetRow[]> {
