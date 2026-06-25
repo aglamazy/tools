@@ -36,6 +36,25 @@ export async function scanDirectoryForFiles(dirHandle: FileSystemDirectoryHandle
   const previewPromises = fileHandles.map(async (fileHandle): Promise<FilePreview | null> => {
     try {
       const file = await fileHandle.getFile()
+
+      // PDFs are read by an LLM (Claude/Gemini) — running that on every PDF just to
+      // render the folder list would mean one model call per file (slow + costly) and a
+      // transient extraction failure would silently drop the row (looked like "no files
+      // found"). List PDFs cheaply by filename; the real extraction + classification
+      // runs once, at import time (handleFileSelect → extractFileMetadata).
+      if (file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf') {
+        return {
+          fileName: fileHandle.name,
+          fileHandle,
+          fileType: FileType.Unknown,
+          processingMonth: null,
+          transactionCount: 0,
+          accountNumber: null,
+          cardNumber: null,
+          lastModified: file.lastModified,
+        }
+      }
+
       const metadata = await extractFileMetadata(file)
 
       if (metadata.fileType !== FileType.Bank && metadata.fileType !== FileType.CreditCard) {

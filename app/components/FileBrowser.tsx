@@ -419,7 +419,7 @@ export default function FileBrowser({
       )}
       {savedDirHandle && !loading && !error && previews.length === 0 && subfolders.length === 0 && (
         <div className="banner" style={{ marginTop: '1rem' }}>
-          לא נמצאו קבצי XLS/XLSX בתיקייה שנבחרה.
+          לא נמצאו קבצי XLS/XLSX או PDF בתיקייה שנבחרה.
         </div>
       )}
     </div>

@@ -92,33 +92,6 @@ const GEMINI_RESPONSE_SCHEMA = {
 // schema above, returns structured rows reliably. Overridable later if accuracy needs Pro.
 const GEMINI_PDF_MODEL = 'gemini-flash-latest'
 
-/** Call Claude Sonnet with the PDF as a document block. Returns the raw text response. */
-async function extractViaClaude(pdfBase64: string, userMessage: string, claudeApiKey: string): Promise<string> {
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'x-api-key': claudeApiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 16000,
-      system: SYSTEM_PROMPT,
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } },
-          { type: 'text', text: userMessage },
-        ],
-      }],
-    }),
-  })
-  if (!res.ok) {
-    const errorBody = await res.text()
-    console.error('[extract-pdf-statement] Claude API error:', res.status, errorBody)
-    throw new Error(`Claude API error: ${res.status}`)
-  }
-  const data = await res.json()
-  return data.content?.[0]?.text ?? ''
-}
-
 /** Call Gemini with the PDF inline + structured-output schema. Returns the raw JSON text. */
 async function extractViaGemini(pdfBase64: string, userMessage: string, geminiApiKey: string): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_PDF_MODEL)}:generateContent?key=${geminiApiKey}`
@@ -155,9 +128,8 @@ async function extractViaGemini(pdfBase64: string, userMessage: string, geminiAp
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { pdfBase64, claudeApiKey, hint } = body as {
+    const { pdfBase64, hint } = body as {
       pdfBase64?: string
-      claudeApiKey?: string
       hint?: 'bank' | 'credit'
     }
 
@@ -165,22 +137,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing pdfBase64' }, { status: 400 })
     }
 
-    // Provider: Claude when the caller supplies a key (opt-in), else the included Gemini
-    // (app key). At least one must be available, else PDF import can't run.
+    // PDF statement extraction ALWAYS uses Gemini's structured-schema path
+    // (responseSchema + temperature 0) — the reliable tool for "PDF → exact table",
+    // and the contract default. A user's Claude key powers OTHER features (tax-doc
+    // extraction), NOT this endpoint: Claude's free-form output here intermittently
+    // omitted the bank header row → classifyFile → "unknown file type" (the bug
+    // Agla hit on 211362-June.pdf despite having a Claude key).
     const geminiApiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY
-    if (!claudeApiKey && !geminiApiKey) {
-      return NextResponse.json({ error: 'אין ספק LLM זמין לחילוץ PDF — לא הוגדר מפתח Gemini או Claude.' }, { status: 400 })
+    if (!geminiApiKey) {
+      return NextResponse.json({ error: 'חילוץ PDF לא זמין — לא הוגדר מפתח Gemini.' }, { status: 400 })
     }
 
     const userMessage = hint
       ? `סוג צפוי: ${hint === 'bank' ? 'דף בנק' : 'פירוט אשראי'}. חלץ את הנתונים.`
       : 'חלץ את הנתונים מהמסמך.'
 
-    const provider = claudeApiKey ? 'anthropic' : 'gemini'
-    const text = claudeApiKey
-      ? await extractViaClaude(pdfBase64, userMessage, claudeApiKey)
-      : await extractViaGemini(pdfBase64, userMessage, geminiApiKey as string)
-    console.log(`[extract-pdf-statement] extracted via ${provider}, ${text.length} chars`)
+    const text = await extractViaGemini(pdfBase64, userMessage, geminiApiKey)
+    console.log(`[extract-pdf-statement] extracted via gemini, ${text.length} chars`)
 
     let extraction: Extraction
     try {
