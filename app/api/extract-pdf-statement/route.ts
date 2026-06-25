@@ -88,9 +88,10 @@ const GEMINI_RESPONSE_SCHEMA = {
   required: ['kind', 'rows'],
 }
 
-// Default Gemini model for PDF extraction. Flash reads PDFs natively and, with the response
-// schema above, returns structured rows reliably. Overridable later if accuracy needs Pro.
-const GEMINI_PDF_MODEL = 'gemini-flash-latest'
+// Gemini model for PDF extraction. Flash read the text columns but missed the numeric
+// amount columns on dense Otsar/FIBI statements (every debit/credit/balance came back 0,
+// with duplicated rows). Bank data must be exact, so we use Pro for reliable numeric OCR.
+const GEMINI_PDF_MODEL = 'gemini-2.5-pro'
 
 /** Call Gemini with the PDF inline + structured-output schema. Returns the raw JSON text. */
 async function extractViaGemini(pdfBase64: string, userMessage: string, geminiApiKey: string): Promise<string> {
