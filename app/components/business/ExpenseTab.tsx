@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import JSZip from 'jszip'
 import { db, type Transaction, type Business, type ExpenseDocument } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
@@ -61,6 +61,7 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
   const [selectedMonth, setSelectedMonth] = useState<string>('')
   const [selectedYear, setSelectedYear] = useState<string>('')
   const [filterMode, setFilterMode] = useState<'month' | 'year' | 'all'>('month')
+  const [partyFilter, setPartyFilter] = useState<string>('all')
   const [loading, setLoading] = useState(true)
   const [matchStatus, setMatchStatus] = useState<Record<number, MatchStatus>>({})
   const [matchedDocs, setMatchedDocs] = useState<Record<number, ExpenseDocument[]>>({})
@@ -259,6 +260,44 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
     typeof window !== 'undefined' ? partnerStore.getCachedByBusinessId(businessId) : []
   )
   const [accountOwners, setAccountOwners] = useState<AccountOwners>({})
+  const ownerUid = business?.userId
+  const ownerLabel = useMemo(() => {
+    return participants.find((p) => p.uid === ownerUid)?.label || ownerUid || '—'
+  }, [participants, ownerUid])
+
+  const resolvePartyUid = (t: Pick<Transaction, 'paidByUid' | 'cardNumber' | 'accountNumber'>) => {
+    return getTransactionAttributedUid(t, accountOwners, ownerUid)
+  }
+
+  const resolvePartyLabel = (uid: string | undefined) => {
+    if (!uid) return '—'
+    return participants.find((p) => p.uid === uid)?.label || (uid === ownerUid ? ownerLabel : uid)
+  }
+
+  const partyOptions = useMemo(() => {
+    const options = new Map<string, string>()
+    if (ownerUid) options.set(ownerUid, ownerLabel)
+    for (const participant of participants) {
+      if (participant.uid) options.set(participant.uid, participant.label)
+    }
+    for (const t of transactions) {
+      const uid = resolvePartyUid(t)
+      if (uid) options.set(uid, resolvePartyLabel(uid))
+    }
+    for (const d of partnerPaidDocs) {
+      const uid = d.paidByUid || ownerUid
+      if (uid) options.set(uid, resolvePartyLabel(uid))
+    }
+    return Array.from(options, ([value, label]) => ({ value, label }))
+  }, [ownerUid, ownerLabel, participants, transactions, partnerPaidDocs, accountOwners])
+
+  const visibleTransactions = useMemo(() => {
+    return transactions.filter((t) => partyFilter === 'all' || resolvePartyUid(t) === partyFilter)
+  }, [transactions, partyFilter, accountOwners, ownerUid])
+
+  const visiblePartnerPaidDocs = useMemo(() => {
+    return partnerPaidDocs.filter((d) => partyFilter === 'all' || (d.paidByUid || ownerUid) === partyFilter)
+  }, [partnerPaidDocs, partyFilter, ownerUid])
 
   // Read partner list from cache for instant render; refresh in background; subscribe to store updates.
   useEffect(() => {
@@ -288,6 +327,10 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
   useEffect(() => {
     void appSettingsStore.getAccountOwners().then(setAccountOwners)
   }, [])
+
+  useEffect(() => {
+    setPartyFilter('all')
+  }, [businessId])
 
   // Default cashPaidByUid to current user when participants change.
   useEffect(() => {
@@ -367,15 +410,16 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
   }
 
   const getMonthTotal = () => {
-    return transactions.reduce((sum, t) => sum + Math.abs(t.amount), 0)
+    return visibleTransactions.reduce((sum, t) => sum + Math.abs(t.amount), 0) +
+      visiblePartnerPaidDocs.reduce((sum, d) => sum + Math.abs(d.amount || 0), 0)
   }
 
   const getVatTotal = () => {
-    return transactions.reduce((sum, t) => {
+    return visibleTransactions.reduce((sum, t) => {
       const docs = matchedDocs[t.id!]
       if (!docs) return sum
       return sum + docs.reduce((s, d) => s + (d.vatAmount || 0), 0)
-    }, 0)
+    }, 0) + visiblePartnerPaidDocs.reduce((sum, d) => sum + (d.vatAmount || 0), 0)
   }
 
   const handleUnlink = async (txId: number) => {
@@ -549,12 +593,30 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
             ))}
           </select>
         )}
-        {transactions.length > 0 && (
+        {partyOptions.length > 1 && (
+          <select
+            value={partyFilter}
+            onChange={(e) => setPartyFilter(e.target.value)}
+            style={{
+              padding: '0.5rem 1rem',
+              borderRadius: '0.375rem',
+              border: '1px solid #e2e8f0',
+              fontSize: '1rem',
+              direction: 'rtl',
+            }}
+          >
+            <option value="all">צד: הכל</option>
+            {partyOptions.map((p) => (
+              <option key={p.value} value={p.value}>{p.label}</option>
+            ))}
+          </select>
+        )}
+        {visibleTransactions.length > 0 || visiblePartnerPaidDocs.length > 0 ? (
           <span style={{ color: '#64748b', fontSize: '0.9rem' }}>
             סה"כ: ₪{getMonthTotal().toLocaleString()}
             {getVatTotal() > 0 && ` (מע״מ: ₪${getVatTotal().toLocaleString()})`}
           </span>
-        )}
+        ) : null}
         {Object.values(matchedDocs).flat().some(d => d.driveFileId) && (
           <button
             onClick={handleDownloadAll}
@@ -654,7 +716,7 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
           below so they're visible in context. */}
 
       {/* Transactions table — bank txs + partner-paid docs as inline rows */}
-      {transactions.length === 0 ? (
+      {visibleTransactions.length === 0 && visiblePartnerPaidDocs.length === 0 ? (
         <p style={{ color: '#64748b', textAlign: 'center', padding: '2rem' }}>
           אין הוצאות בתקופה זו
         </p>
@@ -666,9 +728,7 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>תאריך</th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>תיאור</th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>נושא</th>
-                {participants.length > 1 && (
-                  <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>שולם ע״י</th>
-                )}
+                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>שולם ע״י</th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'left' }}>סכום</th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'left' }}>מע״מ</th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'center', width: '80px' }}>קבלה</th>
@@ -676,13 +736,14 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
               </tr>
             </thead>
             <tbody>
-              {transactions.map((t) => {
+              {visibleTransactions.map((t) => {
                 const txId = t.id!
                 const status = matchStatus[txId] || 'idle'
                 const docs = matchedDocs[txId]
                 const firstDoc = docs?.[0]
                 const vatTotal = docs?.reduce((s, d) => s + (d.vatAmount || 0), 0)
                 const isEditing = editingTxId === txId
+                const attributedUid = resolvePartyUid(t)
                 return (
                   <tr key={txId} style={{ borderBottom: '1px solid #f1f5f9' }}>
                     <td style={{ padding: '0.6rem 0.5rem' }}>{t.date}</td>
@@ -716,14 +777,9 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
                         </select>
                       ) : t.category}
                     </td>
-                    {participants.length > 1 && (() => {
-                      const attributedUid = getTransactionAttributedUid(t, accountOwners, business?.userId)
-                      return (
-                        <td style={{ padding: '0.6rem 0.5rem', color: '#64748b', fontSize: '0.85rem' }}>
-                          {attributedUid ? (participants.find(p => p.uid === attributedUid)?.label ?? '') : ''}
-                        </td>
-                      )
-                    })()}
+                    <td style={{ padding: '0.6rem 0.5rem', color: '#64748b', fontSize: '0.85rem' }}>
+                      {resolvePartyLabel(attributedUid)}
+                    </td>
                     <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', fontWeight: 500, color: '#dc2626' }}>
                       {isEditing && editingIsCash ? (
                         <input
@@ -835,9 +891,8 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
                   (#44 follow-up) so they're visible alongside transactions in
                   the same table. Distinguished only by the "שולם ע״י" column
                   + a small badge in the description. */}
-              {partnerPaidDocs.map((d) => {
-                const payerLabel =
-                  participants.find((p) => p.uid === d.paidByUid)?.label || d.paidByUid || '?'
+              {visiblePartnerPaidDocs.map((d) => {
+                const payerLabel = resolvePartyLabel(d.paidByUid || ownerUid)
                 return (
                   <tr key={`pp-${d.id}`} style={{ borderBottom: '1px solid #f1f5f9', background: '#fffbeb' }}>
                     <td style={{ padding: '0.6rem 0.5rem' }}>{d.date || '—'}</td>
@@ -848,9 +903,7 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
                       </span>
                     </td>
                     <td style={{ padding: '0.6rem 0.5rem', color: '#64748b' }}>{d.category || '—'}</td>
-                    {participants.length > 1 && (
-                      <td style={{ padding: '0.6rem 0.5rem' }}>{payerLabel}</td>
-                    )}
+                    <td style={{ padding: '0.6rem 0.5rem' }}>{payerLabel}</td>
                     <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left' }}>
                       ₪{(d.amount ?? 0).toLocaleString()}
                     </td>

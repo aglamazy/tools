@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { db, type Transaction, type YpayDocument, type Business, type Project } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { businessStore } from '@/app/stores/businessStore'
@@ -41,6 +41,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
   const [selectedMonth, setSelectedMonth] = useState<string>('')
   const [selectedYear, setSelectedYear] = useState<string>('')
   const [filterMode, setFilterMode] = useState<'month' | 'year' | 'all'>('month')
+  const [partyFilter, setPartyFilter] = useState<string>('all')
   const [loading, setLoading] = useState(true)
   const [creatingDoc, setCreatingDoc] = useState<number | null>(null)
   const [selectingProject, setSelectingProject] = useState<number | null>(null)
@@ -61,6 +62,32 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     typeof window !== 'undefined' ? partnerStore.getCachedByBusinessId(businessId) : []
   )
   const [accountOwners, setAccountOwners] = useState<AccountOwners>({})
+  const ownerUid = business?.userId
+  const ownerLabel = useMemo(() => {
+    return participants.find((p) => p.uid === ownerUid)?.label || ownerUid || '—'
+  }, [participants, ownerUid])
+  const resolvePartyUid = (t: Pick<Transaction, 'paidByUid' | 'cardNumber' | 'accountNumber'>) => {
+    return getTransactionAttributedUid(t, accountOwners, ownerUid)
+  }
+  const resolvePartyLabel = (uid: string | undefined) => {
+    if (!uid) return '—'
+    return participants.find((p) => p.uid === uid)?.label || (uid === ownerUid ? ownerLabel : uid)
+  }
+  const partyOptions = useMemo(() => {
+    const options = new Map<string, string>()
+    if (ownerUid) options.set(ownerUid, ownerLabel)
+    for (const participant of participants) {
+      if (participant.uid) options.set(participant.uid, participant.label)
+    }
+    for (const t of transactions) {
+      const uid = resolvePartyUid(t)
+      if (uid) options.set(uid, resolvePartyLabel(uid))
+    }
+    return Array.from(options, ([value, label]) => ({ value, label }))
+  }, [ownerUid, ownerLabel, participants, transactions, accountOwners])
+  const visibleTransactions = useMemo(() => {
+    return transactions.filter((t) => partyFilter === 'all' || resolvePartyUid(t) === partyFilter)
+  }, [transactions, partyFilter, accountOwners, ownerUid])
   // #73 — compose a YPAY payment page for a customer (forward billing, not a receipt).
   const [showPaymentModal, setShowPaymentModal] = useState(false)
   const [paymentLinks, setPaymentLinks] = useState<PaymentLinkRow[]>([])
@@ -75,6 +102,10 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
   }, [businessId])
 
   useEffect(() => { void loadPaymentLinks() }, [businessId])
+
+  useEffect(() => {
+    setPartyFilter('all')
+  }, [businessId])
 
   // Read partners from cache for instant render; refresh in background; subscribe to store updates.
   useEffect(() => {
@@ -391,7 +422,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
   }
 
   const getMonthTotal = () => {
-    return transactions.reduce((sum, t) => sum + t.amount, 0)
+    return visibleTransactions.reduce((sum, t) => sum + t.amount, 0)
   }
 
   if (loading) {
@@ -478,7 +509,25 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
             ))}
           </select>
         )}
-        {transactions.length > 0 && (
+        {partyOptions.length > 1 && (
+          <select
+            value={partyFilter}
+            onChange={(e) => setPartyFilter(e.target.value)}
+            style={{
+              padding: '0.5rem 1rem',
+              borderRadius: '0.375rem',
+              border: '1px solid #e2e8f0',
+              fontSize: '1rem',
+              direction: 'rtl',
+            }}
+          >
+            <option value="all">צד: הכל</option>
+            {partyOptions.map((p) => (
+              <option key={p.value} value={p.value}>{p.label}</option>
+            ))}
+          </select>
+        )}
+        {visibleTransactions.length > 0 && (
           <span style={{ color: '#64748b', fontSize: '0.9rem' }}>
             סה"כ: ₪{getMonthTotal().toLocaleString()}
           </span>
@@ -628,7 +677,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
       )}
 
       {/* Transactions table */}
-      {transactions.length === 0 ? (
+      {visibleTransactions.length === 0 ? (
         <p style={{ color: '#64748b', textAlign: 'center', padding: '2rem' }}>
           אין הכנסות בחודש זה
         </p>
@@ -640,177 +689,173 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>תאריך</th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>תיאור</th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>נושא</th>
-                {participants.length > 1 && (
-                  <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>קיבל ע״י</th>
-                )}
+                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>קיבל ע״י</th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'left' }}>סכום</th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'center' }}>קבלה</th>
               </tr>
             </thead>
             <tbody>
-              {transactions.map((t) => (
-                <tr key={t.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                  <td style={{ padding: '0.6rem 0.5rem' }}>{t.date}</td>
-                  <td style={{ padding: '0.6rem 0.5rem' }}>{t.description}</td>
-                  <td style={{ padding: '0.6rem 0.5rem', color: '#64748b' }}>{t.category}</td>
-                  {participants.length > 1 && (() => {
-                    const attributedUid = getTransactionAttributedUid(t, accountOwners, business?.userId)
-                    return (
-                      <td style={{ padding: '0.6rem 0.5rem', color: '#64748b', fontSize: '0.85rem' }}>
-                        {attributedUid ? (participants.find(p => p.uid === attributedUid)?.label ?? '') : ''}
-                      </td>
-                    )
-                  })()}
-                  <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', fontWeight: 500 }}>
-                    ₪{t.amount.toLocaleString()}
-                  </td>
-                  <td style={{ padding: '0.6rem 0.5rem', textAlign: 'center' }}>
-                    {t.ypayDoc ? (
-                      <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', justifyContent: 'center' }}>
-                        <a
-                          href={t.ypayDoc.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          style={{ color: '#10b981', textDecoration: 'none', fontWeight: 500 }}
-                        >
-                          {t.ypayDoc.serialNumber}
-                        </a>
-                        <button
-                          onClick={() => void handleSendReceipt(t)}
-                          disabled={sendingDoc === t.id}
-                          title="שלח ללקוח"
-                          style={{
-                            padding: '0.2rem 0.5rem', fontSize: '0.75rem',
-                            background: sendingDoc === t.id ? '#f1f5f9' : '#0ea5e9', color: sendingDoc === t.id ? '#64748b' : 'white',
-                            border: 'none', borderRadius: '0.25rem',
-                            cursor: sendingDoc === t.id ? 'wait' : 'pointer',
-                          }}
-                        >{sendingDoc === t.id ? '...' : '📧'}</button>
-                      </div>
-                    ) : linkingDoc === t.id ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', minWidth: '200px' }}>
-                        <input
-                          type="text"
-                          placeholder="מספר קבלה"
-                          value={linkForm.serialNumber}
-                          onChange={(e) => setLinkForm(f => ({ ...f, serialNumber: e.target.value }))}
-                          style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', border: '1px solid #e2e8f0', borderRadius: '0.25rem', direction: 'rtl' }}
-                          autoFocus
-                        />
-                        <div style={{ display: 'flex', gap: '0.3rem', justifyContent: 'center' }}>
-                          <button
-                            onClick={() => handleLinkDocument(t)}
-                            disabled={!linkForm.serialNumber.trim()}
-                            style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#f0fdf4', border: '1px solid #10b981', borderRadius: '0.25rem', cursor: 'pointer', color: '#059669' }}
+              {visibleTransactions.map((t) => {
+                const attributedUid = resolvePartyUid(t)
+                return (
+                  <tr key={t.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    <td style={{ padding: '0.6rem 0.5rem' }}>{t.date}</td>
+                    <td style={{ padding: '0.6rem 0.5rem' }}>{t.description}</td>
+                    <td style={{ padding: '0.6rem 0.5rem', color: '#64748b' }}>{t.category}</td>
+                    <td style={{ padding: '0.6rem 0.5rem', color: '#64748b', fontSize: '0.85rem' }}>
+                      {resolvePartyLabel(attributedUid)}
+                    </td>
+                    <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', fontWeight: 500 }}>
+                      ₪{t.amount.toLocaleString()}
+                    </td>
+                    <td style={{ padding: '0.6rem 0.5rem', textAlign: 'center' }}>
+                      {t.ypayDoc ? (
+                        <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', justifyContent: 'center' }}>
+                          <a
+                            href={t.ypayDoc.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ color: '#10b981', textDecoration: 'none', fontWeight: 500 }}
                           >
-                            שמור
-                          </button>
+                            {t.ypayDoc.serialNumber}
+                          </a>
                           <button
-                            onClick={() => { setLinkingDoc(null); setLinkForm({ url: '', serialNumber: '' }) }}
-                            style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '0.25rem', cursor: 'pointer', color: '#64748b' }}
-                          >
-                            ביטול
-                          </button>
-                        </div>
-                      </div>
-                    ) : selectingProject === t.id ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', minWidth: '200px' }}>
-                        <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
-                          <select
-                            value={selectedProjectId || ''}
-                            onChange={(e) => setSelectedProjectId(e.target.value ? Number(e.target.value) : null)}
-                            style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', border: '1px solid #e2e8f0', borderRadius: '0.25rem', direction: 'rtl', flex: 1 }}
-                          >
-                            <option value="">בחר לקוח...</option>
-                            {projects.map(p => (
-                              <option key={p.id} value={p.id}>{p.name}{!p.contactEmail ? ' (חסר אימייל)' : ''}</option>
-                            ))}
-                          </select>
-                          <button
-                            onClick={() => {
-                              setCreatingNewProject(true)
-                              setEditingProjectContact({
-                                businessId,
-                                name: '',
-                                archived: false,
-                                createdAt: new Date().toISOString(),
-                                updatedAt: new Date().toISOString(),
-                              })
+                            onClick={() => void handleSendReceipt(t)}
+                            disabled={sendingDoc === t.id}
+                            title="שלח ללקוח"
+                            style={{
+                              padding: '0.2rem 0.5rem', fontSize: '0.75rem',
+                              background: sendingDoc === t.id ? '#f1f5f9' : '#0ea5e9', color: sendingDoc === t.id ? '#64748b' : 'white',
+                              border: 'none', borderRadius: '0.25rem',
+                              cursor: sendingDoc === t.id ? 'wait' : 'pointer',
                             }}
-                            title="לקוח חדש"
-                            style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', background: '#eff6ff', border: '1px solid #3b82f6', borderRadius: '0.25rem', cursor: 'pointer', color: '#2563eb', whiteSpace: 'nowrap' }}
+                          >{sendingDoc === t.id ? '...' : '📧'}</button>
+                        </div>
+                      ) : linkingDoc === t.id ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', minWidth: '200px' }}>
+                          <input
+                            type="text"
+                            placeholder="מספר קבלה"
+                            value={linkForm.serialNumber}
+                            onChange={(e) => setLinkForm(f => ({ ...f, serialNumber: e.target.value }))}
+                            style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', border: '1px solid #e2e8f0', borderRadius: '0.25rem', direction: 'rtl' }}
+                            autoFocus
+                          />
+                          <div style={{ display: 'flex', gap: '0.3rem', justifyContent: 'center' }}>
+                            <button
+                              onClick={() => handleLinkDocument(t)}
+                              disabled={!linkForm.serialNumber.trim()}
+                              style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#f0fdf4', border: '1px solid #10b981', borderRadius: '0.25rem', cursor: 'pointer', color: '#059669' }}
+                            >
+                              שמור
+                            </button>
+                            <button
+                              onClick={() => { setLinkingDoc(null); setLinkForm({ url: '', serialNumber: '' }) }}
+                              style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '0.25rem', cursor: 'pointer', color: '#64748b' }}
+                            >
+                              ביטול
+                            </button>
+                          </div>
+                        </div>
+                      ) : selectingProject === t.id ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', minWidth: '200px' }}>
+                          <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                            <select
+                              value={selectedProjectId || ''}
+                              onChange={(e) => setSelectedProjectId(e.target.value ? Number(e.target.value) : null)}
+                              style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', border: '1px solid #e2e8f0', borderRadius: '0.25rem', direction: 'rtl', flex: 1 }}
+                            >
+                              <option value="">בחר לקוח...</option>
+                              {projects.map(p => (
+                                <option key={p.id} value={p.id}>{p.name}{!p.contactEmail ? ' (חסר אימייל)' : ''}</option>
+                              ))}
+                            </select>
+                            <button
+                              onClick={() => {
+                                setCreatingNewProject(true)
+                                setEditingProjectContact({
+                                  businessId,
+                                  name: '',
+                                  archived: false,
+                                  createdAt: new Date().toISOString(),
+                                  updatedAt: new Date().toISOString(),
+                                })
+                              }}
+                              title="לקוח חדש"
+                              style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', background: '#eff6ff', border: '1px solid #3b82f6', borderRadius: '0.25rem', cursor: 'pointer', color: '#2563eb', whiteSpace: 'nowrap' }}
+                            >
+                              +
+                            </button>
+                          </div>
+                          <div style={{ display: 'flex', gap: '0.3rem', justifyContent: 'center' }}>
+                            {(() => {
+                              const selected = projects.find(p => p.id === selectedProjectId)
+                              const hasEmail = selected?.contactEmail
+                              return (
+                                <>
+                                  <button
+                                    onClick={() => selected && handleCreateDocument(t, selected)}
+                                    disabled={!selected || !hasEmail}
+                                    style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#f0fdf4', border: '1px solid #10b981', borderRadius: '0.25rem', cursor: !selected || !hasEmail ? 'not-allowed' : 'pointer', color: '#059669', opacity: !selected || !hasEmail ? 0.5 : 1 }}
+                                  >
+                                    צור
+                                  </button>
+                                  <button
+                                    onClick={() => selected && setEditingProjectContact(selected)}
+                                    disabled={!selected}
+                                    style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '0.25rem', cursor: !selected ? 'not-allowed' : 'pointer', color: '#475569', opacity: !selected ? 0.5 : 1 }}
+                                  >
+                                    ערוך
+                                  </button>
+                                  <button
+                                    onClick={() => { setSelectingProject(null); setSelectedProjectId(null) }}
+                                    style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '0.25rem', cursor: 'pointer', color: '#64748b' }}
+                                  >
+                                    ביטול
+                                  </button>
+                                </>
+                              )
+                            })()}
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'center' }}>
+                          <button
+                            onClick={() => handleStartCreate(t.id!)}
+                            disabled={creatingDoc === t.id}
+                            style={{
+                              padding: '0.35rem 0.75rem',
+                              fontSize: '0.8rem',
+                              background: creatingDoc === t.id ? '#f1f5f9' : '#f0fdf4',
+                              border: '1px solid #10b981',
+                              borderRadius: '0.375rem',
+                              cursor: creatingDoc === t.id ? 'not-allowed' : 'pointer',
+                              color: '#059669',
+                            }}
                           >
-                            +
+                            {creatingDoc === t.id ? '...' : 'צור קבלה'}
+                          </button>
+                          <button
+                            onClick={() => { setLinkingDoc(t.id!); setLinkForm({ url: '', serialNumber: '' }); loadExistingDocs() }}
+                            style={{
+                              padding: '0.35rem 0.75rem',
+                              fontSize: '0.8rem',
+                              background: '#f8fafc',
+                              border: '1px solid #cbd5e1',
+                              borderRadius: '0.375rem',
+                              cursor: 'pointer',
+                              color: '#475569',
+                            }}
+                            title="קשר קבלה קיימת"
+                          >
+                            קשר
                           </button>
                         </div>
-                        <div style={{ display: 'flex', gap: '0.3rem', justifyContent: 'center' }}>
-                          {(() => {
-                            const selected = projects.find(p => p.id === selectedProjectId)
-                            const hasEmail = selected?.contactEmail
-                            return (
-                              <>
-                                <button
-                                  onClick={() => selected && handleCreateDocument(t, selected)}
-                                  disabled={!selected || !hasEmail}
-                                  style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#f0fdf4', border: '1px solid #10b981', borderRadius: '0.25rem', cursor: !selected || !hasEmail ? 'not-allowed' : 'pointer', color: '#059669', opacity: !selected || !hasEmail ? 0.5 : 1 }}
-                                >
-                                  צור
-                                </button>
-                                <button
-                                  onClick={() => selected && setEditingProjectContact(selected)}
-                                  disabled={!selected}
-                                  style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '0.25rem', cursor: !selected ? 'not-allowed' : 'pointer', color: '#475569', opacity: !selected ? 0.5 : 1 }}
-                                >
-                                  ערוך
-                                </button>
-                                <button
-                                  onClick={() => { setSelectingProject(null); setSelectedProjectId(null) }}
-                                  style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '0.25rem', cursor: 'pointer', color: '#64748b' }}
-                                >
-                                  ביטול
-                                </button>
-                              </>
-                            )
-                          })()}
-                        </div>
-                      </div>
-                    ) : (
-                      <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'center' }}>
-                        <button
-                          onClick={() => handleStartCreate(t.id!)}
-                          disabled={creatingDoc === t.id}
-                          style={{
-                            padding: '0.35rem 0.75rem',
-                            fontSize: '0.8rem',
-                            background: creatingDoc === t.id ? '#f1f5f9' : '#f0fdf4',
-                            border: '1px solid #10b981',
-                            borderRadius: '0.375rem',
-                            cursor: creatingDoc === t.id ? 'not-allowed' : 'pointer',
-                            color: '#059669',
-                          }}
-                        >
-                          {creatingDoc === t.id ? '...' : 'צור קבלה'}
-                        </button>
-                        <button
-                          onClick={() => { setLinkingDoc(t.id!); setLinkForm({ url: '', serialNumber: '' }); loadExistingDocs() }}
-                          style={{
-                            padding: '0.35rem 0.75rem',
-                            fontSize: '0.8rem',
-                            background: '#f8fafc',
-                            border: '1px solid #cbd5e1',
-                            borderRadius: '0.375rem',
-                            cursor: 'pointer',
-                            color: '#475569',
-                          }}
-                          title="קשר קבלה קיימת"
-                        >
-                          קשר
-                        </button>
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
