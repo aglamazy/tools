@@ -1,3 +1,91 @@
+/* ─── Dashboard Home Onboarding ─── */
+.home-start-card {
+  background:
+    radial-gradient(circle at top left, rgba(99, 102, 241, 0.16), transparent 40%),
+    radial-gradient(circle at bottom right, rgba(14, 165, 233, 0.1), transparent 35%),
+    #fff;
+  border: 1px solid rgba(99, 102, 241, 0.14);
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.25rem;
+}
+
+.home-start-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.home-start-kicker {
+  margin: 0 0 0.5rem;
+  color: #4338ca;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.home-start-card h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.45rem;
+  line-height: 1.25;
+  color: #0f172a;
+}
+
+.home-start-card p {
+  margin: 0;
+  color: #475569;
+  line-height: 1.7;
+}
+
+.home-start-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.65rem;
+  min-width: 190px;
+}
+
+.home-start-primary,
+.home-start-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.75rem;
+  padding: 0 1rem;
+  border-radius: 999px;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 0.95rem;
+  transition: transform 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+}
+
+.home-start-primary {
+  background: linear-gradient(135deg, #4338ca 0%, #6366f1 100%);
+  color: #fff;
+  box-shadow: 0 12px 28px rgba(67, 56, 202, 0.22);
+}
+
+.home-start-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 32px rgba(67, 56, 202, 0.28);
+}
+
+.home-start-secondary {
+  background: #eef2ff;
+  color: #312e81;
+}
+
+.home-start-secondary:hover {
+  background: #e0e7ff;
+}
+
+.home-start-secondary:active,
+.home-start-primary:active {
+  transform: translateY(0);
+}
+
 /* ─── Market Research Page ─── */
 .mr-page {
   display: flex;
@@ -349,6 +437,15 @@
 }
 
 @media (max-width: 768px) {
+  .home-start-card {
+    flex-direction: column;
+  }
+
+  .home-start-actions {
+    width: 100%;
+    min-width: 0;
+  }
+
   .mr-page {
     flex-direction: column;
     height: auto;

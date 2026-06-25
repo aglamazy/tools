@@ -1,8 +1,10 @@
 "use client"
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { transactionStore } from '@/app/stores/transactionStore'
 import { subjectStore } from '@/app/stores/subjectStore'
+import { routes } from '@/app/config'
 
 const currency = (value: number) =>
   new Intl.NumberFormat('he-IL', {
@@ -129,6 +131,25 @@ export default function HomePage() {
   return (
     <main className="app" dir="rtl">
       <div style={{ display: 'grid', gap: '1.5rem' }}>
+        <div className="card home-start-card">
+          <div className="home-start-copy">
+            <p className="home-start-kicker">התחלה מהירה</p>
+            <h2>לא ברור מה עושים עכשיו? מתחילים מהתפריט בצד</h2>
+            <p>
+              התפריט בצד יוביל אתכם למסך המתאים. אם זו הכניסה הראשונה, הכי כדאי להתחיל מייבוא
+              קבצים או לפתוח את מדריך השימוש.
+            </p>
+          </div>
+          <div className="home-start-actions">
+            <Link href={routes.import} className="home-start-primary">
+              ייבוא קבצים
+            </Link>
+            <Link href={routes.guide} className="home-start-secondary">
+              מדריך שימוש
+            </Link>
+          </div>
+        </div>
+
         {loading ? (
           <div className="card">
             <p style={{ margin: 0, color: '#64748b' }}>טוען נתונים...</p>
