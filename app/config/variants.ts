@@ -11,6 +11,8 @@
  * can flip at different moments during the cutover.
  */
 
+import { SALIKO_CONTACT_EMAIL } from '@/app/saliko/canon'
+
 export type ProductVariant = 'aglamazo' | 'saliko'
 
 const RAW = (process.env.NEXT_PUBLIC_PRODUCT || 'aglamazo').toLowerCase()
@@ -24,6 +26,8 @@ export interface VariantConfig {
   tagline: string
   /** Telegram bot self-name (used in the chat brain system prompt). */
   botName: string
+  /** The ONLY contact address this variant's bot may give out (C09 — never invent one). */
+  contactEmail: string
   /** Logged-in landing route for this variant. */
   landingPath: string
   /**
@@ -58,6 +62,7 @@ const VARIANTS: Record<ProductVariant, VariantConfig> = {
     name: 'Aglamazo',
     tagline: 'הראש השקט של העסק שלך',
     botName: 'AglamazoBot',
+    contactEmail: 'support@aglamaz.com',
     landingPath: '/app',
     allowedPages: undefined,
     homeHero: {
@@ -71,6 +76,7 @@ const VARIANTS: Record<ProductVariant, VariantConfig> = {
     name: 'Saliko',
     tagline: 'הסל שלך, על אוטומט',
     botName: 'SalikoBot',
+    contactEmail: SALIKO_CONTACT_EMAIL,
     landingPath: '/app/stores',
     allowedPages: SALIKO_ALLOWED_PAGES,
     homeHero: {

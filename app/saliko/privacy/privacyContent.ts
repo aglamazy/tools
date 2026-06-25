@@ -18,6 +18,8 @@
  * this honestly is the whole point of the document.
  */
 
+import { SALIKO_CONTACT_EMAIL } from '@/app/saliko/canon'
+
 /** Version slug. Bump (and reseed) whenever the policy text changes materially. */
 export const SALIKO_PRIVACY_VERSION = '2026-05-16-saliko-privacy-v1'
 
@@ -38,8 +40,9 @@ export const SALIKO_PRIVACY_TIER_LABELS: Record<SalikoPrivacyTierId, string> = {
   [SALIKO_PRIVACY_TIERS.loggedInWithServerCreds]: 'מחובר עם שמירת פרטי חנות בשרת',
 }
 
-/** Contact address for privacy questions. */
-export const SALIKO_PRIVACY_CONTACT_EMAIL = 'privacy@saliko.co.il'
+/** Contact address for privacy questions. Sourced from the canon SST so the
+ *  privacy page and the chat brain can never drift (C09). */
+export const SALIKO_PRIVACY_CONTACT_EMAIL = SALIKO_CONTACT_EMAIL
 
 /**
  * The full privacy statement as HTML (Hebrew, RTL). The string is wrapped in
