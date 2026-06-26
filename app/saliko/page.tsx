@@ -7,7 +7,7 @@ import ReturningUserRedirect from '@/app/components/ReturningUserRedirect'
 export const metadata: Metadata = {
   title: `${VARIANT_CONFIG.name} — ${VARIANT_CONFIG.tagline}`,
   description: `${VARIANT_CONFIG.name} — ${VARIANT_CONFIG.homeHero.subheadline}`,
-  alternates: { canonical: '/' },
+  alternates: { canonical: 'https://saliko.co.il' },
 }
 
 export default function SalikoLanding() {
