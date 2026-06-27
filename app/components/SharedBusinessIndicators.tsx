@@ -7,6 +7,9 @@ import {
   getSharedPassword,
   saveSharedPassword,
   syncSharedBusiness,
+  deleteSharedPassword,
+  dismissSharedBusiness,
+  getDismissedSharedBusinessIds,
   SHARED_SYNC_STATUS_EVENT,
   type SharedSyncStatusDetail,
 } from '@/app/services/sharedBusinessSyncService'
@@ -53,6 +56,8 @@ export default function SharedBusinessIndicators() {
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [modalError, setModalError] = useState('')
+  const [showRemoveConfirm, setShowRemoveConfirm] = useState(false)
+  const [removing, setRemoving] = useState(false)
   // Errors reported by BACKGROUND sync (CloudSyncManager → syncAllSharedBusinesses)
   // keyed by bizSyncId. Kept in a ref so the 5s poll below can merge them in
   // without recomputing status to 'ok' and clearing the red dot. (#104)
@@ -64,9 +69,15 @@ export default function SharedBusinessIndicators() {
       setIndicators([])
       return
     }
+    const dismissed = await getDismissedSharedBusinessIds()
+    const activeIds = ids.filter((id) => !dismissed.has(id))
+    if (activeIds.length === 0) {
+      setIndicators([])
+      return
+    }
     const allBiz: Business[] = await db.businesses.toArray()
     const next = await Promise.all(
-      ids.map(async (bizSyncId) => {
+      activeIds.map(async (bizSyncId) => {
         const local = allBiz.find((b) => b.syncId === bizSyncId) ?? null
         const pwd = await getSharedPassword(bizSyncId)
         const bgError = bgErrorsRef.current.get(bizSyncId)
@@ -140,6 +151,8 @@ export default function SharedBusinessIndicators() {
     setPassword('')
     setModalError('')
     setSubmitting(false)
+    setShowRemoveConfirm(false)
+    setRemoving(false)
   }
 
   const handleSubmit = async () => {
@@ -182,6 +195,26 @@ export default function SharedBusinessIndicators() {
       )
       setModalError(`שגיאה: ${msg}`)
       setSubmitting(false)
+    }
+  }
+
+  const handleRemove = async () => {
+    if (!openModalFor) return
+    setRemoving(true)
+    try {
+      const allBiz: Business[] = await db.businesses.toArray()
+      const local = allBiz.find((b) => b.syncId === openModalFor.bizSyncId)
+      if (local?.id != null) {
+        await db.businesses.delete(local.id)
+      }
+      await deleteSharedPassword(openModalFor.bizSyncId)
+      await dismissSharedBusiness(openModalFor.bizSyncId)
+      bgErrorsRef.current.delete(openModalFor.bizSyncId)
+      setIndicators((prev) => prev.filter((i) => i.bizSyncId !== openModalFor.bizSyncId))
+      closeModal()
+    } catch (err) {
+      console.error('[SharedSync] Error removing shared business:', err)
+      setRemoving(false)
     }
   }
 
@@ -332,6 +365,40 @@ export default function SharedBusinessIndicators() {
               >
                 {submitting ? 'מסנכרן…' : 'שמור וסנכרן'}
               </button>
+            </div>
+
+            <div style={{ marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid #f1f5f9' }}>
+              {!showRemoveConfirm ? (
+                <button
+                  onClick={() => setShowRemoveConfirm(true)}
+                  disabled={submitting || removing}
+                  style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: '0.8rem', padding: 0, textDecoration: 'underline' }}
+                >
+                  הסר גישה לעסק זה מהמכשיר
+                </button>
+              ) : (
+                <div>
+                  <p style={{ fontSize: '0.82rem', color: '#7f1d1d', marginBottom: '0.5rem', lineHeight: 1.4 }}>
+                    הנתונים המסונכרנים יימחקו מהמכשיר הזה. פעולה זו לא משפיעה על נתוני הבעלים ולא מבטלת את ההרשאה.
+                  </p>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button
+                      onClick={() => setShowRemoveConfirm(false)}
+                      disabled={removing}
+                      style={{ padding: '0.4rem 0.75rem', border: '1px solid #cbd5e1', background: '#fff', color: '#475569', borderRadius: '0.375rem', cursor: removing ? 'wait' : 'pointer', fontSize: '0.8rem' }}
+                    >
+                      ביטול
+                    </button>
+                    <button
+                      onClick={handleRemove}
+                      disabled={removing}
+                      style={{ padding: '0.4rem 0.75rem', border: 'none', background: removing ? '#fca5a5' : '#dc2626', color: '#fff', borderRadius: '0.375rem', cursor: removing ? 'wait' : 'pointer', fontSize: '0.8rem', fontWeight: 500 }}
+                    >
+                      {removing ? 'מסיר…' : 'כן, הסר'}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -446,6 +446,46 @@ export async function saveSharedPassword(businessSyncId: string, password: strin
 }
 
 /**
+ * Delete the locally-stored password for a shared business (e.g. when the
+ * sharee removes access locally).
+ */
+export async function deleteSharedPassword(businessSyncId: string): Promise<void> {
+  const key = `sharedPassword_${businessSyncId}`
+  const existing = await db.appSettings.where('key').equals(key).first()
+  if (existing?.id != null) {
+    await db.appSettings.delete(existing.id)
+  }
+}
+
+const DISMISSED_SHARED_KEY = 'dismissedSharedBusinesses'
+
+/**
+ * Returns the set of shared-business syncIds the user has locally dismissed
+ * (i.e. hidden from the header indicator without a server-side revocation).
+ */
+export async function getDismissedSharedBusinessIds(): Promise<Set<string>> {
+  const row = await db.appSettings.where('key').equals(DISMISSED_SHARED_KEY).first()
+  const list = row?.value
+  return new Set(Array.isArray(list) ? list : [])
+}
+
+/**
+ * Mark a shared business as locally dismissed so it no longer appears in the
+ * header indicator. Does NOT revoke the server-side grant.
+ */
+export async function dismissSharedBusiness(bizSyncId: string): Promise<void> {
+  const dismissed = await getDismissedSharedBusinessIds()
+  dismissed.add(bizSyncId)
+  const arr = Array.from(dismissed)
+  const existing = await db.appSettings.where('key').equals(DISMISSED_SHARED_KEY).first()
+  if (existing?.id != null) {
+    await db.appSettings.update(existing.id, { value: arr, updatedAt: new Date().toISOString() })
+  } else {
+    await db.appSettings.add({ key: DISMISSED_SHARED_KEY, value: arr, updatedAt: new Date().toISOString() })
+  }
+}
+
+/**
  * Owner-side: reset the shared-business encryption password.
  *
  * Used when the owner has lost the old password OR wants to rotate. Skips
