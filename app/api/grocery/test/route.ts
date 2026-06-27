@@ -13,6 +13,7 @@
  * `store` defaults to 'shufersal'.
  */
 import { NextRequest, NextResponse } from 'next/server'
+import { requireAuth } from '@/app/lib/apiGuard'
 import { getStore } from '@/app/services/grocery/storeRegistry'
 import { initStores } from '@/app/services/grocery/initStores'
 import { getAuthenticatedCookies, checkSession, cartRead, orderLoadToCart, _debugFetchHtml, preselectSlot } from '@/app/services/grocery/shufersalClient'
@@ -22,9 +23,17 @@ import { selectProduct } from '@/app/services/chat/actionExecutor'
 export const maxDuration = 60
 
 async function handle(request: NextRequest) {
+  const guard = await requireAuth(request)
+  if (guard.error) return guard.error
+
   initStores()
   const { searchParams } = new URL(request.url)
-  const uid = searchParams.get('uid') || ''
+  // uid defaults to the authenticated user; if explicitly provided it must match
+  const uidParam = searchParams.get('uid') || ''
+  const uid = uidParam || guard.uid
+  if (uidParam && uidParam !== guard.uid) {
+    return NextResponse.json({ error: 'Forbidden: uid mismatch' }, { status: 403 })
+  }
   const storeId = searchParams.get('store') || 'shufersal'
   const action = searchParams.get('action') || ''
 
