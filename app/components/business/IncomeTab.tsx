@@ -34,6 +34,13 @@ type PaymentLinkRow = {
   createdAt?: string
 }
 
+const parseSortableDate = (date?: string) => {
+  if (!date) return 0
+  const [day, month, year] = date.split('/')
+  const ts = new Date(`${year}-${month}-${day}`).getTime()
+  return Number.isFinite(ts) ? ts : 0
+}
+
 export default function IncomeTab({ businessId }: IncomeTabProps) {
   const [business, setBusiness] = useState<Business | null>(null)
   const [transactions, setTransactions] = useState<TransactionWithDoc[]>([])
@@ -42,6 +49,10 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
   const [selectedYear, setSelectedYear] = useState<string>('')
   const [filterMode, setFilterMode] = useState<'month' | 'year' | 'all'>('month')
   const [partyFilter, setPartyFilter] = useState<string>('all')
+  const [amountMinFilter, setAmountMinFilter] = useState<string>('')
+  const [amountMaxFilter, setAmountMaxFilter] = useState<string>('')
+  const [sortKey, setSortKey] = useState<'date' | 'party' | 'amount'>('date')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [loading, setLoading] = useState(true)
   const [creatingDoc, setCreatingDoc] = useState<number | null>(null)
   const [selectingProject, setSelectingProject] = useState<number | null>(null)
@@ -86,8 +97,33 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     return Array.from(options, ([value, label]) => ({ value, label }))
   }, [ownerUid, ownerLabel, participants, transactions, accountOwners])
   const visibleTransactions = useMemo(() => {
-    return transactions.filter((t) => partyFilter === 'all' || resolvePartyUid(t) === partyFilter)
-  }, [transactions, partyFilter, accountOwners, ownerUid])
+    const minAmount = amountMinFilter.trim() ? Number(amountMinFilter) : null
+    const maxAmount = amountMaxFilter.trim() ? Number(amountMaxFilter) : null
+    const filtered = transactions.filter((t) => {
+      const partyUid = resolvePartyUid(t)
+      const amount = Math.abs(t.amount)
+      if (partyFilter !== 'all' && partyUid !== partyFilter) return false
+      if (minAmount != null && amount < minAmount) return false
+      if (maxAmount != null && amount > maxAmount) return false
+      return true
+    })
+
+    filtered.sort((a, b) => {
+      const dir = sortDir === 'asc' ? 1 : -1
+      switch (sortKey) {
+        case 'amount':
+          return (Math.abs(a.amount) - Math.abs(b.amount)) * dir
+        case 'party':
+          return resolvePartyLabel(resolvePartyUid(a)).localeCompare(resolvePartyLabel(resolvePartyUid(b)), 'he') * dir
+        case 'date':
+        default: {
+          return (parseSortableDate(a.date) - parseSortableDate(b.date)) * dir
+        }
+      }
+    })
+
+    return filtered
+  }, [transactions, partyFilter, amountMinFilter, amountMaxFilter, sortKey, sortDir, accountOwners, ownerUid, participants])
   // #73 — compose a YPAY payment page for a customer (forward billing, not a receipt).
   const [showPaymentModal, setShowPaymentModal] = useState(false)
   const [paymentLinks, setPaymentLinks] = useState<PaymentLinkRow[]>([])
@@ -527,6 +563,25 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
             ))}
           </select>
         )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+          <label style={{ fontSize: '0.8rem', color: '#64748b' }}>סכום:</label>
+          <input
+            type="number"
+            min="0"
+            placeholder="מינימום"
+            value={amountMinFilter}
+            onChange={(e) => setAmountMinFilter(e.target.value)}
+            style={{ padding: '0.45rem 0.7rem', borderRadius: '0.375rem', border: '1px solid #e2e8f0', fontSize: '0.9rem', width: '110px', direction: 'ltr' }}
+          />
+          <input
+            type="number"
+            min="0"
+            placeholder="מקסימום"
+            value={amountMaxFilter}
+            onChange={(e) => setAmountMaxFilter(e.target.value)}
+            style={{ padding: '0.45rem 0.7rem', borderRadius: '0.375rem', border: '1px solid #e2e8f0', fontSize: '0.9rem', width: '110px', direction: 'ltr' }}
+          />
+        </div>
         {visibleTransactions.length > 0 && (
           <span style={{ color: '#64748b', fontSize: '0.9rem' }}>
             סה"כ: ₪{getMonthTotal().toLocaleString()}
@@ -686,11 +741,44 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
             <thead>
               <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
-                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>תאריך</th>
+                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sortKey === 'date') setSortDir((d) => d === 'asc' ? 'desc' : 'asc')
+                      else { setSortKey('date'); setSortDir('desc') }
+                    }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', font: 'inherit', fontWeight: 600, padding: 0, color: '#0f172a' }}
+                  >
+                    תאריך {sortKey === 'date' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                  </button>
+                </th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>תיאור</th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>נושא</th>
-                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>קיבל ע״י</th>
-                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'left' }}>סכום</th>
+                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sortKey === 'party') setSortDir((d) => d === 'asc' ? 'desc' : 'asc')
+                      else { setSortKey('party'); setSortDir('asc') }
+                    }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', font: 'inherit', fontWeight: 600, padding: 0, color: '#0f172a' }}
+                  >
+                    קיבל ע״י {sortKey === 'party' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                  </button>
+                </th>
+                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'left' }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sortKey === 'amount') setSortDir((d) => d === 'asc' ? 'desc' : 'asc')
+                      else { setSortKey('amount'); setSortDir('desc') }
+                    }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', font: 'inherit', fontWeight: 600, padding: 0, color: '#0f172a' }}
+                  >
+                    סכום {sortKey === 'amount' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                  </button>
+                </th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'center' }}>קבלה</th>
               </tr>
             </thead>

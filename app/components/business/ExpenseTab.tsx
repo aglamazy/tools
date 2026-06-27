@@ -27,6 +27,28 @@ type ExtractedData = {
   [key: string]: unknown
 }
 
+type ExpenseTableRow =
+  | {
+      kind: 'transaction'
+      id: number
+      date: string
+      partyUid?: string
+      partyLabel: string
+      amount: number
+      vatAmount: number
+      transaction: Transaction
+    }
+  | {
+      kind: 'partnerDoc'
+      id: number
+      date: string
+      partyUid?: string
+      partyLabel: string
+      amount: number
+      vatAmount: number
+      doc: ExpenseDocument
+    }
+
 async function extractFromFile(file: File, transaction: { date: string; description: string; amount: number }, claudeApiKey: string): Promise<ExtractedData> {
   if (!claudeApiKey) return {}
   const buffer = await file.arrayBuffer()
@@ -62,6 +84,10 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
   const [selectedYear, setSelectedYear] = useState<string>('')
   const [filterMode, setFilterMode] = useState<'month' | 'year' | 'all'>('month')
   const [partyFilter, setPartyFilter] = useState<string>('all')
+  const [amountMinFilter, setAmountMinFilter] = useState<string>('')
+  const [amountMaxFilter, setAmountMaxFilter] = useState<string>('')
+  const [sortKey, setSortKey] = useState<'date' | 'party' | 'amount'>('date')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [loading, setLoading] = useState(true)
   const [matchStatus, setMatchStatus] = useState<Record<number, MatchStatus>>({})
   const [matchedDocs, setMatchedDocs] = useState<Record<number, ExpenseDocument[]>>({})
@@ -119,6 +145,13 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
       setSelectedMonth(months[0])
     }
   }
+
+const parseSortableDate = (date?: string) => {
+  if (!date) return 0
+  const [day, month, year] = date.split('/')
+  const ts = new Date(`${year}-${month}-${day}`).getTime()
+  return Number.isFinite(ts) ? ts : 0
+}
 
   const loadTransactions = async () => {
     const categories = subjectStore.getAll().filter(
@@ -291,13 +324,73 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
     return Array.from(options, ([value, label]) => ({ value, label }))
   }, [ownerUid, ownerLabel, participants, transactions, partnerPaidDocs, accountOwners])
 
-  const visibleTransactions = useMemo(() => {
-    return transactions.filter((t) => partyFilter === 'all' || resolvePartyUid(t) === partyFilter)
-  }, [transactions, partyFilter, accountOwners, ownerUid])
+  const visibleRows = useMemo(() => {
+    const minAmount = amountMinFilter.trim() ? Number(amountMinFilter) : null
+    const maxAmount = amountMaxFilter.trim() ? Number(amountMaxFilter) : null
+    const rows: ExpenseTableRow[] = []
 
-  const visiblePartnerPaidDocs = useMemo(() => {
-    return partnerPaidDocs.filter((d) => partyFilter === 'all' || (d.paidByUid || ownerUid) === partyFilter)
-  }, [partnerPaidDocs, partyFilter, ownerUid])
+    for (const t of transactions) {
+      const partyUid = resolvePartyUid(t)
+      const amount = Math.abs(t.amount)
+      if (partyFilter !== 'all' && partyUid !== partyFilter) continue
+      if (minAmount != null && amount < minAmount) continue
+      if (maxAmount != null && amount > maxAmount) continue
+      rows.push({
+        kind: 'transaction',
+        id: t.id!,
+        date: t.date,
+        partyUid,
+        partyLabel: resolvePartyLabel(partyUid),
+        amount,
+        vatAmount: matchedDocs[t.id!]?.reduce((s, d) => s + (d.vatAmount || 0), 0) || 0,
+        transaction: t,
+      })
+    }
+
+    for (const d of partnerPaidDocs) {
+      const partyUid = d.paidByUid || ownerUid
+      const amount = Math.abs(d.amount || 0)
+      if (partyFilter !== 'all' && partyUid !== partyFilter) continue
+      if (minAmount != null && amount < minAmount) continue
+      if (maxAmount != null && amount > maxAmount) continue
+      rows.push({
+        kind: 'partnerDoc',
+        id: d.id!,
+        date: d.date || '',
+        partyUid,
+        partyLabel: resolvePartyLabel(partyUid),
+        amount,
+        vatAmount: d.vatAmount || 0,
+        doc: d,
+      })
+    }
+
+    rows.sort((a, b) => {
+      const dir = sortDir === 'asc' ? 1 : -1
+      switch (sortKey) {
+        case 'amount':
+          return (a.amount - b.amount) * dir
+        case 'party':
+          return a.partyLabel.localeCompare(b.partyLabel, 'he') * dir
+        case 'date':
+        default: {
+          return (parseSortableDate(a.date) - parseSortableDate(b.date)) * dir
+        }
+      }
+    })
+
+    return rows
+  }, [transactions, partnerPaidDocs, partyFilter, amountMinFilter, amountMaxFilter, sortKey, sortDir, accountOwners, ownerUid, participants, matchedDocs])
+
+  const visibleTransactions = useMemo(
+    () => visibleRows.flatMap((row) => (row.kind === 'transaction' ? [row.transaction] : [])),
+    [visibleRows],
+  )
+
+  const visiblePartnerPaidDocs = useMemo(
+    () => visibleRows.flatMap((row) => (row.kind === 'partnerDoc' ? [row.doc] : [])),
+    [visibleRows],
+  )
 
   // Read partner list from cache for instant render; refresh in background; subscribe to store updates.
   useEffect(() => {
@@ -410,16 +503,11 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
   }
 
   const getMonthTotal = () => {
-    return visibleTransactions.reduce((sum, t) => sum + Math.abs(t.amount), 0) +
-      visiblePartnerPaidDocs.reduce((sum, d) => sum + Math.abs(d.amount || 0), 0)
+    return visibleRows.reduce((sum, row) => sum + row.amount, 0)
   }
 
   const getVatTotal = () => {
-    return visibleTransactions.reduce((sum, t) => {
-      const docs = matchedDocs[t.id!]
-      if (!docs) return sum
-      return sum + docs.reduce((s, d) => s + (d.vatAmount || 0), 0)
-    }, 0) + visiblePartnerPaidDocs.reduce((sum, d) => sum + (d.vatAmount || 0), 0)
+    return visibleRows.reduce((sum, row) => sum + row.vatAmount, 0)
   }
 
   const handleUnlink = async (txId: number) => {
@@ -611,6 +699,25 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
             ))}
           </select>
         )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+          <label style={{ fontSize: '0.8rem', color: '#64748b' }}>סכום:</label>
+          <input
+            type="number"
+            min="0"
+            placeholder="מינימום"
+            value={amountMinFilter}
+            onChange={(e) => setAmountMinFilter(e.target.value)}
+            style={{ padding: '0.45rem 0.7rem', borderRadius: '0.375rem', border: '1px solid #e2e8f0', fontSize: '0.9rem', width: '110px', direction: 'ltr' }}
+          />
+          <input
+            type="number"
+            min="0"
+            placeholder="מקסימום"
+            value={amountMaxFilter}
+            onChange={(e) => setAmountMaxFilter(e.target.value)}
+            style={{ padding: '0.45rem 0.7rem', borderRadius: '0.375rem', border: '1px solid #e2e8f0', fontSize: '0.9rem', width: '110px', direction: 'ltr' }}
+          />
+        </div>
         {visibleTransactions.length > 0 || visiblePartnerPaidDocs.length > 0 ? (
           <span style={{ color: '#64748b', fontSize: '0.9rem' }}>
             סה"כ: ₪{getMonthTotal().toLocaleString()}
@@ -716,7 +823,7 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
           below so they're visible in context. */}
 
       {/* Transactions table — bank txs + partner-paid docs as inline rows */}
-      {visibleTransactions.length === 0 && visiblePartnerPaidDocs.length === 0 ? (
+      {visibleRows.length === 0 ? (
         <p style={{ color: '#64748b', textAlign: 'center', padding: '2rem' }}>
           אין הוצאות בתקופה זו
         </p>
@@ -725,174 +832,204 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
             <thead>
               <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
-                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>תאריך</th>
+                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sortKey === 'date') setSortDir((d) => d === 'asc' ? 'desc' : 'asc')
+                      else { setSortKey('date'); setSortDir('desc') }
+                    }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', font: 'inherit', fontWeight: 600, padding: 0, color: '#0f172a' }}
+                  >
+                    תאריך {sortKey === 'date' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                  </button>
+                </th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>תיאור</th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>נושא</th>
-                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>שולם ע״י</th>
-                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'left' }}>סכום</th>
+                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sortKey === 'party') setSortDir((d) => d === 'asc' ? 'desc' : 'asc')
+                      else { setSortKey('party'); setSortDir('asc') }
+                    }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', font: 'inherit', fontWeight: 600, padding: 0, color: '#0f172a' }}
+                  >
+                    שולם ע״י {sortKey === 'party' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                  </button>
+                </th>
+                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'left' }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sortKey === 'amount') setSortDir((d) => d === 'asc' ? 'desc' : 'asc')
+                      else { setSortKey('amount'); setSortDir('desc') }
+                    }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', font: 'inherit', fontWeight: 600, padding: 0, color: '#0f172a' }}
+                  >
+                    סכום {sortKey === 'amount' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                  </button>
+                </th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'left' }}>מע״מ</th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'center', width: '80px' }}>קבלה</th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'center', width: '60px' }}></th>
               </tr>
             </thead>
             <tbody>
-              {visibleTransactions.map((t) => {
-                const txId = t.id!
-                const status = matchStatus[txId] || 'idle'
-                const docs = matchedDocs[txId]
-                const firstDoc = docs?.[0]
-                const vatTotal = docs?.reduce((s, d) => s + (d.vatAmount || 0), 0)
-                const isEditing = editingTxId === txId
-                const attributedUid = resolvePartyUid(t)
-                return (
-                  <tr key={txId} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                    <td style={{ padding: '0.6rem 0.5rem' }}>{t.date}</td>
-                    <td style={{ padding: '0.6rem 0.5rem' }}>
-                      {isEditing ? (
-                        <input
-                          type="text"
-                          value={editValues.description}
-                          onChange={e => setEditValues(v => ({ ...v, description: e.target.value }))}
-                          style={{ padding: '0.3rem 0.5rem', borderRadius: '0.25rem', border: '1px solid #e2e8f0', fontSize: '0.85rem', width: '100%', direction: 'rtl', boxSizing: 'border-box' }}
-                          autoFocus
-                        />
-                      ) : (
-                        <>
-                          {firstDoc?.description || firstDoc?.vendor || t.merchant || t.description}
-                          <span style={{ display: 'block', fontSize: '0.75rem', color: '#94a3b8' }}>
-                            {t.description}
-                          </span>
-                        </>
-                      )}
-                    </td>
-                    <td style={{ padding: '0.6rem 0.5rem', color: '#64748b' }}>
-                      {isEditing ? (
-                        <select
-                          value={editValues.category}
-                          onChange={e => setEditValues(v => ({ ...v, category: e.target.value }))}
-                          style={{ padding: '0.3rem 0.5rem', borderRadius: '0.25rem', border: '1px solid #e2e8f0', fontSize: '0.85rem', direction: 'rtl' }}
-                        >
-                          <option value="">—</option>
-                          {categories.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
-                        </select>
-                      ) : t.category}
-                    </td>
-                    <td style={{ padding: '0.6rem 0.5rem', color: '#64748b', fontSize: '0.85rem' }}>
-                      {resolvePartyLabel(attributedUid)}
-                    </td>
-                    <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', fontWeight: 500, color: '#dc2626' }}>
-                      {isEditing && editingIsCash ? (
-                        <input
-                          type="number"
-                          value={editValues.amount || ''}
-                          onChange={e => setEditValues(v => ({ ...v, amount: e.target.value }))}
-                          style={{ padding: '0.3rem 0.5rem', borderRadius: '0.25rem', border: '1px solid #e2e8f0', fontSize: '0.85rem', width: '90px', textAlign: 'left' }}
-                        />
-                      ) : (
-                        <>₪{Math.abs(t.amount).toLocaleString()}</>
-                      )}
-                    </td>
-                    <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', color: '#64748b', fontSize: '0.85rem' }}>
-                      {vatTotal ? `₪${vatTotal.toLocaleString()}` : ''}
-                    </td>
-                    <td style={{ padding: '0.6rem 0.5rem', textAlign: 'center' }}>
-                      {status === 'matched' ? (
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}>
-                          {docs?.map((doc, i) => (
-                            doc.driveWebViewLink ? (
-                              <a key={i} href={doc.driveWebViewLink} target="_blank" rel="noopener noreferrer" title={doc.vendor || doc.fileName || 'פתח קבלה'} style={{ color: '#10b981', textDecoration: 'none', fontSize: '0.9rem' }}>📄</a>
-                            ) : (
-                              <span key={i} title={doc.vendor || 'נמצאה קבלה'} style={{ color: '#10b981' }}>✓</span>
-                            )
-                          ))}
-                          <button
-                            onClick={() => handleUnlink(txId)}
-                            title="הסר קישור"
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', fontSize: '0.7rem', padding: 0 }}
-                          >✕</button>
-                        </div>
-                      ) : status === 'searching' ? (
-                        <span style={{ color: '#64748b' }}>...</span>
-                      ) : status === 'no-match' ? (
-                        <button
-                          onClick={() => handleMatchReceipt(t)}
-                          disabled={Object.values(matchStatus).includes('searching')}
-                          title="לא נמצאה קבלה — לחץ לחיפוש נוסף"
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#f59e0b', fontSize: '0.85rem', padding: '0.1rem 0.3rem' }}
-                        >לא נמצא</button>
-                      ) : status === 'error' ? (
-                        <button
-                          onClick={() => handleMatchReceipt(t)}
-                          disabled={Object.values(matchStatus).includes('searching')}
-                          title="שגיאה — לחץ לניסיון נוסף"
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: '0.85rem', padding: '0.1rem 0.3rem' }}
-                        >שגיאה</button>
-                      ) : (
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.2rem' }}>
-                        <button
-                          onClick={() => handleMatchReceipt(t)}
-                          disabled={Object.values(matchStatus).includes('searching')}
-                          title="חפש קבלה ב-Gmail"
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            cursor: 'pointer',
-                            fontSize: '1rem',
-                            padding: '0.1rem 0.3rem',
-                            opacity: Object.values(matchStatus).includes('searching') ? 0.4 : 1,
-                          }}
-                        >
-                          🔍
-                        </button>
-                        <label
-                          title="העלה קבלה"
-                          style={{
-                            cursor: 'pointer',
-                            fontSize: '0.9rem',
-                            padding: '0.1rem 0.3rem',
-                            opacity: Object.values(matchStatus).includes('searching') ? 0.4 : 1,
-                          }}
-                        >
-                          📎
+              {visibleRows.map((row) => {
+                if (row.kind === 'transaction') {
+                  const t = row.transaction
+                  const txId = row.id
+                  const status = matchStatus[txId] || 'idle'
+                  const docs = matchedDocs[txId]
+                  const firstDoc = docs?.[0]
+                  const vatTotal = docs?.reduce((s, d) => s + (d.vatAmount || 0), 0)
+                  const isEditing = editingTxId === txId
+                  return (
+                    <tr key={`tx-${txId}`} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '0.6rem 0.5rem' }}>{t.date}</td>
+                      <td style={{ padding: '0.6rem 0.5rem' }}>
+                        {isEditing ? (
                           <input
-                            type="file"
-                            accept=".pdf,.jpg,.jpeg,.png,.gif,.webp"
-                            multiple
-                            style={{ display: 'none' }}
-                            onChange={(e) => {
-                              const files = e.target.files
-                              if (files && files.length > 0) handleUploadReceipt(t, files)
-                              e.target.value = ''
-                            }}
+                            type="text"
+                            value={editValues.description}
+                            onChange={e => setEditValues(v => ({ ...v, description: e.target.value }))}
+                            style={{ padding: '0.3rem 0.5rem', borderRadius: '0.25rem', border: '1px solid #e2e8f0', fontSize: '0.85rem', width: '100%', direction: 'rtl', boxSizing: 'border-box' }}
+                            autoFocus
                           />
-                        </label>
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ padding: '0.6rem 0.25rem', textAlign: 'center', whiteSpace: 'nowrap' }}>
-                      {isEditing ? (
-                        <div style={{ display: 'flex', gap: '0.2rem', justifyContent: 'center' }}>
-                          <button onClick={saveEdit} title="שמור" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', color: '#10b981', padding: '0.1rem 0.25rem' }}>✓</button>
-                          <button onClick={cancelEdit} title="בטל" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', color: '#94a3b8', padding: '0.1rem 0.25rem' }}>✕</button>
-                        </div>
-                      ) : (
-                        <div style={{ display: 'flex', gap: '0.2rem', justifyContent: 'center' }}>
-                          <button onClick={() => startEdit(t)} title="ערוך" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', padding: '0.1rem 0.25rem', color: '#64748b' }}>✎</button>
-                          {t.type === 'cash' && (
-                            <button onClick={() => handleDeleteCash(t)} title="מחק" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', padding: '0.1rem 0.25rem', color: '#dc2626' }}>✕</button>
-                          )}
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                )
-              })}
-              {/* Partner-paid invoices (no bank tx) appended as regular rows
-                  (#44 follow-up) so they're visible alongside transactions in
-                  the same table. Distinguished only by the "שולם ע״י" column
-                  + a small badge in the description. */}
-              {visiblePartnerPaidDocs.map((d) => {
-                const payerLabel = resolvePartyLabel(d.paidByUid || ownerUid)
+                        ) : (
+                          <>
+                            {firstDoc?.description || firstDoc?.vendor || t.merchant || t.description}
+                            <span style={{ display: 'block', fontSize: '0.75rem', color: '#94a3b8' }}>
+                              {t.description}
+                            </span>
+                          </>
+                        )}
+                      </td>
+                      <td style={{ padding: '0.6rem 0.5rem', color: '#64748b' }}>
+                        {isEditing ? (
+                          <select
+                            value={editValues.category}
+                            onChange={e => setEditValues(v => ({ ...v, category: e.target.value }))}
+                            style={{ padding: '0.3rem 0.5rem', borderRadius: '0.25rem', border: '1px solid #e2e8f0', fontSize: '0.85rem', direction: 'rtl' }}
+                          >
+                            <option value="">—</option>
+                            {categories.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                          </select>
+                        ) : t.category}
+                      </td>
+                      <td style={{ padding: '0.6rem 0.5rem', color: '#64748b', fontSize: '0.85rem' }}>
+                        {row.partyLabel}
+                      </td>
+                      <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', fontWeight: 500, color: '#dc2626' }}>
+                        {isEditing && editingIsCash ? (
+                          <input
+                            type="number"
+                            value={editValues.amount || ''}
+                            onChange={e => setEditValues(v => ({ ...v, amount: e.target.value }))}
+                            style={{ padding: '0.3rem 0.5rem', borderRadius: '0.25rem', border: '1px solid #e2e8f0', fontSize: '0.85rem', width: '90px', textAlign: 'left' }}
+                          />
+                        ) : (
+                          <>₪{row.amount.toLocaleString()}</>
+                        )}
+                      </td>
+                      <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', color: '#64748b', fontSize: '0.85rem' }}>
+                        {vatTotal ? `₪${vatTotal.toLocaleString()}` : ''}
+                      </td>
+                      <td style={{ padding: '0.6rem 0.5rem', textAlign: 'center' }}>
+                        {status === 'matched' ? (
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}>
+                            {docs?.map((doc, i) => (
+                              doc.driveWebViewLink ? (
+                                <a key={i} href={doc.driveWebViewLink} target="_blank" rel="noopener noreferrer" title={doc.vendor || doc.fileName || 'פתח קבלה'} style={{ color: '#10b981', textDecoration: 'none', fontSize: '0.9rem' }}>📄</a>
+                              ) : (
+                                <span key={i} title={doc.vendor || 'נמצאה קבלה'} style={{ color: '#10b981' }}>✓</span>
+                              )
+                            ))}
+                            <button
+                              onClick={() => handleUnlink(txId)}
+                              title="הסר קישור"
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', fontSize: '0.7rem', padding: 0 }}
+                            >✕</button>
+                          </div>
+                        ) : status === 'searching' ? (
+                          <span style={{ color: '#64748b' }}>...</span>
+                        ) : status === 'no-match' ? (
+                          <button
+                            onClick={() => handleMatchReceipt(t)}
+                            disabled={Object.values(matchStatus).includes('searching')}
+                            title="לא נמצאה קבלה — לחץ לחיפוש נוסף"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#f59e0b', fontSize: '0.85rem', padding: '0.1rem 0.3rem' }}
+                          >לא נמצא</button>
+                        ) : status === 'error' ? (
+                          <button
+                            onClick={() => handleMatchReceipt(t)}
+                            disabled={Object.values(matchStatus).includes('searching')}
+                            title="שגיאה — לחץ לניסיון נוסף"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: '0.85rem', padding: '0.1rem 0.3rem' }}
+                          >שגיאה</button>
+                        ) : (
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.2rem' }}>
+                          <button
+                            onClick={() => handleMatchReceipt(t)}
+                            disabled={Object.values(matchStatus).includes('searching')}
+                            title="חפש קבלה ב-Gmail"
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              cursor: 'pointer',
+                              fontSize: '1rem',
+                              padding: '0.1rem 0.3rem',
+                              opacity: Object.values(matchStatus).includes('searching') ? 0.4 : 1,
+                            }}
+                          >
+                            🔍
+                          </button>
+                          <label
+                            title="העלה קבלה"
+                            style={{
+                              cursor: 'pointer',
+                              fontSize: '0.9rem',
+                              padding: '0.1rem 0.3rem',
+                              opacity: Object.values(matchStatus).includes('searching') ? 0.4 : 1,
+                            }}
+                          >
+                            📎
+                            <input
+                              type="file"
+                              accept=".pdf,.jpg,.jpeg,.png,.gif,.webp"
+                              multiple
+                              style={{ display: 'none' }}
+                              onChange={(e) => {
+                                const files = e.target.files
+                                if (files && files.length > 0) handleUploadReceipt(t, files)
+                                e.target.value = ''
+                              }}
+                            />
+                          </label>
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ padding: '0.6rem 0.25rem', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                        {isEditing ? (
+                          <div style={{ display: 'flex', gap: '0.2rem', justifyContent: 'center' }}>
+                            <button onClick={saveEdit} title="שמור" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', color: '#10b981', padding: '0.1rem 0.25rem' }}>✓</button>
+                            <button onClick={cancelEdit} title="בטל" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', color: '#94a3b8', padding: '0.1rem 0.25rem' }}>✕</button>
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', gap: '0.2rem', justifyContent: 'center' }}>
+                            <button onClick={() => startEdit(t)} title="ערוך" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', padding: '0.1rem 0.25rem', color: '#64748b' }}>✎</button>
+                            {t.type === 'cash' && (
+                              <button onClick={() => handleDeleteCash(t)} title="מחק" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', padding: '0.1rem 0.25rem', color: '#dc2626' }}>✕</button>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                }
+
+                const d = row.doc
                 return (
                   <tr key={`pp-${d.id}`} style={{ borderBottom: '1px solid #f1f5f9', background: '#fffbeb' }}>
                     <td style={{ padding: '0.6rem 0.5rem' }}>{d.date || '—'}</td>
@@ -903,9 +1040,9 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
                       </span>
                     </td>
                     <td style={{ padding: '0.6rem 0.5rem', color: '#64748b' }}>{d.category || '—'}</td>
-                    <td style={{ padding: '0.6rem 0.5rem' }}>{payerLabel}</td>
+                    <td style={{ padding: '0.6rem 0.5rem' }}>{row.partyLabel}</td>
                     <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left' }}>
-                      ₪{(d.amount ?? 0).toLocaleString()}
+                      ₪{row.amount.toLocaleString()}
                     </td>
                     <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', color: '#64748b' }}>
                       {d.vatAmount != null ? `₪${d.vatAmount.toLocaleString()}` : '—'}
