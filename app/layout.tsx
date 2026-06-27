@@ -9,6 +9,7 @@ import './pages.css'
 import { ToastProvider } from './components/ToastContainer'
 import { branding } from './config'
 import MigrationRunner from './components/MigrationRunner'
+import MigrationsRegistry from './components/MigrationsRegistry'
 import AuthInitializer from './components/AuthInitializer'
 import CloudSyncManager from './components/CloudSyncManager'
 import PageHeader from './components/PageHeader'
@@ -142,6 +143,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         />
         <ToastProvider>
           <MigrationRunner />
+          <MigrationsRegistry />
           <AuthInitializer />
           <CloudSyncManager />
           <PageHeader />
