@@ -6,6 +6,8 @@ import AppChat from '@/app/components/AppChat'
 import YesNoModal from '@/app/components/YesNoModal'
 import { subscribeToAuth } from '@/app/stores/authStore'
 import { chatHistoryStore, type ChatSummary } from '@/app/stores/chatHistoryStore'
+import { getIdToken } from '@/app/services/firebaseAuthService'
+import { useToast } from '@/app/components/ToastContainer'
 
 /** Compact Hebrew "time ago" helper — good enough for a chat list. */
 function formatRelativeHe(iso: string): string {
@@ -33,6 +35,7 @@ function formatRelativeHe(iso: string): string {
 export default function ChatWidget() {
   const [open, setOpen] = useState(false)
   const router = useRouter()
+  const { showToast } = useToast()
   const [uid, setUid] = useState<string | null>(null)
   const [chats, setChats] = useState<ChatSummary[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -136,6 +139,22 @@ export default function ChatWidget() {
     setDeleteCandidate(null)
   }
 
+  const softReset = useCallback(async () => {
+    if (!uid) return
+    try {
+      const token = await getIdToken()
+      if (!token) return
+      await fetch('/api/chat/reset-pending', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      window.dispatchEvent(new Event('chat:soft-reset'))
+      showToast('מצב הצ\'אט אופס', 'success')
+    } catch {
+      showToast('שגיאה באיפוס', 'error')
+    }
+  }, [uid, showToast])
+
   const activeChat = chats.find(c => c.id === activeId) ?? null
   const activeTitle = activeChat?.title || 'שיחה חדשה'
 
@@ -217,6 +236,16 @@ export default function ChatWidget() {
                 </div>
               )}
             </div>
+            {uid && (
+              <button
+                type="button"
+                className="chat-float-soft-reset"
+                onClick={softReset}
+                title="נקה בחירות תלויות — התחל מחדש"
+              >
+                התחל מחדש
+              </button>
+            )}
             <button className="chat-float-close" onClick={() => setOpen(false)} aria-label="סגור">✕</button>
           </div>
           <AppChat />

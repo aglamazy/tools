@@ -158,6 +158,13 @@ export default function AppChat() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, pendingSelections])
 
+  // Soft-reset: clear current product pickers when the "התחל מחדש" button fires.
+  useEffect(() => {
+    const onSoftReset = () => setPendingSelections([])
+    window.addEventListener('chat:soft-reset', onSoftReset)
+    return () => window.removeEventListener('chat:soft-reset', onSoftReset)
+  }, [])
+
   // Hydrate from Dexie once we know who the user is. We only migrate + pick
   // an active chat once per auth user per mount. Visitor mode: when no user,
   // use a stable per-tab anon id so chatHistoryStore + the /api/chat backend

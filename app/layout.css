@@ -226,6 +226,26 @@
   background: #e2e8f0;
 }
 
+.chat-float-soft-reset {
+  background: none;
+  border: 1px solid #c7d2fe;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  color: #4338ca;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.2rem 0.5rem;
+  line-height: 1.4;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+
+.chat-float-soft-reset:hover {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
 /* ─── Chat header — multi-thread switcher ─── */
 .chat-float-header-label {
   font-weight: 600;
