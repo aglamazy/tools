@@ -60,7 +60,7 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
   const [availableMonths, setAvailableMonths] = useState<string[]>([])
   const [selectedMonth, setSelectedMonth] = useState<string>('')
   const [selectedYear, setSelectedYear] = useState<string>('')
-  const [filterMode, setFilterMode] = useState<'month' | 'year' | 'all'>('month')
+  const [filterMode, setFilterMode] = useState<'month' | 'year' | 'all'>('all')
   const [partyFilter, setPartyFilter] = useState<string>('all')
   const [loading, setLoading] = useState(true)
   const [matchStatus, setMatchStatus] = useState<Record<number, MatchStatus>>({})

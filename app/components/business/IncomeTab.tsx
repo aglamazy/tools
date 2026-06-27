@@ -40,7 +40,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
   const [availableMonths, setAvailableMonths] = useState<string[]>([])
   const [selectedMonth, setSelectedMonth] = useState<string>('')
   const [selectedYear, setSelectedYear] = useState<string>('')
-  const [filterMode, setFilterMode] = useState<'month' | 'year' | 'all'>('month')
+  const [filterMode, setFilterMode] = useState<'month' | 'year' | 'all'>('all')
   const [partyFilter, setPartyFilter] = useState<string>('all')
   const [loading, setLoading] = useState(true)
   const [creatingDoc, setCreatingDoc] = useState<number | null>(null)
@@ -679,7 +679,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
       {/* Transactions table */}
       {visibleTransactions.length === 0 ? (
         <p style={{ color: '#64748b', textAlign: 'center', padding: '2rem' }}>
-          אין הכנסות בחודש זה
+          אין הכנסות בתקופה זו
         </p>
       ) : (
         <div style={{ overflowX: 'auto' }}>
