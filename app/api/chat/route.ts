@@ -1,6 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { requireAuth } from '@/app/lib/apiGuard'
-import { processChatMessage, handleReset, handleClear, isAnonUid, ANON_PREFIX } from '@/app/services/chatBrain'
+import { processChatMessage, handleReset, handleClear, isAnonUid, ANON_PREFIX, refreshOpenOrderCaches } from '@/app/services/chatBrain'
 import { panicAdmin } from '@/app/services/adminPanic'
 
 const COLLECTION = 'appChatHistory'
@@ -98,6 +98,16 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    // Refresh the open-order cache for this user's stores fire-and-forget, IN
+    // PARALLEL with the LLM call below. Kicking the promise off here (not inside
+    // `after`) starts the slow store query immediately so it overlaps the LLM
+    // round-trip instead of running serially after it. `after()` then keeps the
+    // function instance alive past the response until the write drains — within
+    // maxDuration. The reply is never blocked; the fresh snapshot is read next
+    // turn. refreshOpenOrderCaches always resolves, so `after` can't reject.
+    const openOrderRefresh = refreshOpenOrderCaches(uid)
+    after(() => openOrderRefresh)
+
     // Anon cred state is only meaningful for anon callers. For authed users
     // it's silently ignored — they have Firestore-backed Tier-2/3 creds.
     const inboundAnonCreds = isAnonUid(uid) ? parseAnonStoreCreds(body.anonStoreCreds) : null

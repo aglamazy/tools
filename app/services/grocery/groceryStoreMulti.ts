@@ -18,6 +18,7 @@ import type {
   GroceryItemMap,
   PendingChanges,
   OrderCycle,
+  OpenOrderCache,
   GrocerySchedule,
 } from './groceryStore'
 import { itemKey } from './groceryStore'
@@ -161,6 +162,7 @@ export async function getStoreData(uid: string, store: StoreType): Promise<Groce
     pendingChanges: migratePendingChanges(raw.pendingChanges),
     orderCycle: raw.orderCycle || null,
     schedule: raw.schedule || null,
+    openOrder: raw.openOrder || null,
   } as GroceryData
 }
 
@@ -168,6 +170,17 @@ async function saveStoreData(uid: string, store: StoreType, data: GroceryData): 
   data.updatedAt = new Date().toISOString()
   // Strip undefined values — Firestore rejects them
   await storeRef(uid, store).set(JSON.parse(JSON.stringify(data)))
+}
+
+/**
+ * Write ONLY the open-order snapshot, merging into the store doc. Deliberately a
+ * partial `merge` set — never a full saveStoreData — because this runs
+ * fire-and-forget in parallel with the chat turn, which may itself be mutating
+ * standingList/pendingChanges. A full rewrite from a stale in-memory copy would
+ * clobber those concurrent writes; a field-scoped merge can't.
+ */
+export async function setOpenOrderCache(uid: string, store: StoreType, cache: OpenOrderCache): Promise<void> {
+  await storeRef(uid, store).set({ openOrder: cache }, { merge: true })
 }
 
 // --- Standing list ---

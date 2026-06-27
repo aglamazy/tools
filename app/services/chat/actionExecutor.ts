@@ -45,7 +45,7 @@ import { deleteMapping, lookupMapping, saveProductMapping } from '@/app/services
  * here — Rexail's `/public/store/catalog` endpoint is fully public, so
  * anon visitors can browse any chain's catalog without first connecting.
  */
-const STORE_ACTIONS = new Set(['trigger_order', 'cancel_order', 're_search', 'list_slots'])
+const STORE_ACTIONS = new Set(['trigger_order', 'update_order', 'cancel_order', 're_search', 'list_slots'])
 // Note: `show_orders` handles its own auth check because it iterates all
 // authenticated stores when no store is specified.
 
@@ -64,7 +64,7 @@ const STORE_ACTIONS = new Set(['trigger_order', 'cancel_order', 're_search', 'li
  * show_orders) stay gated — they need state that outlives the session.
  */
 const ACTIONS_REQUIRING_ACCOUNT = new Set([
-  'cancel_order', 'set_credentials', 'set_schedule', 'show_orders',
+  'cancel_order', 'update_order', 'set_credentials', 'set_schedule', 'show_orders',
 ])
 
 const ANON_PREFIX = 'anon:'
@@ -152,49 +152,15 @@ export async function selectProduct(uid: string, searchKey: string, resultIndex:
   await saveProductMapping(uid, pendingSearch.query, selected.catalogId, selected.name)
   await deletePendingSearch(uid, searchKey)
 
-  // If adding to pending and there's an active Shufersal order, also push to live cart
-  if (pendingSearch.target === 'pending' && selStoreId === 'shufersal' && item.catalogId) {
-    await pushToActiveCart(uid, item.catalogId, item.qty)
-  }
-
+  // NOTE: even when there's an open order, we do NOT push to the live order
+  // here. Each live edit is a full ~30s login→merge→commit cycle (the
+  // 33.9s-per-item problem). Instead the item just buffers into pendingChanges,
+  // and the user applies the whole batch in one commit via the `update_order`
+  // tool after the agent asks for approval. See the "הזמנה פתוחה" prompt section.
   const targetLabel = pendingSearch.target === 'standing' ? 'קבועה' : 'הזמנה'
   return {
     message: `✅ ${selected.name} (x${pendingSearch.qty}) נוסף לרשימה ${targetLabel}`,
     target: targetLabel,
-  }
-}
-
-/**
- * Add a product to an already-open Shufersal order. MUST go through
- * `plugin.modifyOrder` — the full edit-order flow (login → cartFromOrder →
- * cartMerge(false) → cartAdd → commitCheckout(isEdit:true)).
- *
- * The previous implementation only did `orderLoadToCart` + `cartAdd`, which
- * put the session in edit-order mode without ever committing. A subsequent
- * `cartClear` (e.g. from a later checkout) would then wipe the order's
- * contents in-place — the 2026-04-28 "order opened with 1 product" incident.
- * See `project_shufersal_edit_order_flow.md`.
- */
-async function pushToActiveCart(uid: string, catalogId: string, qty: number): Promise<void> {
-  try {
-    const shufersal = getStore('shufersal')
-    if (!shufersal) return
-    const orders = await shufersal.listOrders(uid).catch(() => [])
-    const active = orders.find(o => o.cancelable)
-    if (!active) {
-      console.log(`[pushToActiveCart] uid=${uid} no active order — skip`)
-      return
-    }
-    console.log(`[pushToActiveCart] uid=${uid} order=#${active.orderId} add catalog=${catalogId} qty=${qty}`)
-    const result = await shufersal.modifyOrder(uid, active.orderId, {
-      add: [{ productId: catalogId, qty }],
-    })
-    console.log(`[pushToActiveCart] uid=${uid} order=#${active.orderId} done: added=${result.added} failed=${result.failed.length}`)
-    if (result.failed.length > 0) {
-      console.error(`[pushToActiveCart] uid=${uid} order=#${active.orderId} failures:`, result.failed)
-    }
-  } catch (err) {
-    console.error('[ActionExecutor] Failed to push to active cart:', err)
   }
 }
 
@@ -425,10 +391,7 @@ async function executeOne(
         if (cached) {
           const item = { name: cached.shufersalName, qty, catalogId: cached.catalogId }
           if (target === 'standing') await addToStoreStanding(uid, storeId, [item])
-          else {
-            await addStorePendingItems(uid, storeId, [item], { validTo })
-            if (storeId === 'shufersal') await pushToActiveCart(uid, cached.catalogId, qty)
-          }
+          else await addStorePendingItems(uid, storeId, [item], { validTo })
           const targetLabel = target === 'standing' ? 'קבועה' : 'הזמנה'
           return `✅ ${cached.shufersalName} (x${qty}) נוסף לרשימה ${targetLabel} ב${store.label}`
         }
@@ -449,10 +412,7 @@ async function executeOne(
           const unit = selected.unitPrice?.split('/')?.pop()?.trim() || undefined
           const item = { name: selected.name, qty, catalogId: selected.catalogId, unit, sellingUnitId: selected.sellingUnitId }
           if (target === 'standing') await addToStoreStanding(uid, storeId, [item])
-          else {
-            await addStorePendingItems(uid, storeId, [item], { validTo })
-            if (storeId === 'shufersal' && selected.catalogId) await pushToActiveCart(uid, selected.catalogId, qty)
-          }
+          else await addStorePendingItems(uid, storeId, [item], { validTo })
           await saveProductMapping(uid, query, selected.catalogId, selected.name)
           const targetLabel = target === 'standing' ? 'קבועה' : 'הזמנה'
           return `✅ ${selected.name} (x${qty}) נוסף לרשימה ${targetLabel} ב${store.label}`
@@ -478,35 +438,9 @@ async function executeOne(
       const rmStoreId = await resolveActionStore(uid, action, sessionStore)
       const rmValidTo = normalizeValidTo(action.validTo)
       await removeStorePendingItems(uid, rmStoreId, names, { validTo: rmValidTo })
-
-      // If Shufersal has an active (cancelable) order, also remove from it
-      // through the proper edit-order flow. Same destructive-cart trap as
-      // pushToActiveCart if we cartRemove without cartMerge + commitCheckout.
-      if (rmStoreId === 'shufersal') {
-        try {
-          const shufersal = getStore('shufersal')
-          if (shufersal) {
-            const orders = await shufersal.listOrders(uid).catch(() => [])
-            const active = orders.find(o => o.cancelable)
-            if (active) {
-              const orderItems = await shufersal.readOrderItems(uid, active.orderId).catch(() => [])
-              const refs: string[] = []
-              for (const name of names) {
-                const lowerName = name.toLowerCase()
-                const match = orderItems.find(i => i.name.toLowerCase().includes(lowerName))
-                if (match?.entryRef) refs.push(match.entryRef)
-              }
-              if (refs.length > 0) {
-                console.log(`[remove_items] uid=${uid} order=#${active.orderId} remove refs=${refs.join(',')}`)
-                const result = await shufersal.modifyOrder(uid, active.orderId, { remove: refs })
-                console.log(`[remove_items] uid=${uid} order=#${active.orderId} done: removed=${result.removed} failed=${result.failed.length}`)
-              }
-            }
-          }
-        } catch (err) {
-          console.error(`[ActionExecutor] Failed to remove from live order:`, err)
-        }
-      }
+      // As with adds: when an order is open we do NOT touch the live order here.
+      // The removal buffers into pendingChanges.remove and is applied (with any
+      // buffered adds) in one commit via `update_order` after the user approves.
       return null
     }
 
@@ -572,6 +506,65 @@ async function executeOne(
     case 'clear_pending': {
       await clearStorePending(uid, await resolveActionStore(uid, action, sessionStore))
       return null
+    }
+
+    case 'update_order': {
+      // Apply ALL buffered pending changes (adds + removes) to the user's open
+      // order in ONE commit. This is the batched alternative to the old
+      // per-item live push: the agent collects edits into pendingChanges, asks
+      // the user to approve, then calls this once. modifyOrder does a single
+      // login → cartFromOrder → cartMerge → batch add/remove → commitCheckout,
+      // so N edits cost one ~30s cycle instead of N of them.
+      const uoStoreId = await resolveActionStore(uid, action, sessionStore)
+      const uoStore = getStore(uoStoreId)
+      if (!uoStore) return `חנות "${uoStoreId}" לא מוכרת.`
+      // Only Shufersal has the edit-open-order flow today.
+      if (uoStoreId !== 'shufersal') return `עדכון הזמנה פתוחה נתמך כרגע רק בשופרסל.`
+
+      // The store is the SSOT for "is there an open order" — re-check live.
+      const uoOrders = await uoStore.listOrders(uid).catch(() => [])
+      const uoActive = uoOrders.find(o => o.cancelable)
+      if (!uoActive) return 'אין הזמנה פתוחה לעדכון.'
+
+      const uoData = await getStoreData(uid, uoStoreId)
+      const addEntries = Object.values(uoData.pendingChanges.add).filter(e => e.item.catalogId)
+      const removeNames = Object.values(uoData.pendingChanges.remove).map(r => r.name)
+      if (addEntries.length === 0 && removeNames.length === 0) {
+        return 'אין שינויים ממתינים — אין מה לעדכן בהזמנה.'
+      }
+
+      // Resolve buffered remove-names to the order's opaque entry refs.
+      const removeRefs: string[] = []
+      if (removeNames.length > 0) {
+        const orderItems = await uoStore.readOrderItems(uid, uoActive.orderId).catch(() => [])
+        for (const name of removeNames) {
+          const lower = name.toLowerCase()
+          const match = orderItems.find(i => i.name.toLowerCase().includes(lower))
+          if (match?.entryRef) removeRefs.push(match.entryRef)
+        }
+      }
+
+      const adds = addEntries.map(e => ({ productId: e.item.catalogId!, qty: e.item.qty }))
+      console.log(`[update_order] uid=${uid} order=#${uoActive.orderId} adds=${adds.length} removes=${removeRefs.length}`)
+      const uoResult = await uoStore.modifyOrder(uid, uoActive.orderId, {
+        ...(adds.length ? { add: adds } : {}),
+        ...(removeRefs.length ? { remove: removeRefs } : {}),
+      })
+      console.log(`[update_order] uid=${uid} order=#${uoActive.orderId} done: added=${uoResult.added} removed=${uoResult.removed} failed=${uoResult.failed.length}`)
+
+      if (uoResult.failed.length > 0) {
+        // Keep the buffer so the user can retry the failed parts.
+        console.error(`[update_order] uid=${uid} order=#${uoActive.orderId} failures:`, uoResult.failed)
+        return `עדכנתי חלקית את הזמנה #${uoActive.orderId} (נוספו ${uoResult.added}, הוסרו ${uoResult.removed}, נכשלו ${uoResult.failed.length}). השינויים נשמרו — אפשר לנסות שוב.`
+      }
+
+      // Full success: drop single-shot pending that applied to this order, keep
+      // still-future-dated standing instructions (same convention as trigger_order).
+      await sweepStorePending(uid, uoStoreId, new Date())
+      const uoParts: string[] = []
+      if (uoResult.added) uoParts.push(`נוספו ${uoResult.added}`)
+      if (uoResult.removed) uoParts.push(`הוסרו ${uoResult.removed}`)
+      return `✅ הזמנה #${uoActive.orderId} עודכנה: ${uoParts.join(', ')}.`
     }
 
     case 'trigger_order': {

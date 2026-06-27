@@ -157,6 +157,16 @@ export const ACTION_DECLARATIONS: FunctionDeclaration[] = [
     },
   },
   {
+    name: 'update_order',
+    description: 'החל את כל השינויים הממתינים (הוספות והסרות שנאספו) על ההזמנה הפתוחה בשופרסל, בעדכון אחד. קרא לזה רק כשיש הזמנה פתוחה (orderStatus=active) ורק אחרי שהמשתמש אישר במפורש שברצונו לעדכן את ההזמנה. עדכון ההזמנה לוקח ~30 שניות.',
+    parameters: {
+      type: 'object',
+      properties: {
+        store: { type: 'string', description: 'מזהה חנות (shufersal)' },
+      },
+    },
+  },
+  {
     name: 'show_cart',
     description: 'הצג את תוכן העגלה / ההזמנה הפתוחה בשופרסל (פריטים בפועל, לא הרשימה)',
     parameters: {

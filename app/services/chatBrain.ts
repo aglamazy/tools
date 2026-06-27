@@ -130,7 +130,7 @@ export function isFirstWordGreeting(text: string): boolean {
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import { buildContextBlock, SYSTEM_PROMPT, type UserContext } from '@/app/services/chat/chatProcessor'
 import { savePendingSearch, clearAllPendingSearches, type PendingProductSelection, type AnonStoreCreds } from '@/app/services/chat/actionExecutor'
-import { getUserStores, getStoreData } from '@/app/services/grocery/groceryStoreMulti'
+import { getUserStores, getStoreData, setOpenOrderCache } from '@/app/services/grocery/groceryStoreMulti'
 import { getAllStores } from '@/app/services/grocery/storeRegistry'
 import { initStores } from '@/app/services/grocery/initStores'
 import { isCredentialsVerified } from '@/app/services/grocery/shufersalClient'
@@ -232,6 +232,12 @@ async function buildContext(uid: string, displayName?: string, includeTasks = fa
           })),
         } : undefined,
         schedule: storeData?.schedule,
+        // Cached open-order snapshot (SSOT = the store, refreshed fire-and-forget
+        // each turn). Lights up the "הזמנה פתוחה" branch of the system prompt so
+        // the agent knows it's editing an open order vs building a future list —
+        // with no user hint. null status → undefined (no open order).
+        orderStatus: storeData?.openOrder?.status ?? undefined,
+        orderId: storeData?.openOrder?.orderId ?? undefined,
       }
     }),
   )
@@ -246,6 +252,35 @@ async function buildContext(uid: string, displayName?: string, includeTasks = fa
     hasCredentials: hasCreds,
     serverCredsConsent: consent,
   }
+}
+
+/**
+ * Refresh the cached open-order snapshot for every store this user is connected
+ * to. The store is the SSOT, but querying it needs a login (slow), so this is
+ * meant to run FIRE-AND-FORGET in parallel with the LLM call (see the chat
+ * route): it never blocks the reply, and the fresh snapshot is read on the NEXT
+ * turn. Always resolves — every per-store failure is swallowed and logged — so
+ * it's safe to hand to `after()` without an unhandled rejection.
+ *
+ * Anon (Tier-1) users are skipped: nothing about them is persisted server-side,
+ * and the server has no creds to query the store on their behalf.
+ */
+export async function refreshOpenOrderCaches(uid: string): Promise<void> {
+  if (isAnonUid(uid)) return
+  await Promise.all(getAllStores().map(async (store) => {
+    try {
+      if (!(await store.isAuthenticated(uid).catch(() => false))) return
+      const orders = await store.listOrders(uid)
+      const open = orders.find(o => o.cancelable) || null
+      await setOpenOrderCache(uid, store.id, {
+        orderId: open?.orderId ?? null,
+        status: open ? 'active' : null,
+        fetchedAt: new Date().toISOString(),
+      })
+    } catch (err) {
+      console.warn(`[openOrderCache] uid=${uid} store=${store.id} refresh failed:`, err)
+    }
+  }))
 }
 
 // --- One-shot resets exposed to /api/chat/reset and /api/chat/clear-list ---

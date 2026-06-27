@@ -79,10 +79,29 @@ export interface GrocerySchedule {
   reviewReminderHours: number
 }
 
+/**
+ * Cached snapshot of the store's open/editable-order state. The SSOT is the
+ * store itself (Shufersal's order list), which is slow to query (needs a login).
+ * So on each chat turn we refresh this fire-and-forget — in parallel with the
+ * LLM call — and the chat context reads this snapshot so the agent knows whether
+ * the user is editing an OPEN order vs building a future list. One turn of
+ * staleness is acceptable (see the chat route + refreshOpenOrderCaches).
+ */
+export interface OpenOrderCache {
+  /** Store order id of the open order, or null when there is none. */
+  orderId: string | null
+  /** 'active' = there is an open/editable order at the store; null = none. */
+  status: 'active' | null
+  /** ISO timestamp of when this snapshot was taken from the store. */
+  fetchedAt: string
+}
+
 export interface GroceryData {
   standingList: GroceryItemMap
   pendingChanges: PendingChanges
   orderCycle: OrderCycle | null
   schedule: GrocerySchedule | null
+  /** Cached open-order snapshot (SSOT = the store). Optional/legacy-absent. */
+  openOrder?: OpenOrderCache | null
   updatedAt: string
 }
