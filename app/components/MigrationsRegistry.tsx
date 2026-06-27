@@ -7,8 +7,7 @@ import { db } from '@/app/db/financeDB'
 /**
  * Exposes one-shot data-repair migrations on `window.aglamazoMigrations` so
  * Agla can run them from DevTools on prod aglamazo.com without shipping a
- * visible UI button. Mounted from the dashboard layout, so it's available on
- * every authed page.
+ * visible UI button. Mounted from the app shell, so it's available site-wide.
  *
  * Usage:
  *   // Inspect data
@@ -24,7 +23,7 @@ import { db } from '@/app/db/financeDB'
 export default function MigrationsRegistry() {
   useEffect(() => {
     if (typeof window === 'undefined') return
-    ;(window as any).aglamazoMigrations = {
+    const migrations = {
       partnerPaidBusinessId: migratePartnerPaidBusinessId,
       dumpBusinesses: async () => {
         const rows = await db.businesses.toArray()
@@ -46,6 +45,10 @@ export default function MigrationsRegistry() {
           syncId: c.syncId,
         }))
       },
+    }
+    window.aglamazoMigrations = {
+      ...(window.aglamazoMigrations || {}),
+      ...migrations,
     }
   }, [])
   return null

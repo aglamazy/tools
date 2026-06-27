@@ -56,6 +56,11 @@ export type VendorRule = {
   toBusinessId: number
 }
 
+type CategoryLookup = {
+  category: Category
+  source: 'subjectStore' | 'dexie'
+}
+
 export async function migratePartnerPaidBusinessId(
   opts: { dryRun?: boolean; vendorRules?: VendorRule[] } = {},
 ): Promise<PartnerPaidMigrationReport> {
@@ -77,18 +82,20 @@ export async function migratePartnerPaidBusinessId(
   const dexieCats = dexieCatsRaw as unknown as Category[]
   // The category that the user picks in PartnerPaidImportModal comes from
   // `subjectStore` (localStorage key 'finance-categories'), NOT db.categories.
-  // For #74's lookup we union both — subjectStore takes precedence because it's
-  // the source of truth for what the user actually sees in the picker.
+  // For #74's lookup we union both stores, then resolve by businessId and
+  // refuse ambiguous same-name matches so we do not move a doc to the wrong
+  // business during a repair pass.
   const subjectCats = subjectStore.getAll()
 
-  const catByName = new Map<string, Category>()
-  for (const c of dexieCats) {
-    if (c.name) catByName.set(c.name, c)
+  const catCandidatesByName = new Map<string, CategoryLookup[]>()
+  const addCandidate = (category: Category, source: CategoryLookup['source']) => {
+    if (!category.name) return
+    const list = catCandidatesByName.get(category.name) || []
+    list.push({ category, source })
+    catCandidatesByName.set(category.name, list)
   }
-  // subjectStore wins on collision — last write to the map wins.
-  for (const c of subjectCats) {
-    if (c.name) catByName.set(c.name, c)
-  }
+  for (const c of dexieCats) addCandidate(c, 'dexie')
+  for (const c of subjectCats) addCandidate(c, 'subjectStore')
 
   // Partner-paid heuristic: no transactionId, paidByUid set. Matches the
   // SettlementSummary filter at app/components/business/SettlementSummary.tsx
@@ -131,8 +138,8 @@ export async function migratePartnerPaidBusinessId(
       })
       continue
     }
-    const cat = catByName.get(d.category)
-    if (!cat) {
+    const candidates = catCandidatesByName.get(d.category) || []
+    if (candidates.length === 0) {
       skipped.push({
         docId: d.id!,
         vendor: d.vendor,
@@ -142,17 +149,25 @@ export async function migratePartnerPaidBusinessId(
       })
       continue
     }
-    if (cat.businessId === undefined || cat.businessId === null) {
+    const businessScoped = candidates.filter((c) => c.category.businessId != null)
+    const uniqueBusinessIds = [...new Set(businessScoped.map((c) => c.category.businessId))].filter(
+      (id): id is number => id != null,
+    )
+    if (uniqueBusinessIds.length !== 1) {
       skipped.push({
         docId: d.id!,
         vendor: d.vendor,
         category: d.category,
         currentBusinessId: d.businessId,
-        reason: `category "${d.category}" has no businessId (household-scoped or shared)`,
+        reason:
+          uniqueBusinessIds.length === 0
+            ? `category "${d.category}" has no businessId (household-scoped or shared)`
+            : `category "${d.category}" is ambiguous across businesses: ${uniqueBusinessIds.join(', ')}`,
       })
       continue
     }
-    if (d.businessId === cat.businessId) {
+    const targetBusinessId = uniqueBusinessIds[0]
+    if (d.businessId === targetBusinessId) {
       alreadyCorrect++
       continue
     }
@@ -161,7 +176,7 @@ export async function migratePartnerPaidBusinessId(
       vendor: d.vendor,
       category: d.category,
       fromBusinessId: d.businessId,
-      toBusinessId: cat.businessId,
+      toBusinessId: targetBusinessId,
     })
   }
 
