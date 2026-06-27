@@ -20,6 +20,7 @@ import { getCurrentUser } from './firebaseAuthService'
 import { encrypt, decrypt, generateVerificationToken, verifyPasswordWithToken } from './encryptionService'
 import { exportAllStores, importAllStores, isLocalDataEmpty, type BackupData } from './backupService'
 import { applyCloudBackup } from './applyMergedBackupService'
+import { classifySyncError } from './syncErrorClassifier'
 // Shared business sync is triggered independently from CloudSyncManager
 
 const BACKUP_FILE_NAME = 'backup.enc'
@@ -29,7 +30,7 @@ const MAX_BACKUP_SIZE_BYTES = 2.5 * 1024 * 1024 // 2.5 MB
 export type CloudBackupResult = {
   success: boolean
   error?: string
-  errorCode?: 'not-authenticated' | 'not-configured' | 'size-limit' | 'wrong-password' | 'no-backup' | 'unknown'
+  errorCode?: 'not-authenticated' | 'not-configured' | 'size-limit' | 'wrong-password' | 'no-backup' | 'permission-denied' | 'unknown'
 }
 
 export type CloudBackupInfo = {
@@ -446,7 +447,7 @@ async function uploadBackupWithGeneration(
     return { success: true, generation: newMetadata.generation }
   } catch (err: any) {
     console.error('[CloudBackup] Upload with generation failed:', err)
-    return { success: false, error: 'שגיאה בהעלאת הגיבוי', errorCode: 'unknown' }
+    return { success: false, ...classifySyncError(err) }
   }
 }
 
@@ -504,8 +505,14 @@ export async function syncMerge(password: string): Promise<CloudBackupResult> {
       return { success: true }
     } catch (err: any) {
       console.error(`[CloudSync] Sync-merge attempt ${attempt + 1} failed:`, err)
+      // Permission-denied is not transient — fail fast so the user is told to
+      // re-authenticate instead of silently retrying a doomed sync. (#104)
+      const classified = classifySyncError(err)
+      if (classified.errorCode === 'permission-denied') {
+        return { success: false, ...classified }
+      }
       if (attempt === MAX_RETRIES - 1) {
-        return { success: false, error: 'שגיאה בסנכרון', errorCode: 'unknown' }
+        return { success: false, ...classified }
       }
     }
   }

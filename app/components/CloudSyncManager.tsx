@@ -60,6 +60,9 @@ export function clearSyncPassword(): void {
 export default function CloudSyncManager() {
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
   const isSyncingRef = useRef(false)
+  // Last personal-sync error code we surfaced — dedupes the toast so a
+  // persistent failure isn't re-announced every sync interval. (#104)
+  const lastSyncErrorRef = useRef<string | null>(null)
   const promptedRef = useRef(false)
   const initialCheckDoneRef = useRef(false)
   const [showPasswordModal, setShowPasswordModal] = useState(false)
@@ -199,8 +202,19 @@ export default function CloudSyncManager() {
         const result = await syncMerge(password)
         if (result.success) {
           console.log('[CloudSync] Sync completed (leader)')
+          lastSyncErrorRef.current = null // recovered — allow re-announce if it breaks again
         } else {
           console.warn('[CloudSync] Sync failed:', result.error)
+          // Surface only actionable, persistent failures the user must fix —
+          // and only once per distinct error (not every interval). Transient
+          // 'unknown' (network blips) stays console-only. (#104)
+          const code = result.errorCode || 'unknown'
+          const actionable =
+            code === 'permission-denied' || code === 'wrong-password' || code === 'size-limit'
+          if (actionable && lastSyncErrorRef.current !== code) {
+            lastSyncErrorRef.current = code
+            showToast('error', result.error || 'שגיאה בסנכרון הנתונים', undefined, 7000)
+          }
         }
       } finally {
         isSyncingRef.current = false

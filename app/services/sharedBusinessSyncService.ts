@@ -22,6 +22,27 @@ import { db } from '@/app/db/financeDB'
 import type { BackupData } from './backupService'
 import { applyCloudBackup } from './applyMergedBackupService'
 import { subjectStore } from '@/app/stores/subjectStore'
+import { classifySyncError } from './syncErrorClassifier'
+
+/**
+ * Status of a background shared-business sync, broadcast as a DOM CustomEvent so
+ * the header indicator (SharedBusinessIndicators) can turn red / green without
+ * the user having to manually open the modal. (#104)
+ */
+export type SharedSyncStatus = 'ok' | 'error' | 'no-password'
+export const SHARED_SYNC_STATUS_EVENT = 'shared-business-sync-status'
+
+export type SharedSyncStatusDetail = {
+  bizSyncId: string
+  status: SharedSyncStatus
+  errorCode?: string
+  error?: string
+}
+
+function dispatchSharedSyncStatus(detail: SharedSyncStatusDetail): void {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent(SHARED_SYNC_STATUS_EVENT, { detail }))
+}
 
 const BACKUP_FILE_NAME = 'backup.enc'
 const VERIFICATION_FILE_NAME = 'verify.enc'
@@ -633,8 +654,13 @@ export async function syncSharedBusiness(
       return { success: true }
     } catch (err: any) {
       console.error(`[SharedSync] Attempt ${attempt + 1} failed:`, err)
+      const classified = classifySyncError(err)
+      // Permission-denied won't fix itself on retry — surface it immediately.
+      if (classified.errorCode === 'permission-denied') {
+        return { success: false, error: classified.error, errorCode: classified.errorCode }
+      }
       if (attempt === MAX_RETRIES - 1) {
-        return { success: false, error: 'שגיאה בסנכרון עסק משותף', errorCode: 'unknown' }
+        return { success: false, error: classified.error, errorCode: classified.errorCode }
       }
     }
   }
@@ -660,12 +686,21 @@ export async function syncAllSharedBusinesses(getPassword: (bizSyncId: string) =
     const password = await getPassword(bizSyncId)
     if (!password) {
       console.warn(`[SharedSync] No password for shared business ${bizSyncId}, skipping`)
+      dispatchSharedSyncStatus({ bizSyncId, status: 'no-password' })
       continue
     }
 
     const result = await syncSharedBusiness(bizSyncId, password)
     if (!result.success) {
       console.error(`[SharedSync] Failed to sync ${bizSyncId}:`, result.error)
+      dispatchSharedSyncStatus({
+        bizSyncId,
+        status: 'error',
+        errorCode: result.errorCode,
+        error: result.error,
+      })
+    } else {
+      dispatchSharedSyncStatus({ bizSyncId, status: 'ok' })
     }
   }
 }

@@ -1,12 +1,14 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { db, type Business } from '@/app/db/financeDB'
 import {
   getSharedBusinessIdsFromToken,
   getSharedPassword,
   saveSharedPassword,
   syncSharedBusiness,
+  SHARED_SYNC_STATUS_EVENT,
+  type SharedSyncStatusDetail,
 } from '@/app/services/sharedBusinessSyncService'
 
 type IndicatorStatus = 'no-password' | 'idle' | 'syncing' | 'ok' | 'error'
@@ -51,6 +53,10 @@ export default function SharedBusinessIndicators() {
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [modalError, setModalError] = useState('')
+  // Errors reported by BACKGROUND sync (CloudSyncManager → syncAllSharedBusinesses)
+  // keyed by bizSyncId. Kept in a ref so the 5s poll below can merge them in
+  // without recomputing status to 'ok' and clearing the red dot. (#104)
+  const bgErrorsRef = useRef<Map<string, string>>(new Map())
 
   const loadIndicators = useCallback(async () => {
     const ids = await getSharedBusinessIdsFromToken()
@@ -63,16 +69,20 @@ export default function SharedBusinessIndicators() {
       ids.map(async (bizSyncId) => {
         const local = allBiz.find((b) => b.syncId === bizSyncId) ?? null
         const pwd = await getSharedPassword(bizSyncId)
+        const bgError = bgErrorsRef.current.get(bizSyncId)
         const status: IndicatorStatus = !pwd
           ? 'no-password'
-          : local
-            ? 'ok'
-            : 'idle'
+          : bgError
+            ? 'error'
+            : local
+              ? 'ok'
+              : 'idle'
         return {
           bizSyncId,
           shortLabel: shortFromSyncId(bizSyncId, local?.name ?? null),
           fullName: local?.name ?? `עסק משותף — ${bizSyncId.slice(0, 8)}…`,
           status,
+          errorMessage: bgError,
         } satisfies Indicator
       }),
     )
@@ -86,6 +96,39 @@ export default function SharedBusinessIndicators() {
     const t = setInterval(() => void loadIndicators(), 5000)
     return () => clearInterval(t)
   }, [loadIndicators])
+
+  // Listen for background-sync status so the dot turns red the moment a
+  // periodic sync fails (wrong password, permission-denied) — without the user
+  // having to open the modal. 'ok' clears a previously-recorded error. (#104)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<SharedSyncStatusDetail>).detail
+      if (!detail) return
+      if (detail.status === 'error') {
+        const msg = detail.error || detail.errorCode || 'שגיאה בסנכרון'
+        bgErrorsRef.current.set(detail.bizSyncId, msg)
+        setIndicators((prev) =>
+          prev.map((i) =>
+            i.bizSyncId === detail.bizSyncId ? { ...i, status: 'error' as const, errorMessage: msg } : i,
+          ),
+        )
+      } else {
+        // 'ok' or 'no-password' — a successful/again-pending sync clears the error.
+        bgErrorsRef.current.delete(detail.bizSyncId)
+        if (detail.status === 'ok') {
+          setIndicators((prev) =>
+            prev.map((i) =>
+              i.bizSyncId === detail.bizSyncId && i.status === 'error'
+                ? { ...i, status: 'ok' as const, errorMessage: undefined }
+                : i,
+            ),
+          )
+        }
+      }
+    }
+    window.addEventListener(SHARED_SYNC_STATUS_EVENT, handler)
+    return () => window.removeEventListener(SHARED_SYNC_STATUS_EVENT, handler)
+  }, [])
 
   const openModal = (ind: Indicator) => {
     setOpenModalFor(ind)
@@ -126,7 +169,8 @@ export default function SharedBusinessIndicators() {
         setSubmitting(false)
         return
       }
-      // Success — reload indicators (the business is now in local Dexie).
+      // Success — clear any background error and reload (business now in Dexie).
+      bgErrorsRef.current.delete(openModalFor.bizSyncId)
       await loadIndicators()
       closeModal()
     } catch (err: unknown) {
