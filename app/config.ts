@@ -45,5 +45,5 @@ export const config = {
   syncIntervalMinutes: 5,
 
   // Terms & Conditions latest version date. Update this to force re-acceptance.
-  tcVersion: '2026-03-09',
+  tcVersion: '2026-06-28',
 }

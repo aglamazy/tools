@@ -109,6 +109,9 @@ export default async function PayPage({ params }: { params: Promise<{ cid: strin
               <span>סה״כ לתשלום</span><span>{money(total, link.currency || 'ILS')}</span>
             </div>
             <p style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '0.6rem', marginBottom: 0 }}>הסכום כולל מע״מ כחוק. התשלום מאובטח ומתבצע בעמוד הסליקה של YPAY.</p>
+            <p style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '0.35rem', marginBottom: 0 }}>
+              פירוט זה (שם, פריטים, סכום) נשמר ב-Firebase לצורך הצגת עמוד זה. פרטי כרטיס האשראי מוזנים ונשמרים אך ורק ב-YPAY ואינם עוברים דרך Aglamazo.
+            </p>
           </div>
 
           {/* YPAY clearance page (card capture stays on their PCI page) */}

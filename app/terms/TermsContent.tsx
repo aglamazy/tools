@@ -48,7 +48,30 @@ export default function TermsContent() {
       </section>
 
       <section style={{ marginBottom: '1.5rem' }}>
-        <h2 style={{ fontSize: '1.25rem', marginBottom: '0.75rem' }}>6. שינויים בתנאים</h2>
+        <h2 style={{ fontSize: '1.25rem', marginBottom: '0.75rem' }}>6. תשלומים וסליקה</h2>
+        <p>
+          Aglamazo מציעה אפשרות לשליחת קישורי תשלום ללקוחות, באמצעות מעבד הסליקה YPAY.
+          יש להיות מודעים לאופן אחסון הנתונים הקשורים לתשלום:
+        </p>
+        <ul style={{ paddingRight: '1.25rem', marginTop: '0.5rem', lineHeight: 1.7 }}>
+          <li>
+            <strong>פרטי כרטיס האשראי</strong> — נשמרים אך ורק במערכת YPAY, בהתאם לדרישות PCI-DSS.
+            Aglamazo אינה רואה ואינה מאחסנת פרטי כרטיס.
+          </li>
+          <li>
+            <strong>מטה-נתוני תשלום</strong> (שם עסק, פירוט פריטים, סכום, פרטי קשר של הלקוח,
+            סטטוס התשלום) — נשמרים ב-Google Firebase Firestore לצורך הצגת עמוד התשלום
+            ומעקב סטטוס. <strong>אחסון זה אינו zero-trust</strong>: צוות התפעול של Aglamazo
+            ועובדי Google שנדרשים לכך עשויים לגשת לנתונים אלה בכפוף לנהלי Google.
+          </li>
+        </ul>
+        <p style={{ marginTop: '0.5rem' }}>
+          אם הדרישה שלך היא zero-trust מלא גם על מטה-נתוני התשלום, אין להשתמש בתכונת קישורי התשלום.
+        </p>
+      </section>
+
+      <section style={{ marginBottom: '1.5rem' }}>
+        <h2 style={{ fontSize: '1.25rem', marginBottom: '0.75rem' }}>7. שינויים בתנאים</h2>
         <p>
           אנו שומרים לעצמנו את הזכות לעדכן תנאי שימוש אלה מעת לעת.
           שינויים מהותיים יופיעו בהתראה בתוך האפליקציה.
@@ -57,7 +80,7 @@ export default function TermsContent() {
       </section>
 
       <section style={{ marginBottom: '1.5rem' }}>
-        <h2 style={{ fontSize: '1.25rem', marginBottom: '0.75rem' }}>7. יצירת קשר</h2>
+        <h2 style={{ fontSize: '1.25rem', marginBottom: '0.75rem' }}>8. יצירת קשר</h2>
         <p>
           לשאלות בנוגע לתנאי השימוש, ניתן לפנות אלינו בדוא"ל:{' '}
           <a href="mailto:support@aglamaz.com" style={{ color: '#4338ca' }}>support@aglamaz.com</a>.
@@ -65,7 +88,7 @@ export default function TermsContent() {
       </section>
 
       <p style={{ color: '#94a3b8', fontSize: '0.875rem', marginTop: '2rem' }}>
-        עודכן לאחרונה: אפריל 2026
+        עודכן לאחרונה: יוני 2026
       </p>
     </div>
   )
