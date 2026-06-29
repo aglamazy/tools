@@ -46,7 +46,8 @@ async function parseBody(request: NextRequest): Promise<unknown> {
 }
 
 export async function POST(request: NextRequest) {
-  const { searchParams } = new URL(request.url)
+  const url = new URL(request.url)
+  const { searchParams } = url
   const cid = searchParams.get('cid') || ''
   const k = searchParams.get('k') || ''
 
@@ -55,11 +56,25 @@ export async function POST(request: NextRequest) {
 
   const raw = await parseBody(request)
 
+  // SMOKE-TEST: capture EVERYTHING the sender posted (method/url/query/headers/
+  // body) so we can inspect exactly what YPAY sends. ⚠️ url + query carry
+  // &k=<secret> — rotate YPAY_WEBHOOK_SECRET after the smoke test, or strip this
+  // `request` field before relying on the events log in steady-state prod.
+  const requestDump = {
+    method: request.method,
+    url: request.url,
+    path: url.pathname,
+    query: Object.fromEntries(searchParams.entries()),
+    headers: Object.fromEntries(request.headers.entries()),
+    contentType: request.headers.get('content-type') || null,
+  }
+
   try {
     const firestore = getAdminFirestore()
     await firestore.collection('ypayPaymentEvents').add({
       chargeIdentifier: cid || null,
       verified,
+      request: requestDump,
       raw,
       receivedAt: new Date().toISOString(),
     })
