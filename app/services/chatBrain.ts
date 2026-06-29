@@ -134,6 +134,7 @@ import { getUserStores, getStoreData, setOpenOrderCache } from '@/app/services/g
 import { getAllStores } from '@/app/services/grocery/storeRegistry'
 import { initStores } from '@/app/services/grocery/initStores'
 import { isCredentialsVerified } from '@/app/services/grocery/shufersalClient'
+import { getAnyStoredOtpPhone } from '@/app/services/grocery/retalixClient'
 import { REXAIL_STORES } from '@/app/services/grocery/rexailStores'
 import { listTasks } from '@/app/services/taskFirestoreService'
 import { getServerCredsConsent, hasCurrentServerCredsConsent } from '@/app/services/consentService'
@@ -208,6 +209,12 @@ async function buildContext(uid: string, displayName?: string, includeTasks = fa
     getServerCredsConsent(uid).catch(() => null),
   ])
 
+  // Tier 3 only: look up a stored OTP phone from any connected OTP store.
+  // Tier 2 phones live in the browser — server can't read them.
+  const storedOtpPhoneEntry = consent?.acceptedAt
+    ? await getAnyStoredOtpPhone(uid).catch(() => null)
+    : null
+
   const storeContexts = await Promise.all(
     getAllStores().map(async (store) => {
       const connected = await store.isAuthenticated(uid).catch(() => false)
@@ -251,6 +258,9 @@ async function buildContext(uid: string, displayName?: string, includeTasks = fa
     tasks: tasks || undefined,
     hasCredentials: hasCreds,
     serverCredsConsent: consent,
+    storedOtpPhone: storedOtpPhoneEntry
+      ? { masked: `...${storedOtpPhoneEntry.phone.slice(-4)}` }
+      : undefined,
   }
 }
 

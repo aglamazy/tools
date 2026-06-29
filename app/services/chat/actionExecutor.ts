@@ -29,6 +29,7 @@ import {
   verifyOtpWithCreds,
   checkoutWithCreds,
   getRetalixConfigForStore,
+  getAnyStoredOtpPhone,
 } from '@/app/services/grocery/retalixClient'
 import { getStore, getAllStores } from '@/app/services/grocery/storeRegistry'
 import { getUserStores, setDefaultStore, addActiveStore, getStoreData, addToStoreStanding, addStorePendingItems, removeFromStoreStanding, removeStorePendingItems, clearStorePending, movePendingToStanding as moveStorePendingToStanding, getStoreSchedule, setStoreSchedule } from '@/app/services/grocery/groceryStoreMulti'
@@ -936,13 +937,19 @@ async function executeOne(
     }
 
     case 'set_otp_phone': {
-      const phone = typeof action.phone === 'string' ? action.phone.trim() : ''
-      if (!phone) return 'חסר מספר טלפון.'
       // Resolve which OTP-based chain the user is connecting. Default keeps
       // the legacy 'retalix' (Makor HaShefa) for back-compat with old prompts.
       const targetStoreId = await resolveActionStore(uid, action, sessionStore).catch(() => 'retalix')
       const plugin = getStore(targetStoreId)
       if (!plugin || plugin.authType !== 'otp') return `חנות "${targetStoreId}" לא תומכת בחיבור עם SMS.`
+
+      // Resolve phone: explicit arg → stored from another OTP store → error.
+      let phone = typeof action.phone === 'string' ? action.phone.trim() : ''
+      if (!phone && !isAnon) {
+        const stored = await getAnyStoredOtpPhone(uid, targetStoreId).catch(() => null)
+        if (stored) phone = stored.phone
+      }
+      if (!phone) return 'חסר מספר טלפון.'
 
       // --- Anon Tier-1 branch ---
       // Per privacy policy SALIKO_PRIVACY_TIERS.anonymous: do NOT touch

@@ -13,6 +13,7 @@ import type { RetalixStoreConfig, OtpStorePlugin, StoreSearchResult, StoreChecko
 import { encryptCred, decryptCred, looksEncrypted } from '@/app/services/security/credEncryption'
 import { hasCurrentServerCredsConsent } from '@/app/services/consentService'
 import { getRexailStore } from './rexailStores'
+import { getAllStores } from './storeRegistry'
 
 // Default config for Makor Hashefa
 const DEFAULT_CONFIG: RetalixStoreConfig = {
@@ -187,6 +188,25 @@ function catalogRef(storeId: string) {
 
 export async function loadCredentials(uid: string, storeId: string): Promise<RetalixCredentials | null> {
   return readCredDoc(uid, storeId)
+}
+
+/**
+ * Scan all registered OTP stores for this user and return the first stored phone.
+ * Used to offer phone reuse when connecting a second OTP store (Tier 3 only —
+ * Tier 2 phones live in the browser, never reach the server).
+ * `excludeStoreId` skips the store currently being connected.
+ */
+export async function getAnyStoredOtpPhone(
+  uid: string,
+  excludeStoreId?: string,
+): Promise<{ phone: string; fromStoreId: string } | null> {
+  for (const store of getAllStores()) {
+    if (store.authType !== 'otp') continue
+    if (store.id === excludeStoreId) continue
+    const cred = await readCredDoc(uid, store.id).catch(() => null)
+    if (cred?.phone) return { phone: cred.phone, fromStoreId: store.id }
+  }
+  return null
 }
 
 export async function saveRetalixCredentials(uid: string, storeId: string, phone: string, config: RetalixStoreConfig): Promise<void> {
