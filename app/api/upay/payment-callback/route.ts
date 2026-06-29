@@ -50,23 +50,11 @@ export async function POST(request: NextRequest) {
 
   const raw = await parseBody(request)
 
-  // SMOKE-TEST: capture EVERYTHING the sender posted (see the ypay callback for
-  // the rationale + rotate-after caveat — url/query carry &k=<secret>).
-  const requestDump = {
-    method: request.method,
-    url: request.url,
-    path: url.pathname,
-    query: Object.fromEntries(searchParams.entries()),
-    headers: Object.fromEntries(request.headers.entries()),
-    contentType: request.headers.get('content-type') || null,
-  }
-
   try {
     const firestore = getAdminFirestore()
     await firestore.collection('upayPaymentEvents').add({
       chargeIdentifier: cid || null,
       verified,
-      request: requestDump,
       raw,
       receivedAt: new Date().toISOString(),
     })
