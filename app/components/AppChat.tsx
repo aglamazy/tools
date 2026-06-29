@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react'
 import { useToast } from '@/app/components/ToastContainer'
 import { getIdToken } from '@/app/services/firebaseAuthService'
 import { subscribeToAuth } from '@/app/stores/authStore'
@@ -23,6 +23,75 @@ type PendingSelection = {
   store?: string
   searchKey: string
   results: ProductResult[]
+}
+
+/** Parse **bold** spans into React nodes — no HTML strings, XSS-safe. */
+function parseInline(text: string): ReactNode {
+  const parts: ReactNode[] = []
+  const re = /\*\*(.+?)\*\*/g
+  let last = 0
+  let m: RegExpExecArray | null
+  let idx = 0
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parts.push(text.slice(last, m.index))
+    parts.push(<strong key={idx++}>{m[1]}</strong>)
+    last = m.index + m[0].length
+  }
+  if (last < text.length) parts.push(text.slice(last))
+  return parts.length === 0 ? '' : parts.length === 1 ? parts[0] : <>{parts}</>
+}
+
+/** Render LLM markdown (bold, numbered/bullet lists, newlines) as JSX — RTL-safe. */
+function MarkdownContent({ text }: { text: string }) {
+  const lines = text.split('\n')
+  const nodes: ReactNode[] = []
+  let i = 0
+  let key = 0
+
+  while (i < lines.length) {
+    const line = lines[i]
+
+    if (/^\d+\.\s+/.test(line)) {
+      const items: string[] = []
+      while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
+        const m = /^\d+\.\s+(.*)$/.exec(lines[i])
+        items.push(m ? m[1] : lines[i])
+        i++
+      }
+      nodes.push(
+        <ol key={key++} style={{ margin: '0.25em 0', paddingInlineStart: '1.4em' }}>
+          {items.map((item, j) => <li key={j}>{parseInline(item)}</li>)}
+        </ol>
+      )
+      continue
+    }
+
+    if (/^[-*]\s+/.test(line)) {
+      const items: string[] = []
+      while (i < lines.length && /^[-*]\s+/.test(lines[i])) {
+        const m = /^[-*]\s+(.*)$/.exec(lines[i])
+        items.push(m ? m[1] : lines[i])
+        i++
+      }
+      nodes.push(
+        <ul key={key++} style={{ margin: '0.25em 0', paddingInlineStart: '1.4em' }}>
+          {items.map((item, j) => <li key={j}>{parseInline(item)}</li>)}
+        </ul>
+      )
+      continue
+    }
+
+    if (line.trim() === '') {
+      nodes.push(<br key={key++} />)
+      i++
+      continue
+    }
+
+    nodes.push(<div key={key++}>{parseInline(line)}</div>)
+    i++
+  }
+
+  return <>{nodes}</>
 }
 
 function ThinkingBubble({ text }: { text: string }) {
@@ -454,7 +523,7 @@ export default function AppChat() {
           <div key={i} className="app-chat-message-group">
             {msg.thinking && <ThinkingBubble text={msg.thinking} />}
             <div className={`app-chat-bubble ${msg.role === 'user' ? 'app-chat-user' : 'app-chat-assistant'}`}>
-              {msg.content}
+              {msg.role === 'assistant' ? <MarkdownContent text={msg.content} /> : msg.content}
             </div>
           </div>
         ))}
