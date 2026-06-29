@@ -26,6 +26,12 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Terms & Conditions versions - public read (T&C text is public content)
+    match /tcVersions/{version} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     // Legacy business shares collection - read for owner or recipient.
     // Writes are server-side only (kept around during the businessPartners
     // migration window so we can roll back; will be removed once stable).

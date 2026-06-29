@@ -4,9 +4,11 @@
  * Also owns Firestore subscription for real-time tier sync.
  */
 
-import { doc, onSnapshot, type Unsubscribe } from 'firebase/firestore'
+import { doc, onSnapshot, collection, query, orderBy, limit, type Unsubscribe } from 'firebase/firestore'
 import { getFirebaseFirestore, isFirebaseConfigured } from '@/app/lib/firebase'
 import { config } from '@/app/config'
+
+const TC_COLLECTION = 'tcVersions'
 
 export enum UserTier {
   FREE = 'free',
@@ -39,12 +41,23 @@ const listeners: Set<Listener> = new Set()
 let firestoreUnsubscribe: Unsubscribe | null = null
 
 let tcAcceptedAt: string | null = null
-let tcLoading = true
+let userDocLoading = true
+let requiredTcVersion: string | null = null
+let requiredTcVersionLoading = true
+let tcVersionsUnsubscribe: Unsubscribe | null = null
+
 const tcListeners = new Set<(state: TcState) => void>()
+const requiredVersionListeners = new Set<(version: string | null) => void>()
 
 function notifyTcListeners() {
-  const accepted = tcAcceptedAt != null && tcAcceptedAt >= config.tcVersion
-  tcListeners.forEach((l) => l({ accepted, loading: tcLoading }))
+  const required = requiredTcVersion ?? config.tcVersion
+  const accepted = tcAcceptedAt != null && tcAcceptedAt >= required
+  const loading = userDocLoading || requiredTcVersionLoading
+  tcListeners.forEach((l) => l({ accepted, loading }))
+}
+
+function notifyRequiredVersionListeners() {
+  requiredVersionListeners.forEach(l => l(requiredTcVersion))
 }
 
 export const userTierStore = {
@@ -68,6 +81,58 @@ export const userTierStore = {
   },
 
   /**
+   * Subscribe to the latest required T&C version from Firestore tcVersions.
+   * Idempotent — safe to call multiple times; starts the subscription once.
+   */
+  subscribeRequiredTcVersion(): () => void {
+    if (tcVersionsUnsubscribe) return () => {}
+    if (!isFirebaseConfigured()) {
+      requiredTcVersion = config.tcVersion
+      requiredTcVersionLoading = false
+      notifyTcListeners()
+      notifyRequiredVersionListeners()
+      return () => {}
+    }
+    const firestore = getFirebaseFirestore()
+    const q = query(collection(firestore, TC_COLLECTION), orderBy('version', 'desc'), limit(1))
+    tcVersionsUnsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        requiredTcVersion = snapshot.empty ? config.tcVersion : snapshot.docs[0].id
+        requiredTcVersionLoading = false
+        notifyTcListeners()
+        notifyRequiredVersionListeners()
+      },
+      (error) => {
+        console.error('[UserTierStore] tcVersions subscription error:', error)
+        requiredTcVersion = config.tcVersion
+        requiredTcVersionLoading = false
+        notifyTcListeners()
+        notifyRequiredVersionListeners()
+      }
+    )
+    return () => {
+      if (tcVersionsUnsubscribe) {
+        tcVersionsUnsubscribe()
+        tcVersionsUnsubscribe = null
+        requiredTcVersion = null
+        requiredTcVersionLoading = true
+      }
+    }
+  },
+
+  /**
+   * Subscribe to required T&C version changes (starts Firestore subscription if not running).
+   * Emits immediately with current value (null if not yet loaded), then on updates.
+   */
+  subscribeRequiredVersion(listener: (version: string | null) => void): () => void {
+    requiredVersionListeners.add(listener)
+    listener(requiredTcVersion)
+    this.subscribeRequiredTcVersion()
+    return () => requiredVersionListeners.delete(listener)
+  },
+
+  /**
    * Start real-time Firestore subscription for the logged-in user's tier.
    * Updates the in-memory tier whenever Firestore changes.
    */
@@ -76,11 +141,14 @@ export const userTierStore = {
       // Offline/unconfigured: default tier to FREE, TC to accepted
       this.set(UserTier.FREE)
       tcAcceptedAt = null
-      tcLoading = false
+      userDocLoading = false
+      requiredTcVersion = config.tcVersion
+      requiredTcVersionLoading = false
       tcListeners.forEach((l) => l({ accepted: true, loading: false }))
       return
     }
     this.unsubscribeFirestore()
+    this.subscribeRequiredTcVersion()
     const firestore = getFirebaseFirestore()
     firestoreUnsubscribe = onSnapshot(
       doc(firestore, 'users', uid),
@@ -88,21 +156,21 @@ export const userTierStore = {
         if (!snapshot.exists()) {
           this.set(UserTier.FREE)
           tcAcceptedAt = null
-          tcLoading = false
+          userDocLoading = false
           notifyTcListeners()
           return
         }
         const data = snapshot.data()
         this.set((data.tier as UserTier) || UserTier.FREE)
         tcAcceptedAt = (data?.tcAcceptedAt as string | undefined) ?? null
-        tcLoading = false
+        userDocLoading = false
         notifyTcListeners()
       },
       (error) => {
         console.error('[UserTierStore] Firestore subscription error:', error)
         this.set(UserTier.FREE)
         tcAcceptedAt = null
-        tcLoading = false
+        userDocLoading = false
         notifyTcListeners()
       }
     )
@@ -117,13 +185,15 @@ export const userTierStore = {
       firestoreUnsubscribe = null
     }
     tcAcceptedAt = null
-    tcLoading = true
+    userDocLoading = true
     notifyTcListeners()
   },
 
   getTcState(): TcState {
-    const accepted = tcAcceptedAt != null && tcAcceptedAt >= config.tcVersion
-    return { accepted, loading: tcLoading }
+    const required = requiredTcVersion ?? config.tcVersion
+    const accepted = tcAcceptedAt != null && tcAcceptedAt >= required
+    const loading = userDocLoading || requiredTcVersionLoading
+    return { accepted, loading }
   },
 
   subscribeTc(listener: (state: TcState) => void): () => void {

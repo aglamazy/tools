@@ -39,7 +39,7 @@ if (!admin.apps.length) {
 }
 
 const TC_COLLECTION = 'tcVersions'
-const VERSION = '2026-03-09' // matches config.tcVersion
+const VERSION = '2026-03-09' // matches config.tcVersion (dev/empty-DB fallback)
 
 const TC_HTML = `<div dir="rtl" style="line-height: 1.8; font-size: 1rem; color: #1e293b;">
 

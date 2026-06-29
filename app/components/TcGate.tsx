@@ -4,7 +4,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { subscribeToAuth } from '@/app/stores/authStore'
 import { userTierStore } from '@/app/stores/userTierStore'
-import { config, routes } from '@/app/config'
+import { routes } from '@/app/config'
 import { db } from '@/app/db/financeDB'
 
 /**
@@ -22,6 +22,7 @@ export default function TcGate({ children }: { children: ReactNode }) {
   const [wasLoggedIn, setWasLoggedIn] = useState(false)
   const [tcState, setTcState] = useState(userTierStore.getTcState())
   const [localTcAccepted, setLocalTcAccepted] = useState<boolean | null>(null) // null = loading
+  const [requiredVersion, setRequiredVersion] = useState<string | null>(null)
 
   useEffect(() => {
     const unsub = subscribeToAuth((s) => {
@@ -38,17 +39,22 @@ export default function TcGate({ children }: { children: ReactNode }) {
     return unsub
   }, [])
 
+  useEffect(() => {
+    return userTierStore.subscribeRequiredVersion(setRequiredVersion)
+  }, [])
+
   // Check local T&C acceptance for free/anonymous users
   useEffect(() => {
+    if (requiredVersion === null) return
     db.appSettings.where('key').equals('tcAcceptedAt').first().then(row => {
-      const accepted = typeof row?.value === 'string' && row.value >= config.tcVersion
+      const accepted = typeof row?.value === 'string' && row.value >= requiredVersion
       setLocalTcAccepted(accepted)
     }).catch(() => setLocalTcAccepted(false))
 
     const handleTcAccepted = () => setLocalTcAccepted(true)
     window.addEventListener('local-tc-accepted', handleTcAccepted)
     return () => window.removeEventListener('local-tc-accepted', handleTcAccepted)
-  }, [])
+  }, [requiredVersion])
 
   useEffect(() => {
     if (pathname === routes.terms) return
