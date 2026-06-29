@@ -55,11 +55,25 @@ export async function POST(request: NextRequest) {
 
   const raw = await parseBody(request)
 
+  // SMOKE-TEST: capture EVERYTHING the sender posted (method/url/query/headers/
+  // body). ⚠️ url + query carry &k=<secret> — rotate the webhook secret after
+  // the smoke test, THEN strip this. (Re-added after the Hopper prematurely
+  // stripped it via #1995 before the smoke test ran — keep until test passes.)
+  const requestDump = {
+    method: request.method,
+    url: request.url,
+    path: url.pathname,
+    query: Object.fromEntries(searchParams.entries()),
+    headers: Object.fromEntries(request.headers.entries()),
+    contentType: request.headers.get('content-type') || null,
+  }
+
   try {
     const firestore = getAdminFirestore()
     await firestore.collection('ypayPaymentEvents').add({
       chargeIdentifier: cid || null,
       verified,
+      request: requestDump,
       raw,
       receivedAt: new Date().toISOString(),
     })
