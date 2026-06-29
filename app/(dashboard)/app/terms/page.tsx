@@ -15,6 +15,7 @@ export default function TermsPage() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [tcText, setTcText] = useState<string | null>(null)
+  const [tcRequiredVersion, setTcRequiredVersion] = useState<string | null>(null)
 
   useEffect(() => {
     const unsub = subscribeToAuthState((u) => {
@@ -34,11 +35,14 @@ export default function TermsPage() {
     return unsub
   }, [router])
 
-  // Fetch latest T&C text from server (public endpoint)
+  // Fetch latest T&C text and required version from server (public endpoint)
   useEffect(() => {
     fetch('/api/terms')
       .then(res => res.json())
-      .then(data => { if (data.success && data.text) setTcText(data.text) })
+      .then(data => {
+        if (data.success && data.text) setTcText(data.text)
+        if (data.success && data.version) setTcRequiredVersion(data.version)
+      })
       .catch(() => {})
   }, [])
 
@@ -62,10 +66,10 @@ export default function TermsPage() {
           return
         }
       } else {
-        // Anonymous: save locally
+        // Anonymous: save locally using DB-sourced version (config.tcVersion as fallback)
         await db.appSettings.put({
           key: 'tcAcceptedAt',
-          value: config.tcVersion,
+          value: tcRequiredVersion ?? config.tcVersion,
           updatedAt: new Date().toISOString(),
         })
         window.dispatchEvent(new Event('local-tc-accepted'))
