@@ -254,7 +254,7 @@ function bankRows(e: Extraction): Array<Array<string | number | null>> {
       r.reference ?? '',
       r.debit ?? 0,
       r.credit ?? 0,
-      r.balance ?? 0,
+      r.balance ?? null,
     ])
   }
   return rows

@@ -19,7 +19,7 @@ export type ParsedBankTransaction = {
   date: string
   description: string
   amount: number
-  balance: number
+  balance?: number
   accountNumber: string
   cardNumber?: string
   isCreditCardCharge?: boolean
@@ -101,7 +101,10 @@ export function parseBankTransactions(
     const credit = creditIdx !== -1 ? toNumber(row[creditIdx]) : 0
     const rawAmount = debit !== 0 ? -debit : credit
     const amount = normalizeAmount(rawAmount)
-    const balance = balanceIdx !== -1 ? normalizeAmount(row[balanceIdx]) : 0
+    const rawBal = balanceIdx !== -1 ? row[balanceIdx] : null
+    const balance = (rawBal === null || rawBal === undefined || rawBal === '')
+      ? undefined
+      : normalizeAmount(rawBal)
 
     // Detect credit card charges
     const descriptionStr = String(description).trim().replace(/\s+/g, ' ');

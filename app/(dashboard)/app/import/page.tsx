@@ -226,12 +226,10 @@ const handleDeleteFile = (file: ImportedFile) => {
 
   const handleFileSelect = async (file: File) => {
     setImporting(file.name)
-    console.log('[import] start', { name: file.name, type: file.type, size: file.size })
     try {
       // Extract file metadata
       const { extractFileMetadata } = await import('@/app/utils/filePreview')
       const metadata = await extractFileMetadata(file)
-      console.log('[import] metadata', metadata)
 
       if (metadata.fileType === 'unknown') {
         setMessageModal({
@@ -255,7 +253,6 @@ const handleDeleteFile = (file: ImportedFile) => {
 
       // Helper: actually import the file and save
       const doImport = async () => {
-        console.log('[import] doImport', { fileType: metadata.fileType, month: metadata.processingMonth, card: metadata.cardNumber, account: metadata.accountNumber })
         const fileId = `${Date.now()}-${file.name}`
         const { fileImportService } = await import('@/app/services/fileImportService')
 
@@ -688,7 +685,9 @@ const handleDeleteFile = (file: ImportedFile) => {
                           {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(t.amount)}
                         </td>
                         <td style={{ padding: '0.5rem' }}>
-                          {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(t.balance)}
+                          {t.balance != null
+                            ? new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(t.balance)
+                            : '—'}
                         </td>
                         <td style={{ padding: '0.5rem', textAlign: 'center' }}>
                           {t.isCreditCardCharge ? '✓' : ''}

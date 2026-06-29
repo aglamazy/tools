@@ -272,7 +272,7 @@ export default function FileBrowser({
   }
 
   const formatMonthDisplay = (monthStr: string | null): string => {
-    if (!monthStr) return 'לא זוהה'
+    if (!monthStr) return '—'
     const [month, year] = monthStr.split('/')
     const monthNames = [
       'ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני',
