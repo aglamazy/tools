@@ -64,9 +64,29 @@ export default function ApiKeysTab() {
 
   return (
     <div style={{ maxWidth: '500px' }}>
+      {/* AI-engine intro: the platform provides Gemini Pro for free (for now);
+          a personal Claude key is optional and recommended for speed/accuracy. */}
+      <div
+        style={{
+          background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '0.5rem',
+          padding: '0.85rem 1rem', marginBottom: '1.25rem', fontSize: '0.85rem',
+          color: '#1e3a8a', lineHeight: 1.65,
+        }}
+      >
+        <strong>מנוע הבינה המלאכותית</strong>
+        <p style={{ margin: '0.4rem 0 0' }}>
+          כברירת מחדל המערכת משתמשת ב-<strong>Gemini Pro</strong>, המסופק באדיבות הפלטפורמה ללא עלות
+          (בשלב זה) — הכל עובד מהקופסה, ללא הגדרות.
+        </p>
+        <p style={{ margin: '0.4rem 0 0' }}>
+          הוספת מפתח <strong>Claude</strong> אישי היא אופציונלית ו<strong>מומלצת לביצועים טובים יותר</strong> —
+          חילוץ מהיר ומדויק יותר ממסמכי PDF.
+        </p>
+      </div>
+
       <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem' }}>Claude API Key</h3>
       <p style={{ color: '#64748b', fontSize: '0.85rem', margin: '0 0 1rem' }}>
-        משמש לחילוץ נתונים ממסמכי מס. ניתן להשיג מ-{' '}
+        אופציונלי — משמש לחילוץ נתונים ממסמכי מס וקבצי PDF. ניתן להשיג מ-{' '}
         <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6' }}>
           console.anthropic.com
         </a>

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
+import Link from 'next/link'
 import type { FilePreview } from '@/app/types/file-preview'
 import { FileType } from '@/app/types/file-type'
 import { requestDirectoryPermission } from '@/app/utils/directoryStorage'
@@ -312,6 +313,12 @@ export default function FileBrowser({
               📂 בחר תיקייה
             </button>
           </div>
+          <p style={{ margin: '1rem 0 0', fontSize: '0.8rem', color: '#1e3a8a' }}>
+            💡 קובצי PDF מחולצים אוטומטית. לחילוץ מהיר ומדויק יותר —{' '}
+            <Link href="/app/settings?tab=apikeys" style={{ color: '#4338ca', fontWeight: 600 }}>
+              הגדר מנוע Claude
+            </Link>
+          </p>
         </div>
       )}
       {loading && (

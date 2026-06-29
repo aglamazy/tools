@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, Suspense } from 'react'
+import { useState, useEffect, useRef, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import type { ImportedFile } from '@/app/db/financeDB'
 import { formatMonthDisplay, formatDateTime } from '@/app/utils/formatters'
@@ -123,6 +123,19 @@ function ImportPageContent() {
       sessionStorage.setItem('selectedMonth', selectedMonth)
     }
   }, [selectedMonth])
+
+  // Refresh the imported-files view when a background import finishes
+  // (importing went from a filename → null) — new data appears without a full
+  // page reload, preserving the non-blocking flow.
+  const prevImporting = useRef<string | null>(null)
+  useEffect(() => {
+    if (prevImporting.current && importing === null) {
+      transactionStore.getImportedFiles()
+        .then(data => { if (data) setFiles(data.files || []) })
+        .catch(() => {})
+    }
+    prevImporting.current = importing
+  }, [importing])
 
   const handleDirHandleChange = async (handle: FileSystemDirectoryHandle | null) => {
     setSavedDirHandle(handle)
@@ -350,13 +363,25 @@ const handleDeleteFile = (file: ImportedFile) => {
 
   return (
     <main className="app" dir="rtl">
+      {/* Non-blocking background indicator — extraction runs async (Gemini PDF
+          ~20-40s). A corner toast (no backdrop, no inset:0) so the user can keep
+          using the app while it processes; the success toast + list update fire
+          when it lands. */}
       {importing && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
-          <div style={{ background: '#fff', borderRadius: '0.75rem', padding: '1.5rem 2rem', textAlign: 'center', maxWidth: 380, boxShadow: '0 10px 40px rgba(15,23,42,0.2)' }}>
-            <div style={{ fontSize: '1.75rem', marginBottom: '0.5rem' }}>⏳</div>
-            <div style={{ fontWeight: 600, color: '#0f172a' }}>מנתח את הקובץ…</div>
-            <div style={{ fontSize: '0.85rem', color: '#64748b', marginTop: '0.35rem' }}>
-              {importing} — קובצי PDF מנותחים אוטומטית ויכולים לקחת עד דקה.
+        <div
+          style={{
+            position: 'fixed', bottom: '1.25rem', insetInlineStart: '1.25rem', zIndex: 9999,
+            background: '#fff', borderRadius: '0.75rem', padding: '0.85rem 1.1rem',
+            boxShadow: '0 10px 30px rgba(15,23,42,0.18)', border: '1px solid #e2e8f0',
+            display: 'flex', alignItems: 'center', gap: '0.6rem', maxWidth: 340,
+          }}
+          dir="rtl"
+        >
+          <span style={{ fontSize: '1.3rem' }}>⏳</span>
+          <div>
+            <div style={{ fontWeight: 600, color: '#0f172a', fontSize: '0.9rem' }}>מנתח את הקובץ ברקע…</div>
+            <div style={{ fontSize: '0.78rem', color: '#64748b' }}>
+              {importing} — אפשר להמשיך לעבוד, נודיע כשמוכן.
             </div>
           </div>
         </div>

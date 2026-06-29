@@ -22,7 +22,7 @@ const ALL_TABS: TabItemWithTier[] = [
   { id: 'sync', label: 'סנכרון', icon: '☁️', requiredTier: UserTier.FREE },
   { id: 'telegram', label: 'טלגרם', icon: '📱', requiredTier: UserTier.FREE },
   { id: 'bots', label: 'בוטים', icon: '🤖', requiredTier: UserTier.HOME },
-  { id: 'apikeys', label: 'מפתחות API', icon: '🔑', requiredTier: UserTier.PRO },
+  { id: 'apikeys', label: 'מפתחות API', icon: '🔑', requiredTier: UserTier.FREE },
   { id: 'vault', label: 'חיבורים חיצוניים', icon: '🔐', requiredTier: UserTier.FREE },
   { id: 'advanced', label: 'מתקדם', icon: '⚙️', requiredTier: UserTier.FREE },
 ]
