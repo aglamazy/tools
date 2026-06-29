@@ -13,9 +13,13 @@
  *
  * Auth: `k` must equal YPAY_WEBHOOK_SECRET (server-only env). If the env is unset
  * (local dev) we still store the event but flag it `verified: false`.
+ *
+ * Billing ledger: if the payment link carries billingTier/billingKind metadata,
+ * a successful payment also upserts billingStatus/{ownerUserId} (#223).
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
+import { upsertBillingStatus } from '@/app/lib/billingLedger'
 
 export const runtime = 'nodejs'
 
@@ -73,6 +77,14 @@ export async function POST(request: NextRequest) {
         ...(r.url ? { receiptUrl: String(r.url) } : {}),
         ...(r.document_id !== undefined ? { serialNumber: String(r.document_id) } : {}),
       }, { merge: true })
+
+      // Billing ledger upsert (#223): if the link carries billingTier/billingKind
+      // metadata, propagate the payment outcome to billingStatus/{ownerUserId}.
+      if (ok) {
+        const linkDoc = await firestore.collection('ypayPaymentLinks').doc(cid).get()
+        const link = linkDoc.data() || {}
+        await upsertBillingStatus(firestore, link, ok)
+      }
     }
   } catch (err) {
     // Never fail YPAY's callback on our storage hiccup — log + 200 so it doesn't retry-storm.
