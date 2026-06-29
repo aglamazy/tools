@@ -33,7 +33,8 @@ export interface VariantConfig {
   /**
    * Whitelist of page ids visible in this variant's navigation surfaces
    * (sidebar, section tabs, page registry). `undefined` = no filtering
-   * (all pages visible) — i.e. the legacy Aglamazo behavior.
+   * except for shared variant-gates in `isPageAllowed` (for example, the
+   * grocery/stores surface stays hidden in Aglamazo).
    */
   allowedPages?: ReadonlySet<string>
   /** Public landing-page hero copy. */
@@ -102,6 +103,7 @@ export const VARIANT_CONFIG: VariantConfig = VARIANTS[VARIANT]
  * across variants without per-variant route trees.
  */
 export function isPageAllowed(pageId: string): boolean {
+  if (VARIANT === 'aglamazo' && pageId === 'stores') return false
   if (!VARIANT_CONFIG.allowedPages) return true
   return VARIANT_CONFIG.allowedPages.has(pageId)
 }
