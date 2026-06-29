@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useCallback } from 'react'
 import { getIdToken } from '@/app/services/firebaseAuthService'
+import { VARIANT_CONFIG } from '@/app/config/variants'
 
 interface TelegramLink {
   chatId: number
@@ -78,15 +79,25 @@ export default function TelegramTab() {
     return `${m}:${String(s).padStart(2, '0')}`
   }
 
+  const botHandle = `@${VARIANT_CONFIG.botName}`
+  const connectCopy = VARIANT_CONFIG.id === 'aglamazo'
+    ? 'חבר את חשבון הטלגרם שלך כדי לנהל משימות דרך'
+    : 'חבר את חשבון הטלגרם שלך כדי לנהל קניות ומשימות דרך'
+
   if (loading) return <div style={{ color: '#64748b' }}>טוען...</div>
 
   return (
     <div style={{ maxWidth: '500px' }}>
       <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem' }}>טלגרם</h3>
       <p style={{ color: '#64748b', fontSize: '0.85rem', margin: '0 0 1rem' }}>
-        חבר את חשבון הטלגרם שלך כדי לנהל קניות ומשימות דרך{' '}
-        <a href="https://t.me/AglamazoBot" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6' }}>
-          @AglamazoBot
+        {connectCopy}{' '}
+        <a
+          href={`https://t.me/${VARIANT_CONFIG.botName}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ color: '#3b82f6' }}
+        >
+          {botHandle}
         </a>
       </p>
 
@@ -130,7 +141,7 @@ export default function TelegramTab() {
           textAlign: 'center',
         }}>
           <div style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '0.5rem' }}>
-            שלח את הפקודה הזו ל-@AglamazoBot בטלגרם:
+            שלח את הפקודה הזו ל-{botHandle} בטלגרם:
           </div>
           <div style={{
             fontSize: '1.5rem',

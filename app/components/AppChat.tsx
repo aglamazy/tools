@@ -5,6 +5,7 @@ import { useToast } from '@/app/components/ToastContainer'
 import { getIdToken } from '@/app/services/firebaseAuthService'
 import { subscribeToAuth } from '@/app/stores/authStore'
 import { chatHistoryStore, type ChatMessage } from '@/app/stores/chatHistoryStore'
+import { VARIANT_CONFIG } from '@/app/config/variants'
 
 type Message = { role: 'user' | 'assistant'; content: string; thinking?: string }
 
@@ -113,6 +114,18 @@ function formatDelay(seconds: number): string {
   const min = Math.round(seconds / 60)
   return `${min} דקות`
 }
+
+const EMPTY_STATE_COPY = VARIANT_CONFIG.id === 'aglamazo'
+  ? {
+      title: 'העוזר האישי',
+      description: 'ניהול משימות ועוד. כתוב מה שצריך!',
+      hints: ['הוסף משימה', 'מה ברשימת המשימות?', 'כמה משימות פתוחות?'],
+    }
+  : {
+      title: 'העוזר האישי',
+      description: 'ניהול רשימות קניות, משימות ועוד. כתוב מה שצריך!',
+      hints: ['תוסיף חלב וביצים', 'מה ברשימה?', 'תזמין הזמנה'],
+    }
 
 /** AbortController-friendly sleep that rejects on `AbortError`. */
 function sleepAbortable(ms: number, signal: AbortSignal): Promise<void> {
@@ -440,12 +453,12 @@ export default function AppChat() {
         {messages.length === 0 && (
           <div className="app-chat-empty">
             <span style={{ fontSize: '2.5rem' }}>💬</span>
-            <h3>העוזר האישי</h3>
-            <p>ניהול רשימות קניות, משימות ועוד. כתוב מה שצריך!</p>
+            <h3>{EMPTY_STATE_COPY.title}</h3>
+            <p>{EMPTY_STATE_COPY.description}</p>
             <div className="app-chat-hints">
-              <span>תוסיף חלב וביצים</span>
-              <span>מה ברשימה?</span>
-              <span>תזמין הזמנה</span>
+              {EMPTY_STATE_COPY.hints.map(hint => (
+                <span key={hint}>{hint}</span>
+              ))}
             </div>
           </div>
         )}

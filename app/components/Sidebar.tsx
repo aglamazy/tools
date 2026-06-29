@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation'
 import { businessStore } from '@/app/stores/businessStore'
 import { userTierStore, UserTier } from '@/app/stores/userTierStore'
 import { config, routes } from '@/app/config'
+import { VARIANT_CONFIG } from '@/app/config/variants'
 import { isPageAllowed } from '@/app/config/variants'
 import type { Business } from '@/app/db/financeDB'
 import { BUSINESS_TYPE_CONFIG } from '@/app/types/businessColors'
@@ -61,8 +62,8 @@ const allModules: Module[] = [
   },
   {
     id: 'shopping',
-    label: 'קניות',
-    icon: '🛒',
+    label: VARIANT_CONFIG.id === 'aglamazo' ? 'צ׳אט' : 'קניות',
+    icon: VARIANT_CONFIG.id === 'aglamazo' ? '💬' : '🛒',
     items: [
       { id: 'stores', title: 'חנויות', href: routes.stores, icon: '🛒', available: true, requiredTier: UserTier.FREE },
       { id: 'chat', title: 'צ׳אט', href: routes.chat, icon: '💬', available: true, requiredTier: UserTier.FREE },
