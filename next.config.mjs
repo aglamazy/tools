@@ -15,7 +15,7 @@ const nextConfig = {
   },
 
   async headers() {
-    const indexableRoutes = ['/', '/about', '/contact', '/demo-form', '/form-filler', '/guide', '/pricing', '/terms']
+    const indexableRoutes = ['/', '/about', '/contact', '/demo-form', '/guide', '/pricing', '/terms']
     return [
       {
         source: '/sitemap.xml',

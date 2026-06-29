@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   title: `מילוי טפסים | ${branding.name}`,
   description: `כלי מילוי טפסים אוטומטי של ${branding.name}. חסכו זמן במילוי טפסים מקוונים עבור העסק שלכם.`,
   keywords: ['מילוי טפסים אוטומטי', 'auto fill forms', 'טפסים מקוונים', 'הרשמה אוטומטית', 'בקשות ממשלתיות', 'טפסים לעסקים', 'Aglamazo'],
-  robots: { index: true, follow: true, googleBot: { index: true, follow: true, 'max-video-preview': -1, 'max-image-preview': 'large', 'max-snippet': -1 } },
+  robots: { index: false, follow: false },
   alternates: {
     canonical: '/form-filler',
     languages: {

@@ -25,7 +25,6 @@ const ALL_PAGES_RAW: NavigablePage[] = [
   { id: 'business-categories', label: 'עסקים', icon: '🏛️', href: routes.businessCategories, requiredTier: UserTier.PRO },
   { id: 'stores', label: 'חנויות', icon: '🛒', href: routes.stores, requiredTier: UserTier.FREE },
   { id: 'chat', label: 'צ׳אט', icon: '💬', href: routes.chat, requiredTier: UserTier.FREE },
-  { id: 'form-filler', label: 'מילוי טפסים', icon: '📋', href: '/form-filler', requiredTier: UserTier.FREE },
   { id: 'settings', label: 'הגדרות', icon: '⚙️', href: routes.settings, requiredTier: UserTier.FREE },
 ]
 

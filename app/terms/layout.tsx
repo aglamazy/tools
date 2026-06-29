@@ -72,7 +72,6 @@ export default function TermsLayout({ children }: { children: React.ReactNode })
           <li><Link href="/guide" style={{ color: '#4338ca' }}>מדריך שימוש</Link></li>
           <li><Link href="/pricing" style={{ color: '#4338ca' }}>מחירים</Link></li>
           <li><Link href="/demo-form" style={{ color: '#4338ca' }}>טופס הדגמה</Link></li>
-          <li><Link href="/form-filler" style={{ color: '#4338ca' }}>מילוי טפסים</Link></li>
           <li><Link href="/contact" style={{ color: '#4338ca' }}>צור קשר</Link></li>
         </ul>
       </nav>

@@ -84,7 +84,7 @@ function discoverPublicRoutes(dir: string, basePath = ''): DiscoveredRoute[] {
 }
 
 /** Higher-priority routes that should be crawled first */
-const HIGH_PRIORITY_ROUTES = new Set(['/', '/about', '/pricing', '/guide', '/contact', '/demo-form', '/form-filler', '/terms'])
+const HIGH_PRIORITY_ROUTES = new Set(['/', '/about', '/pricing', '/guide', '/contact', '/demo-form', '/terms'])
 
 /** Routes that should not appear in the sitemap (personalized / requires auth) */
 const NOINDEX_ROUTES = new Set(['/share-invite'])

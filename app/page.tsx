@@ -47,7 +47,6 @@ const homeJsonLd = [
       `${siteUrl}/guide`,
       `${siteUrl}/pricing`,
       `${siteUrl}/demo-form`,
-      `${siteUrl}/form-filler`,
       `${siteUrl}/contact`,
       `${siteUrl}/terms`,
     ],
@@ -150,10 +149,6 @@ export default function LandingPage() {
           <div className="landing-step">
             <h3><Link href="/demo-form">טופס הדגמה</Link></h3>
             <p>נסו את כלי מילוי הטפסים שלנו עם טופס דוגמה אינטראקטיבי.</p>
-          </div>
-          <div className="landing-step">
-            <h3><Link href="/form-filler">מילוי טפסים</Link></h3>
-            <p>כלי אוטומטי למילוי טפסים מקוונים — חסכו זמן בהרשמות.</p>
           </div>
           <div className="landing-step">
             <h3><Link href={routes.publicTerms}>תנאי שימוש</Link></h3>

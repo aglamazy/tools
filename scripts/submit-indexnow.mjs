@@ -15,7 +15,6 @@ const URLS = [
   '/about',
   '/contact',
   '/demo-form',
-  '/form-filler',
   '/guide',
   '/pricing',
   '/terms',
