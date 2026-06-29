@@ -66,6 +66,7 @@ export default function PaymentLinkModal({ business, projects, vatType, onProjec
   const [error, setError] = useState<string | null>(null)
   const [resultUrl, setResultUrl] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [saveToken, setSaveToken] = useState(false)
 
   useEffect(() => {
     if (projectId == null && projects.length > 0) setProjectId(projects[0].id ?? null)
@@ -126,6 +127,7 @@ export default function PaymentLinkModal({ business, projects, vatType, onProjec
         // Always send `payments` — it's YPAY's MAX (default 12). Sending 1 caps
         // the clearance page to a single payment instead of offering 1..12.
         payments,
+        saveToken,
       })
       // Share OUR branded page (logo + itemized details + YPAY iframe), not the
       // raw YPAY clearance url.
@@ -226,6 +228,11 @@ export default function PaymentLinkModal({ business, projects, vatType, onProjec
             <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', fontSize: '0.85rem', cursor: 'pointer' }}>
               <input type="checkbox" checked={priceIncludesVat} onChange={(e) => setPriceIncludesVat(e.target.checked)} />
               המחירים שהוקלדו כוללים מע״מ
+            </label>
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', fontSize: '0.85rem', cursor: 'pointer' }}>
+              <input type="checkbox" checked={saveToken} onChange={(e) => setSaveToken(e.target.checked)} />
+              שמור טוקן אשראי לחיובים עתידיים (ריטיינר)
             </label>
 
             <div style={{ marginBottom: '1rem' }}>

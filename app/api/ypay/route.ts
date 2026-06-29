@@ -95,6 +95,7 @@ export async function POST(request: NextRequest) {
         items, contact, chargeIdentifier, docType,
         payments, mail, lang, currency, appOrigin,
         businessId, businessName, ownerUserId, amount,
+        saveToken,
       } = body
 
       if (!items || !Array.isArray(items) || items.length === 0) {
@@ -138,6 +139,12 @@ export async function POST(request: NextRequest) {
           ...(notifyUrl ? { notifyUrl } : {}),
           ...(successUrl ? { successUrl } : {}),
           ...(failureUrl ? { failureUrl } : {}),
+          // Save the customer's CC token for future/recurring charges. UNDOCUMENTED
+          // in the v1.9 public API — YPAY's web UI sends `save_token=on` to its
+          // internal endpoint (Agla captured it). We send both the snake_case the
+          // UI uses and the camelCase the public API otherwise follows, and let
+          // YPAY honor whichever it recognizes (unknown fields are ignored).
+          ...(saveToken ? { saveToken: true, save_token: true } : {}),
         }),
       })
 

@@ -161,6 +161,8 @@ export const ypayService = {
     /** Gross total for display on our page + income list (YPAY computes its own;
      *  this is what the user sees, VAT included). */
     amount?: number
+    /** Save the customer's CC token for future/recurring charges (retainer). */
+    saveToken?: boolean
   }): Promise<{ url: string; chargeIdentifier: string }> => {
     const credentials = getCredentials(business)
     const effectiveVatType = params.vatType || business.vatType
@@ -188,6 +190,7 @@ export const ypayService = {
         businessName: business.name,
         ownerUserId: business.userId,
         ...(params.amount !== undefined ? { amount: params.amount } : {}),
+        ...(params.saveToken ? { saveToken: true } : {}),
         appOrigin,
       }),
     })
