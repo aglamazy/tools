@@ -119,7 +119,6 @@ export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose
   const [pinnedBusinesses, setPinnedBusinesses] = useState<Business[]>([])
   const [userTier, setUserTier] = useState<UserTier>(userTierStore.get())
   const [upgradePrompt, setUpgradePrompt] = useState<{ item: MenuItem } | null>(null)
-  const showIntro = pathname === routes.dashboard
 
   // Filter modules based on variant whitelist, dev-mode, and tier access.
   // Variant filter runs first so a missing page id doesn't reach the
@@ -175,23 +174,6 @@ export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose
 
   return (
     <aside className={`sidebar ${isOpen ? 'sidebar-open' : ''}`}>
-      {showIntro && (
-        <div className="sidebar-intro">
-          <p className="sidebar-intro-kicker">התחלה מהירה</p>
-          <h2>הכל מתחיל מהתפריט הזה</h2>
-          <p>
-            אם זו הפעם הראשונה, התחילו בייבוא קבצים או במדריך השימוש. משם אפשר לעבור לשאר המסכים.
-          </p>
-          <div className="sidebar-intro-actions">
-            <Link href={routes.import} className="sidebar-intro-primary" onClick={onClose}>
-              ייבוא קבצים
-            </Link>
-            <Link href={routes.guide} className="sidebar-intro-secondary" onClick={onClose}>
-              מדריך שימוש
-            </Link>
-          </div>
-        </div>
-      )}
       <nav className="sidebar-nav">
         <ul className="mod-list">
           {flatItems.map((entry, i) => {
