@@ -35,6 +35,9 @@ function ImportPageContent() {
   const [savedDirHandle, setSavedDirHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [showFileBrowser, setShowFileBrowser] = useState(false)
   const [showWizard, setShowWizard] = useState(false)
+  // Name of the file currently being analyzed/imported — drives a blocking
+  // overlay so a slow PDF extraction (~10-40s via Gemini) isn't silent.
+  const [importing, setImporting] = useState<string | null>(null)
 
   // Modal states
   const [messageModal, setMessageModal] = useState<{ isOpen: boolean; emoji?: string; message: string }>({
@@ -222,10 +225,13 @@ const handleDeleteFile = (file: ImportedFile) => {
   }
 
   const handleFileSelect = async (file: File) => {
+    setImporting(file.name)
+    console.log('[import] start', { name: file.name, type: file.type, size: file.size })
     try {
       // Extract file metadata
       const { extractFileMetadata } = await import('@/app/utils/filePreview')
       const metadata = await extractFileMetadata(file)
+      console.log('[import] metadata', metadata)
 
       if (metadata.fileType === 'unknown') {
         setMessageModal({
@@ -249,6 +255,7 @@ const handleDeleteFile = (file: ImportedFile) => {
 
       // Helper: actually import the file and save
       const doImport = async () => {
+        console.log('[import] doImport', { fileType: metadata.fileType, month: metadata.processingMonth, card: metadata.cardNumber, account: metadata.accountNumber })
         const fileId = `${Date.now()}-${file.name}`
         const { fileImportService } = await import('@/app/services/fileImportService')
 
@@ -295,7 +302,9 @@ const handleDeleteFile = (file: ImportedFile) => {
       await doImport()
     } catch (err) {
       console.error('Error importing file:', err)
-      showToast('error', 'אירעה שגיאה בייבוא הקובץ.')
+      showToast('error', `אירעה שגיאה בייבוא הקובץ: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setImporting(null)
     }
   }
 
@@ -344,6 +353,17 @@ const handleDeleteFile = (file: ImportedFile) => {
 
   return (
     <main className="app" dir="rtl">
+      {importing && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+          <div style={{ background: '#fff', borderRadius: '0.75rem', padding: '1.5rem 2rem', textAlign: 'center', maxWidth: 380, boxShadow: '0 10px 40px rgba(15,23,42,0.2)' }}>
+            <div style={{ fontSize: '1.75rem', marginBottom: '0.5rem' }}>⏳</div>
+            <div style={{ fontWeight: 600, color: '#0f172a' }}>מנתח את הקובץ…</div>
+            <div style={{ fontSize: '0.85rem', color: '#64748b', marginTop: '0.35rem' }}>
+              {importing} — קובצי PDF מנותחים אוטומטית ויכולים לקחת עד דקה.
+            </div>
+          </div>
+        </div>
+      )}
       <div className="card">
         <header>
           <h1>ייבוא קבצים</h1>

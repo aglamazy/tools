@@ -1,6 +1,8 @@
 "use client"
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
+import { routes } from '@/app/config'
 import { transactionStore } from '@/app/stores/transactionStore'
 import { subjectStore } from '@/app/stores/subjectStore'
 
@@ -134,9 +136,36 @@ export default function HomePage() {
             <p style={{ margin: 0, color: '#64748b' }}>טוען נתונים...</p>
           </div>
         ) : monthSummaries.length === 0 ? (
-          <div className="card">
-            <p style={{ margin: 0, color: '#64748b' }}>
-              עדיין אין נתונים היסטוריים. טען קובץ תנועות כדי לראות תקציר כאן.
+          // Getting-started onboarding. Gated on zero imported months, so it
+          // stays as the first-run surface until the user actually imports —
+          // then it's replaced by the real cash-flow view below. (Liel feedback.)
+          <div
+            className="card"
+            style={{ textAlign: 'center', padding: '2.5rem 1.5rem', maxWidth: 580, margin: '2rem auto' }}
+          >
+            <div style={{ fontSize: '2.75rem', marginBottom: '0.75rem' }}>📥</div>
+            <h2 style={{ margin: '0 0 0.5rem', fontSize: '1.45rem', color: '#0f172a' }}>
+              בוא נראה את התזרים שלך
+            </h2>
+            <p style={{ margin: '0 auto 1.5rem', maxWidth: 460, color: '#64748b', lineHeight: 1.7 }}>
+              כדי לראות את התזרים — הכנסות מול הוצאות, חודש אחר חודש — יש לטעון קבצי חשבון ואשראי.
+            </p>
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap', marginBottom: '1.75rem' }}>
+              <Link
+                href={routes.import}
+                style={{ display: 'inline-block', padding: '0.7rem 1.6rem', borderRadius: '0.5rem', background: '#4f46e5', color: '#fff', fontWeight: 600, fontSize: '0.95rem', textDecoration: 'none' }}
+              >
+                📥 ייבוא קבצים
+              </Link>
+              <Link
+                href={routes.guide}
+                style={{ display: 'inline-block', padding: '0.7rem 1.6rem', borderRadius: '0.5rem', background: '#fff', color: '#4f46e5', border: '1px solid #c7d2fe', fontWeight: 600, fontSize: '0.95rem', textDecoration: 'none' }}
+              >
+                מדריך שימוש
+              </Link>
+            </div>
+            <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.82rem', lineHeight: 1.8 }}>
+              1. טוענים קבצי חשבון ואשראי&nbsp;&middot;&nbsp;2. הקטגוריות מתמלאות אוטומטית&nbsp;&middot;&nbsp;3. רואים תזרים
             </p>
           </div>
         ) : (

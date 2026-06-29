@@ -215,6 +215,29 @@ export default function FileBrowser({
     }
   }
 
+  // Direct single-file pick (PDF / Excel). Additive to the folder picker (which
+  // stays as the persistent-permission path). Feeds the same onFileSelect.
+  const handleSelectFiles = async () => {
+    try {
+      const [handle] = await (window as any).showOpenFilePicker({
+        multiple: false,
+        types: [{
+          description: 'קבצי בנק / כרטיסי אשראי (PDF, Excel)',
+          accept: {
+            'application/pdf': ['.pdf'],
+            'application/vnd.ms-excel': ['.xls'],
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+          },
+        }],
+      })
+      if (handle) onFileSelect(await handle.getFile())
+    } catch (err: any) {
+      if (err.name === 'AbortError') return
+      console.error('Error selecting file:', err)
+      setError('שגיאה בבחירת קובץ')
+    }
+  }
+
   const handleEnterSubfolder = async (folder: { name: string; handle: FileSystemDirectoryHandle }) => {
     if (currentDirHandle) {
       setDirStack((prev) => [...prev, { name: currentDirHandle.name, handle: currentDirHandle }])
@@ -277,13 +300,18 @@ export default function FileBrowser({
           <p style={{ margin: '0 0 1.5rem 0', fontSize: '0.875rem', color: '#1e3a8a' }}>
             בחר את תיקיית ההורדות (Downloads) שבה נמצאים קבצי הבנק וכרטיסי האשראי שלך
           </p>
-          <button
-            onClick={handleSelectFolder}
-            className="file-picker"
-            style={{ margin: '0 auto' }}
-          >
-            📂 בחר תיקייה
-          </button>
+          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+            <button onClick={handleSelectFiles} className="file-picker">
+              📄 בחר קובץ
+            </button>
+            <button
+              onClick={handleSelectFolder}
+              className="file-picker"
+              style={{ background: '#fff', color: '#4338ca', border: '1px solid #c7d2fe' }}
+            >
+              📂 בחר תיקייה
+            </button>
+          </div>
         </div>
       )}
       {loading && (
