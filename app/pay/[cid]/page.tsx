@@ -135,6 +135,14 @@ export default async function PayPage({ params }: { params: Promise<{ cid: strin
             )}
           </div>
         </div>
+
+        {/* Data-handling transparency (#213 non-zero-trust disclosure): the payer
+            sees that the request details are server-stored + readable by the
+            business operator; card data stays on YPAY's PCI page. Mirrors T&C §6. */}
+        <p style={{ fontSize: '0.72rem', color: '#94a3b8', textAlign: 'center', marginTop: '1rem', lineHeight: 1.6 }}>
+          פרטי בקשת תשלום זו (שם, פריטים, סכום וסטטוס) נשמרים בשרת מאובטח (Firebase) לצורך הצגת העמוד ומעקב,
+          וקריאים למפעיל העסק. פרטי כרטיס האשראי מוזנים ומאובטחים בעמוד הסליקה של YPAY ואינם נשמרים כאן.
+        </p>
       </div>
     </div>
   )

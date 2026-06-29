@@ -48,7 +48,24 @@ export default function TermsContent() {
       </section>
 
       <section style={{ marginBottom: '1.5rem' }}>
-        <h2 style={{ fontSize: '1.25rem', marginBottom: '0.75rem' }}>6. שינויים בתנאים</h2>
+        <h2 style={{ fontSize: '1.25rem', marginBottom: '0.75rem' }}>6. תשלומים וסליקה (קישורי תשלום)</h2>
+        <p>
+          כאשר אתה משתמש בתכונת קישורי התשלום (סליקת אשראי דרך YPAY), חלק מהמידע נשמר בשרתים שלנו —
+          בשונה משאר המידע הפיננסי המתואר בסעיף 2. כדי שעמוד התשלום יוצג ללקוח שלך (הנמצא במכשיר אחר)
+          וכדי שנוכל לעקוב אחר סטטוס התשלום, אנו שומרים בענן (Firebase / Firestore) את פרטי הבקשה:
+          שם העסק, פרטי הלקוח שהזנת, פירוט הפריטים, הסכום וסטטוס התשלום.
+        </p>
+        <p>
+          מידע זה נשמר בצורה <strong>גלויה — לא מוצפנת ב&quot;ידע אפס&quot; (zero-knowledge)</strong> כמו שאר נתוני
+          האפליקציה. משמעות הדבר: מפעיל השירות (Aglamazo / יעקב אגלמז), וכן צוות Firebase / Google בעל גישת
+          ייצור, יכולים עקרונית לקרוא מידע זה. אנו לא מרככים זאת: שימוש בקישורי התשלום אינו עומד במודל ידע-האפס.
+          פרטי כרטיס האשראי עצמם מוזנים ומעובדים ישירות מול YPAY ואינם נשמרים אצלנו. אם אינך מעוניין באחסון
+          מסוג זה — אל תשתמש בתכונת קישורי התשלום.
+        </p>
+      </section>
+
+      <section style={{ marginBottom: '1.5rem' }}>
+        <h2 style={{ fontSize: '1.25rem', marginBottom: '0.75rem' }}>7. שינויים בתנאים</h2>
         <p>
           אנו שומרים לעצמנו את הזכות לעדכן תנאי שימוש אלה מעת לעת.
           שינויים מהותיים יופיעו בהתראה בתוך האפליקציה.
@@ -57,7 +74,7 @@ export default function TermsContent() {
       </section>
 
       <section style={{ marginBottom: '1.5rem' }}>
-        <h2 style={{ fontSize: '1.25rem', marginBottom: '0.75rem' }}>7. יצירת קשר</h2>
+        <h2 style={{ fontSize: '1.25rem', marginBottom: '0.75rem' }}>8. יצירת קשר</h2>
         <p>
           לשאלות בנוגע לתנאי השימוש, ניתן לפנות אלינו בדוא"ל:{' '}
           <a href="mailto:support@aglamaz.com" style={{ color: '#4338ca' }}>support@aglamaz.com</a>.
@@ -65,7 +82,7 @@ export default function TermsContent() {
       </section>
 
       <p style={{ color: '#94a3b8', fontSize: '0.875rem', marginTop: '2rem' }}>
-        עודכן לאחרונה: אפריל 2026
+        עודכן לאחרונה: יוני 2026
       </p>
     </div>
   )
