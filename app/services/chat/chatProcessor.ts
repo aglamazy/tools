@@ -98,6 +98,13 @@ export interface UserContext {
    * call needs to walk the user through Tier-3 acceptance first.
    */
   serverCredsConsent?: { acceptedAt: string; policyVersion: string } | null
+  /**
+   * Masked phone from a previously-connected OTP store (Tier 3 only — Tier 2
+   * phones live in the browser, never server-side). Format: "...XXXX" (last 4
+   * digits). When present, the LLM should offer to reuse it instead of asking
+   * for the phone again.
+   */
+  storedOtpPhone?: { masked: string }
 
   // Legacy
   /** @deprecated use stores instead */
@@ -180,6 +187,7 @@ export const SYSTEM_PROMPT = `אתה ${VARIANT_CONFIG.botName} — עוזר מש
 - שופרסל: אימייל + סיסמה (set_credentials). **למשתמש מחובר** — דורש החלטת tier (ראה "פרטיות וסיסמאות" למטה).
 - מקור השפע ושאר רשת Rexail: מספר טלפון + קוד SMS (set_otp_phone → verify_otp). **משתמש אנונימי** יכול להזמין באופן חד-פעמי בלי חשבון.
 - כשמשתמש שולח קוד מספרי והמצב מראה otpPending=true, זה קוד SMS → verify_otp.
+- **מספר טלפון שמור:** אם ההקשר מציג "מספר טלפון שמור (OTP): ...XXXX" — **אל תבקש מספר טלפון**. במקום זאת, הצע: "יש לי מספר שמור (...XXXX) — להשתמש בו לחיבור <שם חנות>?" אם המשתמש מאשר — קרא ל-set_otp_phone **ללא** phone (המערכת תשתמש במספר השמור אוטומטית).
 
 ## פרטיות וסיסמאות — קודם תקרא את "רמת פרטיות נוכחית" בהקשר
 **הרמה הנוכחית של המשתמש כתובה למטה בהקשר** ("## רמת פרטיות נוכחית של המשתמש הזה"). זה ה-single source of truth לכל שאלת פרטיות.
@@ -516,6 +524,10 @@ export function buildContextBlock(ctx: UserContext): string {
     } else {
       parts.push('Tier 3 consent: NOT granted (saving credentials server-side will be refused; ask the user before retrying)')
     }
+  }
+
+  if (ctx.storedOtpPhone) {
+    parts.push(`מספר טלפון שמור (OTP): ${ctx.storedOtpPhone.masked} — הצע למשתמש להשתמש בו לחיבור חנות OTP חדשה; אם מאשר, קרא ל-set_otp_phone ללא phone`)
   }
 
   if (ctx.stores?.length) {
