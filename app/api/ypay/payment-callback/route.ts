@@ -6,10 +6,9 @@
  * POSTs the transaction result here (per API doc v1.9 p.12 "Transaction Information"):
  *   { success: 'true'|'false', transactionId, url, sum, document_id, document_type }
  *
- * Step-2 of the #73 test plan: this stores the RAW payload exactly as received to
- * Firestore `ypayPaymentEvents` so we can see the real object shape and wire the
- * payment into the income line. Body may arrive as JSON or form-encoded — we keep
- * whatever we get, untouched, under `raw`.
+ * Stores the raw payload exactly as received to Firestore `ypayPaymentEvents` to
+ * wire the payment into the income line. Body may arrive as JSON or form-encoded —
+ * stored as-is under `raw`.
  *
  * Auth: `k` must equal YPAY_WEBHOOK_SECRET (server-only env). If the env is unset
  * (local dev) we still store the event but flag it `verified: false`.
@@ -56,25 +55,11 @@ export async function POST(request: NextRequest) {
 
   const raw = await parseBody(request)
 
-  // SMOKE-TEST: capture EVERYTHING the sender posted (method/url/query/headers/
-  // body) so we can inspect exactly what YPAY sends. ⚠️ url + query carry
-  // &k=<secret> — rotate YPAY_WEBHOOK_SECRET after the smoke test, or strip this
-  // `request` field before relying on the events log in steady-state prod.
-  const requestDump = {
-    method: request.method,
-    url: request.url,
-    path: url.pathname,
-    query: Object.fromEntries(searchParams.entries()),
-    headers: Object.fromEntries(request.headers.entries()),
-    contentType: request.headers.get('content-type') || null,
-  }
-
   try {
     const firestore = getAdminFirestore()
     await firestore.collection('ypayPaymentEvents').add({
       chargeIdentifier: cid || null,
       verified,
-      request: requestDump,
       raw,
       receivedAt: new Date().toISOString(),
     })
