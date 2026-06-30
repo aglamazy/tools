@@ -25,7 +25,6 @@ const STATIC_PAGES: SearchablePage[] = [
   { title: 'מסים', keywords: ['מסים', 'מס', 'tax', 'taxes'], href: routes.taxes, icon: '🏛️', requiredTier: UserTier.PRO },
   { title: 'משימות', keywords: ['משימות', 'todo', 'tasks'], href: routes.todo, icon: '✓', requiredTier: UserTier.FREE },
   { title: 'עסקים', keywords: ['עסקים', 'עסק', 'business', 'חשבונית'], href: routes.businessCategories, icon: '🏛️', requiredTier: UserTier.PRO },
-  { title: 'מילוי טפסים', keywords: ['טפסים', 'form', 'filler', 'רישום'], href: '/form-filler', icon: '📋', requiredTier: UserTier.FREE },
   { title: 'מחקר שוק', keywords: ['מחקר', 'שוק', 'market', 'research', 'מוצרים'], href: routes.marketResearch, icon: '🔍', requiredTier: UserTier.PRO },
   { title: 'Gmail', keywords: ['gmail', 'מייל', 'דואר'], href: routes.gmail, icon: '📧', requiredTier: UserTier.PRO },
   { title: 'פרופיל', keywords: ['פרופיל', 'profile', 'חשבון'], href: routes.profile, icon: '👤', requiredTier: UserTier.FREE },

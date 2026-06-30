@@ -25,7 +25,6 @@ export default function SiteFooter() {
             <Link href={routes.guide}>מדריך</Link>
             <Link href={routes.pricing}>מחירון</Link>
             <Link href="/demo-form">טופס הדגמה</Link>
-            <Link href="/form-filler">מילוי טפסים</Link>
             <Link href={routes.publicTerms}>תנאי שימוש</Link>
           </div>
         )}

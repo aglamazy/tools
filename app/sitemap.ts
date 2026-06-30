@@ -84,7 +84,7 @@ function discoverPublicRoutes(dir: string, basePath = ''): DiscoveredRoute[] {
 }
 
 /** Higher-priority routes that should be crawled first */
-const HIGH_PRIORITY_ROUTES = new Set(['/', '/about', '/pricing', '/guide', '/contact', '/demo-form', '/form-filler', '/terms'])
+const HIGH_PRIORITY_ROUTES = new Set(['/', '/about', '/pricing', '/guide', '/contact', '/demo-form', '/terms'])
 
 /** Content hub directory prefixes — sub-paths automatically get high priority once they exist */
 const HIGH_PRIORITY_PREFIXES = ['/madrich/', '/template/', '/machshevon/']
@@ -96,7 +96,7 @@ const HIGH_PRIORITY_PREFIXES = ['/madrich/', '/template/', '/machshevon/']
  * - /saliko, /saliko/privacy: cross-domain canonical (saliko.co.il) — these are Saliko's pages,
  *   not Aglamazo content; including them wastes crawl budget without benefit
  */
-const NOINDEX_ROUTES = new Set(['/share-invite', '/pay/success', '/pay/failure', '/saliko', '/saliko/privacy'])
+const NOINDEX_ROUTES = new Set(['/share-invite', '/pay/success', '/pay/failure', '/saliko', '/saliko/privacy', '/form-filler'])
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const appDir = path.join(process.cwd(), 'app')
