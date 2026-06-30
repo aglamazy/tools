@@ -16,7 +16,7 @@
     },
     {
       "path": "/api/chat/queue-cron",
-      "schedule": "*/10 * * * *"
+      "schedule": "*/2 * * * *"
     }
   ]
 }
