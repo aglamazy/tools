@@ -364,6 +364,32 @@ export function QuickWinPage({ page }: { page: QuickWinPageData }) {
         { '@type': 'ListItem', position: 2, name: page.title, item: `${NORMALIZED_BASE}${page.path}` },
       ],
     },
+    {
+      '@context': 'https://schema.org',
+      '@type': 'FAQPage',
+      mainEntity: [
+        {
+          '@type': 'Question',
+          name: page.title,
+          acceptedAnswer: {
+            '@type': 'Answer',
+            text: [page.intro, ...page.keyPoints].join(' '),
+          },
+        },
+      ],
+    },
+    {
+      '@context': 'https://schema.org',
+      '@type': 'HowTo',
+      name: `איך Aglamazo עוזר — ${page.title}`,
+      description: page.intro,
+      inLanguage: 'he-IL',
+      step: page.productSteps.map((text, i) => ({
+        '@type': 'HowToStep',
+        position: i + 1,
+        text,
+      })),
+    },
   ]
 
   return (
@@ -512,4 +538,136 @@ const listStyle: CSSProperties = {
 const listItemStyle: CSSProperties = {
   lineHeight: 1.9,
   color: '#334155',
+}
+
+export type QuickWinHubData = {
+  path: string
+  title: string
+  description: string
+  pages: QuickWinPageData[]
+}
+
+export function buildHubMetadata(hub: QuickWinHubData): Metadata {
+  return {
+    title: `${hub.title} | Aglamazo`,
+    description: hub.description,
+    alternates: {
+      canonical: hub.path,
+      languages: {
+        'he-IL': hub.path,
+        'x-default': hub.path,
+      },
+    },
+    openGraph: {
+      title: `${hub.title} | Aglamazo`,
+      description: hub.description,
+      url: `${NORMALIZED_BASE}${hub.path}`,
+      siteName: 'Aglamazo',
+      type: 'website',
+      locale: 'he_IL',
+      images: [{ url: '/logo.png', width: 2816, height: 1536, alt: hub.title }],
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: `${hub.title} | Aglamazo`,
+      description: hub.description,
+      images: ['/logo.png'],
+    },
+    robots: { index: true, follow: true },
+  }
+}
+
+export function QuickWinHub({ hub }: { hub: QuickWinHubData }) {
+  const jsonLd = [
+    {
+      '@context': 'https://schema.org',
+      '@type': 'CollectionPage',
+      name: hub.title,
+      description: hub.description,
+      url: `${NORMALIZED_BASE}${hub.path}`,
+      inLanguage: 'he-IL',
+      datePublished: QUICK_WIN_DATE,
+      dateModified: QUICK_WIN_DATE,
+      isPartOf: { '@type': 'WebSite', name: 'Aglamazo', url: `${NORMALIZED_BASE}/` },
+    },
+    {
+      '@context': 'https://schema.org',
+      '@type': 'BreadcrumbList',
+      itemListElement: [
+        { '@type': 'ListItem', position: 1, name: 'Aglamazo', item: `${NORMALIZED_BASE}/` },
+        { '@type': 'ListItem', position: 2, name: hub.title, item: `${NORMALIZED_BASE}${hub.path}` },
+      ],
+    },
+    {
+      '@context': 'https://schema.org',
+      '@type': 'ItemList',
+      name: hub.title,
+      itemListElement: hub.pages.map((page, i) => ({
+        '@type': 'ListItem',
+        position: i + 1,
+        name: page.title,
+        url: `${NORMALIZED_BASE}${page.path}`,
+      })),
+    },
+  ]
+
+  return (
+    <main dir="rtl" style={{ background: 'linear-gradient(180deg, #f8fafc 0%, #fff 36%, #f8fafc 100%)', minHeight: '100vh' }}>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+      <div style={{ maxWidth: 1040, margin: '0 auto', padding: '2rem 1rem 3rem' }}>
+        <section
+          style={{
+            background: 'linear-gradient(135deg, #0f172a 0%, #0f766e 100%)',
+            color: '#f8fafc',
+            borderRadius: 24,
+            padding: '2rem',
+            boxShadow: '0 30px 70px rgba(15, 23, 42, 0.18)',
+            marginBottom: 22,
+          }}
+        >
+          <h1 style={{ margin: 0, fontSize: 'clamp(1.8rem, 4vw, 2.8rem)', lineHeight: 1.15 }}>{hub.title}</h1>
+          <p style={{ marginTop: 14, marginBottom: 0, maxWidth: 760, fontSize: '1.05rem', lineHeight: 1.8, color: '#dbeafe' }}>
+            {hub.description}
+          </p>
+        </section>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 18 }}>
+          {hub.pages.map((page) => (
+            <Link
+              key={page.path}
+              href={page.path}
+              style={{
+                display: 'block',
+                background: '#ffffff',
+                borderRadius: 20,
+                padding: '1.35rem',
+                boxShadow: '0 14px 40px rgba(15, 23, 42, 0.08)',
+                border: '1px solid #e2e8f0',
+                textDecoration: 'none',
+                color: 'inherit',
+                transition: 'box-shadow 0.15s',
+              }}
+            >
+              <span
+                style={{
+                  display: 'inline-block',
+                  background: '#f0fdf4',
+                  color: '#0f766e',
+                  border: '1px solid #a7f3d0',
+                  borderRadius: 999,
+                  padding: '0.2rem 0.65rem',
+                  fontSize: '0.82rem',
+                  marginBottom: 10,
+                }}
+              >
+                {page.category}
+              </span>
+              <h2 style={{ margin: 0, fontSize: '1.1rem', color: '#0f172a', lineHeight: 1.35 }}>{page.title}</h2>
+              <p style={{ margin: '0.6rem 0 0', fontSize: '0.9rem', color: '#475569', lineHeight: 1.7 }}>{page.description}</p>
+            </Link>
+          ))}
+        </div>
+      </div>
+    </main>
+  )
 }

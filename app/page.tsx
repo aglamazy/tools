@@ -156,6 +156,24 @@ export default function LandingPage() {
         </div>
       </section>
 
+      <section className="landing-links">
+        <h2>מדריכים, תבניות ומחשבונים</h2>
+        <div className="landing-steps">
+          <div className="landing-step">
+            <h3><Link href="/madrich">מדריכים לבעל עסק</Link></h3>
+            <p>קריאת דפי בנק, התאמת חשבון, תזרים מזומנים, מע"מ, הוצאות מוכרות וסיווג אוטומטי — מדריכים מעשיים חינם.</p>
+          </div>
+          <div className="landing-step">
+            <h3><Link href="/template">תבניות אקסל חינם</Link></h3>
+            <p>תבנית תזרים מזומנים וטבלת הוצאות והכנסות — להורדה ולשימוש מיידי, עם מעבר קל לסיווג אוטומטי.</p>
+          </div>
+          <div className="landing-step">
+            <h3><Link href="/machshevon">מחשבונים לעצמאי</Link></h3>
+            <p>מחשבוני מקדמות מס הכנסה ומע"מ — מבוססים על נתוני תזרים אמיתיים, לא על תחושת בטן.</p>
+          </div>
+        </div>
+      </section>
+
       <section className="landing-contact">
         <h2>שאלה? בעיה? דברו איתנו</h2>
         <p>נשמח לעזור בכל נושא - שלחו הודעה ונחזור אליכם בהקדם</p>
