@@ -1,7 +1,7 @@
 /**
  * chatQueue — Firestore-backed retry queue for Telegram chat messages whose
  * LLM call exhausted the in-line recovery ladder. A cron drains the queue
- * every 2 minutes; entries respect their own per-message `nextRetryAt` so
+ * every 10 minutes; entries respect their own per-message `nextRetryAt` so
  * each retry waits the right exp-backoff delay regardless of cron cadence.
  *
  * The same backoff schedule mirrors the React polling on the web side
