@@ -1,6 +1,6 @@
 // CALLER-KEYED ROUTE
 /**
- * GET /api/chat/queue-cron — drains the LLM-failure retry queue.
+ * GET /api/chat/queue-cron — drains the LLM-failure retry queue (runs every 10 min).
  *
  * Each pending `chatQueue` entry is replayed through the chat brain ONLY when
  * its per-entry `nextRetryAt` has elapsed (exp-backoff schedule lives in
