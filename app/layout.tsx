@@ -132,7 +132,7 @@ const jsonLd = [
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="he">
+    <html lang="he" dir="rtl">
       <head>
         <link rel="sitemap" type="application/xml" href="/sitemap.xml" />
       </head>
