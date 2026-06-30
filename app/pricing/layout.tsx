@@ -142,7 +142,6 @@ export default function PricingLayout({ children }: { children: React.ReactNode 
           <li><Link href="/about" style={{ color: '#4338ca' }}>אודות</Link></li>
           <li><Link href="/guide" style={{ color: '#4338ca' }}>מדריך שימוש</Link></li>
           <li><Link href="/demo-form" style={{ color: '#4338ca' }}>טופס הדגמה</Link></li>
-          <li><Link href="/form-filler" style={{ color: '#4338ca' }}>מילוי טפסים</Link></li>
           <li><Link href="/contact" style={{ color: '#4338ca' }}>צור קשר</Link></li>
           <li><Link href="/terms" style={{ color: '#4338ca' }}>תנאי שימוש</Link></li>
         </ul>
