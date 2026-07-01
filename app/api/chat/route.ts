@@ -158,6 +158,9 @@ export async function POST(request: NextRequest) {
       // sessionStorage. `undefined` is dropped by JSON.stringify (no key in
       // response = client keeps current); `null` means "wipe."
       ...(result.anonStoreCreds !== undefined ? { anonStoreCreds: result.anonStoreCreds } : {}),
+      // Tier-2 attended checkout context — client must complete the order
+      // using Dexie credentials + /api/grocery/shufersal/attended-checkout.
+      ...(result.attendedCheckoutContext ? { attendedCheckoutContext: result.attendedCheckoutContext } : {}),
     })
   } catch (err) {
     console.error('[AppChat] Error:', err)
