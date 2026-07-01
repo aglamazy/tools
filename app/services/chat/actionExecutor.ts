@@ -187,6 +187,20 @@ export interface AnonStoreCreds {
   orderedOnce?: boolean
 }
 
+/**
+ * Tier-2 attended-checkout context. Returned to the web client when a
+ * trigger_order on Shufersal fails because the server has no credentials
+ * (user is Tier-2). The client reads its Dexie credentials and calls
+ * /api/grocery/shufersal/attended-checkout to complete the order.
+ */
+export interface AttendedCheckoutContext {
+  storeId: string
+  items: { code: string; qty: number }[]
+  day?: string
+  time?: string
+  nearest?: boolean
+}
+
 export interface ActionResult {
   /** Per-action results, in the same order as the input `actions` array — used to feed tool responses back to the LLM. */
   results: { name: string; result: string }[]
@@ -198,6 +212,11 @@ export interface ActionResult {
    * `trigger_order`). When undefined, the client should keep whatever it had.
    */
   anonStoreCreds?: AnonStoreCreds | null
+  /**
+   * Set when Shufersal checkout requires attended (Tier-2) flow.
+   * Client must read Dexie credentials and call the attended-checkout route.
+   */
+  attendedCheckoutContext?: AttendedCheckoutContext
 }
 
 export interface PendingProductSelection {
@@ -224,6 +243,7 @@ export async function executeActions(
   // final value is what gets shipped back to the client.
   let workingAnonCreds: AnonStoreCreds | null | undefined = inboundAnonCreds
   let anonCredsTouched = false
+  let attendedCheckoutContext: AttendedCheckoutContext | undefined
 
   // Same-turn consent defense (C01): use the turn-start consent snapshot threaded
   // in by the caller — NOT a live read here, since toolRegistry calls executeActions
@@ -246,6 +266,9 @@ export async function executeActions(
           workingAnonCreds = r.anonStoreCreds
           anonCredsTouched = true
         }
+        if (r.attendedCheckoutContext) {
+          attendedCheckoutContext = r.attendedCheckoutContext
+        }
       } else {
         results.push({ name: action.action, result: 'ok' })
       }
@@ -264,6 +287,7 @@ export async function executeActions(
     // the client distinguish "nothing changed, keep current" (undefined)
     // from "wipe it" (null).
     anonStoreCreds: anonCredsTouched ? workingAnonCreds ?? null : undefined,
+    attendedCheckoutContext,
   }
 }
 
@@ -275,6 +299,8 @@ interface ExecuteOneResult {
    * Set by `set_otp_phone`, `verify_otp`, and successful Tier-1 `trigger_order`.
    */
   anonStoreCreds?: AnonStoreCreds | null
+  /** Set when Shufersal needs Tier-2 attended checkout. */
+  attendedCheckoutContext?: AttendedCheckoutContext
 }
 
 async function executeOne(
@@ -684,6 +710,24 @@ async function executeOne(
             error: 'dry-run',
           })
           return `דמה-ריצה: לא בוצעה הזמנה אמיתית. חלון משלוח שזוהה: ${result.deliveryWindow?.day} ${result.deliveryWindow?.date} ${result.deliveryWindow?.time}.`
+        }
+        // Tier-2: server has no credentials — release the safety lock and
+        // hand the item list back to the client for attended checkout.
+        if (result.requiresAttendedCheckout) {
+          await finalizeOrderFailure({
+            uid, storeId, idempotencyKey: gate.idempotencyKey, cycle: gate.cycle, now: safetyNow,
+            error: 'attended-required',
+          })
+          return {
+            followUp: `הזמנה ב${store.label} דורשת אימות — מסירה לאפליקציה`,
+            attendedCheckoutContext: {
+              storeId,
+              items: items.map(i => ({ code: i.code, qty: i.qty })),
+              day,
+              time,
+              nearest: !day,
+            },
+          }
         }
         await finalizeOrderFailure({
           uid, storeId, idempotencyKey: gate.idempotencyKey, cycle: gate.cycle, now: safetyNow,

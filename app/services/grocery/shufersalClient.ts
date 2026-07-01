@@ -69,6 +69,8 @@ export interface CheckoutResult {
   deliveryWindow?: { day: string; date: string; time: string }
   error?: string
   dryRun?: boolean
+  /** True when server has no credentials for this user — Tier-2 attended checkout required. */
+  requiresAttendedCheckout?: boolean
 }
 
 export interface SearchResult {
@@ -334,10 +336,8 @@ export async function hasCredentials(uid: string): Promise<boolean> {
 
 // --- Auth ---
 
-export async function login(uid: string): Promise<Record<string, string>> {
-  const creds = await loadCredentials(uid)
-  if (!creds) throw new Error('Shufersal credentials not configured')
-
+/** Core login flow using explicit credentials. Saves the resulting session to Firestore. */
+async function doLogin(uid: string, creds: ShufersalCredentials): Promise<Record<string, string>> {
   // Step 1: GET login page for CSRF
   let cookies: Record<string, string> = {}
   const { resp: loginPage, cookies: c1 } = await shuFetch('/login', cookies)
@@ -395,6 +395,12 @@ export async function login(uid: string): Promise<Record<string, string>> {
   await saveSession(uid, { cookies, updatedAt: new Date().toISOString() })
   console.log(`[Shufersal] Login success for uid=${uid}`)
   return cookies
+}
+
+export async function login(uid: string): Promise<Record<string, string>> {
+  const creds = await loadCredentials(uid)
+  if (!creds) throw new Error('Shufersal credentials not configured')
+  return doLogin(uid, creds)
 }
 
 export async function getAuthenticatedCookies(uid: string): Promise<Record<string, string>> {
@@ -645,7 +651,7 @@ export async function checkout(
   options: { day?: string; time?: string; nearest?: boolean; dryRun?: boolean },
 ): Promise<CheckoutResult> {
   const creds = await loadCredentials(uid)
-  if (!creds) return { success: false, error: 'Credentials not configured' }
+  if (!creds) return { success: false, requiresAttendedCheckout: true }
 
   // === CLEAR + BUILD CART ===
   if (items.length > 0) {
@@ -702,6 +708,9 @@ export async function checkout(
  * Run the post-cart commit flow: auth → SSO → optional slot-set → JWT → placeOrder.
  * Used by both new-order checkout and edit-order commit. Assumes the cart is
  * already populated (either built from items or loaded from an order via cartMerge).
+ *
+ * `credsOverride` skips the Firestore credential load — used by the Tier-2
+ * attended checkout path where the client supplies credentials directly.
  */
 export async function commitCheckout(
   uid: string,
@@ -710,9 +719,10 @@ export async function commitCheckout(
     deliveryWindow?: { day: string; date: string; time: string }
     isEdit?: boolean
   } = {},
+  credsOverride?: ShufersalCredentials,
 ): Promise<CheckoutResult> {
-  const creds = await loadCredentials(uid)
-  if (!creds) return { success: false, error: 'Credentials not configured' }
+  const creds = credsOverride ?? await loadCredentials(uid)
+  if (!creds) return { success: false, requiresAttendedCheckout: true }
 
   const cookies = await getAuthenticatedCookies(uid)
   const csrf = getCsrf(cookies)
@@ -914,6 +924,57 @@ export async function commitCheckout(
 
   console.log(`[Shufersal] Order placed: #${orderId || 'unknown'}`)
   return { success: true, orderId: orderId || undefined, deliveryWindow }
+}
+
+/**
+ * Tier-2 attended checkout: login + full checkout using caller-supplied
+ * credentials. The password is used transiently and never persisted.
+ * Only the resulting session cookies are saved to Firestore.
+ *
+ * Callers (the /api/grocery/shufersal/attended-checkout route) are responsible
+ * for the order-safety preflight and finalisation calls.
+ */
+export async function checkoutAttended(
+  uid: string,
+  email: string,
+  password: string,
+  items: { code: string; qty: number }[],
+  options: { day?: string; time?: string; nearest?: boolean; dryRun?: boolean },
+): Promise<CheckoutResult> {
+  const creds: ShufersalCredentials = { email, password }
+
+  // Login with caller-supplied credentials, saving session to Firestore.
+  await doLogin(uid, creds)
+
+  // Clear + build cart (cartClear/cartAddMany use the Firestore session).
+  if (items.length > 0) {
+    await cartClear(uid)
+    const addResult = await cartAddMany(uid, items)
+    console.log(`[Shufersal] Attended cart built: ${addResult.added}/${items.length}`)
+    if (addResult.added === 0) return { success: false, error: 'No items added to cart' }
+  }
+
+  const cookies = await getAuthenticatedCookies(uid)
+
+  // Get delivery slots.
+  const { resp: slotsResp } = await shuFetch('/timeSlot/preselection/getHomeDeliverySlots?amount=1.0', cookies)
+  if (!slotsResp.ok) return { success: false, error: `Failed to fetch slots: ${slotsResp.status}` }
+  const rawSlots = await slotsResp.json() as Record<string, any[]>
+  let slot = findMatchingSlot(rawSlots, options.day, options.time, options.nearest)
+  if (!slot && options.day) slot = findMatchingSlot(rawSlots, undefined, undefined, true)
+  if (!slot) return { success: false, error: 'No matching delivery slot found' }
+
+  await shuFetch('/timeSlot/preselection/postHomeDeliverySlot', cookies, {
+    method: 'POST',
+    body: JSON.stringify({ homeDeliveryTimeSlot: { code: slot.code, sourceOfSupply: 'DIRECT' } }),
+    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+  })
+
+  const deliveryWindow = { day: slot.day, date: slot.date, time: slot.time }
+  if (options.dryRun) return { success: false, dryRun: true, deliveryWindow }
+
+  // Commit with explicit credentials (Spring Security re-auth needs the password).
+  return commitCheckout(uid, { slot, deliveryWindow }, creds)
 }
 
 // --- Orders ---
