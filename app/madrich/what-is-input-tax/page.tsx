@@ -1,6 +1,8 @@
 import type { Metadata } from 'next'
 import { buildQuickWinMetadata, QuickWinPage, QUICK_WIN_PAGES } from '@/app/lib/seoQuickWin'
 
+export const dynamic = 'force-static'
+
 const page = QUICK_WIN_PAGES.inputTaxGlossary
 
 export const metadata: Metadata = buildQuickWinMetadata(page)

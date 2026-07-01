@@ -3,6 +3,8 @@ import Link from 'next/link'
 import { branding, routes } from '@/app/config'
 import ReturningUserRedirect from '@/app/components/ReturningUserRedirect'
 
+export const dynamic = 'force-static'
+
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://aglamazo.com'
 
 export const metadata: Metadata = {

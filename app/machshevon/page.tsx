@@ -1,6 +1,8 @@
 import type { Metadata } from 'next'
 import { buildHubMetadata, QuickWinHub, QUICK_WIN_PAGES } from '@/app/lib/seoQuickWin'
 
+export const dynamic = 'force-static'
+
 const hub = {
   path: '/machshevon',
   title: 'מחשבונים לעצמאי ועסק קטן — מס ומע"מ',
