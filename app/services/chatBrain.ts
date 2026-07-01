@@ -129,7 +129,7 @@ export function isFirstWordGreeting(text: string): boolean {
 
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import { buildContextBlock, SYSTEM_PROMPT, type UserContext } from '@/app/services/chat/chatProcessor'
-import { savePendingSearch, clearAllPendingSearches, type PendingProductSelection, type AnonStoreCreds } from '@/app/services/chat/actionExecutor'
+import { savePendingSearch, clearAllPendingSearches, type PendingProductSelection, type AnonStoreCreds, type AttendedCheckoutContext } from '@/app/services/chat/actionExecutor'
 import { getUserStores, getStoreData, setOpenOrderCache } from '@/app/services/grocery/groceryStoreMulti'
 import { getAllStores } from '@/app/services/grocery/storeRegistry'
 import { initStores } from '@/app/services/grocery/initStores'
@@ -171,6 +171,8 @@ export interface ChatBrainResult {
   llmExhausted?: boolean
   upstreamError?: string
   anonStoreCreds?: AnonStoreCreds | null
+  /** Set when Shufersal trigger_order requires Tier-2 attended checkout from the client. */
+  attendedCheckoutContext?: AttendedCheckoutContext
 }
 
 // --- Context builder (per-turn server state injected into the system prompt) ---
@@ -433,5 +435,6 @@ export async function processChatMessage(input: ChatBrainInput): Promise<ChatBra
     llmExhausted: false,
     upstreamError: undefined,
     anonStoreCreds: toolCtx.anonCredsTouched ? (toolCtx.anonStoreCreds ?? null) : undefined,
+    attendedCheckoutContext: toolCtx.attendedCheckout,
   }
 }

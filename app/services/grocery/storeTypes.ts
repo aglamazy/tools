@@ -89,6 +89,8 @@ export interface StoreCheckoutResult {
   deliveryWindow?: { day: string; date: string; time: string }
   error?: string
   dryRun?: boolean
+  /** True when the store requires attended (client-side credential) checkout — Tier-2 users only. */
+  requiresAttendedCheckout?: boolean
 }
 
 export interface StoreOrder {

@@ -6,6 +6,7 @@ import { getIdToken } from '@/app/services/firebaseAuthService'
 import { subscribeToAuth } from '@/app/stores/authStore'
 import { chatHistoryStore, type ChatMessage } from '@/app/stores/chatHistoryStore'
 import { VARIANT_CONFIG } from '@/app/config/variants'
+import { credentialStore } from '@/app/stores/credentialStore'
 
 type Message = { role: 'user' | 'assistant'; content: string; thinking?: string }
 
@@ -359,6 +360,14 @@ export default function AppChat() {
           pendingSelections?: PendingSelection[]
           /** Server-side update to Tier-1 anon creds. Present only when changed. `null` = wipe. */
           anonStoreCreds?: AnonStoreCreds | null
+          /** Tier-2 attended checkout context — client must complete the order. */
+          attendedCheckoutContext?: {
+            storeId: string
+            items: { code: string; qty: number }[]
+            day?: string
+            time?: string
+            nearest?: boolean
+          }
         }
         try {
           const token = await getIdToken()
@@ -413,6 +422,58 @@ export default function AppChat() {
           // the key when nothing changed; sends null to explicitly wipe.
           if (Object.prototype.hasOwnProperty.call(data, 'anonStoreCreds')) {
             writeAnonStoreCreds(data.anonStoreCreds ?? null)
+          }
+          // Tier-2 attended checkout: server has no credentials — read from
+          // Dexie and complete the order via the attended-checkout endpoint.
+          if (data.attendedCheckoutContext) {
+            const ctx = data.attendedCheckoutContext
+            const cred = await credentialStore.getByService('shufersal')
+            if (!cred) {
+              const noCredMsg: Message = { role: 'assistant', content: 'לא נמצאו פרטי כניסה לשופרסל. שמור אותם בהגדרות ← חיבורים חיצוניים ונסה שוב.' }
+              setMessages(prev => [...prev, noCredMsg])
+              await chatHistoryStore.appendMessage(uid, activeChatId, noCredMsg)
+              setRetryStatus(null)
+              return
+            }
+            const orderingMsg: Message = { role: 'assistant', content: '⏳ מבצע הזמנה עם פרטי הכניסה שלך...' }
+            setMessages(prev => [...prev, orderingMsg])
+            try {
+              const orderToken = await getIdToken()
+              const orderRes = await fetch('/api/grocery/shufersal/attended-checkout', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(orderToken ? { Authorization: `Bearer ${orderToken}` } : {}),
+                },
+                body: JSON.stringify({
+                  email: cred.userCode,
+                  password: cred.password,
+                  items: ctx.items,
+                  day: ctx.day,
+                  time: ctx.time,
+                  nearest: ctx.nearest,
+                }),
+              })
+              const orderData = await orderRes.json()
+              let resultContent: string
+              if (orderData.success) {
+                const dw = orderData.deliveryWindow
+                resultContent = `✅ הזמנה בוצעה בשופרסל! #${orderData.orderId || ''}\nמשלוח: ${dw?.day || ''} ${dw?.date || ''} ${dw?.time || ''}`
+              } else if (orderData.dryRun) {
+                const dw = orderData.deliveryWindow
+                resultContent = `דמה-ריצה: לא בוצעה הזמנה. חלון: ${dw?.day || ''} ${dw?.date || ''} ${dw?.time || ''}`
+              } else {
+                resultContent = `שגיאה בהזמנה: ${orderData.error || 'שגיאה לא ידועה'}`
+              }
+              const resultMsg: Message = { role: 'assistant', content: resultContent }
+              setMessages(prev => prev.map(m => m === orderingMsg ? resultMsg : m))
+              await chatHistoryStore.appendMessage(uid, activeChatId, resultMsg)
+            } catch (orderErr) {
+              const errContent = `שגיאה בביצוע ההזמנה: ${orderErr instanceof Error ? orderErr.message : 'שגיאת רשת'}`
+              const errMsg: Message = { role: 'assistant', content: errContent }
+              setMessages(prev => prev.map(m => m === orderingMsg ? errMsg : m))
+              await chatHistoryStore.appendMessage(uid, activeChatId, errMsg)
+            }
           }
           setRetryStatus(null)
           return

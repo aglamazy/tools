@@ -1,6 +1,6 @@
 import { createToolRegistry, type LLMTool, type ToolDeclaration, type ToolDispatcher } from "agents-ai";
 import { ACTION_DECLARATIONS } from "@/app/services/chat/actionDeclarations";
-import { executeActions, type AnonStoreCreds, type PendingProductSelection } from "@/app/services/chat/actionExecutor";
+import { executeActions, type AnonStoreCreds, type PendingProductSelection, type AttendedCheckoutContext } from "@/app/services/chat/actionExecutor";
 import type { ChatAction } from "@/app/services/chat/chatProcessor";
 import { getAllStores } from "@/app/services/grocery/storeRegistry";
 import type { SessionState } from "@/app/services/chat/history";
@@ -13,6 +13,8 @@ export interface AglamazoToolContext {
   anonStoreCreds: AnonStoreCreds | null | undefined;
   anonCredsTouched: boolean;
   pendingSelections: PendingProductSelection[];
+  /** Set when a Shufersal trigger_order requires Tier-2 attended checkout. */
+  attendedCheckout?: AttendedCheckoutContext;
   /**
    * C01 same-turn consent defense: whether Tier-3 server-creds consent existed
    * BEFORE this user turn began. Snapshotted once in processChatMessage and
@@ -69,6 +71,10 @@ export function createAglamazoToolRegistry(): {
       if (out.anonStoreCreds !== undefined) {
         context.anonStoreCreds = out.anonStoreCreds;
         context.anonCredsTouched = true;
+      }
+
+      if (out.attendedCheckoutContext) {
+        context.attendedCheckout = out.attendedCheckoutContext;
       }
 
       let stop = false;
