@@ -342,7 +342,9 @@ export async function processChatMessage(input: ChatBrainInput): Promise<ChatBra
   // tool runs this turn. The dispatcher calls executeActions per-tool-call, so
   // this turn-start value (not a per-call re-read) is what gates set_credentials/
   // set_otp_phone — a bundled grant+save in one turn therefore can't self-authorize.
-  const consentExistedAtTurnStart = !isAnonUid(uid) && (await hasCurrentServerCredsConsent(uid))
+  // Firestore read failure defaults to false (safe: blocks Tier-3 ops, never grants).
+  // A throw here (uncaught) was the root cause of service ticket #1 (saliko 2026-06-28).
+  const consentExistedAtTurnStart = !isAnonUid(uid) && (await hasCurrentServerCredsConsent(uid).catch(() => false))
 
   // Tool context — shared mutable state across all tool calls in the turn.
   const toolCtx: AglamazoToolContext = {
