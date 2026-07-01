@@ -120,7 +120,7 @@ export function parseBankTransactions(
     dateIndexMap.set(dateStr, currentIndex)
     transactions.push({
       date: dateStr,
-      description: String(description),
+      description: descriptionStr,
       amount,
       balance,
       accountNumber,
