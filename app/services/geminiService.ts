@@ -5,7 +5,7 @@
 
 import { type GmailFilterCriteria } from './gmailService'
 
-const GEMINI_API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY
 
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent`
 
@@ -51,7 +51,7 @@ export async function extractEventDates(
   messages: { id: string; subject: string; snippet: string }[]
 ): Promise<{ results: EventAnalysis[]; error?: string }> {
   if (!GEMINI_API_KEY) {
-    return { results: [], error: 'חסר מפתח Gemini API. הגדר NEXT_PUBLIC_GEMINI_API_KEY' }
+    return { results: [], error: 'חסר מפתח Gemini API. הגדר GEMINI_API_KEY' }
   }
 
   const today = new Date().toISOString().split('T')[0]
@@ -105,7 +105,7 @@ export async function generateArchiveQuery(
   from: string,
 ): Promise<{ criteria?: GmailFilterCriteria; error?: string }> {
   if (!GEMINI_API_KEY) {
-    return { error: 'חסר מפתח Gemini API. הגדר NEXT_PUBLIC_GEMINI_API_KEY' }
+    return { error: 'חסר מפתח Gemini API. הגדר GEMINI_API_KEY' }
   }
 
   try {

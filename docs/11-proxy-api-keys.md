@@ -1,7 +1,7 @@
 # Proxy API calls to hide client-side API keys
 
 ## Problem
-`NEXT_PUBLIC_GEMINI_API_KEY` is exposed in the browser bundle. Anyone can extract and abuse it.
+Using a `NEXT_PUBLIC_` prefix on a Gemini key exposes it in the browser bundle. Anyone can extract and abuse it.
 
 ## Solution
 Move API calls behind Next.js API routes. The key stays server-side only.
