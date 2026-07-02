@@ -16,6 +16,7 @@ import { SelfEmployedBTLSection, SelfEmployedIncomeTaxSection, type BTLRates, ty
 import TaxVatSection from './TaxVatSection'
 import { getTaxProfile, type TaxProfile } from '@/app/components/TaxProfileSection'
 import SelfEmployedSummaryTable from './TaxSelfEmployedSummaryTable'
+import MonthClosureReport from './MonthClosureReport'
 import { HEBREW_MONTHS, cellStyle, tHeaderStyle, fmt } from './taxSharedStyles'
 import { BusinessType } from '@/app/types/business'
 
@@ -502,6 +503,17 @@ function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBu
 
       {activeSection === 'selfEmployed' && (
         <>
+          {taxProfile && personUid && (
+            <MonthClosureReport
+              businesses={nonRentalBusinesses}
+              transactions={transactions}
+              bizCategoryMap={bizCategoryMap}
+              expCategoryMap={expCategoryMap}
+              categoryByName={categoryByName}
+              taxProfile={taxProfile}
+              personUid={personUid}
+            />
+          )}
           <SelfEmployedSummaryTable
             businesses={nonRentalBusinesses}
             transactions={transactions}
