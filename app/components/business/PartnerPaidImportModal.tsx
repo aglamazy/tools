@@ -207,17 +207,14 @@ export default function PartnerPaidImportModal({
           typeof extracted.vatAmount === 'number' ? Math.abs(extracted.vatAmount) : undefined
 
         const externalTxRef =
-          typeof extracted.externalTxRef === 'string'
-            ? extracted.externalTxRef
-            : typeof extracted.transactionId === 'string'
-              ? (extracted.transactionId as string)
-              : undefined
+          typeof extracted.externalTxRef === 'string' ? extracted.externalTxRef : undefined
         const referenceNumber =
           typeof extracted.referenceNumber === 'string' ? extracted.referenceNumber : undefined
         const docType =
           extracted.docType === 'invoice' ||
           extracted.docType === 'receipt' ||
-          extracted.docType === 'receipt-invoice'
+          extracted.docType === 'receipt-invoice' ||
+          extracted.docType === 'unknown'
             ? extracted.docType
             : undefined
 
@@ -336,7 +333,8 @@ export default function PartnerPaidImportModal({
           docType:
             r.extractedData?.docType === 'invoice' ||
             r.extractedData?.docType === 'receipt' ||
-            r.extractedData?.docType === 'receipt-invoice'
+            r.extractedData?.docType === 'receipt-invoice' ||
+            r.extractedData?.docType === 'unknown'
               ? r.extractedData.docType
               : undefined,
         }))

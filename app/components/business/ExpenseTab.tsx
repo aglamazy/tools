@@ -261,6 +261,15 @@ const parseSortableDate = (date?: string) => {
           description: finalExtracted.documentTitle || finalExtracted.description,
           driveFileId: uploaded.fileId,
           driveWebViewLink: uploaded.webViewLink,
+          externalTxRef: typeof finalExtracted.externalTxRef === 'string' ? finalExtracted.externalTxRef : undefined,
+          referenceNumber: typeof finalExtracted.referenceNumber === 'string' ? finalExtracted.referenceNumber : undefined,
+          docType:
+            finalExtracted.docType === 'invoice' ||
+            finalExtracted.docType === 'receipt' ||
+            finalExtracted.docType === 'receipt-invoice' ||
+            finalExtracted.docType === 'unknown'
+              ? finalExtracted.docType
+              : undefined,
           extractedData: finalExtracted,
           sourceType: 'upload',
           uploadedAt: new Date().toISOString(),
@@ -484,6 +493,15 @@ const parseSortableDate = (date?: string) => {
         description: extracted.documentTitle || extracted.description,
         driveFileId: uploaded.fileId,
         driveWebViewLink: uploaded.webViewLink,
+        externalTxRef: typeof extracted.externalTxRef === 'string' ? extracted.externalTxRef : undefined,
+        referenceNumber: typeof extracted.referenceNumber === 'string' ? extracted.referenceNumber : undefined,
+        docType:
+          extracted.docType === 'invoice' ||
+          extracted.docType === 'receipt' ||
+          extracted.docType === 'receipt-invoice' ||
+          extracted.docType === 'unknown'
+            ? extracted.docType
+            : undefined,
         extractedData: extracted,
         sourceType: 'upload',
         uploadedAt: new Date().toISOString(),

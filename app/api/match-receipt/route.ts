@@ -150,6 +150,9 @@ async function handleExtract(emailBody: string, transaction: TransactionInfo, cl
 - vatAmount: סכום מע״מ אם מופיע (מספר או null)
 - description: תיאור קצר של הפריטים / השירות
 - invoiceNumber: מספר חשבונית / קבלה (מחרוזת או null)
+- externalTxRef: מזהה העסקה / המסמך של הספק עצמו אם קיים (מחרוזת או null)
+- referenceNumber: מספר אסמכתא / reference של חברת האשראי או המעבד אם קיים (מחרוזת או null)
+- docType: אחד מהערכים "invoice" | "receipt" | "receipt-invoice" | "unknown"; אם אינך בטוח בסיווג, החזר "unknown"; אם השדה לא רלוונטי כלל, החזר null
 - documentUrl: קישור למסמך/קבלה/חשבונית אם יש (URL מלא או null)
 - matchesTransaction: האם הקבלה הזו אכן שייכת לעסקה הבנקאית שצוינה למטה? (true/false)
 - matchReason: משפט קצר המסביר את ההחלטה
@@ -291,6 +294,9 @@ async function handleExtractPdf(pdfBase64: string, transaction: TransactionInfo,
 - vatAmount: סכום מע״מ אם מופיע (מספר או null)
 - description: תיאור קצר של הפריטים / השירות
 - invoiceNumber: מספר חשבונית / קבלה (מחרוזת או null)
+- externalTxRef: מזהה העסקה / המסמך של הספק עצמו אם קיים (מחרוזת או null)
+- referenceNumber: מספר אסמכתא / reference של חברת האשראי או המעבד אם קיים (מחרוזת או null)
+- docType: אחד מהערכים "invoice" | "receipt" | "receipt-invoice" | "unknown"; אם אינך בטוח בסיווג, החזר "unknown"; אם השדה לא רלוונטי כלל, החזר null
 - matchesTransaction: האם המסמך הזה אכן שייך לעסקה הבנקאית שצוינה למטה? (true/false)
 - matchReason: משפט קצר המסביר את ההחלטה
 
@@ -368,6 +374,9 @@ async function handleExtractImage(imageBase64: string, mediaType: string, transa
 - vatAmount: סכום מע״מ אם מופיע (מספר או null)
 - description: תיאור קצר של הפריטים / השירות
 - invoiceNumber: מספר חשבונית / קבלה (מחרוזת או null)
+- externalTxRef: מזהה העסקה / המסמך של הספק עצמו אם קיים (מחרוזת או null)
+- referenceNumber: מספר אסמכתא / reference של חברת האשראי או המעבד אם קיים (מחרוזת או null)
+- docType: אחד מהערכים "invoice" | "receipt" | "receipt-invoice" | "unknown"; אם אינך בטוח בסיווג, החזר "unknown"; אם השדה לא רלוונטי כלל, החזר null
 
 העסקה הבנקאית לעיון: ${transaction.description}, ₪${Math.abs(transaction.amount)}, ${transaction.date}
 

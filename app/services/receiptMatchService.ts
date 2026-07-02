@@ -121,6 +121,20 @@ function extractVendorTokens(desc: string): string[] {
     .slice(0, 3)
 }
 
+function normalizeExpenseDocFields(extracted: any): Pick<ExpenseDocument, 'externalTxRef' | 'referenceNumber' | 'docType'> {
+  return {
+    externalTxRef: typeof extracted.externalTxRef === 'string' ? extracted.externalTxRef : undefined,
+    referenceNumber: typeof extracted.referenceNumber === 'string' ? extracted.referenceNumber : undefined,
+    docType:
+      extracted.docType === 'invoice' ||
+      extracted.docType === 'receipt' ||
+      extracted.docType === 'receipt-invoice' ||
+      extracted.docType === 'unknown'
+        ? extracted.docType
+        : undefined,
+  }
+}
+
 export async function matchReceiptForTransaction(
   tx: { id: number; date: string; description: string; merchant?: string; amount: number },
   claudeApiKey: string,
@@ -280,6 +294,7 @@ async function tryCandidate(
       date: extracted.date,
       description: extracted.documentTitle || extracted.description,
       externalUrl: ctaUrl,
+      ...normalizeExpenseDocFields(extracted),
       extractedData: extracted,
       sourceType: 'gmail',
       gmailMessageId: msgId,
@@ -381,6 +396,7 @@ async function tryCandidate(
       description: finalExtracted.documentTitle || finalExtracted.description,
       driveFileId: uploaded.fileId,
       driveWebViewLink: uploaded.webViewLink,
+      ...normalizeExpenseDocFields(finalExtracted),
       extractedData: finalExtracted,
       sourceType: 'gmail',
       gmailMessageId: msgId,
