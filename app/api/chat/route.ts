@@ -170,6 +170,13 @@ export async function POST(request: NextRequest) {
     })
   } catch (err) {
     console.error('[AppChat] Error:', err)
+    panicAdmin({
+      source: 'web-500',
+      upstreamError: err instanceof Error ? err.message : String(err),
+      severity: 'high',
+      uid,
+      userTextSnippet: text,
+    }).catch(panicErr => console.warn('[AppChat] panicAdmin failed:', panicErr))
     return NextResponse.json({ success: false, error: 'Server error' }, { status: 500 })
   }
 }

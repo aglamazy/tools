@@ -11,6 +11,7 @@ export type BillingStatus = {
   kind: BillingKind
   paid_through: string  // ISO date (YYYY-MM-DD); the day coverage expires
   updatedAt: string     // ISO timestamp of last upsert
+  service_status?: 'in_service' | 'suppressed' | 'resolved' | 'escalated-to-principal'
 }
 
 /** Full map returned by GET /api/billing/status: uid → billing state */

@@ -43,6 +43,12 @@ export interface VariantConfig {
     subheadline: string
     cta: string
   }
+  /**
+   * Service-call monitoring status for the product itself. Saliko is a
+   * live/in-service product, so the billing/status read path should surface
+   * it as such for cockpit reconciliation.
+   */
+  serviceStatus?: 'in_service'
 }
 
 /**
@@ -85,6 +91,7 @@ const VARIANTS: Record<ProductVariant, VariantConfig> = {
       subheadline: 'אנחנו קונים בשבילך — בלי הרעש של אתר הסופר. סוכן חכם שמכיר את ההרגלים שלך.',
       cta: 'נסה חינם',
     },
+    serviceStatus: 'in_service',
   },
 }
 
