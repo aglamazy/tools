@@ -126,6 +126,18 @@ export async function clearAllPendingSearches(uid: string): Promise<void> {
 }
 
 /**
+ * Clear all pending cart state for the user's active stores, plus any stale
+ * product-picker searches. Leaves chat history and standing lists intact.
+ */
+export async function clearAllPendingState(uid: string): Promise<void> {
+  const meta = await getUserStores(uid)
+  await Promise.all([
+    clearAllPendingSearches(uid),
+    ...meta.activeStores.map(store => clearStorePending(uid, store)),
+  ])
+}
+
+/**
  * Select a product from a pending search and save it to the appropriate list.
  * Returns a confirmation message. Used by both Telegram callback and app chat select.
  */
