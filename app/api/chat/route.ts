@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server'
 import { requireAuth } from '@/app/lib/apiGuard'
 import { processChatMessage, handleReset, handleClear, isAnonUid, ANON_PREFIX, refreshOpenOrderCaches } from '@/app/services/chatBrain'
+import { clearAllPendingState } from '@/app/services/chat/actionExecutor'
 import { panicAdmin } from '@/app/services/adminPanic'
 
 const COLLECTION = 'appChatHistory'
@@ -31,7 +32,8 @@ async function resolveChatIdentity(request: NextRequest): Promise<{ uid: string;
 }
 
 interface ChatRequestBody {
-  message: string
+  message?: string
+  resetPendingState?: boolean
   /**
    * Anon visitors don't have server-side history (no Firestore writes for
    * anon). To preserve conversation context across turns the client sends
@@ -83,6 +85,10 @@ export async function POST(request: NextRequest) {
   }
 
   const text = body.message?.trim()
+  if (body.resetPendingState === true) {
+    await clearAllPendingState(uid)
+    return NextResponse.json({ success: true, resetPendingState: true })
+  }
   if (!text) {
     return NextResponse.json({ success: false, error: 'Empty message' }, { status: 400 })
   }

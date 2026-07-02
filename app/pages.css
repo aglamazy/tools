@@ -633,13 +633,40 @@
   padding: 0.75rem 1rem;
   border-top: 1px solid #e2e8f0;
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   align-items: flex-end;
   background: #fff;
 }
 
+.app-chat-reset {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  background: #ecfeff;
+  color: #0f766e;
+  border: 1px solid #99f6e4;
+  border-radius: 0.6rem;
+  font-weight: 700;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, transform 0.15s;
+}
+
+.app-chat-reset:hover:not(:disabled) {
+  background: #cffafe;
+  border-color: #5eead4;
+  transform: translateY(-1px);
+}
+
+.app-chat-reset:disabled {
+  opacity: 0.6;
+  cursor: wait;
+  transform: none;
+}
+
 .app-chat-textarea {
   flex: 1;
+  min-width: 0;
   resize: none;
   border: 1px solid #d1d5db;
   border-radius: 0.5rem;

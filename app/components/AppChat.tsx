@@ -215,6 +215,7 @@ export default function AppChat() {
   const [pendingSelections, setPendingSelections] = useState<PendingSelection[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [resetting, setResetting] = useState(false)
   const [retryStatus, setRetryStatus] = useState<{ attempt: number; total: number; nextDelaySec: number } | null>(null)
   const [selectingKey, setSelectingKey] = useState<string | null>(null)
   const [uid, setUid] = useState<string | null>(null)
@@ -519,6 +520,35 @@ export default function AppChat() {
     }
   }, [input, loading, uid, activeChatId, showToast])
 
+  const handleRestart = useCallback(async () => {
+    if (!uid || resetting) return
+    setResetting(true)
+    try {
+      const token = await getIdToken()
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (token) headers['Authorization'] = `Bearer ${token}`
+      if (uid.startsWith(ANON_PREFIX)) headers['x-anon-session'] = uid.slice(ANON_PREFIX.length)
+
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ resetPendingState: true }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        setPendingSelections([])
+      } else {
+        showToast('error', data.error || 'שגיאה באיפוס')
+      }
+    } catch (err) {
+      console.error('[AppChat] Reset error:', err)
+      showToast('error', 'שגיאה בחיבור לשרת')
+    } finally {
+      setResetting(false)
+      setTimeout(() => inputRef.current?.focus(), 100)
+    }
+  }, [uid, resetting, showToast])
+
   // Cancel any in-flight retry when the component unmounts or the user logs out.
   useEffect(() => {
     return () => {
@@ -637,6 +667,14 @@ export default function AppChat() {
       </div>
 
       <div className="app-chat-input-area">
+        <button
+          type="button"
+          onClick={handleRestart}
+          disabled={resetting || loading}
+          className="app-chat-reset"
+        >
+          {resetting ? 'מנקה...' : 'התחל מחדש'}
+        </button>
         <textarea
           ref={inputRef}
           value={input}

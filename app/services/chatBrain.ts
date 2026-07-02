@@ -129,7 +129,7 @@ export function isFirstWordGreeting(text: string): boolean {
 
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import { buildContextBlock, SYSTEM_PROMPT, type UserContext } from '@/app/services/chat/chatProcessor'
-import { savePendingSearch, clearAllPendingSearches, type PendingProductSelection, type AnonStoreCreds, type AttendedCheckoutContext } from '@/app/services/chat/actionExecutor'
+import { savePendingSearch, clearAllPendingState, type PendingProductSelection, type AnonStoreCreds, type AttendedCheckoutContext } from '@/app/services/chat/actionExecutor'
 import { getUserStores, getStoreData, setOpenOrderCache } from '@/app/services/grocery/groceryStoreMulti'
 import { getAllStores } from '@/app/services/grocery/storeRegistry'
 import { initStores } from '@/app/services/grocery/initStores'
@@ -326,14 +326,14 @@ export async function processChatMessage(input: ChatBrainInput): Promise<ChatBra
   const { uid, text, displayName, historyCollection, includeTasks, seedHistory, anonStoreCreds } = input
 
   // Greeting soft-reset: a first-word שלום/היי/בוקר/etc. signals the user is
-  // starting fresh. Wipe leftover product-picker selections so the next turn
-  // doesn't surface a stale "בחר מספר" from yesterday. Chat messages and the
-  // weekly cart (pendingChanges) are NOT touched — those are deliberate state.
-  if (!isAnonUid(uid) && isFirstWordGreeting(text)) {
+  // starting fresh. Wipe leftover pending state so the next turn doesn't
+  // surface stale picker cards or buffered cart edits from yesterday. Chat
+  // messages and standing lists are NOT touched — those are deliberate state.
+  if (isFirstWordGreeting(text)) {
     try {
-      await clearAllPendingSearches(uid)
+      await clearAllPendingState(uid)
     } catch (err) {
-      console.warn('[ChatBrain] clearAllPendingSearches failed (greeting soft-reset):', err)
+      console.warn('[ChatBrain] clearAllPendingState failed (greeting soft-reset):', err)
     }
   }
 
