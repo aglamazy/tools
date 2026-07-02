@@ -326,20 +326,6 @@ export interface VatPayment {
   updatedAt?: string
 }
 
-// Blog post — authored in Markdown, stored as Markdown, rendered as HTML.
-export interface BlogPost {
-  id?: number
-  syncId?: string
-  title: string
-  slug: string        // unique URL-safe slug
-  content: string     // Markdown source
-  status: 'draft' | 'published'
-  publishedAt?: string  // ISO when published
-  authorUid?: string    // Firebase UID
-  createdAt: string
-  updatedAt?: string
-}
-
 // Chat persistence (v26) — multi-thread chat with per-message rows.
 // Replaces the old localStorage-only single-thread store. Both tables
 // participate in encrypted sync via SYNCED_DB_TABLES.
@@ -391,7 +377,6 @@ class FinanceDB extends Dexie {
   chats!: Table<Chat, string>
   chatMessages!: Table<ChatMessageRow, string>
   credentials!: Table<CredentialRow, number>
-  blogPosts!: Table<BlogPost, number>
 
   constructor() {
     super('FinanceDB')
@@ -404,7 +389,7 @@ class FinanceDB extends Dexie {
       'importedFiles', 'transactions', 'tasks', 'financialInstitutions',
       'capitalEntries', 'ypayDocuments', 'expenseDocuments', 'projects', 'harvestTasks',
       'timeEntries', 'taxDocuments', 'advancePayments', 'businessTasks',
-      'chats', 'chatMessages', 'credentials', 'vatPayments', 'blogPosts',
+      'chats', 'chatMessages', 'credentials', 'vatPayments',
     ])
 
     // Auto-inject syncId/updatedAt on create/update, and record deletions
