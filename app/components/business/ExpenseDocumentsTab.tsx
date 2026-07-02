@@ -169,6 +169,15 @@ export default function ExpenseDocumentsTab({ businessId }: Props) {
         amount: data.amount,
         vatAmount: data.vatAmount,
         description: data.description,
+        externalTxRef: typeof data.externalTxRef === 'string' ? data.externalTxRef : undefined,
+        referenceNumber: typeof data.referenceNumber === 'string' ? data.referenceNumber : undefined,
+        docType:
+          data.docType === 'invoice' ||
+          data.docType === 'receipt' ||
+          data.docType === 'receipt-invoice' ||
+          data.docType === 'unknown'
+            ? data.docType
+            : undefined,
         extractedData: data,
         updatedAt: new Date().toISOString(),
       }

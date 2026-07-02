@@ -23,6 +23,9 @@ export async function POST(req: NextRequest) {
 - vatAmount: סכום מע״מ אם מופיע (מספר או null)
 - description: תיאור קצר של הפריטים / השירות (מחרוזת)
 - invoiceNumber: מספר חשבונית / קבלה אם קיים (מחרוזת או null)
+- externalTxRef: מזהה העסקה / המסמך של הספק עצמו אם קיים (מחרוזת או null)
+- referenceNumber: מספר אסמכתא / reference של חברת האשראי או המעבד אם קיים (מחרוזת או null)
+- docType: אחד מהערכים "invoice" | "receipt" | "receipt-invoice" | "unknown"; אם אינך בטוח בסיווג, החזר "unknown"; אם השדה לא רלוונטי כלל, החזר null
 - paymentMethod: אמצעי תשלום אם מצוין - מזומן, אשראי, העברה בנקאית וכו׳ (מחרוזת או null)
 
 החזר אך ורק JSON תקין. אל תעטוף בבלוק קוד. אל תוסיף טקסט לפני או אחרי ה-JSON.`
