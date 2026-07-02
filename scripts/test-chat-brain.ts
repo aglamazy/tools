@@ -14,7 +14,7 @@ const UID = process.argv[2]
 const SKIP_PLACE = process.argv.includes('--skip-place')
 if (!UID) { console.error('Usage: npx tsx scripts/test-chat-brain.ts <uid> [--skip-place]'); process.exit(1) }
 
-// Dynamic imports — must happen AFTER loadEnv() so geminiClient sees NEXT_PUBLIC_GEMINI_API_KEY
+// Dynamic imports — must happen AFTER loadEnv() so geminiClient sees GEMINI_API_KEY
 // at its top-level read.
 type ChatBrain = typeof import('../app/services/chatBrain')
 type ShufersalClient = typeof import('../app/services/grocery/shufersalClient')

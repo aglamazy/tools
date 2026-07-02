@@ -3,7 +3,7 @@
 //
 // Provider: honors the project LLM contract (gemini = included default; anthropic = user opt-in).
 // When the caller passes a Claude key we use Claude Sonnet; otherwise we fall back to Gemini on the
-// app's included key (NEXT_PUBLIC_GEMINI_API_KEY) so PDF import works out-of-box with no user config.
+// app's included key (GEMINI_API_KEY) so PDF import works out-of-box with no user config.
 import { NextRequest, NextResponse } from 'next/server'
 
 type ExtractedRow = {
@@ -144,7 +144,7 @@ export async function POST(req: NextRequest) {
     // extraction), NOT this endpoint: Claude's free-form output here intermittently
     // omitted the bank header row → classifyFile → "unknown file type" (the bug
     // Agla hit on 211362-June.pdf despite having a Claude key).
-    const geminiApiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY
+    const geminiApiKey = process.env.GEMINI_API_KEY
     if (!geminiApiKey) {
       return NextResponse.json({ error: 'חילוץ PDF לא זמין — לא הוגדר מפתח Gemini.' }, { status: 400 })
     }

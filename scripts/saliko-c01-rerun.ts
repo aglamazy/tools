@@ -34,7 +34,7 @@ loadEnv() // .env.local — Gemini key; FIREBASE_SERVICE_ACCOUNT_JSON from .env.
 const UID = 'local-auth-user'
 const COLLECTION = 'appChatHistory_c01_rerun' // isolated history; never touches real chat
 
-// Dynamic imports AFTER env load so geminiClient sees NEXT_PUBLIC_GEMINI_API_KEY at top-level read.
+// Dynamic imports AFTER env load so geminiClient sees GEMINI_API_KEY at top-level read.
 type ChatBrain = typeof import('../app/services/chatBrain')
 let processChatMessage: ChatBrain['processChatMessage']
 let handleReset: ChatBrain['handleReset']

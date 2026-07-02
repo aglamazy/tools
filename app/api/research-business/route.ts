@@ -1,4 +1,4 @@
-// CALLER-KEYED ROUTE — Gemini key comes from server env (NEXT_PUBLIC_GEMINI_API_KEY).
+// CALLER-KEYED ROUTE — Gemini key comes from server env (GEMINI_API_KEY).
 // Used by the smart-classifier to look up unfamiliar vendors via Google Search grounding.
 import { NextRequest, NextResponse } from 'next/server'
 import { getLLMClient } from '@/app/services/llm'
@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid body' }, { status: 400 })
     }
 
-    const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY
+    const apiKey = process.env.GEMINI_API_KEY
     if (!apiKey) {
       return NextResponse.json({ error: 'Missing Gemini API key' }, { status: 500 })
     }

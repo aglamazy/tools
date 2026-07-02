@@ -1,6 +1,6 @@
 import type { LLMClient, LLMChatOptions, LLMResult, LLMChatWithToolsOptions, LLMResultWithTools } from './types'
 
-const GEMINI_API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY
 
 /**
  * Default model: the `-latest` alias auto-tracks the freshest stable Flash

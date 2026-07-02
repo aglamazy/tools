@@ -1,6 +1,6 @@
 // PUBLIC ROUTE — converts an XLS/XLSX financial statement to normalized structured
 // transactions via Gemini structured-output. No user auth required; uses the server's
-// included Gemini key (NEXT_PUBLIC_GEMINI_API_KEY), same model policy as
+// included Gemini key (GEMINI_API_KEY), same model policy as
 // /api/extract-pdf-statement. The caller passes the file as base64.
 //
 // Unlike the PDF route, the sheet is first converted to TSV text (numbers arrive as
@@ -130,7 +130,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing xlsBase64' }, { status: 400 })
     }
 
-    const geminiApiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY
+    const geminiApiKey = process.env.GEMINI_API_KEY
     if (!geminiApiKey) {
       return NextResponse.json({ error: 'XLS extraction unavailable — Gemini key not configured.' }, { status: 400 })
     }
