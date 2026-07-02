@@ -630,4 +630,11 @@ export function defineSchemaVersions(db: Dexie): void {
     vatPayments: '++id, syncId, userId, periodStart, periodEnd, paymentDate',
     blogPosts: '++id, syncId, &slug, status, createdAt',
   })
+
+  // v30: drop blogPosts — Aglamazo has no blog (aglamaz.com/FamCircle owns it).
+  // blogPosts: null is the Dexie-correct way to remove a table while preserving
+  // earlier version history (do NOT edit v29).
+  db.version(30).stores({
+    blogPosts: null,
+  })
 }
