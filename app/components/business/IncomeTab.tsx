@@ -13,6 +13,8 @@ import { appSettingsStore, type AccountOwners } from '@/app/stores/appSettingsSt
 import { getTransactionAttributedUid } from '@/app/utils/transactionAttribution'
 import ProjectEditModal from './ProjectEditModal'
 import PaymentLinkModal from './PaymentLinkModal'
+import PartnerSplitSummary from './PartnerSplitSummary'
+import PaymentLinksTable, { type PaymentLinkRow } from './PaymentLinksTable'
 import Modal from '@/app/components/Modal'
 import type { Category } from '@/app/types/category'
 import { getTaxProfile } from '@/app/components/TaxProfileSection'
@@ -23,15 +25,6 @@ type IncomeTabProps = {
 
 type TransactionWithDoc = Transaction & {
   ypayDoc?: YpayDocument
-}
-
-type PaymentLinkRow = {
-  chargeIdentifier: string
-  contact?: { name?: string } | null
-  amount?: number | null
-  currency?: string | null
-  status?: string
-  createdAt?: string
 }
 
 const parseSortableDate = (date?: string) => {
@@ -124,10 +117,31 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
 
     return filtered
   }, [transactions, partyFilter, amountMinFilter, amountMaxFilter, sortKey, sortDir, accountOwners, ownerUid, participants])
+
   // #73 — compose a YPAY payment page for a customer (forward billing, not a receipt).
   const [showPaymentModal, setShowPaymentModal] = useState(false)
+  const [paymentModalItems, setPaymentModalItems] = useState<Array<{ description: string; quantity: number; price: number }>>([])
   const [paymentLinks, setPaymentLinks] = useState<PaymentLinkRow[]>([])
   const [copiedCid, setCopiedCid] = useState<string | null>(null)
+
+  // #213 — multi-select income rows to pre-seed a payment link.
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const allSelected = visibleTransactions.length > 0 && visibleTransactions.every(t => t.id != null && selectedIds.has(t.id))
+  const selectedTransactionsTotal = useMemo(() =>
+    visibleTransactions.filter(t => t.id != null && selectedIds.has(t.id)).reduce((s, t) => s + t.amount, 0),
+    [visibleTransactions, selectedIds],
+  )
+  const toggleSelect = (id: number) => setSelectedIds(prev => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id) else next.add(id)
+    return next
+  })
+  const toggleAll = () => setSelectedIds(
+    allSelected ? new Set() : new Set(visibleTransactions.filter(t => t.id != null).map(t => t.id!)),
+  )
+
+  // Clear selection when filters change so stale IDs don't persist across views.
+  useEffect(() => { setSelectedIds(new Set()) }, [filterMode, selectedMonth, selectedYear, partyFilter, businessId])
 
   useEffect(() => {
     loadBusiness()
@@ -318,7 +332,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     setError(null)
 
     // Strip invisible Unicode directional characters (RTL/LTR marks)
-    const strip = (s?: string) => s?.replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, '').trim() || ''
+    const strip = (s?: string) => s?.replace(/[‎‏‪-‮⁦-⁩]/g, '').trim() || ''
 
     const contact = {
       email: strip(project.contactEmail),
@@ -368,16 +382,6 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     } catch (err: any) {
       setError(err.message || 'שגיאה בשמירת קבלה')
     }
-  }
-
-  // Remove the link between a transaction and its YPAY document in Aglamazo.
-  // Does NOT void the document in YPAY (that's a separate ביטול/תעודת זיכוי in the
-  // YPAY dashboard) — it only clears Aglamazo's reference so the row shows צור קבלה
-  // again. Used to detach a wrongly-created doc (e.g. the erroneous 109 #900000).
-  const handleUnlinkDoc = async (transaction: TransactionWithDoc) => {
-    if (transaction.id == null) return
-    await db.ypayDocuments.where('transactionId').equals(String(transaction.id)).delete()
-    await loadTransactions()
   }
 
   const handleSendReceipt = async (transaction: TransactionWithDoc) => {
@@ -455,6 +459,14 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     } finally {
       setSendingDoc(null)
     }
+  }
+
+  const openPaymentModalFromSelection = async () => {
+    const selected = visibleTransactions.filter(t => t.id != null && selectedIds.has(t.id))
+    const items = selected.map(t => ({ description: t.description, quantity: 1, price: t.amount }))
+    setProjects(await projectStore.getActiveByBusinessId(businessId))
+    setPaymentModalItems(items)
+    setShowPaymentModal(true)
   }
 
   const getMonthTotal = () => {
@@ -604,130 +616,61 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
         </div>
       )}
 
-      {/* Splid summary — only when there are 2+ participants and at least one income tx has paidByUid */}
-      {participants.length > 1 && transactions.some(t => t.paidByUid) && (() => {
-        const totalReceived = transactions.reduce((sum, t) => sum + Math.abs(t.amount), 0)
-        const sharePctSum = participants.reduce((sum, p) => sum + (p.sharePercent ?? 0), 0)
-        const validShares = sharePctSum > 0
-        const rows = participants.map(p => {
-          const received = transactions
-            .filter(t => t.paidByUid === p.uid)
-            .reduce((sum, t) => sum + Math.abs(t.amount), 0)
-          const sharePct = p.sharePercent ?? 0
-          const fairShare = totalReceived * (sharePct / 100)
-          // For income: positive balance = they received MORE than fair share = they owe others
-          const balance = validShares ? (received - fairShare) : 0
-          return { ...p, received, fairShare, balance }
-        })
-        return (
-          <div style={{
-            marginBottom: '1rem', padding: '0.75rem 1rem',
-            background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '0.5rem',
-            fontSize: '0.85rem',
-          }}>
-            <div style={{ fontWeight: 600, marginBottom: '0.4rem', color: '#166534' }}>חלוקת הכנסות בין השותפים</div>
-            <table style={{ width: '100%', fontSize: '0.85rem', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid #86efac', color: '#15803d' }}>
-                  <th style={{ textAlign: 'right', padding: '0.25rem 0.5rem', fontWeight: 500 }}>שותף</th>
-                  <th style={{ textAlign: 'right', padding: '0.25rem 0.5rem', fontWeight: 500 }}>אחוז</th>
-                  <th style={{ textAlign: 'left', padding: '0.25rem 0.5rem', fontWeight: 500 }}>קיבל</th>
-                  <th style={{ textAlign: 'left', padding: '0.25rem 0.5rem', fontWeight: 500 }}>חלקו</th>
-                  <th style={{ textAlign: 'left', padding: '0.25rem 0.5rem', fontWeight: 500 }}>מאזן</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map(r => (
-                  <tr key={r.uid}>
-                    <td style={{ padding: '0.25rem 0.5rem' }}>{r.label}</td>
-                    <td style={{ padding: '0.25rem 0.5rem', color: '#64748b' }}>
-                      {r.sharePercent != null ? `${r.sharePercent}%` : '—'}
-                    </td>
-                    <td style={{ padding: '0.25rem 0.5rem', textAlign: 'left' }}>₪{r.received.toLocaleString()}</td>
-                    <td style={{ padding: '0.25rem 0.5rem', textAlign: 'left', color: '#64748b' }}>
-                      ₪{Math.round(r.fairShare).toLocaleString()}
-                    </td>
-                    <td style={{
-                      padding: '0.25rem 0.5rem', textAlign: 'left', fontWeight: 500,
-                      color: r.balance > 0 ? '#dc2626' : r.balance < 0 ? '#16a34a' : '#64748b',
-                    }}>
-                      {r.balance > 0 ? '+' : ''}₪{Math.round(r.balance).toLocaleString()}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {!validShares && (
-              <div style={{ marginTop: '0.4rem', fontSize: '0.75rem', color: '#dc2626' }}>
-                אחוזי שותפות לא הוגדרו — קבע אותם בלשונית ההגדרות
-              </div>
-            )}
-          </div>
-        )
-      })()}
+      <PartnerSplitSummary transactions={transactions} participants={participants} />
 
       {/* #73 — create a YPAY payment page to send a customer (compose line items) */}
-      <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: '1rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
         <button
           onClick={async () => {
             setProjects(await projectStore.getActiveByBusinessId(businessId))
+            setPaymentModalItems([])
             setShowPaymentModal(true)
           }}
           style={{ padding: '0.5rem 1rem', background: '#059669', color: 'white', border: 'none', borderRadius: '0.5rem', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}
         >💳 צור דף תשלום ללקוח</button>
       </div>
 
-      {/* #213 — payment links created for this business + their live status */}
-      {paymentLinks.length > 0 && (
-        <div style={{ border: '1px solid #e2e8f0', borderRadius: '0.5rem', overflow: 'hidden', marginBottom: '1rem' }}>
-          <div style={{ padding: '0.5rem 0.75rem', background: '#f8fafc', fontWeight: 600, fontSize: '0.85rem', color: '#334155', borderBottom: '1px solid #e2e8f0' }}>
-            קישורי תשלום
-          </div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
-            <tbody>
-              {paymentLinks.map((lnk) => {
-                const paid = lnk.status === 'paid'
-                const failed = lnk.status === 'failed'
-                const payUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/pay/${lnk.chargeIdentifier}`
-                const badge = paid
-                  ? { t: '✓ שולם', c: '#166534', b: '#dcfce7' }
-                  : failed
-                    ? { t: 'נכשל', c: '#991b1b', b: '#fee2e2' }
-                    : { t: 'ממתין', c: '#92400e', b: '#fef3c7' }
-                return (
-                  <tr key={lnk.chargeIdentifier} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                    <td style={{ padding: '0.5rem 0.75rem', color: '#0f172a' }}>{lnk.contact?.name || '—'}</td>
-                    <td style={{ padding: '0.5rem 0.75rem', color: '#475569', whiteSpace: 'nowrap' }}>
-                      {typeof lnk.amount === 'number' ? `₪${lnk.amount.toLocaleString('he-IL', { maximumFractionDigits: 2 })}` : '—'}
-                    </td>
-                    <td style={{ padding: '0.5rem 0.75rem', color: '#94a3b8', whiteSpace: 'nowrap' }}>
-                      {lnk.createdAt ? new Date(lnk.createdAt).toLocaleDateString('he-IL') : ''}
-                    </td>
-                    <td style={{ padding: '0.5rem 0.75rem' }}>
-                      <span style={{ background: badge.b, color: badge.c, padding: '0.1rem 0.5rem', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 600 }}>{badge.t}</span>
-                    </td>
-                    <td style={{ padding: '0.5rem 0.75rem', textAlign: 'left', whiteSpace: 'nowrap' }}>
-                      <button
-                        onClick={() => { void navigator.clipboard.writeText(payUrl); setCopiedCid(lnk.chargeIdentifier); setTimeout(() => setCopiedCid(null), 1500) }}
-                        style={{ padding: '0.25rem 0.6rem', background: '#0ea5e9', color: 'white', border: 'none', borderRadius: '0.35rem', cursor: 'pointer', fontSize: '0.75rem', marginInlineEnd: '0.4rem' }}
-                      >{copiedCid === lnk.chargeIdentifier ? 'הועתק ✓' : 'העתק קישור'}</button>
-                      <a href={payUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.75rem', color: '#0ea5e9' }}>פתח</a>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+      {/* #213 — multi-select action bar */}
+      {selectedIds.size > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.6rem 0.75rem', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '0.5rem', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.85rem', color: '#1e40af', fontWeight: 600 }}>
+            {selectedIds.size} שורות נבחרו — ₪{selectedTransactionsTotal.toLocaleString()}
+          </span>
+          <button
+            onClick={() => void openPaymentModalFromSelection()}
+            style={{ padding: '0.4rem 0.85rem', background: '#059669', color: 'white', border: 'none', borderRadius: '0.4rem', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}
+          >💳 צור דף תשלום</button>
+          <button
+            onClick={() => setSelectedIds(new Set())}
+            style={{ padding: '0.4rem 0.7rem', background: '#f1f5f9', border: '1px solid #cbd5e1', color: '#475569', borderRadius: '0.4rem', cursor: 'pointer', fontSize: '0.85rem' }}
+          >ביטול</button>
         </div>
       )}
+
+      {/* #213 — payment links created for this business + their live status */}
+      <PaymentLinksTable
+        paymentLinks={paymentLinks}
+        copiedCid={copiedCid}
+        onCopy={(cid, payUrl) => {
+          void navigator.clipboard.writeText(payUrl)
+          setCopiedCid(cid)
+          setTimeout(() => setCopiedCid(null), 1500)
+        }}
+      />
 
       {showPaymentModal && business && (
         <PaymentLinkModal
           business={business}
           projects={projects}
           vatType={profileVatType}
+          initialItems={paymentModalItems.length > 0 ? paymentModalItems : undefined}
           onProjectAdded={async () => setProjects(await projectStore.getActiveByBusinessId(businessId))}
-          onClose={() => { setShowPaymentModal(false); void loadPaymentLinks() }}
+          onClose={() => {
+            setShowPaymentModal(false)
+            setPaymentModalItems([])
+            setSelectedIds(new Set())
+            void loadPaymentLinks()
+          }}
         />
       )}
 
@@ -741,6 +684,15 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
             <thead>
               <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
+                <th style={{ padding: '0.75rem 0.5rem', width: '2rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={toggleAll}
+                    style={{ cursor: 'pointer' }}
+                    title={allSelected ? 'בטל בחירת הכל' : 'בחר הכל'}
+                  />
+                </th>
                 <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>
                   <button
                     type="button"
@@ -785,8 +737,17 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
             <tbody>
               {visibleTransactions.map((t) => {
                 const attributedUid = resolvePartyUid(t)
+                const isChecked = t.id != null && selectedIds.has(t.id)
                 return (
-                  <tr key={t.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                  <tr key={t.id} style={{ borderBottom: '1px solid #f1f5f9', background: isChecked ? '#f0f9ff' : undefined }}>
+                    <td style={{ padding: '0.6rem 0.5rem' }}>
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => t.id != null && toggleSelect(t.id)}
+                        style={{ cursor: 'pointer' }}
+                      />
+                    </td>
                     <td style={{ padding: '0.6rem 0.5rem' }}>{t.date}</td>
                     <td style={{ padding: '0.6rem 0.5rem' }}>{t.description}</td>
                     <td style={{ padding: '0.6rem 0.5rem', color: '#64748b' }}>{t.category}</td>

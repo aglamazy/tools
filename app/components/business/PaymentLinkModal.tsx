@@ -30,6 +30,8 @@ type Props = {
   /** Dealer VAT status — read from the tax profile by the parent (same SSOT as
    *  receipt/invoice creation), since it lives on the profile, not business.vatType. */
   vatType?: 'exempt' | 'authorized'
+  /** Pre-seed line items (e.g. from multi-select income rows). */
+  initialItems?: LineItem[]
   onProjectAdded?: () => void
   onClose: () => void
 }
@@ -56,8 +58,8 @@ const input: React.CSSProperties = {
   borderRadius: '0.4rem', fontSize: '0.9rem', boxSizing: 'border-box',
 }
 
-export default function PaymentLinkModal({ business, projects, vatType, onProjectAdded, onClose }: Props) {
-  const [lines, setLines] = useState<LineItem[]>([emptyLine()])
+export default function PaymentLinkModal({ business, projects, vatType, initialItems, onProjectAdded, onClose }: Props) {
+  const [lines, setLines] = useState<LineItem[]>(initialItems && initialItems.length > 0 ? initialItems : [emptyLine()])
   const [projectId, setProjectId] = useState<number | null>(projects[0]?.id ?? null)
   const [draftProject, setDraftProject] = useState<Project | null>(null)
   const [priceIncludesVat, setPriceIncludesVat] = useState(false) // default: NOT including
