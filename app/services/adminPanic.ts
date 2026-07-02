@@ -59,6 +59,12 @@ export interface PanicReason {
   source: string
   /** Server-observed error string from the upstream LLM call (NOT user input). */
   upstreamError: string
+  /**
+   * Optional incident severity. High-severity incidents bypass the normal
+   * cooldown so they do not remain suppressed while a real customer-facing
+   * fault is still live.
+   */
+  severity?: 'low' | 'medium' | 'high'
   /** Optional uid for context — included verbatim only because uids are opaque. */
   uid?: string
   /** Optional first chars of the user's message — truncated, for context only. */
@@ -83,8 +89,9 @@ export async function panicAdmin(reason: PanicReason): Promise<boolean> {
     return false
   }
 
+  const bypassCooldown = reason.severity === 'high'
   const now = new Date()
-  if (config.lastFiredAt) {
+  if (!bypassCooldown && config.lastFiredAt) {
     const lastMs = new Date(config.lastFiredAt).getTime()
     if (!Number.isNaN(lastMs)) {
       const elapsedMin = (now.getTime() - lastMs) / 60000
@@ -95,6 +102,8 @@ export async function panicAdmin(reason: PanicReason): Promise<boolean> {
         return false
       }
     }
+  } else if (bypassCooldown) {
+    console.log(`[adminPanic] high-severity bypass source=${reason.source}`)
   }
 
   // Reserve the cooldown slot BEFORE sending so a burst of concurrent panics
@@ -127,6 +136,7 @@ function formatPanicMessage(reason: PanicReason, now: Date): string {
   const lines = [
     `🚨 Aglamazo LLM panic`,
     `מקור: ${reason.source}`,
+    ...(reason.severity ? [`חומרה: ${reason.severity}`] : []),
     `שגיאת upstream: ${reason.upstreamError}`,
   ]
   if (reason.uid) lines.push(`uid: ${reason.uid}`)

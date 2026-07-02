@@ -15,6 +15,7 @@
  * instead of Firebase ID token because callers are machine peers.
  */
 import { NextRequest, NextResponse } from 'next/server'
+import { VARIANT, VARIANT_CONFIG } from '@/app/config/variants'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import type { BillingStatus, BillingStatusMap } from '@/app/types/billing'
 
@@ -34,6 +35,16 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    if (VARIANT === 'saliko' && VARIANT_CONFIG.serviceStatus) {
+      await getAdminFirestore().collection('billingStatus').doc('saliko').set({
+        tier: 'saliko',
+        kind: 'recurring',
+        paid_through: '2099-12-31',
+        service_status: VARIANT_CONFIG.serviceStatus,
+        updatedAt: new Date().toISOString(),
+      }, { merge: true })
+    }
+
     const snap = await getAdminFirestore().collection('billingStatus').get()
 
     const status: BillingStatusMap = {}
