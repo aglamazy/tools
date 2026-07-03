@@ -33,6 +33,7 @@ type Props = {
   /** Pre-seed line items (e.g. from multi-select income rows). */
   initialItems?: LineItem[]
   onProjectAdded?: () => void
+  onCreated?: () => void
   onClose: () => void
 }
 
@@ -58,7 +59,7 @@ const input: React.CSSProperties = {
   borderRadius: '0.4rem', fontSize: '0.9rem', boxSizing: 'border-box',
 }
 
-export default function PaymentLinkModal({ business, projects, vatType, initialItems, onProjectAdded, onClose }: Props) {
+export default function PaymentLinkModal({ business, projects, vatType, initialItems, onProjectAdded, onCreated, onClose }: Props) {
   const [lines, setLines] = useState<LineItem[]>(initialItems && initialItems.length > 0 ? initialItems : [emptyLine()])
   const [projectId, setProjectId] = useState<number | null>(projects[0]?.id ?? null)
   const [draftProject, setDraftProject] = useState<Project | null>(null)
@@ -135,6 +136,7 @@ export default function PaymentLinkModal({ business, projects, vatType, initialI
       // raw YPAY clearance url.
       const origin = typeof window !== 'undefined' ? window.location.origin : ''
       setResultUrl(`${origin}/pay/${chargeIdentifier}`)
+      onCreated?.()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'שגיאה ביצירת קישור תשלום')
     } finally {
