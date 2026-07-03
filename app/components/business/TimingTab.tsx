@@ -16,7 +16,7 @@ import WeeklyView from './WeeklyView'
 import MonthlyCalendarView from './MonthlyCalendarView'
 import RecentView from './RecentView'
 import TimerSection from './TimerSection'
-import InvoicePreviewModal, { type InvoicePreview } from './InvoicePreviewModal'
+import MultiMonthInvoiceModal from './MultiMonthInvoiceModal'
 import ProjectSummary from './ProjectSummary'
 import ViewModeSelector from './ViewModeSelector'
 import { exportToExcel, generateExcelBase64 } from './excelExport'
@@ -71,7 +71,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
   const [selectedDate, setSelectedDate] = useState(initialDate)
   const [monthOffset, setMonthOffset] = useState(initialMonthOffset)
   const [editingTask, setEditingTask] = useState<EditingTask | null>(null)
-  const [invoicePreview, setInvoicePreview] = useState<InvoicePreview | null>(null)
+  const [multiInvoiceProject, setMultiInvoiceProject] = useState<Project | null>(null)
   const [invoiceError, setInvoiceError] = useState<string | null>(null)
   const [createdInvoices, setCreatedInvoices] = useState<Record<string, string>>({})
   const [profileVatType, setProfileVatType] = useState<'exempt' | 'authorized' | undefined>(undefined)
@@ -93,44 +93,14 @@ export default function TimingTab({ businessId }: TimingTabProps) {
       })
   }, [monthOffset])
 
-  function getLastWorkingDay(offset: number): string {
-    const now = new Date()
-    const year = now.getFullYear()
-    const month = now.getMonth() + offset
-    const lastDay = new Date(year, month + 1, 0)
-    while (lastDay.getDay() === 5 || lastDay.getDay() === 6) {
-      lastDay.setDate(lastDay.getDate() - 1)
-    }
-    return lastDay.toISOString().split('T')[0]
-  }
-
-  const handleCreateInvoice = (projectName: string, totalHours: number) => {
+  // Open the multi-month invoice builder for a project (choose which months to bill).
+  const handleCreateInvoice = (projectName: string) => {
     const project = projects.find(p => p.name === projectName)
-    if (!project?.defaultHourlyRate) {
-      setInvoiceError('לא הוגדר תעריף שעתי לפרויקט')
+    if (!project) {
+      setInvoiceError('פרויקט לא נמצא')
       return
     }
-    if (!project.contactEmail) {
-      setInvoiceError('לא הוגדר אימייל איש קשר לפרויקט')
-      return
-    }
-
-    const { monthName } = getMonthDates(monthOffset)
-    const amount = totalHours * project.defaultHourlyRate
-    const date = getLastWorkingDay(monthOffset)
-
-    setInvoicePreview({
-      projectName,
-      totalHours,
-      hourlyRate: project.defaultHourlyRate,
-      amount,
-      monthName,
-      date,
-      contactEmail: project.contactEmail,
-      contactBusinessID: project.contactBusinessID,
-      contactPhone: project.contactPhone,
-      description: `${projectName} - ${monthName} (${totalHours.toFixed(2)} שעות × ${project.defaultHourlyRate} ₪)`,
-    })
+    setMultiInvoiceProject(project)
   }
 
   // Sync view state to URL params
@@ -901,14 +871,14 @@ export default function TimingTab({ businessId }: TimingTabProps) {
         onSave={handleSaveNewTask}
         onChange={setEditingTask}
       />
-      {invoicePreview && (
-        <InvoicePreviewModal
-          preview={invoicePreview}
+      {multiInvoiceProject && (
+        <MultiMonthInvoiceModal
           business={business!}
+          project={multiInvoiceProject}
           vatType={profileVatType}
-          onClose={() => setInvoicePreview(null)}
+          onClose={() => setMultiInvoiceProject(null)}
           onCreated={(serialNumber) => {
-            setCreatedInvoices(prev => ({ ...prev, [invoicePreview!.projectName]: serialNumber }))
+            setCreatedInvoices(prev => ({ ...prev, [multiInvoiceProject.name]: serialNumber }))
           }}
           onError={setInvoiceError}
         />

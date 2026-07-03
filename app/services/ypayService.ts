@@ -255,6 +255,63 @@ export const ypayService = {
     return { url: data.url, serialNumber: data.serialNumber }
   },
 
+  // Multi-month invoice: one YPAY document with one line item per month, so a
+  // single invoice can cover e.g. May + June. Each included month gets its own
+  // `invoice:project:month` record (all sharing the issued doc's url/serial), so
+  // every covered month is marked invoiced and won't be re-suggested.
+  createMultiMonthInvoice: async (business: Business, params: {
+    projectName: string
+    months: Array<{ monthName: string; totalHours: number }>
+    hourlyRate: number
+    date: string
+    contact?: YpayContact
+    vatType?: 'exempt' | 'authorized'
+  }): Promise<{ url: string; serialNumber: string }> => {
+    const credentials = getCredentials(business)
+    const docType = getBillingDocType(business, params.vatType)
+
+    const items = params.months.map(m => ({
+      description: `${params.projectName} - ${m.monthName} (${m.totalHours.toFixed(2)} שעות × ${params.hourlyRate} ₪)`,
+      quantity: 1,
+      price: m.totalHours * params.hourlyRate,
+      vatIncluded: false,
+    }))
+
+    const response = await fetch('/api/ypay', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...credentials,
+        action: 'createDocument',
+        docType,
+        items,
+        date: params.date,
+        ...(params.contact ? { contact: params.contact } : {}),
+      }),
+    })
+
+    const data = await response.json()
+    if (!data.success) {
+      throw new Error(data.message || 'שגיאה ביצירת חשבונית')
+    }
+
+    const createdAt = new Date().toISOString()
+    for (const m of params.months) {
+      await db.ypayDocuments.add({
+        transactionId: `invoice:${params.projectName}:${m.monthName}`,
+        url: data.url,
+        serialNumber: data.serialNumber,
+        docType,
+        amount: m.totalHours * params.hourlyRate,
+        projectName: params.projectName,
+        monthName: m.monthName,
+        createdAt,
+      })
+    }
+
+    return { url: data.url, serialNumber: data.serialNumber }
+  },
+
   createItemBasedInvoice: async (business: Business, params: {
     projectName: string
     items: Array<{ description: string; quantity: number; price: number }>
