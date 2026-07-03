@@ -31,18 +31,20 @@ export default function PageHeader() {
       <div className="page-header-inner">
         {isApp ? (
           <>
-            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-              <NotificationCenter notifications={notifications} onClear={clearNotifications} />
-              <AuthStatus />
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              {/* Saliko has only a few pages — page search + 9-grid launcher
+                  are noise. Aglamazo keeps both for cross-feature navigation.
+                  Launcher first so it sits flush at the RTL start (right edge);
+                  the wider search input sits inside it, away from the edge. */}
+              {VARIANT !== 'saliko' && <AppLauncher />}
+              {VARIANT !== 'saliko' && <PageSearch />}
             </div>
             <Link href={routes.dashboard} className="page-header-title" style={{ textDecoration: 'none' }}>
               <h1>{branding.name}</h1>
             </Link>
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              {/* Saliko has only a few pages — page search + 9-grid launcher
-                  are noise. Aglamazo keeps both for cross-feature navigation. */}
-              {VARIANT !== 'saliko' && <PageSearch />}
-              {VARIANT !== 'saliko' && <AppLauncher />}
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+              <NotificationCenter notifications={notifications} onClear={clearNotifications} />
+              <AuthStatus />
             </div>
           </>
         ) : (
