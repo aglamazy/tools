@@ -41,6 +41,16 @@
 - Use Store classes for data access, not direct localStorage/IndexedDB
 - Extension changes: bump version in `extension/manifest.json`
 
+## Landmines (worker-facing — `task-prepare` copies this into every baked spec)
+Build/ship-breakers a memoryless worker WILL hit unless told. Check each against your change:
+- **Dexie schema changes need a NEW version.** Never edit/delete an existing entry in `app/db/schemaVersions.ts` (corrupts the version chain). Add an unindexed optional field → no bump. Add/change an index or table → append a NEW version. REMOVE a table → append a new version with `tableName: null` (don't delete the old line).
+- **New synced table → register in `SYNCED_DB_TABLES`** (`app/services/syncedTables.ts`) or CloudSync silently skips it (eslint: no-inline-table-lists).
+- **850-line file cap (eslint).** Files near the limit (e.g. `TimingTab.tsx`) reject additions — put new logic in a new file/component, don't grow the file.
+- **Quote app-router paths with `()`/`[]`** in shell/git (e.g. `"app/(dashboard)/app/business/[id]/page.tsx"`) or the shell mangles them.
+- **Never catch-and-swallow into a naked 500 or a silent default** — fix the cause; if you must catch, log/surface it (a swallowed throw was the Saliko `/api/chat` 500).
+- **Inline `if/else` needs a separator** — `if (c) a; else b` or braces; `if (c) a else b` on one line is an SWC parse error (broke the build 2026-07-03).
+- **DoD = merged AND runs on localhost:3100** (`tsc --noEmit` clean, the real UI action works). "Pushed to origin" is a separate deploy step — don't call it shipped when it's only committed. Keep console.logs until verified.
+
 ## Telegram Bot (AglamazoBot)
 - Webhook: `app/api/telegram/webhook/route.ts`
 - Chat LLM: `app/services/telegram/chatProcessor.ts` (Gemini, action blocks)
