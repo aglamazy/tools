@@ -14,40 +14,21 @@ import { partnerStore, type Partner as Participant } from '@/app/stores/partnerS
 import { getUser } from '@/app/stores/authStore'
 import type { Category } from '@/app/types/category'
 import PartnerPaidImportModal from '@/app/components/business/PartnerPaidImportModal'
+import ExpenseFiltersBar from '@/app/components/business/ExpenseFiltersBar'
+import ExpenseCashForm from '@/app/components/business/ExpenseCashForm'
+import ExpenseRowsTable from '@/app/components/business/ExpenseRowsTable'
+import ExpenseMonthSupplierPivot from '@/app/components/business/ExpenseMonthSupplierPivot'
+import type { ExpenseTableRow, MatchStatus } from '@/app/components/business/expenseTabTypes'
 
 type ExpenseTabProps = {
   businessId: number
 }
-
-type MatchStatus = 'idle' | 'searching' | 'matched' | 'no-match' | 'error'
 
 type ExtractedData = {
   vendor?: string; documentTitle?: string; description?: string
   date?: string; amount?: number; vatAmount?: number
   [key: string]: unknown
 }
-
-type ExpenseTableRow =
-  | {
-      kind: 'transaction'
-      id: number
-      date: string
-      partyUid?: string
-      partyLabel: string
-      amount: number
-      vatAmount: number
-      transaction: Transaction
-    }
-  | {
-      kind: 'partnerDoc'
-      id: number
-      date: string
-      partyUid?: string
-      partyLabel: string
-      amount: number
-      vatAmount: number
-      doc: ExpenseDocument
-    }
 
 async function extractFromFile(file: File, transaction: { date: string; description: string; amount: number }, claudeApiKey: string): Promise<ExtractedData> {
   if (!claudeApiKey) return {}
@@ -77,6 +58,7 @@ async function extractFromFile(file: File, transaction: { date: string; descript
 }
 
 export default function ExpenseTab({ businessId }: ExpenseTabProps) {
+  const [viewMode, setViewMode] = useState<'list' | 'pivot'>('list')
   const [business, setBusiness] = useState<Business | null>(null)
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [availableMonths, setAvailableMonths] = useState<string[]>([])
@@ -615,6 +597,11 @@ const parseSortableDate = (date?: string) => {
     setDownloading(false)
   }
 
+  const onSort = (key: 'date' | 'party' | 'amount') => {
+    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortKey(key); setSortDir(key === 'party' ? 'asc' : 'desc') }
+  }
+
   if (loading) {
     return <p>טוען...</p>
   }
@@ -640,447 +627,102 @@ const parseSortableDate = (date?: string) => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-      {/* Filter selector */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
-        <label style={{ fontWeight: 600 }}>תקופה:</label>
-        <select
-          value={filterMode}
-          onChange={(e) => {
-            const mode = e.target.value as 'month' | 'year' | 'all'
-            setFilterMode(mode)
-            if (mode === 'year' && !selectedYear) {
-              const years = [...new Set(availableMonths.map(m => m.split('/')[1]))].sort((a, b) => Number(b) - Number(a))
-              if (years.length > 0) setSelectedYear(years[0])
-            }
-          }}
-          style={{
-            padding: '0.5rem 1rem',
-            borderRadius: '0.375rem',
-            border: '1px solid #e2e8f0',
-            fontSize: '1rem',
-            direction: 'rtl',
-          }}
-        >
-          <option value="month">חודש</option>
-          <option value="year">שנה</option>
-          <option value="all">הכל</option>
-        </select>
-        {filterMode === 'month' && (
-          <select
-            value={selectedMonth}
-            onChange={(e) => setSelectedMonth(e.target.value)}
-            style={{
-              padding: '0.5rem 1rem',
-              borderRadius: '0.375rem',
-              border: '1px solid #e2e8f0',
-              fontSize: '1rem',
-              direction: 'rtl',
-            }}
-          >
-            {availableMonths.map(m => (
-              <option key={m} value={m}>{m}</option>
-            ))}
-          </select>
-        )}
-        {filterMode === 'year' && (
-          <select
-            value={selectedYear}
-            onChange={(e) => setSelectedYear(e.target.value)}
-            style={{
-              padding: '0.5rem 1rem',
-              borderRadius: '0.375rem',
-              border: '1px solid #e2e8f0',
-              fontSize: '1rem',
-              direction: 'rtl',
-            }}
-          >
-            {[...new Set(availableMonths.map(m => m.split('/')[1]))].sort((a, b) => Number(b) - Number(a)).map(y => (
-              <option key={y} value={y}>{y}</option>
-            ))}
-          </select>
-        )}
-        {partyOptions.length > 1 && (
-          <select
-            value={partyFilter}
-            onChange={(e) => setPartyFilter(e.target.value)}
-            style={{
-              padding: '0.5rem 1rem',
-              borderRadius: '0.375rem',
-              border: '1px solid #e2e8f0',
-              fontSize: '1rem',
-              direction: 'rtl',
-            }}
-          >
-            <option value="all">צד: הכל</option>
-            {partyOptions.map((p) => (
-              <option key={p.value} value={p.value}>{p.label}</option>
-            ))}
-          </select>
-        )}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
-          <label style={{ fontSize: '0.8rem', color: '#64748b' }}>סכום:</label>
-          <input
-            type="number"
-            min="0"
-            placeholder="מינימום"
-            value={amountMinFilter}
-            onChange={(e) => setAmountMinFilter(e.target.value)}
-            style={{ padding: '0.45rem 0.7rem', borderRadius: '0.375rem', border: '1px solid #e2e8f0', fontSize: '0.9rem', width: '110px', direction: 'ltr' }}
-          />
-          <input
-            type="number"
-            min="0"
-            placeholder="מקסימום"
-            value={amountMaxFilter}
-            onChange={(e) => setAmountMaxFilter(e.target.value)}
-            style={{ padding: '0.45rem 0.7rem', borderRadius: '0.375rem', border: '1px solid #e2e8f0', fontSize: '0.9rem', width: '110px', direction: 'ltr' }}
-          />
-        </div>
-        {visibleTransactions.length > 0 || visiblePartnerPaidDocs.length > 0 ? (
-          <span style={{ color: '#64748b', fontSize: '0.9rem' }}>
-            סה"כ: ₪{getMonthTotal().toLocaleString()}
-            {getVatTotal() > 0 && ` (מע״מ: ₪${getVatTotal().toLocaleString()})`}
-          </span>
-        ) : null}
-        {Object.values(matchedDocs).flat().some(d => d.driveFileId) && (
-          <button
-            onClick={handleDownloadAll}
-            disabled={downloading}
-            style={{
-              padding: '0.4rem 0.8rem',
-              borderRadius: '0.375rem',
-              border: '1px solid #e2e8f0',
-              background: downloading ? '#f1f5f9' : '#fff',
-              cursor: downloading ? 'wait' : 'pointer',
-              fontSize: '0.85rem',
-            }}
-          >
-            {downloading ? '...מוריד' : '📥 הורד הכל (ZIP)'}
-          </button>
-        )}
+      <div style={{ display: 'flex', gap: '0.25rem' }}>
         <button
-          onClick={() => setShowCashForm(f => !f)}
+          onClick={() => setViewMode('list')}
           style={{
-            padding: '0.4rem 0.8rem',
-            borderRadius: '0.375rem',
-            border: '1px solid #e2e8f0',
-            background: showCashForm ? '#f1f5f9' : '#fff',
-            cursor: 'pointer',
-            fontSize: '0.85rem',
+            padding: '0.4rem 0.9rem', borderRadius: '0.375rem 0 0 0.375rem', border: '1px solid #e2e8f0',
+            background: viewMode === 'list' ? '#3b82f6' : '#fff', color: viewMode === 'list' ? '#fff' : '#0f172a',
+            cursor: 'pointer', fontSize: '0.85rem', fontWeight: 500,
           }}
         >
-          + מזומן
+          רשימה
         </button>
-        {participants.length > 1 && (
-          <button
-            onClick={() => setShowPartnerImportModal(true)}
-            title="ייבוא מרובה של חשבוניות ששילם שותף — בחר מי שילם וקבצים מרובים, ערוך פרטים, אשר"
-            style={{
-              padding: '0.4rem 0.8rem',
-              borderRadius: '0.375rem',
-              border: '1px solid #e2e8f0',
-              background: '#fff',
-              cursor: 'pointer',
-              fontSize: '0.85rem',
-            }}
-          >
-            + ייבוא חשבוניות מ-שותף
-          </button>
-        )}
+        <button
+          onClick={() => setViewMode('pivot')}
+          style={{
+            padding: '0.4rem 0.9rem', borderRadius: '0 0.375rem 0.375rem 0', border: '1px solid #e2e8f0', borderRight: 'none',
+            background: viewMode === 'pivot' ? '#3b82f6' : '#fff', color: viewMode === 'pivot' ? '#fff' : '#0f172a',
+            cursor: 'pointer', fontSize: '0.85rem', fontWeight: 500,
+          }}
+        >
+          טבלה
+        </button>
       </div>
 
-      {showCashForm && (
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end', flexWrap: 'wrap', padding: '0.75rem', background: '#f8fafc', borderRadius: '0.5rem', border: '1px solid #e2e8f0' }}>
-          <div>
-            <label style={{ fontSize: '0.75rem', color: '#64748b', display: 'block' }}>נושא</label>
-            <select value={cashCategory} onChange={e => setCashCategory(e.target.value)}
-              style={{ padding: '0.5rem 1rem', borderRadius: '0.375rem', border: '1px solid #e2e8f0', fontSize: '0.85rem', direction: 'rtl', background: '#fff' }}>
-              <option value="">בחר</option>
-              {categories.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
-            </select>
-          </div>
-          {participants.length > 1 && (
-            <div>
-              <label style={{ fontSize: '0.75rem', color: '#64748b', display: 'block' }}>שולם על ידי</label>
-              <select value={cashPaidByUid} onChange={e => setCashPaidByUid(e.target.value)}
-                style={{ padding: '0.5rem 1rem', borderRadius: '0.375rem', border: '1px solid #e2e8f0', fontSize: '0.85rem', direction: 'rtl', background: '#fff' }}>
-                {participants.map(p => <option key={p.uid} value={p.uid}>{p.label}</option>)}
-              </select>
-            </div>
-          )}
-          <div>
-            <label style={{ fontSize: '0.75rem', color: '#64748b', display: 'block' }}>קובץ</label>
-            <label className="file-picker" style={{ padding: '0.45rem 1rem', fontSize: '0.85rem', borderRadius: '0.375rem' }}>
-              <span>{cashFile ? cashFile.name : 'בחר קובץ'}</span>
-              <input type="file" accept=".pdf,.jpg,.jpeg,.png,.gif,.webp" onChange={e => setCashFile(e.target.files?.[0] || null)} />
-            </label>
-          </div>
-          <button
-            onClick={handleAddCash}
-            disabled={cashSaving || !cashFile}
-            style={{
-              padding: '0.5rem 1.25rem',
-              borderRadius: '0.375rem',
-              border: 'none',
-              background: cashSaving || !cashFile ? '#93c5fd' : '#3b82f6',
-              color: '#fff',
-              cursor: cashSaving ? 'wait' : 'pointer',
-              fontSize: '0.85rem',
-              fontWeight: 500,
-            }}
-          >
-            {cashSaving ? 'מחלץ נתונים...' : 'הוסף'}
-          </button>
-        </div>
-      )}
-
-      {/* Splid summary intentionally removed from Expenses tab (per Agla
-          2026-06-05): it duplicated the Settlement tab. Share % lives in
-          Settings; the Settlement tab is the single place to see split
-          math. Partner-paid rows are merged into the transactions table
-          below so they're visible in context. */}
-
-      {/* Transactions table — bank txs + partner-paid docs as inline rows */}
-      {visibleRows.length === 0 ? (
-        <p style={{ color: '#64748b', textAlign: 'center', padding: '2rem' }}>
-          אין הוצאות בתקופה זו
-        </p>
+      {viewMode === 'pivot' ? (
+        <ExpenseMonthSupplierPivot businessId={businessId} />
       ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
-            <thead>
-              <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
-                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (sortKey === 'date') setSortDir((d) => d === 'asc' ? 'desc' : 'asc')
-                      else { setSortKey('date'); setSortDir('desc') }
-                    }}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', font: 'inherit', fontWeight: 600, padding: 0, color: '#0f172a' }}
-                  >
-                    תאריך {sortKey === 'date' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
-                  </button>
-                </th>
-                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>תיאור</th>
-                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>נושא</th>
-                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (sortKey === 'party') setSortDir((d) => d === 'asc' ? 'desc' : 'asc')
-                      else { setSortKey('party'); setSortDir('asc') }
-                    }}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', font: 'inherit', fontWeight: 600, padding: 0, color: '#0f172a' }}
-                  >
-                    שולם ע״י {sortKey === 'party' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
-                  </button>
-                </th>
-                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'left' }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (sortKey === 'amount') setSortDir((d) => d === 'asc' ? 'desc' : 'asc')
-                      else { setSortKey('amount'); setSortDir('desc') }
-                    }}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', font: 'inherit', fontWeight: 600, padding: 0, color: '#0f172a' }}
-                  >
-                    סכום {sortKey === 'amount' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
-                  </button>
-                </th>
-                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'left' }}>מע״מ</th>
-                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'center', width: '80px' }}>קבלה</th>
-                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'center', width: '60px' }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {visibleRows.map((row) => {
-                if (row.kind === 'transaction') {
-                  const t = row.transaction
-                  const txId = row.id
-                  const status = matchStatus[txId] || 'idle'
-                  const docs = matchedDocs[txId]
-                  const firstDoc = docs?.[0]
-                  const vatTotal = docs?.reduce((s, d) => s + (d.vatAmount || 0), 0)
-                  const isEditing = editingTxId === txId
-                  return (
-                    <tr key={`tx-${txId}`} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                      <td style={{ padding: '0.6rem 0.5rem' }}>{t.date}</td>
-                      <td style={{ padding: '0.6rem 0.5rem' }}>
-                        {isEditing ? (
-                          <input
-                            type="text"
-                            value={editValues.description}
-                            onChange={e => setEditValues(v => ({ ...v, description: e.target.value }))}
-                            style={{ padding: '0.3rem 0.5rem', borderRadius: '0.25rem', border: '1px solid #e2e8f0', fontSize: '0.85rem', width: '100%', direction: 'rtl', boxSizing: 'border-box' }}
-                            autoFocus
-                          />
-                        ) : (
-                          <>
-                            {firstDoc?.description || firstDoc?.vendor || t.merchant || t.description}
-                            <span style={{ display: 'block', fontSize: '0.75rem', color: '#94a3b8' }}>
-                              {t.description}
-                            </span>
-                          </>
-                        )}
-                      </td>
-                      <td style={{ padding: '0.6rem 0.5rem', color: '#64748b' }}>
-                        {isEditing ? (
-                          <select
-                            value={editValues.category}
-                            onChange={e => setEditValues(v => ({ ...v, category: e.target.value }))}
-                            style={{ padding: '0.3rem 0.5rem', borderRadius: '0.25rem', border: '1px solid #e2e8f0', fontSize: '0.85rem', direction: 'rtl' }}
-                          >
-                            <option value="">—</option>
-                            {categories.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
-                          </select>
-                        ) : t.category}
-                      </td>
-                      <td style={{ padding: '0.6rem 0.5rem', color: '#64748b', fontSize: '0.85rem' }}>
-                        {row.partyLabel}
-                      </td>
-                      <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', fontWeight: 500, color: '#dc2626' }}>
-                        {isEditing && editingIsCash ? (
-                          <input
-                            type="number"
-                            value={editValues.amount || ''}
-                            onChange={e => setEditValues(v => ({ ...v, amount: e.target.value }))}
-                            style={{ padding: '0.3rem 0.5rem', borderRadius: '0.25rem', border: '1px solid #e2e8f0', fontSize: '0.85rem', width: '90px', textAlign: 'left' }}
-                          />
-                        ) : (
-                          <>₪{row.amount.toLocaleString()}</>
-                        )}
-                      </td>
-                      <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', color: '#64748b', fontSize: '0.85rem' }}>
-                        {vatTotal ? `₪${vatTotal.toLocaleString()}` : ''}
-                      </td>
-                      <td style={{ padding: '0.6rem 0.5rem', textAlign: 'center' }}>
-                        {status === 'matched' ? (
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}>
-                            {docs?.map((doc, i) => (
-                              doc.driveWebViewLink ? (
-                                <a key={i} href={doc.driveWebViewLink} target="_blank" rel="noopener noreferrer" title={doc.vendor || doc.fileName || 'פתח קבלה'} style={{ color: '#10b981', textDecoration: 'none', fontSize: '0.9rem' }}>📄</a>
-                              ) : (
-                                <span key={i} title={doc.vendor || 'נמצאה קבלה'} style={{ color: '#10b981' }}>✓</span>
-                              )
-                            ))}
-                            <button
-                              onClick={() => handleUnlink(txId)}
-                              title="הסר קישור"
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', fontSize: '0.7rem', padding: 0 }}
-                            >✕</button>
-                          </div>
-                        ) : status === 'searching' ? (
-                          <span style={{ color: '#64748b' }}>...</span>
-                        ) : status === 'no-match' ? (
-                          <button
-                            onClick={() => handleMatchReceipt(t)}
-                            disabled={Object.values(matchStatus).includes('searching')}
-                            title="לא נמצאה קבלה — לחץ לחיפוש נוסף"
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#f59e0b', fontSize: '0.85rem', padding: '0.1rem 0.3rem' }}
-                          >לא נמצא</button>
-                        ) : status === 'error' ? (
-                          <button
-                            onClick={() => handleMatchReceipt(t)}
-                            disabled={Object.values(matchStatus).includes('searching')}
-                            title="שגיאה — לחץ לניסיון נוסף"
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: '0.85rem', padding: '0.1rem 0.3rem' }}
-                          >שגיאה</button>
-                        ) : (
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.2rem' }}>
-                          <button
-                            onClick={() => handleMatchReceipt(t)}
-                            disabled={Object.values(matchStatus).includes('searching')}
-                            title="חפש קבלה ב-Gmail"
-                            style={{
-                              background: 'none',
-                              border: 'none',
-                              cursor: 'pointer',
-                              fontSize: '1rem',
-                              padding: '0.1rem 0.3rem',
-                              opacity: Object.values(matchStatus).includes('searching') ? 0.4 : 1,
-                            }}
-                          >
-                            🔍
-                          </button>
-                          <label
-                            title="העלה קבלה"
-                            style={{
-                              cursor: 'pointer',
-                              fontSize: '0.9rem',
-                              padding: '0.1rem 0.3rem',
-                              opacity: Object.values(matchStatus).includes('searching') ? 0.4 : 1,
-                            }}
-                          >
-                            📎
-                            <input
-                              type="file"
-                              accept=".pdf,.jpg,.jpeg,.png,.gif,.webp"
-                              multiple
-                              style={{ display: 'none' }}
-                              onChange={(e) => {
-                                const files = e.target.files
-                                if (files && files.length > 0) handleUploadReceipt(t, files)
-                                e.target.value = ''
-                              }}
-                            />
-                          </label>
-                          </div>
-                        )}
-                      </td>
-                      <td style={{ padding: '0.6rem 0.25rem', textAlign: 'center', whiteSpace: 'nowrap' }}>
-                        {isEditing ? (
-                          <div style={{ display: 'flex', gap: '0.2rem', justifyContent: 'center' }}>
-                            <button onClick={saveEdit} title="שמור" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', color: '#10b981', padding: '0.1rem 0.25rem' }}>✓</button>
-                            <button onClick={cancelEdit} title="בטל" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', color: '#94a3b8', padding: '0.1rem 0.25rem' }}>✕</button>
-                          </div>
-                        ) : (
-                          <div style={{ display: 'flex', gap: '0.2rem', justifyContent: 'center' }}>
-                            <button onClick={() => startEdit(t)} title="ערוך" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', padding: '0.1rem 0.25rem', color: '#64748b' }}>✎</button>
-                            {t.type === 'cash' && (
-                              <button onClick={() => handleDeleteCash(t)} title="מחק" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', padding: '0.1rem 0.25rem', color: '#dc2626' }}>✕</button>
-                            )}
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                }
+        <>
+          <ExpenseFiltersBar
+            filterMode={filterMode}
+            setFilterMode={setFilterMode}
+            selectedMonth={selectedMonth}
+            setSelectedMonth={setSelectedMonth}
+            selectedYear={selectedYear}
+            setSelectedYear={setSelectedYear}
+            availableMonths={availableMonths}
+            partyOptions={partyOptions}
+            partyFilter={partyFilter}
+            setPartyFilter={setPartyFilter}
+            amountMinFilter={amountMinFilter}
+            setAmountMinFilter={setAmountMinFilter}
+            amountMaxFilter={amountMaxFilter}
+            setAmountMaxFilter={setAmountMaxFilter}
+            showTotals={visibleTransactions.length > 0 || visiblePartnerPaidDocs.length > 0}
+            monthTotal={getMonthTotal()}
+            vatTotal={getVatTotal()}
+            hasDownloadable={Object.values(matchedDocs).flat().some(d => d.driveFileId)}
+            downloading={downloading}
+            onDownloadAll={handleDownloadAll}
+            showCashForm={showCashForm}
+            setShowCashForm={setShowCashForm}
+            hasMultipleParticipants={participants.length > 1}
+            onOpenPartnerImport={() => setShowPartnerImportModal(true)}
+          />
 
-                const d = row.doc
-                return (
-                  <tr key={`pp-${d.id}`} style={{ borderBottom: '1px solid #f1f5f9', background: '#fffbeb' }}>
-                    <td style={{ padding: '0.6rem 0.5rem' }}>{d.date || '—'}</td>
-                    <td style={{ padding: '0.6rem 0.5rem' }}>
-                      {d.vendor || d.fileName}
-                      <span style={{ display: 'block', fontSize: '0.75rem', color: '#92400e' }}>
-                        🧾 חשבונית ששולמה ע״י שותף (אין רישום בנק)
-                      </span>
-                    </td>
-                    <td style={{ padding: '0.6rem 0.5rem', color: '#64748b' }}>{d.category || '—'}</td>
-                    <td style={{ padding: '0.6rem 0.5rem' }}>{row.partyLabel}</td>
-                    <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left' }}>
-                      ₪{row.amount.toLocaleString()}
-                    </td>
-                    <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', color: '#64748b' }}>
-                      {d.vatAmount != null ? `₪${d.vatAmount.toLocaleString()}` : '—'}
-                    </td>
-                    <td style={{ padding: '0.6rem 0.5rem', textAlign: 'center' }}>
-                      {d.driveWebViewLink ? (
-                        <a href={d.driveWebViewLink} target="_blank" rel="noreferrer" style={{ color: '#0ea5e9' }}>
-                          קובץ
-                        </a>
-                      ) : (
-                        '—'
-                      )}
-                    </td>
-                    <td />
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+          {showCashForm && (
+            <ExpenseCashForm
+              categories={categories}
+              participants={participants}
+              cashCategory={cashCategory}
+              setCashCategory={setCashCategory}
+              cashPaidByUid={cashPaidByUid}
+              setCashPaidByUid={setCashPaidByUid}
+              cashFile={cashFile}
+              setCashFile={setCashFile}
+              cashSaving={cashSaving}
+              onSubmit={handleAddCash}
+            />
+          )}
+
+          {/* Splid summary intentionally removed from Expenses tab (per Agla
+              2026-06-05): it duplicated the Settlement tab. Share % lives in
+              Settings; the Settlement tab is the single place to see split
+              math. Partner-paid rows are merged into the transactions table
+              below so they're visible in context. */}
+
+          <ExpenseRowsTable
+            visibleRows={visibleRows}
+            categories={categories}
+            matchStatus={matchStatus}
+            matchedDocs={matchedDocs}
+            sortKey={sortKey}
+            sortDir={sortDir}
+            onSort={onSort}
+            editingTxId={editingTxId}
+            editValues={editValues}
+            setEditValues={setEditValues}
+            editingIsCash={editingIsCash}
+            startEdit={startEdit}
+            saveEdit={saveEdit}
+            cancelEdit={cancelEdit}
+            handleMatchReceipt={handleMatchReceipt}
+            handleUploadReceipt={handleUploadReceipt}
+            handleUnlink={handleUnlink}
+            handleDeleteCash={handleDeleteCash}
+          />
+        </>
       )}
 
       <PartnerPaidImportModal
