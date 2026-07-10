@@ -2,9 +2,14 @@
  * Cloud Backup Service
  * Handles encrypted backup storage in Firebase Storage
  *
- * Supports two storage modes:
- * 1. Personal: backups/{userId}/... (default for FREE/PRO users)
- * 2. Household: backups/households/{householdId}/... (for HOME tier sharing)
+ * Supports two storage modes, both namespaced by product variant so a
+ * misconfigured local/preview session for one variant can never write into
+ * another variant's backup even if it somehow shares a Firebase project
+ * (each variant is meant to have its own project, but this is defense in
+ * depth — see #248, a Saliko local-testing session was found writing into
+ * Aglamazo's backup path because saliko-prod had no Storage bucket set up):
+ * 1. Personal: backups/{variant}/{userId}/... (default for FREE/PRO users)
+ * 2. Household: backups/{variant}/households/{householdId}/... (HOME tier sharing)
  */
 
 import {
@@ -21,6 +26,7 @@ import { encrypt, decrypt, generateVerificationToken, verifyPasswordWithToken } 
 import { exportAllStores, importAllStores, isLocalDataEmpty, type BackupData } from './backupService'
 import { applyCloudBackup } from './applyMergedBackupService'
 import { classifySyncError } from './syncErrorClassifier'
+import { VARIANT } from '@/app/config/variants'
 // Shared business sync is triggered independently from CloudSyncManager
 
 const BACKUP_FILE_NAME = 'backup.enc'
@@ -69,10 +75,10 @@ async function getBackupPath(uid: string, fileName: string): Promise<string> {
   const householdId = await getHouseholdIdFromToken()
 
   if (householdId) {
-    return `backups/households/${householdId}/${fileName}`
+    return `backups/${VARIANT}/households/${householdId}/${fileName}`
   }
 
-  return `backups/${uid}/${fileName}`
+  return `backups/${VARIANT}/${uid}/${fileName}`
 }
 
 /**
@@ -104,8 +110,8 @@ export async function migrateToHouseholdStorage(): Promise<CloudBackupResult> {
   let migrated = 0
 
   for (const fileName of filesToMigrate) {
-    const personalPath = `backups/${user.uid}/${fileName}`
-    const householdPath = `backups/households/${householdId}/${fileName}`
+    const personalPath = `backups/${VARIANT}/${user.uid}/${fileName}`
+    const householdPath = `backups/${VARIANT}/households/${householdId}/${fileName}`
 
     try {
       const personalRef = ref(storage, personalPath)

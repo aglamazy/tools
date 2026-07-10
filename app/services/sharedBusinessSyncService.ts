@@ -5,7 +5,7 @@
  * Uses the same backup-and-merge pattern as cloudBackupService.ts,
  * but scoped to a single business's data tree.
  *
- * Storage path: backups/shared/{businessSyncId}/backup.enc
+ * Storage path: backups/{variant}/shared/{businessSyncId}/backup.enc
  */
 
 import {
@@ -23,6 +23,7 @@ import type { BackupData } from './backupService'
 import { applyCloudBackup } from './applyMergedBackupService'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { classifySyncError } from './syncErrorClassifier'
+import { VARIANT } from '@/app/config/variants'
 
 /**
  * Status of a background shared-business sync, broadcast as a DOM CustomEvent so
@@ -369,7 +370,7 @@ async function applySharedBackup(
  * Get the storage path for a shared business backup
  */
 function getSharedBackupPath(businessSyncId: string, fileName: string): string {
-  return `backups/shared/${businessSyncId}/${fileName}`
+  return `backups/${VARIANT}/shared/${businessSyncId}/${fileName}`
 }
 
 /**
