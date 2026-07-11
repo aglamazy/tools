@@ -82,30 +82,68 @@ async function fetchExtractionChunk(
   }
 }
 
+// A single Gemini call occasionally hallucinates an all-zero page even at
+// temperature 0 — observed on page 1/6 of a real statement across repeated
+// runs of the exact same input: pass, fail, fail-twice-in-a-row. Page 1 is
+// also the densest layout (blank-balance rows, wrapped two-line
+// descriptions), so it's the most failure-prone chunk. 3 attempts absorbs
+// that without forcing the user to re-upload the whole file for one bad page.
+const MAX_CHUNK_ATTEMPTS = 3
+
+/**
+ * Extract one chunk, retrying up to MAX_CHUNK_ATTEMPTS on failure. A missing
+ * chunk means missing days of transactions — the same silent-data-loss shape
+ * we're preventing (#251/#252) — so we fail hard if every attempt fails.
+ */
+async function extractChunkWithRetry(
+  chunk: File,
+  opts: { hint?: 'bank' | 'credit'; exampleContext?: string },
+  label: string,
+): Promise<Extraction & { rawRows: Extraction['rows'] }> {
+  let lastErr: unknown
+  for (let attempt = 1; attempt <= MAX_CHUNK_ATTEMPTS; attempt++) {
+    try {
+      return await fetchExtractionChunk(chunk, opts)
+    } catch (err) {
+      lastErr = err
+      console.error(`[pdfReader] ${label} attempt ${attempt} failed:`, err)
+    }
+  }
+  throw lastErr
+}
+
 async function fetchExtraction(file: File, onProgress?: (p: PdfReadProgress) => void): Promise<SheetRow[]> {
   const chunks = await splitPdfIntoChunks(file)
+  const total = chunks.length
 
-  const extractions: Extraction[] = []
-  let hint: 'bank' | 'credit' | undefined
-  let exampleContext: string | undefined
-  for (let i = 0; i < chunks.length; i++) {
-    onProgress?.({ current: i + 1, total: chunks.length })
-    // Fail the whole import if any chunk fails — a missing chunk means
-    // missing days of transactions, which is the same silent-data-loss
-    // shape we're trying to prevent (#251/#252). Sequential (not parallel)
-    // so progress is meaningful, each chunk can use the previous chunk's
-    // real result as its few-shot example, and we don't hammer the rate limit.
-    const extraction = await fetchExtractionChunk(chunks[i], { hint, exampleContext })
-    if (!hint) hint = extraction.kind
-    // Continuation pages print no column headers of their own (#251) — carry
-    // the first successful chunk's real extraction forward as a worked
-    // example so every later chunk knows the debit/credit/balance mapping
-    // without re-sending the header page's image on every call.
-    if (!exampleContext) exampleContext = buildExampleContext(extraction)
-    extractions.push(extraction)
-  }
+  // Page 1 carries the only column-header row in an Israeli statement export
+  // (#251) — continuation pages print none. So extract it FIRST, sequentially:
+  // it establishes the doc kind and, from its own real extraction, a few-shot
+  // "worked example" that tells every later page the debit/credit/balance
+  // column mapping. Only then can the rest run.
+  let done = 0
+  const bump = () => onProgress?.({ current: ++done, total })
 
-  const merged = mergeExtractions(extractions)
+  const first = await extractChunkWithRetry(chunks[0], {}, `chunk 1/${total}`)
+  bump()
+  const hint = first.kind
+  const exampleContext = buildExampleContext(first)
+
+  // The remaining pages are independent of each other — each only needs page
+  // 1's example, not the page before it. So fan them out in PARALLEL instead
+  // of walking them one-by-one: a 6-page file goes from ~6 sequential calls
+  // (~3.5min) to ~2 call-times (~60-80s). Each still retries independently;
+  // if any page fails all attempts, the whole import fails (no silent gaps).
+  const rest = await Promise.all(
+    chunks.slice(1).map((chunk, i) =>
+      extractChunkWithRetry(chunk, { hint, exampleContext }, `chunk ${i + 2}/${total}`).then((r) => {
+        bump()
+        return r
+      }),
+    ),
+  )
+
+  const merged = mergeExtractions([first, ...rest])
 
   // Server already validates each chunk individually before returning it —
   // this is a cheap final sanity check on the merged result, not a
