@@ -39,12 +39,14 @@
 - Don't commit until user confirms it works in the browser
 - Keep console.log until feature is verified working
 - Use Store classes for data access, not direct localStorage/IndexedDB
+- **No new localStorage-backed stores.** All persistent app state goes in a Dexie synced table (registered in `SYNCED_DB_TABLES`) so it gets the generic syncId-merge + deletion-ledger for free. localStorage stores sit outside that path and sync by whole-blob overwrite — a thinner-but-newer remote wiped every business-scoped subject on 2026-07-11. The two legacy exceptions (`subjectStore`, `timerStore`) are being migrated to Dexie; don't add a third. `scripts/check-backup-stores.js` (pre-commit) fails if a localStorage store's incremental sync isn't a `{ merge: true }` call.
 - Extension changes: bump version in `extension/manifest.json`
 
 ## Landmines (worker-facing — `task-prepare` copies this into every baked spec)
 Build/ship-breakers a memoryless worker WILL hit unless told. Check each against your change:
 - **Dexie schema changes need a NEW version.** Never edit/delete an existing entry in `app/db/schemaVersions.ts` (corrupts the version chain). Add an unindexed optional field → no bump. Add/change an index or table → append a NEW version. REMOVE a table → append a new version with `tableName: null` (don't delete the old line).
 - **New synced table → register in `SYNCED_DB_TABLES`** (`app/services/syncedTables.ts`) or CloudSync silently skips it (eslint: no-inline-table-lists).
+- **Never persist app state in localStorage — use a Dexie synced table.** localStorage stores sync by whole-blob OVERWRITE (thinner-newer remote clobbers a richer local → data loss, incident 2026-07-11). Only Dexie synced tables get the syncId-merge + deletion ledger. If you must touch the legacy `subjectStore`/`timerStore`, their sync import MUST merge, not overwrite (`check-backup-stores.js` enforces this in pre-commit).
 - **850-line file cap (eslint).** Files near the limit (e.g. `TimingTab.tsx`) reject additions — put new logic in a new file/component, don't grow the file.
 - **Quote app-router paths with `()`/`[]`** in shell/git (e.g. `"app/(dashboard)/app/business/[id]/page.tsx"`) or the shell mangles them.
 - **Never catch-and-swallow into a naked 500 or a silent default** — fix the cause; if you must catch, log/surface it (a swallowed throw was the Saliko `/api/chat` 500).

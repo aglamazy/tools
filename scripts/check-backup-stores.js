@@ -76,13 +76,40 @@ for (const store of LOCALSTORAGE_STORES) {
   }
 }
 
+// Anomaly guard: a localStorage store is OUTSIDE the generic Dexie sync path
+// (syncId-merge + deletion ledger), so its incremental-sync import MUST be a
+// per-record MERGE, never a whole-blob overwrite. A blind overwrite let a
+// thinner-but-newer remote clobber the local subjectStore and wiped every
+// business-scoped subject (data-loss incident 2026-07-11). Enforce that the
+// incremental sync (applyMergedBackupService) merges each localStorage store.
+console.log('\nlocalStorage store sync-safety (must MERGE on incremental sync, not overwrite):')
+for (const store of LOCALSTORAGE_STORES) {
+  // timerStore is intentionally NOT imported on incremental sync (local timer
+  // always wins) — only merged-into on full restore. Skip the merge assertion
+  // for stores the incremental sync doesn't touch.
+  const importedIncrementally = applyServiceContent.includes(`${store}.import(`)
+  if (!importedIncrementally) {
+    console.log(`  ⏭️  ${store} — not imported on incremental sync (skip)`)
+    continue
+  }
+  // Require the merge option on the incremental-sync import call.
+  const mergeRe = new RegExp(`${store}\\.import\\([^)]*merge\\s*:\\s*true`)
+  if (mergeRe.test(applyServiceContent)) {
+    console.log(`  ✅ ${store} — incremental sync uses { merge: true }`)
+  } else {
+    console.log(`  ❌ ${store} — incremental sync import is NOT a merge (overwrite = data-loss risk)`)
+    hasErrors = true
+  }
+}
+
 console.log('')
 
 if (hasErrors) {
-  console.error('❌ Sync services are not properly configured!')
-  console.error('   All sync services must import SYNCED_DB_TABLES from syncedTables.ts')
+  console.error('❌ Data-store sync is not safe!')
+  console.error('   - All sync services must import SYNCED_DB_TABLES from syncedTables.ts')
+  console.error('   - Every localStorage store imported on incremental sync must MERGE (not overwrite).')
   process.exit(1)
 } else {
-  console.log('✅ All sync services use the single source of truth (syncedTables.ts)')
+  console.log('✅ Sync services use the SSOT and all localStorage stores merge safely on sync')
   process.exit(0)
 }

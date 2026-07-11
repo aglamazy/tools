@@ -134,12 +134,57 @@ export const subjectStore = {
     }
   },
 
-  // Import store data from backup
-  import: async (data: any): Promise<void> => {
+  // Import store data from backup.
+  //
+  // Two modes:
+  //  - full restore (default): overwrite — the user explicitly chose to replace
+  //    local state with a backup file, so honor that.
+  //  - sync merge (`{ merge: true }`): UNION by id/key so a local-only subject
+  //    is NEVER dropped. A blind overwrite here let a thinner remote clobber a
+  //    richer local set and wiped every business-scoped subject (data-loss
+  //    incident 2026-07-11). Every other synced store merges per-record; this
+  //    brings subjectStore in line. Note: without a per-subject deletion ledger
+  //    a merge can resurrect a subject deleted on another device — acceptable
+  //    for a low-churn store, and far safer than a wipe. A real tombstone
+  //    ledger for subjects is the follow-up (generic-store convergence).
+  import: async (
+    data: { categories?: Category[]; classifications?: Classification[]; version?: string } | null,
+    opts?: { merge?: boolean },
+  ): Promise<void> => {
     try {
-      if (data) {
+      if (!data) return
+      if (!opts?.merge) {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+        return
       }
+
+      const stored = localStorage.getItem(STORAGE_KEY)
+      const local = stored ? JSON.parse(stored) : {}
+
+      // Union categories by id — incoming wins on a shared id (it's the update),
+      // but a local-only id is always kept.
+      const catById = new Map<string | number, Category>()
+      for (const c of (local.categories || [])) catById.set(c.id, c)
+      for (const c of (data.categories || [])) catById.set(c.id, c)
+
+      // Union classifications by (transactionId, monthYear) — newest wins.
+      const classKey = (x: Classification) => `${x.transactionId}|${x.monthYear}`
+      const classByKey = new Map<string, Classification>()
+      for (const x of (local.classifications || [])) classByKey.set(classKey(x), x)
+      for (const x of (data.classifications || [])) {
+        const prev = classByKey.get(classKey(x))
+        if (!prev || new Date(x.classifiedAt || 0) >= new Date(prev.classifiedAt || 0)) {
+          classByKey.set(classKey(x), x)
+        }
+      }
+
+      const merged = {
+        version: data.version || local.version || '1.0',
+        categories: Array.from(catById.values()),
+        classifications: Array.from(classByKey.values()),
+        lastUpdated: new Date().toISOString(),
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(merged))
     } catch (err) {
       console.error('Error importing subject store:', err)
     }

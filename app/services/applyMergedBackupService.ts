@@ -344,14 +344,14 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
     },
   )
 
-  // Import non-DB stores — only if cloud is newer than local
+  // Import non-DB stores via a per-record MERGE, never a timestamp-gated
+  // overwrite. The old "import whole blob only if cloud is newer" logic let a
+  // thinner-but-newer remote clobber a richer local subjectStore and wiped
+  // every business-scoped subject (data-loss incident 2026-07-11). Merging
+  // unions both sides so no local-only subject is ever lost — and it runs
+  // unconditionally (both directions are safe under a union).
   if (cloud.stores.subjectStore) {
-    const cloudUpdated = cloud.stores.subjectStore.lastUpdated
-    const local = subjectStore.getRaw()
-    const localUpdated = local?.lastUpdated
-    if (!localUpdated || !cloudUpdated || new Date(cloudUpdated) > new Date(localUpdated)) {
-      await subjectStore.import(cloud.stores.subjectStore)
-    }
+    await subjectStore.import(cloud.stores.subjectStore, { merge: true })
   }
   // Local timer always wins — don't restore cloud timer (user may have stopped it locally)
   // timerStore is only imported during full restore (importAllStores), not incremental sync

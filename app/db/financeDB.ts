@@ -392,26 +392,36 @@ class FinanceDB extends Dexie {
       'chats', 'chatMessages', 'credentials', 'vatPayments',
     ])
 
-    // Auto-inject syncId/updatedAt on create/update, and record deletions
-    // Serialized queue for deletion ledger updates to avoid read-modify-write races
+    // Auto-inject syncId/updatedAt on create/update, and record deletions.
+    // Deletion ledger updates are a read-modify-write on a single appSettings
+    // row, so concurrent flushes MUST NOT interleave — otherwise flush B reads
+    // the ledger before flush A's write commits and clobbers A's additions.
+    // (That race lost ~89 of 109 tombstones during a bulk console delete on
+    // 2026-07-11 — the UI deletes one row at a time so it never surfaced in
+    // normal use.) `flushChain` serializes every flush's full read-modify-write
+    // end-to-end; `deletionFlushScheduled` only debounces scheduling.
     let deletionQueue: { tableName: string; syncId: string }[] = []
     let deletionFlushScheduled = false
+    let flushChain: Promise<void> = Promise.resolve()
     const flushDeletionQueue = () => {
       deletionFlushScheduled = false
       const batch = deletionQueue.splice(0)
       if (batch.length === 0) return
-      this.appSettings.where('key').equals('deletedRecords').first().then(setting => {
-        const ledger: Record<string, string[]> = setting?.value as Record<string, string[]> || {}
-        for (const { tableName, syncId } of batch) {
-          if (!ledger[tableName]) ledger[tableName] = []
-          if (!ledger[tableName].includes(syncId)) ledger[tableName].push(syncId)
-        }
-        if (setting) {
-          this.appSettings.update(setting.id!, { value: ledger, updatedAt: new Date().toISOString() })
-        } else {
-          this.appSettings.add({ key: 'deletedRecords', value: ledger, updatedAt: new Date().toISOString() })
-        }
-      }).catch(err => console.error('[DB] deletion ledger error:', err))
+      flushChain = flushChain
+        .then(async () => {
+          const setting = await this.appSettings.where('key').equals('deletedRecords').first()
+          const ledger: Record<string, string[]> = (setting?.value as Record<string, string[]>) || {}
+          for (const { tableName, syncId } of batch) {
+            if (!ledger[tableName]) ledger[tableName] = []
+            if (!ledger[tableName].includes(syncId)) ledger[tableName].push(syncId)
+          }
+          if (setting) {
+            await this.appSettings.update(setting.id!, { value: ledger, updatedAt: new Date().toISOString() })
+          } else {
+            await this.appSettings.add({ key: 'deletedRecords', value: ledger, updatedAt: new Date().toISOString() })
+          }
+        })
+        .catch(err => console.error('[DB] deletion ledger error:', err))
     }
 
     this.on('ready', () => {
