@@ -1,7 +1,8 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { db } from '@/app/db/financeDB'
+import { getClaudeKeyHealth, clearHealthCache, type ClaudeKeyHealth } from '@/app/services/claudeKeyHealth'
 
 export default function ApiKeysTab() {
   const [claudeApiKey, setClaudeApiKey] = useState('')
@@ -9,18 +10,30 @@ export default function ApiKeysTab() {
   const [editing, setEditing] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
+  const [health, setHealth] = useState<ClaudeKeyHealth | null>(null)
+  const [checking, setChecking] = useState(false)
+
+  const refreshHealth = useCallback(async (force = false) => {
+    setChecking(true)
+    try {
+      const h = await getClaudeKeyHealth({ force })
+      setHealth(h)
+    } finally {
+      setChecking(false)
+    }
+  }, [])
 
   useEffect(() => {
     db.appSettings.where('key').equals('claudeApiKey').first().then(row => {
-      console.log('[ApiKeysTab] load row:', row)
       if (row?.value) {
         setClaudeApiKey(row.value as string)
         setHasKey(true)
+        refreshHealth()
       }
     }).catch(err => {
       console.error('[ApiKeysTab] load error:', err)
     })
-  }, [])
+  }, [refreshHealth])
 
   const handleSave = async () => {
     try {
@@ -51,6 +64,9 @@ export default function ApiKeysTab() {
       setEditing(false)
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
+      // Key changed — drop the stale health verdict and re-probe the new key.
+      clearHealthCache()
+      refreshHealth(true)
     } catch (err: any) {
       console.error('[ApiKeysTab] save error:', err)
       setError(err.message)
@@ -172,6 +188,43 @@ export default function ApiKeysTab() {
               }}
             >
               ביטול
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Key health — always shown when a key is set, so a dead key (e.g.
+          depleted Anthropic credits) is visible right here instead of failing
+          silently during extraction. */}
+      {hasKey && !editing && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.6rem', fontSize: '0.82rem' }}>
+          {checking ? (
+            <span style={{ color: '#64748b' }}>בודק מפתח…</span>
+          ) : health && health.reason !== 'no-key' ? (
+            health.ok ? (
+              <span style={{ color: '#16a34a' }}>✓ מפתח Claude תקין</span>
+            ) : health.reason === 'rate-limit' || health.reason === 'error' ? (
+              <span style={{ color: '#b45309' }}>⚠ {health.message}</span>
+            ) : (
+              <span
+                style={{
+                  color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca',
+                  borderRadius: '0.375rem', padding: '0.4rem 0.6rem', lineHeight: 1.5,
+                }}
+              >
+                ✗ {health.message} החילוץ ממשיך לעבוד דרך Gemini.
+              </span>
+            )
+          ) : null}
+          {!checking && (
+            <button
+              onClick={() => refreshHealth(true)}
+              style={{
+                padding: '0.25rem 0.6rem', fontSize: '0.78rem', background: 'transparent',
+                color: '#3b82f6', border: '1px solid #bfdbfe', borderRadius: '0.375rem', cursor: 'pointer',
+              }}
+            >
+              בדוק שוב
             </button>
           )}
         </div>
