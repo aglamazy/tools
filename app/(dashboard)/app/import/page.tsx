@@ -38,6 +38,8 @@ function ImportPageContent() {
   // Name of the file currently being analyzed/imported — drives a blocking
   // overlay so a slow PDF extraction (~10-40s via Gemini) isn't silent.
   const [importing, setImporting] = useState<string | null>(null)
+  // Chunk progress for large PDFs split into page-range extraction calls (#251).
+  const [pdfProgress, setPdfProgress] = useState<{ current: number; total: number } | null>(null)
 
   // Modal states
   const [messageModal, setMessageModal] = useState<{ isOpen: boolean; emoji?: string; message: string }>({
@@ -239,10 +241,12 @@ const handleDeleteFile = (file: ImportedFile) => {
 
   const handleFileSelect = async (file: File) => {
     setImporting(file.name)
+    setPdfProgress(null)
     try {
-      // Extract file metadata
+      // Extract file metadata. Large PDFs split into page-range chunks
+      // (#251) — onProgress drives the "קורא עמוד X מתוך Y" indicator below.
       const { extractFileMetadata } = await import('@/app/utils/filePreview')
-      const metadata = await extractFileMetadata(file)
+      const metadata = await extractFileMetadata(file, (p) => setPdfProgress(p))
 
       if (metadata.fileType === 'unknown') {
         setMessageModal({
@@ -315,6 +319,7 @@ const handleDeleteFile = (file: ImportedFile) => {
       showToast('error', `אירעה שגיאה בייבוא הקובץ: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       setImporting(null)
+      setPdfProgress(null)
     }
   }
 
@@ -379,7 +384,9 @@ const handleDeleteFile = (file: ImportedFile) => {
         >
           <span style={{ fontSize: '1.3rem' }}>⏳</span>
           <div>
-            <div style={{ fontWeight: 600, color: '#0f172a', fontSize: '0.9rem' }}>מנתח את הקובץ ברקע…</div>
+            <div style={{ fontWeight: 600, color: '#0f172a', fontSize: '0.9rem' }}>
+              {pdfProgress ? `קורא עמוד ${pdfProgress.current} מתוך ${pdfProgress.total}…` : 'מנתח את הקובץ ברקע…'}
+            </div>
             <div style={{ fontSize: '0.78rem', color: '#64748b' }}>
               {importing} — אפשר להמשיך לעבוד, נודיע כשמוכן.
             </div>

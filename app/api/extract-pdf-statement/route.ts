@@ -5,28 +5,7 @@
 // When the caller passes a Claude key we use Claude Sonnet; otherwise we fall back to Gemini on the
 // app's included key (GEMINI_API_KEY) so PDF import works out-of-box with no user config.
 import { NextRequest, NextResponse } from 'next/server'
-
-type ExtractedRow = {
-  date?: string | null
-  merchant?: string | null
-  description?: string | null
-  txAmount?: number | null
-  billAmount?: number | null
-  debit?: number | null
-  credit?: number | null
-  balance?: number | null
-  reference?: string | null
-  detail?: string | null
-}
-
-type Extraction = {
-  kind: 'bank' | 'credit'
-  accountNumber?: string | null
-  cardNumber?: string | null
-  billingDate?: string | null
-  processingMonth?: string | null
-  rows: ExtractedRow[]
-}
+import { toSheetRows, findZeroAmountRows, type Extraction } from '@/app/utils/pdfExtractionRows'
 
 const SYSTEM_PROMPT = `אתה מומחה בקריאת דפי בנק וכרטיסי אשראי ישראליים מקובץ PDF.
 המסמך הוא או דף תנועות בחשבון בנק, או פירוט עסקאות בכרטיס אשראי לחודש מסוים.
@@ -129,9 +108,18 @@ async function extractViaGemini(pdfBase64: string, userMessage: string, geminiAp
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { pdfBase64, hint } = body as {
+    const { pdfBase64, hint, exampleContext } = body as {
       pdfBase64?: string
       hint?: 'bank' | 'credit'
+      // Few-shot context for a continuation chunk of a multi-chunk PDF (see
+      // pdfReader.ts): a JSON blob built from an EARLIER chunk's own real
+      // extraction (account/month + a few sample rows). Statement exports
+      // print column headers only on the first page, never repeated on
+      // continuation pages — a headerless chunk with no anchor at all
+      // returns every amount as null (#251). Showing the model its own
+      // prior-chunk mapping fixes that without re-sending the header page's
+      // image on every call.
+      exampleContext?: string
     }
 
     if (!pdfBase64) {
@@ -149,7 +137,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'חילוץ PDF לא זמין — לא הוגדר מפתח Gemini.' }, { status: 400 })
     }
 
-    const userMessage = hint
+    const userMessage = exampleContext
+      ? `להלן דוגמה לחילוץ שבוצע בהצלחה עבור עמוד קודם באותו מסמך, כדי שתבין את מבנה העמודות (איזה סכום הוא debit ואיזה credit, ואיך יתרה מתעדכנת):
+${exampleContext}
+
+כעת חלץ את הנתונים מהעמוד/ים המצורפים (המשך אותו מסמך — ללא כותרות עמודות משלהם, אבל אותו מבנה עמודות בדיוק). אל תכלול את השורות מהדוגמה למעלה — הן כבר חולצו קודם.`
+      : hint
       ? `סוג צפוי: ${hint === 'bank' ? 'דף בנק' : 'פירוט אשראי'}. חלץ את הנתונים.`
       : 'חלץ את הנתונים מהמסמך.'
 
@@ -187,6 +180,30 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // Validate before accepting: a real transaction row can never have a
+    // zero amount on both sides (debit+credit / txAmount+billAmount) — that
+    // shape only happens when the model's response was truncated or
+    // otherwise degenerate (e.g. a token-budget cutoff mid-document; see
+    // #251/#252). Reject the WHOLE extraction rather than silently importing
+    // zero-amount rows — a partial/damaged import is worse than none,
+    // since it looks successful while corrupting the data.
+    const zeroAmountRows = findZeroAmountRows(extraction)
+    if (zeroAmountRows.length > 0) {
+      return NextResponse.json(
+        {
+          error: `החילוץ הניב ${zeroAmountRows.length} שורות עם סכום 0 מתוך ${extraction.rows.length} — ככל הנראה המסמך גדול מדי לחילוץ במכה אחת. פצל את הקובץ לחלקים קטנים יותר ונסה שוב.`,
+          zeroAmountCount: zeroAmountRows.length,
+          totalCount: extraction.rows.length,
+        },
+        { status: 422 },
+      )
+    }
+
+    // Return both the pre-built SheetRow shape (single-call callers use this
+    // directly) and the raw extraction (kind/metadata/rows) — multi-chunk
+    // callers (readPdfFile splitting a large PDF into page-range calls, #251)
+    // merge several chunks' raw extractions before building SheetRows once,
+    // since each chunk's own SheetRow conversion would duplicate header rows.
     const rows = toSheetRows(extraction)
     return NextResponse.json({
       kind: extraction.kind,
@@ -195,67 +212,10 @@ export async function POST(req: NextRequest) {
       billingDate: extraction.billingDate ?? null,
       processingMonth: extraction.processingMonth ?? null,
       rows,
+      rawRows: extraction.rows,
     })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error'
     return NextResponse.json({ error: message }, { status: 500 })
   }
-}
-
-/**
- * Build a SheetRow[] (array of cell arrays) that mirrors the shape produced by readExcelFile.
- * Headers and identifying rows match what an XLSX export from FIBI / Otsar HaHayal would contain,
- * so the existing fileClassifier + bank/credit parsers consume the rows without modification.
- */
-function toSheetRows(e: Extraction): Array<Array<string | number | null>> {
-  if (e.kind === 'credit') {
-    return creditRows(e)
-  }
-  return bankRows(e)
-}
-
-function creditRows(e: Extraction): Array<Array<string | number | null>> {
-  const rows: Array<Array<string | number | null>> = []
-  const card = e.cardNumber ?? ''
-  const billing = e.billingDate ?? ''
-  if (card || billing) {
-    rows.push([`כרטיס:${card} - ישראכרט חודש החיוב: ${billing}`])
-  }
-  if (billing) {
-    rows.push([`עסקאות בשקלים חיוב בתאריך ${billing}`])
-  }
-  rows.push(['תאריך עסקה', 'שם בית העסק', 'סכום עסקה', 'סכום חיוב', 'פירוט'])
-  for (const r of e.rows) {
-    if (!r.date) continue
-    rows.push([
-      r.date,
-      r.merchant ?? '',
-      r.txAmount ?? r.billAmount ?? 0,
-      r.billAmount ?? r.txAmount ?? 0,
-      r.detail ?? '',
-    ])
-  }
-  return rows
-}
-
-function bankRows(e: Extraction): Array<Array<string | number | null>> {
-  const rows: Array<Array<string | number | null>> = []
-  const acct = e.accountNumber ?? ''
-  const month = e.processingMonth ?? ''
-  if (acct) rows.push([`חשבון ${acct}`])
-  if (month) rows.push([`חודש: ${month}`])
-  rows.push(['תאריך', 'תאריך ערך', 'תיאור', 'אסמכתא', 'חובה', 'זכות', 'יתרה'])
-  for (const r of e.rows) {
-    if (!r.date) continue
-    rows.push([
-      r.date,
-      '',
-      r.description ?? '',
-      r.reference ?? '',
-      r.debit ?? 0,
-      r.credit ?? 0,
-      r.balance ?? null,
-    ])
-  }
-  return rows
 }

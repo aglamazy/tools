@@ -1,8 +1,10 @@
-import { readFinancialFile } from './financialFileReader'
+import { readFinancialFile, type PdfReadProgress } from './financialFileReader'
 import { classifyFile } from './fileClassifier'
 import { extractCreditCardPreview } from './creditCardParser'
 import { extractBankPreview, extractBankPreviewAsync } from './bankParser'
 import { FileType } from '@/app/types/file-type'
+
+export type { PdfReadProgress }
 
 export type FileMetadata = {
   fileType: FileType
@@ -16,10 +18,10 @@ export type FileMetadata = {
  * Extract metadata from a financial file for preview purposes.
  * Uses the centralized architecture: reader → classifier → parser preview
  */
-export const extractFileMetadata = async (file: File): Promise<FileMetadata> => {
+export const extractFileMetadata = async (file: File, onProgress?: (p: PdfReadProgress) => void): Promise<FileMetadata> => {
   try {
     // Step 1: Read the financial file (XLS/XLSX or PDF)
-    const rows = await readFinancialFile(file)
+    const rows = await readFinancialFile(file, onProgress)
 
     // Step 2: Classify the file type
     const fileType = classifyFile(rows)
