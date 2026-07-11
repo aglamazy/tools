@@ -11,6 +11,21 @@ type Candidate = {
   snippet: string
 }
 
+// Surface the ACTUAL provider error to the caller instead of a bare
+// "Claude API error: 400". The receipt matcher was swallowing the real
+// message — e.g. "credit balance is too low" — into a silent "no match",
+// so the user saw "לא נמצא" while the real problem was depleted Anthropic
+// credits. `providerError: true` lets the client distinguish a systemic
+// provider failure (abort + tell the user) from a genuine non-match.
+function claudeErrorResponse(status: number, errorBody: string) {
+  let providerMsg = ''
+  try { providerMsg = JSON.parse(errorBody)?.error?.message || '' } catch { /* non-JSON body */ }
+  const friendly = /credit balance is too low/i.test(providerMsg)
+    ? 'יתרת הקרדיט ב-Anthropic נמוכה מדי — טען קרדיט או הסר את מפתח Claude בהגדרות כדי לעבוד עם Gemini.'
+    : (providerMsg || `Claude API error: ${status}`)
+  return NextResponse.json({ error: friendly, providerError: true }, { status })
+}
+
 type TransactionInfo = {
   date: string
   description: string
@@ -176,7 +191,7 @@ async function handleExtract(emailBody: string, transaction: TransactionInfo, cl
   if (!response.ok) {
     const errorBody = await response.text()
     console.error('[match-receipt] Claude API error:', response.status, errorBody)
-    return NextResponse.json({ error: `Claude API error: ${response.status}` }, { status: response.status })
+    return claudeErrorResponse(response.status, errorBody)
   }
 
   const data = await response.json()
@@ -331,7 +346,7 @@ async function handleExtractPdf(pdfBase64: string, transaction: TransactionInfo,
   if (!response.ok) {
     const errorBody = await response.text()
     console.error('[match-receipt] Claude PDF extraction error:', response.status, errorBody)
-    return NextResponse.json({ error: `Claude API error: ${response.status}` }, { status: response.status })
+    return claudeErrorResponse(response.status, errorBody)
   }
 
   const data = await response.json()

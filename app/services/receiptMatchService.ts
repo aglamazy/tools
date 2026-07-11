@@ -267,6 +267,13 @@ async function tryCandidate(
   log('  ↳ email extract →', { vendor: extracted.vendor, matchesTransaction: extracted.matchesTransaction, matchReason: extracted.matchReason, documentUrl: !!extracted.documentUrl })
 
   if (extracted.error) {
+    // A provider-level failure (e.g. depleted Anthropic credits, bad key,
+    // rate limit) affects EVERY candidate — don't silently skip it as if this
+    // one email just didn't match. Throw so matchReceiptForTransaction aborts
+    // and the real message reaches the user instead of a misleading "no match".
+    if (extracted.providerError) {
+      throw new Error(extracted.error)
+    }
     log(`  ↳ extract error: ${extracted.error} — skip`)
     return null
   }
