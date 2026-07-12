@@ -3,6 +3,8 @@
 
 import { db, Transaction, ImportedFile } from '@/app/db/financeDB'
 import { addMonths } from '@/app/utils/formatters'
+import { canonicalizeForDedup } from '@/app/utils/dedupKey'
+import { findDuplicateTransactions, type DuplicateGroup } from '@/app/utils/findDuplicateTransactions'
 
 /**
  * Extract MM/YYYY month from a date string.
@@ -96,19 +98,26 @@ export const transactionStore = {
    */
   getImportedFiles: async (): Promise<{ files: ImportedFile[]; lastUpdated: string } | null> => {
     try {
-      // Build file list directly from transactions (single source of truth)
+      // Build file list directly from transactions (single source of truth).
+      // A single imported file can span multiple months (e.g. a Feb-Jul bank
+      // export) — group by (fileId, month) rather than fileId alone, so one
+      // wide file emits one entry PER month it actually covers instead of
+      // collapsing to whichever transaction happened to be encountered first.
+      // Otherwise the wizard's month × account grid would show every month
+      // but the first as "missing" even though it's already imported.
       const txns = await db.transactions.toArray()
-      const byFile = new Map<string, ImportedFile>()
+      const byFileMonth = new Map<string, ImportedFile>()
       txns.forEach((t) => {
         const inferredMonth = t.chargingDate ? extractMonth(t.chargingDate) : t.month || ''
-        const key = t.fileId || `${t.type}-${inferredMonth || 'unknown'}-${t.cardNumber || t.accountNumber || 'n/a'}`
-        const existing = byFile.get(key)
+        const fileKey = t.fileId || `${t.type}-${inferredMonth || 'unknown'}-${t.cardNumber || t.accountNumber || 'n/a'}`
+        const key = `${fileKey}|${inferredMonth}`
+        const existing = byFileMonth.get(key)
         if (existing) {
           existing.transactionCount += 1
         } else {
-          byFile.set(key, {
-            fileName: key,
-            fileKey: key,
+          byFileMonth.set(key, {
+            fileName: fileKey,
+            fileKey: fileKey,
             fileType: t.type === 'credit' ? 'credit-card' : 'bank',
             processingMonth: inferredMonth,
             accountNumber: t.accountNumber,
@@ -119,7 +128,7 @@ export const transactionStore = {
         }
       })
 
-      const files = Array.from(byFile.values())
+      const files = Array.from(byFileMonth.values())
       const lastUpdated = files.length > 0
         ? files.reduce((latest, f) => (f.importedAt > latest ? f.importedAt : latest), files[0].importedAt)
         : new Date().toISOString()
@@ -248,15 +257,27 @@ export const transactionStore = {
         .and((t) => t.accountNumber === accountNumber)
         .toArray()
 
-      // Create a Set of existing transaction keys for quick lookup
-      const existingKeys = new Set(
-        existingTransactions.map((t) => `${t.date}|${t.description}|${t.amount}`)
+      // Primary dedup key: the bank's own reference/אסמכתא number, when present.
+      // It's assigned by the bank itself, so it's identical regardless of which
+      // import path (deterministic FIBI parser, XLS-LLM, or PDF-LLM) extracted
+      // this row — unlike free-text description, which LLM extraction or bidi
+      // (mixed Hebrew/Latin) reflow can render differently on each re-import.
+      const existingRefs = new Set(
+        existingTransactions.filter((t) => t.reference).map((t) => t.reference)
+      )
+      // Fallback for rows without a reference (older imports, non-FIBI banks,
+      // same-day/pending transactions the bank hasn't assigned one to yet):
+      // canonicalized description (sorted chars, punctuation/case stripped) so
+      // bidi-reordered text still dedupes correctly.
+      const existingHeuristicKeys = new Set(
+        existingTransactions.map((t) => `${t.date}|${canonicalizeForDedup(t.description)}|${t.amount}`)
       )
 
       // Filter out duplicates
       const newTransactions = transactions.filter((t) => {
-        const key = `${t.date}|${t.description}|${t.amount}`
-        return !existingKeys.has(key)
+        if (t.reference && existingRefs.has(t.reference)) return false
+        const key = `${t.date}|${canonicalizeForDedup(t.description)}|${t.amount}`
+        return !existingHeuristicKeys.has(key)
       })
 
       console.log(`📊 Bank import: ${transactions.length} total, ${newTransactions.length} new, ${transactions.length - newTransactions.length} duplicates skipped`)
@@ -275,6 +296,7 @@ export const transactionStore = {
         accountNumber: accountNumber,
         balance: t.balance,
         isCreditCardCharge: t.isCreditCardCharge || false,
+        reference: t.reference,
         month: extractMonth(t.date),
         importedAt: new Date().toISOString(),
         fileId: fileId,
@@ -306,14 +328,16 @@ export const transactionStore = {
         .and((t) => t.cardNumber === cardNumber)
         .toArray()
 
-      // Create a Set of existing transaction keys for quick lookup
+      // Create a Set of existing transaction keys for quick lookup. Merchant is
+      // canonicalized for the same reason as saveBankTransactions above — XLS vs
+      // PDF import of the same statement can reorder bidi Hebrew/Latin text.
       const existingKeys = new Set(
-        existingTransactions.map((t) => `${t.date}|${t.merchant}|${t.amount}|${t.currentStep}|${t.totalSteps}`)
+        existingTransactions.map((t) => `${t.date}|${canonicalizeForDedup(t.merchant || '')}|${t.amount}|${t.currentStep}|${t.totalSteps}`)
       )
 
       // Filter out duplicates
       const newPayments = payments.filter((p) => {
-        const key = `${p.transactionDate}|${p.merchant}|${-Math.abs(p.amount)}|${p.currentStep}|${p.totalSteps}`
+        const key = `${p.transactionDate}|${canonicalizeForDedup(p.merchant || '')}|${-Math.abs(p.amount)}|${p.currentStep}|${p.totalSteps}`
         return !existingKeys.has(key)
       })
 
@@ -594,6 +618,39 @@ export const transactionStore = {
       return true
     } catch (error) {
       console.error('Error clearing transactions:', error)
+      return false
+    }
+  },
+
+  /**
+   * Find duplicate transactions across ALL bank/credit imports (not scoped to
+   * one month/account) — same grouping rule as the import-time dedup key
+   * (reference number first, canonicalized description as fallback). Never
+   * suggests removing a transaction that has its own linked ExpenseDocument
+   * unless multiple duplicates in the group each have one, in which case the
+   * group is flagged for manual review instead. Read-only.
+   */
+  findDuplicates: async (month?: string): Promise<DuplicateGroup[]> => {
+    const [transactions, docs] = await Promise.all([
+      month ? db.transactions.where('month').equals(month).toArray() : db.transactions.toArray(),
+      db.expenseDocuments.toArray(),
+    ])
+    const linkedTransactionIds = new Set(
+      docs.filter((d) => d.transactionId != null).map((d) => d.transactionId as number)
+    )
+    return findDuplicateTransactions(transactions, linkedTransactionIds)
+  },
+
+  /**
+   * Bulk-delete transactions by id. Used by the duplicate-cleanup tool after
+   * explicit user confirmation — never called silently.
+   */
+  deleteTransactions: async (ids: number[]): Promise<boolean> => {
+    try {
+      await db.transactions.bulkDelete(ids)
+      return true
+    } catch (error) {
+      console.error('Error deleting transactions:', error)
       return false
     }
   },

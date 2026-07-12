@@ -37,7 +37,7 @@ export default function ExpenseMonthSupplierPivot({ businessId }: Props) {
     let cancelled = false
     ;(async () => {
       const categories = subjectStore.getAll().filter(
-        (c: Category) => c.type === 'expense' && c.businessId === businessId
+        (c: Category) => c.type === 'expense' && c.businessId === businessId && !c.excludeFromBusinessTotals
       )
       const categoryNames = categories.map(c => c.name)
 

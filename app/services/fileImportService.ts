@@ -113,6 +113,7 @@ export const fileImportService = {
           balance: t.balance,
           isCreditCardCharge: t.isCreditCardCharge || false,
           cardNumber: t.cardNumber,
+          reference: t.reference,
         }))
 
         await transactionStore.saveBankTransactions(effectiveProcessingMonth, transactions, accountNumber, effectiveFileId)

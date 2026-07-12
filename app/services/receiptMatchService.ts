@@ -369,6 +369,14 @@ async function tryCandidate(
     log('  ↳ pdf extract →', { vendor: pdfExtracted.vendor, matchesTransaction: pdfExtracted.matchesTransaction, matchReason: pdfExtracted.matchReason })
 
     if (pdfExtracted.error) {
+      // Same provider-vs-per-candidate distinction as the email-body extract
+      // above: a systemic Claude failure (bad model id, depleted credits,
+      // rate limit) will 404/fail identically for every remaining candidate,
+      // so silently skipping it here just relabels the real error as a
+      // misleading "no match". Abort and let the real message reach the user.
+      if (pdfExtracted.providerError) {
+        throw new Error(pdfExtracted.error)
+      }
       log(`  ↳ pdf extract error: ${pdfExtracted.error} — skip`)
       return null
     }

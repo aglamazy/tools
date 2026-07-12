@@ -19,6 +19,7 @@ import ExpenseCashForm from '@/app/components/business/ExpenseCashForm'
 import ExpenseRowsTable from '@/app/components/business/ExpenseRowsTable'
 import ExpenseMonthSupplierPivot from '@/app/components/business/ExpenseMonthSupplierPivot'
 import type { ExpenseTableRow, MatchStatus } from '@/app/components/business/expenseTabTypes'
+import { useToast } from '@/app/components/ToastContainer'
 
 type ExpenseTabProps = {
   businessId: number
@@ -74,6 +75,7 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
   const [matchStatus, setMatchStatus] = useState<Record<number, MatchStatus>>({})
   const [matchedDocs, setMatchedDocs] = useState<Record<number, ExpenseDocument[]>>({})
   const [claudeApiKey, setClaudeApiKey] = useState<string>('')
+  const { showToast } = useToast()
 
   useEffect(() => {
     loadBusiness()
@@ -102,7 +104,7 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
 
   const loadAvailableMonths = async () => {
     const categories = subjectStore.getAll().filter(
-      (c: Category) => c.type === 'expense' && c.businessId === businessId
+      (c: Category) => c.type === 'expense' && c.businessId === businessId && !c.excludeFromBusinessTotals
     )
     if (categories.length === 0) {
       setAvailableMonths([])
@@ -137,7 +139,7 @@ const parseSortableDate = (date?: string) => {
 
   const loadTransactions = async () => {
     const categories = subjectStore.getAll().filter(
-      (c: Category) => c.type === 'expense' && c.businessId === businessId
+      (c: Category) => c.type === 'expense' && c.businessId === businessId && !c.excludeFromBusinessTotals
     )
     const categoryNames = categories.map(c => c.name)
 
@@ -216,7 +218,11 @@ const parseSortableDate = (date?: string) => {
         setMatchedDocs(d => ({ ...d, [t.id!]: [...(d[t.id!] || []), result.doc] }))
       }
       setMatchStatus(s => ({ ...s, [t.id!]: result.status }))
-    } catch {
+    } catch (err) {
+      // A providerError (bad model id, depleted credits, rate limit) is
+      // thrown here instead of silently skipped — surface the real reason,
+      // not just a generic failed-search state.
+      showToast('error', err instanceof Error ? err.message : 'שגיאה בחיפוש קבלה')
       setMatchStatus(s => ({ ...s, [t.id!]: 'error' }))
     }
   }

@@ -33,6 +33,7 @@ export interface Transaction {
   accountNumber?: string
   balance?: number
   isCreditCardCharge?: boolean
+  reference?: string // Bank-assigned reference/אסמכתא — deterministic dedup key when present
 
   // Credit card-specific fields
   cardNumber?: string

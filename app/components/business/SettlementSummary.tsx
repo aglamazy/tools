@@ -16,12 +16,16 @@ type SettlementSummaryProps = {
   businessId: number
 }
 
+type DrillDownKind = 'paid' | 'received' | 'settlementPaid' | 'settlementReceived'
+
 type Row = {
   uid: string
   label: string
   sharePercent: number
-  paid: number
-  received: number
+  paid: number // regular business expenses only — settlement transfers shown separately
+  received: number // regular business income only — settlement transfers shown separately
+  settlementPaid: number // קיזוז/transfer categories this partner personally paid
+  settlementReceived: number // amount credited via another partner's transfer-to-them
   netActual: number
   fairShare: number
   balance: number
@@ -51,6 +55,9 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
   const [accountOwners, setAccountOwners] = useState<AccountOwners>({})
   const [loading, setLoading] = useState(true)
   const [savingTxId, setSavingTxId] = useState<number | null>(null)
+  // Drill-down: click a paid/received number in the summary table to filter
+  // "רשימת תנועות" below to exactly the transactions that make up that number.
+  const [drillDown, setDrillDown] = useState<{ uid: string; label: string; kind: DrillDownKind } | null>(null)
 
   const reloadTransactions = async () => {
     const cats = subjectStore.getAll().filter(
@@ -125,9 +132,33 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
     )
   }, [businessId])
 
-  const rows = useMemo<Row[]>(() => {
-    if (!business || !business.userId || participants.length === 0) return []
+  // Categories flagged "קיזוז שותפים בלבד" — still count toward settlement
+  // (paid/received) but aren't real business expenses, so the per-row list
+  // labels them distinctly instead of the misleading "הוצאה" badge. Mapped by
+  // name (not just a name Set) so `settlementPartnerUid` — the transfer
+  // recipient — can drive a symmetric "received" credit: the payer keeps
+  // their normal paid attribution, the designated partner additionally gets
+  // credited on received for the same amount.
+  const settlementCategoryByName = useMemo(() => {
+    const map = new Map<string, Category>()
+    for (const c of subjectStore.getAll()) {
+      if (c.type === 'expense' && c.businessId === businessId && c.excludeFromBusinessTotals) {
+        map.set(c.name, c)
+      }
+    }
+    return map
+  }, [businessId])
+  const settlementOnlyCatNames = useMemo(
+    () => new Set(settlementCategoryByName.keys()),
+    [settlementCategoryByName]
+  )
 
+  // Partner-uid resolution shared by `rows` (the summary math) and the
+  // drill-down filter below — both MUST use the identical collapse logic so
+  // a click on a summary number filters to exactly the transactions that
+  // contributed to it.
+  const partnerResolution = useMemo(() => {
+    if (!business || !business.userId) return null
     const ownerUid: string = business.userId
     // Partners of THIS business = owner + active sharees only. Household-only
     // members (e.g., a spouse who isn't a sharee here) aren't partners — their
@@ -145,13 +176,19 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
       .filter(p => p.uid && p.sharePercent !== undefined)
       .map(p => p.uid)
     const partnerUids = new Set<string>([ownerUid, ...shareeUids, ...partnerSharedUids])
-    const partnerParticipants = participants.filter(p => partnerUids.has(p.uid))
-    if (partnerParticipants.length === 0) return []
-
     const toPartnerUid = (uid: string | undefined): string => {
       if (uid && partnerUids.has(uid)) return uid
       return ownerUid
     }
+    return { ownerUid, partnerUids, toPartnerUid }
+  }, [business, shares, participants])
+
+  const rows = useMemo<Row[]>(() => {
+    if (!business || !business.userId || participants.length === 0 || !partnerResolution) return []
+
+    const { ownerUid, partnerUids, toPartnerUid } = partnerResolution
+    const partnerParticipants = participants.filter(p => partnerUids.has(p.uid))
+    if (partnerParticipants.length === 0) return []
 
     // Effective share %: owner uses business.ownerSharePercent (or remainder),
     // sharees use their sharePercent.
@@ -172,16 +209,31 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
 
       // Attribution: paidByUid → card/bank owner → owner-fallback. Then collapse
       // any non-partner uid (e.g., household-only member) to the owner.
+      // Settlement/transfer categories are tracked separately from regular
+      // business paid/received (own columns in the table) — the payer's
+      // settlementPaid and the recipient's settlementReceived are symmetric
+      // (same amount on both sides), so they don't skew the fair-share pool.
       let paid = 0
       let received = 0
+      let settlementPaid = 0
+      let settlementReceived = 0
       for (const t of transactions) {
         const attributedUid = getTransactionAttributedUid(t, accountOwners, ownerUid)
         const partnerUid = toPartnerUid(attributedUid)
-        if (partnerUid !== p.uid) continue
         const gross = Math.abs(t.amount)
-        const net = netOfVat(gross, vatType)
-        if (incomeCatNames.has(t.category ?? '')) received += net
-        else paid += net
+        const isIncome = incomeCatNames.has(t.category ?? '')
+        const settlementCat = !isIncome ? settlementCategoryByName.get(t.category ?? '') : undefined
+        // Settlement transfers aren't a taxable event — use the raw amount,
+        // not VAT-cleaned, so both sides of the transfer show the same
+        // number regardless of either partner's own VAT status.
+        if (partnerUid === p.uid) {
+          if (isIncome) received += netOfVat(gross, vatType)
+          else if (settlementCat) settlementPaid += gross
+          else paid += netOfVat(gross, vatType)
+        }
+        if (settlementCat?.settlementPartnerUid && toPartnerUid(settlementCat.settlementPartnerUid) === p.uid) {
+          settlementReceived += gross
+        }
       }
 
       // Partner-paid invoices (no bank tx) always count as expense, attributed
@@ -193,15 +245,15 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
         paid += netOfVat(gross, vatType)
       }
 
-      return { uid: p.uid, label: p.label, sharePercent, paid, received,
-               netActual: received - paid, fairShare: 0, balance: 0, vatType }
+      return { uid: p.uid, label: p.label, sharePercent, paid, received, settlementPaid, settlementReceived,
+               netActual: (received + settlementReceived) - (paid + settlementPaid), fairShare: 0, balance: 0, vatType }
     }).map((r, _, arr) => {
       // Fair share is computed against the sum of partners' VAT-cleaned net flows.
       const totalNet = arr.reduce((s, x) => s + x.netActual, 0)
       const fairShare = totalNet * (r.sharePercent / 100)
       return { ...r, fairShare, balance: r.netActual - fairShare }
     })
-  }, [business, participants, shares, transactions, partnerPaidDocs, ownerVatType, incomeCatNames, accountOwners])
+  }, [business, participants, partnerResolution, transactions, partnerPaidDocs, ownerVatType, incomeCatNames, accountOwners, settlementCategoryByName])
 
   const settlementLine = useMemo(() => {
     if (rows.length < 2) return null
@@ -278,6 +330,28 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
   ].sort((a, b) => parseHebDate(b.date) - parseHebDate(a.date))
   const sortedTransactions = displayRows.filter((r): r is Extract<DisplayRow, { kind: 'tx' }> => r.kind === 'tx').map((r) => r.tx)
 
+  // Drill-down filter — same collapse logic (toPartnerUid) as the summary
+  // math, so the filtered list matches exactly what contributed to the
+  // clicked number, not just a resemblance.
+  const toPartnerUid = partnerResolution?.toPartnerUid ?? ((uid?: string) => uid ?? ownerUid ?? '')
+  const visibleRows = !drillDown ? displayRows : displayRows.filter((row) => {
+    if (row.kind === 'doc') {
+      if (drillDown.kind !== 'paid') return false // partner-paid docs are always a regular expense
+      return toPartnerUid(row.doc.paidByUid) === drillDown.uid
+    }
+    const isIncome = incomeCatNames.has(row.tx.category ?? '')
+    const settlementCat = !isIncome ? settlementCategoryByName.get(row.tx.category ?? '') : undefined
+    if (drillDown.kind === 'settlementReceived') {
+      return !!settlementCat?.settlementPartnerUid && toPartnerUid(settlementCat.settlementPartnerUid) === drillDown.uid
+    }
+    const attributedUid = getTransactionAttributedUid(row.tx, accountOwners, ownerUid)
+    const partnerUid = toPartnerUid(attributedUid)
+    if (partnerUid !== drillDown.uid) return false
+    if (drillDown.kind === 'received') return isIncome
+    if (drillDown.kind === 'settlementPaid') return !!settlementCat
+    return !isIncome && !settlementCat // 'paid'
+  })
+
   return (
     <div style={{ padding: '1rem 0' }}>
       <h3 style={{ fontSize: '1rem', fontWeight: 600, color: '#0f172a', marginBottom: '0.5rem' }}>
@@ -295,31 +369,52 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
             <th style={{ textAlign: 'right', padding: '0.6rem 0.5rem' }}>סטטוס מע״מ</th>
             <th style={{ textAlign: 'left', padding: '0.6rem 0.5rem' }}>שילם</th>
             <th style={{ textAlign: 'left', padding: '0.6rem 0.5rem' }}>קיבל</th>
+            <th style={{ textAlign: 'left', padding: '0.6rem 0.5rem', color: '#6d28d9' }}>שילם (קיזוז)</th>
+            <th style={{ textAlign: 'left', padding: '0.6rem 0.5rem', color: '#6d28d9' }}>קיבל (קיזוז)</th>
             <th style={{ textAlign: 'left', padding: '0.6rem 0.5rem' }}>חלקו ההוגן</th>
             <th style={{ textAlign: 'left', padding: '0.6rem 0.5rem' }}>מאזן</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map(r => (
-            <tr key={r.uid} style={{ borderBottom: '1px solid #f1f5f9' }}>
-              <td style={{ padding: '0.6rem 0.5rem' }}>
-                {r.label}{r.uid === ownerUid && <span style={{ marginRight: '0.4rem', fontSize: '0.75rem', color: '#94a3b8' }}>(בעלים)</span>}
+          {rows.map(r => {
+            const cell = (kind: DrillDownKind, amount: number, color?: string) => (
+              <td
+                onClick={() => setDrillDown(prev =>
+                  prev?.uid === r.uid && prev?.kind === kind ? null : { uid: r.uid, label: r.label, kind }
+                )}
+                title="לחץ לסינון התנועות שמרכיבות סכום זה"
+                style={{
+                  padding: '0.6rem 0.5rem', textAlign: 'left', cursor: 'pointer', color,
+                  textDecoration: 'underline', textDecorationStyle: 'dotted',
+                  background: drillDown?.uid === r.uid && drillDown?.kind === kind ? '#eff6ff' : undefined,
+                }}
+              >
+                {fmt(amount)}
               </td>
-              <td style={{ padding: '0.6rem 0.5rem', color: '#64748b' }}>{r.sharePercent}%</td>
-              <td style={{ padding: '0.6rem 0.5rem', color: '#64748b', fontSize: '0.8rem' }}>
-                {r.vatType === 'authorized' ? 'עוסק מורשה' : r.vatType === 'exempt' ? 'עוסק פטור' : '—'}
-              </td>
-              <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left' }}>{fmt(r.paid)}</td>
-              <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left' }}>{fmt(r.received)}</td>
-              <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', color: '#64748b' }}>{fmt(r.fairShare)}</td>
-              <td style={{
-                padding: '0.6rem 0.5rem', textAlign: 'left', fontWeight: 600,
-                color: r.balance > 0 ? '#dc2626' : r.balance < 0 ? '#16a34a' : '#64748b',
-              }}>
-                {r.balance > 0 ? '+' : ''}{fmt(r.balance)}
-              </td>
-            </tr>
-          ))}
+            )
+            return (
+              <tr key={r.uid} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                <td style={{ padding: '0.6rem 0.5rem' }}>
+                  {r.label}{r.uid === ownerUid && <span style={{ marginRight: '0.4rem', fontSize: '0.75rem', color: '#94a3b8' }}>(בעלים)</span>}
+                </td>
+                <td style={{ padding: '0.6rem 0.5rem', color: '#64748b' }}>{r.sharePercent}%</td>
+                <td style={{ padding: '0.6rem 0.5rem', color: '#64748b', fontSize: '0.8rem' }}>
+                  {r.vatType === 'authorized' ? 'עוסק מורשה' : r.vatType === 'exempt' ? 'עוסק פטור' : '—'}
+                </td>
+                {cell('paid', r.paid)}
+                {cell('received', r.received)}
+                {cell('settlementPaid', r.settlementPaid, '#6d28d9')}
+                {cell('settlementReceived', r.settlementReceived, '#6d28d9')}
+                <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', color: '#64748b' }}>{fmt(r.fairShare)}</td>
+                <td style={{
+                  padding: '0.6rem 0.5rem', textAlign: 'left', fontWeight: 600,
+                  color: r.balance > 0 ? '#dc2626' : r.balance < 0 ? '#16a34a' : '#64748b',
+                }}>
+                  {r.balance > 0 ? '+' : ''}{fmt(r.balance)}
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
 
@@ -337,12 +432,38 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
 
       {/* Per-row list — every income + expense tx with inline partner-picker */}
       <div style={{ marginTop: '2rem' }}>
-        <h3 style={{ fontSize: '1rem', fontWeight: 600, color: '#0f172a', marginBottom: '0.75rem' }}>
-          רשימת תנועות
-        </h3>
-        {noActivity || displayRows.length === 0 ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+          <h3 style={{ fontSize: '1rem', fontWeight: 600, color: '#0f172a', margin: 0 }}>
+            רשימת תנועות
+          </h3>
+          {drillDown && (
+            <>
+              <span style={{
+                fontSize: '0.8rem', color: '#1d4ed8', background: '#eff6ff',
+                border: '1px solid #bfdbfe', borderRadius: '0.25rem', padding: '0.15rem 0.5rem',
+              }}>
+                מסונן: {drillDown.label} · {
+                  drillDown.kind === 'paid' ? 'שילם'
+                  : drillDown.kind === 'received' ? 'קיבל'
+                  : drillDown.kind === 'settlementPaid' ? 'שילם (קיזוז)'
+                  : 'קיבל (קיזוז)'
+                }
+              </span>
+              <button
+                onClick={() => setDrillDown(null)}
+                style={{
+                  fontSize: '0.8rem', color: '#64748b', background: 'none',
+                  border: 'none', textDecoration: 'underline', cursor: 'pointer', padding: 0,
+                }}
+              >
+                נקה סינון
+              </button>
+            </>
+          )}
+        </div>
+        {noActivity || visibleRows.length === 0 ? (
           <p style={{ color: '#64748b', fontSize: '0.85rem', padding: '1rem 0' }}>
-            אין תנועות לעסק זה.
+            {drillDown ? 'אין תנועות התואמות את הסינון.' : 'אין תנועות לעסק זה.'}
           </p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
@@ -357,7 +478,7 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
               </tr>
             </thead>
             <tbody>
-              {displayRows.map((row) => {
+              {visibleRows.map((row) => {
                 if (row.kind === 'doc') {
                   const d = row.doc
                   const resolvedUid = d.paidByUid
@@ -400,10 +521,17 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
                 }
                 const t = row.tx
                 const isIncome = incomeCatNames.has(t.category ?? '')
+                const isSettlementOnly = !isIncome && settlementOnlyCatNames.has(t.category ?? '')
                 const resolvedUid = getTransactionAttributedUid(t, accountOwners, ownerUid)
                 const resolvedLabel = resolvedUid
                   ? participants.find(p => p.uid === resolvedUid)?.label ?? '—'
                   : '—'
+                const transferToUid = isSettlementOnly
+                  ? settlementCategoryByName.get(t.category ?? '')?.settlementPartnerUid
+                  : undefined
+                const transferToLabel = transferToUid
+                  ? participants.find(p => p.uid === transferToUid)?.label ?? '—'
+                  : undefined
                 const isAuto = !t.paidByUid
                 const selectValue = t.paidByUid ?? ''
                 return (
@@ -415,11 +543,11 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
                         padding: '0.15rem 0.5rem',
                         fontSize: '0.7rem',
                         borderRadius: '0.25rem',
-                        background: isIncome ? '#f0fdf4' : '#fef2f2',
-                        color: isIncome ? '#16a34a' : '#dc2626',
-                        border: `1px solid ${isIncome ? '#bbf7d0' : '#fecaca'}`,
+                        background: isSettlementOnly ? '#f5f3ff' : isIncome ? '#f0fdf4' : '#fef2f2',
+                        color: isSettlementOnly ? '#6d28d9' : isIncome ? '#16a34a' : '#dc2626',
+                        border: `1px solid ${isSettlementOnly ? '#ddd6fe' : isIncome ? '#bbf7d0' : '#fecaca'}`,
                       }}>
-                        {isIncome ? 'הכנסה' : 'הוצאה'}
+                        {isSettlementOnly ? 'קיזוז' : isIncome ? 'הכנסה' : 'הוצאה'}
                       </span>
                     </td>
                     <td style={{ padding: '0.5rem 0.5rem', color: '#0f172a' }}>
@@ -427,9 +555,12 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
                       {t.category && (
                         <div style={{ fontSize: '0.7rem', color: '#94a3b8' }}>{t.category}</div>
                       )}
+                      {transferToLabel && (
+                        <div style={{ fontSize: '0.7rem', color: '#6d28d9' }}>↪ שולם ל{transferToLabel}</div>
+                      )}
                     </td>
                     <td style={{ padding: '0.5rem 0.5rem', textAlign: 'left', whiteSpace: 'nowrap', fontWeight: 500, color: isIncome ? '#16a34a' : '#dc2626' }}>
-                      {fmt(netOfVat(Math.abs(t.amount), vatTypeForTx(resolvedUid)))}
+                      {isSettlementOnly ? fmt(Math.abs(t.amount)) : fmt(netOfVat(Math.abs(t.amount), vatTypeForTx(resolvedUid)))}
                     </td>
                     <td style={{ padding: '0.5rem 0.5rem', color: '#475569' }}>
                       {resolvedLabel}

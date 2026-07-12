@@ -7,6 +7,7 @@ import { db, type Business } from '@/app/db/financeDB'
 import { BusinessType } from '@/app/types/business'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { businessStore } from '@/app/stores/businessStore'
+import { partnerStore, type Partner } from '@/app/stores/partnerStore'
 import { getHouseholdInfo } from '@/app/services/householdService'
 import YesNoModal from '../YesNoModal'
 import Modal from '../Modal'
@@ -30,6 +31,7 @@ export default function CategoriesTab() {
   const [businesses, setBusinesses] = useState<Business[]>([])
   const [scope, setScope] = useState<Scope>({ kind: 'household' })
   const [householdMembers, setHouseholdMembers] = useState<{ uid: string; label: string }[]>([])
+  const [settlementPartnerOptions, setSettlementPartnerOptions] = useState<Partner[]>([])
 
   useEffect(() => {
     loadCategories()
@@ -37,6 +39,22 @@ export default function CategoriesTab() {
     loadBusinesses()
     loadHouseholdMembers()
   }, [])
+
+  // Load business partners for the קיזוז "personally borne by" selector —
+  // only relevant while editing a business-scoped category.
+  useEffect(() => {
+    const businessId = editingCategory?.businessId
+    if (businessId === undefined) { setSettlementPartnerOptions([]); return }
+    setSettlementPartnerOptions(partnerStore.getCachedByBusinessId(businessId))
+    const business = businesses.find(b => b.id === businessId)
+    if (!business?.syncId) return
+    partnerStore.recordBusiness(businessId, business.syncId)
+    const unsub = partnerStore.subscribe(() => {
+      setSettlementPartnerOptions(partnerStore.getCachedByBusinessId(businessId))
+    })
+    void partnerStore.refresh(business.syncId)
+    return unsub
+  }, [editingCategory?.businessId, businesses])
 
   const loadBusinesses = async () => {
     const all = await businessStore.getAll()
@@ -210,21 +228,22 @@ export default function CategoriesTab() {
 
   const handleSaveCategory = () => {
     if (!editingCategory || !editingCategory.name.trim()) return
+    const savedCategory: Category = { ...editingCategory, updatedAt: new Date().toISOString() }
 
     let updatedCategories: Category[]
     if (isAddingNew) {
-      updatedCategories = [...categories, editingCategory]
-      if (editingCategory.parentId) {
+      updatedCategories = [...categories, savedCategory]
+      if (savedCategory.parentId) {
         updatedCategories = updatedCategories.map((cat) => {
-          if (cat.id === editingCategory.parentId) {
-            return { ...cat, subCategories: [...(cat.subCategories || []), editingCategory.id] }
+          if (cat.id === savedCategory.parentId) {
+            return { ...cat, subCategories: [...(cat.subCategories || []), savedCategory.id] }
           }
           return cat
         })
       }
     } else {
       updatedCategories = categories.map((cat) =>
-        cat.id === editingCategory.id ? editingCategory : cat
+        cat.id === savedCategory.id ? savedCategory : cat
       )
     }
 
@@ -733,6 +752,45 @@ export default function CategoriesTab() {
                             </div>
                           )
                         })}
+                      </div>
+                    )}
+                    {editingCategory.businessId && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <input
+                          type="checkbox"
+                          id="excludeFromBusinessTotals"
+                          checked={editingCategory.excludeFromBusinessTotals || false}
+                          onChange={(e) => setEditingCategory({ ...editingCategory, excludeFromBusinessTotals: e.target.checked })}
+                          style={{ width: '1.1rem', height: '1.1rem', cursor: 'pointer' }}
+                        />
+                        <label htmlFor="excludeFromBusinessTotals" style={{ fontWeight: 600, cursor: 'pointer' }}>קיזוז שותפים בלבד</label>
+                        <span style={{ fontSize: '0.8rem', color: '#64748b' }}>(הוצאה תקפה אישית, לא נכללת בסיכומי/דוחות העסק — נשארת בקיזוז/התחשבנות שותפים)</span>
+                      </div>
+                    )}
+                    {editingCategory.businessId && editingCategory.excludeFromBusinessTotals && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', paddingRight: '1.6rem' }}>
+                        <label htmlFor="settlementPartnerUid" style={{ fontSize: '0.85rem', color: '#475569' }}>
+                          שולם לשותף:
+                        </label>
+                        <select
+                          id="settlementPartnerUid"
+                          value={editingCategory.settlementPartnerUid || ''}
+                          onChange={(e) => setEditingCategory({
+                            ...editingCategory,
+                            settlementPartnerUid: e.target.value || undefined,
+                          })}
+                          style={{
+                            padding: '0.3rem 0.5rem',
+                            fontSize: '0.85rem',
+                            border: '1px solid #e2e8f0',
+                            borderRadius: '0.25rem',
+                            direction: 'rtl',
+                          }}
+                        >
+                          {settlementPartnerOptions.map((p) => (
+                            <option key={p.uid} value={p.uid}>{p.label}</option>
+                          ))}
+                        </select>
                       </div>
                     )}
                   </>

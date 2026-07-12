@@ -25,6 +25,7 @@ export type ParsedBankTransaction = {
   isCreditCardCharge?: boolean
   category?: string
   isFixed?: boolean
+  reference?: string
 }
 
 export type BankPreview = {
@@ -65,7 +66,7 @@ export function parseBankTransactions(
   const descriptionIdx = findColumnIndex(headers, COLUMN_MAPPINGS.description)
   const debitIdx = findColumnIndex(headers, COLUMN_MAPPINGS.debit)
   const creditIdx = findColumnIndex(headers, COLUMN_MAPPINGS.credit)
-  const typeIdx = findColumnIndex(headers, COLUMN_MAPPINGS.reference)
+  const referenceIdx = findColumnIndex(headers, COLUMN_MAPPINGS.reference)
   const activityIdx = findColumnIndex(headers, COLUMN_MAPPINGS.activityType)
   const balanceIdx = findColumnIndex(headers, COLUMN_MAPPINGS.balance)
 
@@ -118,6 +119,10 @@ export function parseBankTransactions(
     const dateStr = normalizeDate(rawDateStr) || rawDateStr
     const currentIndex = (dateIndexMap.get(dateStr) || 0) + 1
     dateIndexMap.set(dateStr, currentIndex)
+    const rawReference = referenceIdx !== -1 ? row[referenceIdx] : undefined
+    const reference = rawReference !== undefined && rawReference !== null && String(rawReference).trim() !== ''
+      ? String(rawReference).trim()
+      : undefined
     transactions.push({
       date: dateStr,
       description: descriptionStr,
@@ -126,6 +131,7 @@ export function parseBankTransactions(
       accountNumber,
       cardNumber,
       isCreditCardCharge: isCreditCard,
+      reference,
     })
   })
 

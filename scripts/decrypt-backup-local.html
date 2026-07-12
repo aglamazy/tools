@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Aglamazo — Local Backup Decrypt</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 3rem auto; padding: 0 1.5rem; color: #0f172a; }
+  h1 { font-size: 1.25rem; }
+  .note { background: #f0fdf4; border: 1px solid #86efac; color: #14532d; padding: 0.75rem 1rem; border-radius: 0.5rem; font-size: 0.85rem; margin-bottom: 1.5rem; }
+  fieldset { border: 1px solid #e2e8f0; border-radius: 0.5rem; padding: 1rem 1.25rem; margin-bottom: 1rem; }
+  legend { font-weight: 600; padding: 0 0.4rem; }
+  label { display: block; margin: 0.75rem 0 0.25rem; font-size: 0.9rem; color: #334155; }
+  input[type=file], input[type=password] { width: 100%; padding: 0.5rem; border: 1px solid #cbd5e1; border-radius: 0.375rem; box-sizing: border-box; font-size: 0.95rem; }
+  button { margin-top: 1.25rem; padding: 0.6rem 1.5rem; background: #3b82f6; color: #fff; border: none; border-radius: 0.375rem; font-size: 0.95rem; cursor: pointer; }
+  button:disabled { background: #93c5fd; cursor: wait; }
+  #log { margin-top: 1.25rem; font-family: ui-monospace, monospace; font-size: 0.85rem; white-space: pre-wrap; background: #0f172a; color: #d1fae5; padding: 1rem; border-radius: 0.5rem; min-height: 3rem; }
+  .err { color: #fca5a5; }
+</style>
+</head>
+<body>
+  <h1>Aglamazo — Local Backup Decrypt</h1>
+  <div class="note">
+    100% local. Everything below runs in your browser via the Web Crypto API —
+    no network requests, no server. Your password never leaves this page.
+    Open this file directly (double-click, or drag into a browser tab).
+  </div>
+
+  <fieldset>
+    <legend>1. Files</legend>
+    <label for="verifyFile">Verification file (e.g. verify.enc)</label>
+    <input type="file" id="verifyFile">
+    <label for="backupFile">Backup file to decrypt (e.g. backup-y.enc)</label>
+    <input type="file" id="backupFile">
+  </fieldset>
+
+  <fieldset>
+    <legend>2. Password</legend>
+    <label for="password">Encryption password</label>
+    <input type="password" id="password" autocomplete="off">
+  </fieldset>
+
+  <button id="run">Verify &amp; Decrypt</button>
+
+  <div id="log">Waiting…</div>
+
+<script>
+const SALT_LENGTH = 16
+const IV_LENGTH = 12
+const PBKDF2_ITERATIONS = 100000
+
+function log(msg, isErr) {
+  const el = document.getElementById('log')
+  const line = document.createElement('div')
+  if (isErr) line.className = 'err'
+  line.textContent = msg
+  el.appendChild(line)
+}
+
+function clearLog() {
+  document.getElementById('log').textContent = ''
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = () => reject(reader.error)
+    reader.readAsText(file)
+  })
+}
+
+async function deriveKey(password, salt) {
+  const encoder = new TextEncoder()
+  const passwordKey = await crypto.subtle.importKey(
+    'raw', encoder.encode(password), 'PBKDF2', false, ['deriveKey']
+  )
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: salt.buffer, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+    passwordKey,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['decrypt']
+  )
+}
+
+// Mirrors app/services/encryptionService.ts decrypt(): base64(salt[16] + iv[12] + ciphertext)
+async function decrypt(encryptedBase64, password) {
+  const decoder = new TextDecoder()
+  const combined = Uint8Array.from(atob(encryptedBase64.trim()), c => c.charCodeAt(0))
+  const salt = combined.slice(0, SALT_LENGTH)
+  const iv = combined.slice(SALT_LENGTH, SALT_LENGTH + IV_LENGTH)
+  const ciphertext = combined.slice(SALT_LENGTH + IV_LENGTH)
+  const key = await deriveKey(password, salt)
+  const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext)
+  return decoder.decode(plaintext)
+}
+
+function downloadText(filename, text) {
+  const blob = new Blob([text], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+document.getElementById('run').addEventListener('click', async () => {
+  clearLog()
+  const btn = document.getElementById('run')
+  const verifyFileInput = document.getElementById('verifyFile')
+  const backupFileInput = document.getElementById('backupFile')
+  const password = document.getElementById('password').value
+
+  if (!verifyFileInput.files[0]) { log('Pick the verification file first.', true); return }
+  if (!backupFileInput.files[0]) { log('Pick the backup file first.', true); return }
+  if (!password) { log('Enter the password first.', true); return }
+
+  btn.disabled = true
+  try {
+    log('Reading files…')
+    const verifyText = await readFileAsText(verifyFileInput.files[0])
+    const backupText = await readFileAsText(backupFileInput.files[0])
+
+    log('Verifying password against the verification file…')
+    let verifyPlaintext
+    try {
+      verifyPlaintext = await decrypt(verifyText, password)
+    } catch (e) {
+      log('✗ Wrong password (or the verification file is not a valid encrypted token). Nothing else attempted.', true)
+      return
+    }
+    let verifyPayload
+    try {
+      verifyPayload = JSON.parse(verifyPlaintext)
+    } catch {
+      log('✗ Verification file decrypted but is not the expected JSON shape — password may still be wrong.', true)
+      return
+    }
+    if (verifyPayload.type !== 'finance-backup-verification') {
+      log('✗ Verification file decrypted but has an unexpected "type" field — refusing to proceed.', true)
+      return
+    }
+    log('✓ Password verified.')
+
+    log('Decrypting backup file…')
+    const backupPlaintext = await decrypt(backupText, password)
+    log(`✓ Decrypted (${backupPlaintext.length.toLocaleString()} characters).`)
+
+    // Sanity-check it's JSON before writing it out.
+    try {
+      JSON.parse(backupPlaintext)
+    } catch {
+      log('⚠ Decrypted, but the result is not valid JSON — saving it anyway for inspection.', true)
+    }
+
+    const outName = (backupFileInput.files[0].name || 'backup').replace(/\.enc$/i, '') + '.decrypted.json'
+    downloadText(outName, backupPlaintext)
+    log(`✓ Saved as "${outName}" in your downloads.`)
+  } catch (e) {
+    log('✗ Unexpected error: ' + (e && e.message ? e.message : String(e)), true)
+  } finally {
+    btn.disabled = false
+  }
+})
+</script>
+</body>
+</html>

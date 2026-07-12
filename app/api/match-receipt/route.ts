@@ -151,7 +151,7 @@ async function handleExtract(emailBody: string, transaction: TransactionInfo, cl
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-5',
       max_tokens: 1024,
       system: `אתה מומחה לחילוץ נתונים מקבלות וחשבוניות ישראליות שנשלחו במייל.
 חלץ את השדות הבאים והחזר JSON בלבד, ללא markdown, ללא הסברים.
@@ -295,7 +295,7 @@ async function handleExtractPdf(pdfBase64: string, transaction: TransactionInfo,
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-5',
       max_tokens: 1024,
       system: `אתה מומחה לחילוץ נתונים מקבלות וחשבוניות ישראליות.
 חלץ את השדות הבאים והחזר JSON בלבד, ללא markdown, ללא הסברים.
@@ -376,7 +376,7 @@ async function handleExtractImage(imageBase64: string, mediaType: string, transa
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-5',
       max_tokens: 1024,
       system: `אתה מומחה לחילוץ נתונים מקבלות וחשבוניות ישראליות.
 חלץ את השדות הבאים והחזר JSON בלבד, ללא markdown, ללא הסברים.
@@ -458,7 +458,7 @@ async function handleExtractVatPayment(payloadBase64: string, mediaType: string 
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-5',
       max_tokens: 1024,
       system: `אתה מומחה לחילוץ נתונים מאישור תשלום מע״מ של רשות המסים בישראל.
 חלץ את השדות הבאים והחזר JSON בלבד, ללא markdown, ללא הסברים.

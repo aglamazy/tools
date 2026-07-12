@@ -161,11 +161,21 @@ export const subjectStore = {
       const stored = localStorage.getItem(STORAGE_KEY)
       const local = stored ? JSON.parse(stored) : {}
 
-      // Union categories by id — incoming wins on a shared id (it's the update),
-      // but a local-only id is always kept.
+      // Union categories by id — a local-only id is always kept. On a shared
+      // id, keep whichever side has the later `updatedAt` (incoming wins on a
+      // tie/missing timestamp, preserving the old default for pre-fix
+      // records) — a blind "incoming always wins" let a stale cloud snapshot
+      // silently revert a local edit made moments earlier (e.g. a category
+      // checkbox toggled locally, then clobbered by the next sync cycle
+      // pulling a cloud copy that predated the edit).
       const catById = new Map<string | number, Category>()
       for (const c of (local.categories || [])) catById.set(c.id, c)
-      for (const c of (data.categories || [])) catById.set(c.id, c)
+      for (const c of (data.categories || [])) {
+        const prev = catById.get(c.id)
+        if (!prev || (c.updatedAt || '') >= (prev.updatedAt || '')) {
+          catById.set(c.id, c)
+        }
+      }
 
       // Union classifications by (transactionId, monthYear) — newest wins.
       const classKey = (x: Classification) => `${x.transactionId}|${x.monthYear}`

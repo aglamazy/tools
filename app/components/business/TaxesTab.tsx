@@ -122,7 +122,7 @@ function AnnualSummarySubTab() {
           existing.push(cat.name)
           catMap.set(cat.businessId, existing)
         }
-        if (cat.businessId && cat.type === 'expense') {
+        if (cat.businessId && cat.type === 'expense' && !cat.excludeFromBusinessTotals) {
           const existing = expCatMap.get(cat.businessId) || []
           existing.push(cat.name)
           expCatMap.set(cat.businessId, existing)
