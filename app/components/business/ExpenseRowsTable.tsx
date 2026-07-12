@@ -4,6 +4,7 @@ import React from 'react'
 import type { ExpenseDocument, Transaction } from '@/app/db/financeDB'
 import type { Category } from '@/app/types/category'
 import type { ExpenseTableRow, MatchStatus } from './expenseTabTypes'
+import { pickExpenseLabel } from '@/app/utils/expenseLabel'
 
 type EditValues = { description: string; category: string; amount?: string }
 
@@ -95,12 +96,16 @@ export default function ExpenseRowsTable({
                         autoFocus
                       />
                     ) : (
-                      <>
-                        {firstDoc?.description || firstDoc?.vendor || t.merchant || t.description}
+                      <a
+                        href={`/app/budget?month=${encodeURIComponent(t.month)}&tx=${txId}#tx-${txId}`}
+                        title="פתח בעמוד התקציב לעדכון פרטי התנועה"
+                        style={{ color: 'inherit', textDecoration: 'none' }}
+                      >
+                        {pickExpenseLabel(firstDoc?.description, firstDoc?.vendor, t.merchant, t.description)}
                         <span style={{ display: 'block', fontSize: '0.75rem', color: '#94a3b8' }}>
                           {t.description}
                         </span>
-                      </>
+                      </a>
                     )}
                   </td>
                   <td style={{ padding: '0.6rem 0.5rem', color: '#64748b' }}>

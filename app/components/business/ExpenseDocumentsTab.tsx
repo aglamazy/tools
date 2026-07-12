@@ -737,6 +737,24 @@ export default function ExpenseDocumentsTab({ businessId }: Props) {
                         </button>
                       )}
 
+                      {!!doc.amount && doc.driveFileId && (
+                        <button
+                          onClick={() => handleReExtract(doc)}
+                          title="הפעלה מחדש של חילוץ הנתונים מהקובץ (למשל אחרי שיפור בחילוץ)"
+                          style={{
+                            padding: '0.25rem 0.5rem',
+                            fontSize: '0.75rem',
+                            background: '#f1f5f9',
+                            border: '1px solid #cbd5e1',
+                            borderRadius: '0.25rem',
+                            cursor: 'pointer',
+                            color: '#475569',
+                          }}
+                        >
+                          חלץ מחדש
+                        </button>
+                      )}
+
                       {linkingDocId === doc.id ? (
                         <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
                           <select

@@ -5,6 +5,7 @@ import { db, type Transaction, type ExpenseDocument } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { MONTH_NAMES_HE } from '@/app/lib/dateUtils'
 import type { Category } from '@/app/types/category'
+import { pickExpenseLabel } from '@/app/utils/expenseLabel'
 
 type Props = {
   businessId: number
@@ -17,7 +18,7 @@ type SupplierRow = {
 }
 
 function supplierLabelForTransaction(t: Transaction, doc?: ExpenseDocument): string {
-  return doc?.description || doc?.vendor || t.merchant || t.description
+  return pickExpenseLabel(doc?.description, doc?.vendor, t.merchant, t.description)
 }
 
 function supplierLabelForDoc(d: ExpenseDocument): string {
@@ -142,7 +143,9 @@ export default function ExpenseMonthSupplierPivot({ businessId }: Props) {
               {rows.map(row => (
                 <tr key={row.supplier} style={{ borderBottom: '1px solid #f1f5f9' }}>
                   <td style={{ padding: '0.5rem', position: 'sticky', right: 0, background: '#fff', whiteSpace: 'nowrap' }}>{row.supplier}</td>
-                  {row.byMonth.map((amount, i) => (
+                  {row.byMonth.map((amount, i) => {
+                    const monthStr = `${String(i + 1).padStart(2, '0')}/${year}`
+                    return (
                     <td
                       key={i}
                       style={{
@@ -152,9 +155,18 @@ export default function ExpenseMonthSupplierPivot({ businessId }: Props) {
                         background: amount ? '#eff6ff' : 'transparent',
                       }}
                     >
-                      {amount ? amount.toLocaleString() : '—'}
+                      {amount ? (
+                        <a
+                          href={`/app/budget?month=${encodeURIComponent(monthStr)}`}
+                          title="פתח בעמוד התקציב לחודש זה"
+                          style={{ color: 'inherit', textDecoration: 'none' }}
+                        >
+                          {amount.toLocaleString()}
+                        </a>
+                      ) : '—'}
                     </td>
-                  ))}
+                    )
+                  })}
                   <td style={{ padding: '0.5rem', textAlign: 'left', fontWeight: 600 }}>₪{row.total.toLocaleString()}</td>
                 </tr>
               ))}
