@@ -46,10 +46,20 @@ function buildDateRange(dateStr: string): string {
   return `after:${fmt(after)} before:${fmt(before)}`
 }
 
+/** One Gmail message the matcher actually looked at, and what happened to it. */
+export type CheckedCandidate = {
+  messageId: string
+  date: string
+  subject: string
+  from: string
+  outcome: 'matched' | 'rejected'
+  reason: string
+}
+
 export type MatchResult =
-  | { status: 'matched'; doc: ExpenseDocument }
-  | { status: 'no-match' }
-  | { status: 'error' }
+  | { status: 'matched'; doc: ExpenseDocument; checkedCandidates: CheckedCandidate[] }
+  | { status: 'no-match'; checkedCandidates: CheckedCandidate[] }
+  | { status: 'error'; checkedCandidates: CheckedCandidate[] }
 
 /**
  * Search Gmail for a receipt matching the transaction, extract data, upload to Drive.
@@ -216,11 +226,11 @@ export async function matchReceiptForTransaction(
     log('llm fallback · broad query:', broadQuery)
     const searchResult = await searchMessages(broadQuery, { searchAllMail: true, maxResults: 30 })
     log('broad search →', { count: searchResult.messageIds.length, error: searchResult.error })
-    if (searchResult.error) return { status: 'error' }
-    if (searchResult.messageIds.length === 0) return { status: 'no-match' }
+    if (searchResult.error) return { status: 'error', checkedCandidates: [] }
+    if (searchResult.messageIds.length === 0) return { status: 'no-match', checkedCandidates: [] }
 
     const metaResult = await fetchMessagesMetadata(searchResult.messageIds.slice(0, 20))
-    if (metaResult.error || metaResult.messages.length === 0) return { status: 'no-match' }
+    if (metaResult.error || metaResult.messages.length === 0) return { status: 'no-match', checkedCandidates: [] }
 
     const matchRes = await fetch('/api/match-receipt', {
       method: 'POST',
@@ -244,26 +254,49 @@ export async function matchReceiptForTransaction(
 
     if (candidateMessageIds.length === 0) {
       log('no candidates after llm fallback — returning no-match')
-      return { status: 'no-match' }
+      return { status: 'no-match', checkedCandidates: [] }
     }
   }
 
   // From here on we REQUIRE Claude: verification + extraction + storage.
   if (!claudeApiKey) {
     log('missing Claude API key — required for verification + extraction')
-    return { status: 'error' }
+    return { status: 'error', checkedCandidates: [] }
   }
+
+  // Fetch date/subject/from for every candidate up front — some paths
+  // (known-sender, vendor-token) only have bare message ids at this point.
+  // This is what lets the UI show a real "here's what we checked" list
+  // instead of an opaque no-match.
+  const candidateMeta = await fetchMessagesMetadata(candidateMessageIds)
+  const metaByMsgId = new Map(candidateMeta.messages.map((m) => [m.id, m]))
 
   // Try each candidate. The first one that Claude verifies AND produces a
   // downloadable PDF wins. Anything else (non-receipt, no PDF link, Claude
   // rejection, download failure) gets skipped silently and we move on.
   log('verifying candidates:', candidateMessageIds)
+  const checkedCandidates: CheckedCandidate[] = []
   for (const msgId of candidateMessageIds) {
-    const doc = await tryCandidate(msgId, tx, desc, claudeApiKey, log)
-    if (doc) return { status: 'matched', doc }
+    let lastReason = ''
+    const candidateLog = (...args: unknown[]) => {
+      const text = args.filter((a) => typeof a === 'string').join(' ')
+      if (text.includes('  ↳')) lastReason = text.replace('  ↳', '').trim()
+      log(...args)
+    }
+    const doc = await tryCandidate(msgId, tx, desc, claudeApiKey, candidateLog)
+    const meta = metaByMsgId.get(msgId)
+    checkedCandidates.push({
+      messageId: msgId,
+      date: meta?.date || '',
+      subject: meta?.subject || '',
+      from: meta?.from || '',
+      outcome: doc ? 'matched' : 'rejected',
+      reason: doc ? '' : lastReason,
+    })
+    if (doc) return { status: 'matched', doc, checkedCandidates }
   }
   log('all candidates exhausted — returning no-match')
-  return { status: 'no-match' }
+  return { status: 'no-match', checkedCandidates }
 }
 
 /**

@@ -2,9 +2,10 @@
 
 import React, { useRef, useState } from 'react'
 import type { ExpenseDocument } from '@/app/db/financeDB'
-import { matchReceiptForTransaction, parseDateFolder } from '@/app/services/receiptMatchService'
+import { matchReceiptForTransaction, parseDateFolder, type CheckedCandidate } from '@/app/services/receiptMatchService'
 import { hasGmailAccess, requestGmailAccess } from '@/app/services/gmailService'
 import { uploadExpenseDocument } from '@/app/services/googleDriveService'
+import SearchResultsModal from './SearchResultsModal'
 
 type MatchStatus = 'idle' | 'searching' | 'uploading' | 'matched' | 'no-match' | 'error'
 
@@ -26,6 +27,8 @@ type ExpenseMatchCellProps = {
 export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey, onMatched }: ExpenseMatchCellProps) {
   const [status, setStatus] = useState<MatchStatus>('idle')
   const [errorMsg, setErrorMsg] = useState<string>('')
+  const [checkedCandidates, setCheckedCandidates] = useState<CheckedCandidate[]>([])
+  const [showResults, setShowResults] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // A doc counts as truly linked if either:
@@ -51,6 +54,7 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
   const handleMatch = async () => {
     setStatus('searching')
     setErrorMsg('')
+    setCheckedCandidates([])
     if (!hasGmailAccess()) {
       const r = await requestGmailAccess()
       if (!r.success) {
@@ -69,6 +73,7 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
     try {
       const result = await matchReceiptForTransaction(transaction, claudeApiKey)
       console.log('[ExpenseMatch] result for tx', transaction.id, transaction.description, ':', result)
+      setCheckedCandidates(result.checkedCandidates)
       if (result.status === 'matched') {
         onMatched(result.doc)
       }
@@ -210,6 +215,18 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
         >
           שגיאה
         </span>
+      )}
+      {(status === 'no-match' || status === 'matched') && checkedCandidates.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setShowResults(true)}
+          style={{ background: 'none', border: 'none', color: '#2563eb', fontSize: '0.75rem', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+        >
+          🔍 {checkedCandidates.length} נבדקו
+        </button>
+      )}
+      {showResults && (
+        <SearchResultsModal candidates={checkedCandidates} onClose={() => setShowResults(false)} />
       )}
     </div>
   )
