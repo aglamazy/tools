@@ -5,7 +5,7 @@ import { db, type Transaction, type YpayDocument, type Business, type Project } 
 import { subjectStore } from '@/app/stores/subjectStore'
 import { businessStore } from '@/app/stores/businessStore'
 import { projectStore } from '@/app/stores/projectStore'
-import { ypayService, YpayDocType, formatDateForYpay } from '@/app/services/ypayService'
+import { ypayService, YpayDocType, formatDateForYpay, computeInvoicePaidAmount, invoiceGrossAmount, closeFullyPaidInvoices, isInvoiceFullyPaid } from '@/app/services/ypayService'
 import { parseDateMs } from '@/app/utils/parsers/shared'
 import { hasGmailAccess, requestGmailAccess, sendEmail, type EmailAttachment } from '@/app/services/gmailService'
 import { getIdToken } from '@/app/services/firebaseAuthService'
@@ -31,6 +31,11 @@ export type TransactionWithDoc = Transaction & {
   ypayDoc?: YpayDocument
 }
 
+// An open (not fully paid) invoice with its remaining gross balance already
+// netted against every receipt allocated toward it so far — a partially
+// covered invoice shows what's actually still owed, not its original amount.
+export type OpenInvoice = YpayDocument & { remainingAmount: number }
+
 const parseSortableDate = (date?: string) => parseDateMs(date)
 
 export default function IncomeTab({ businessId }: IncomeTabProps) {
@@ -55,9 +60,12 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
   const [linkingDoc, setLinkingDoc] = useState<number | null>(null)
   const [linkForm, setLinkForm] = useState<{ url: string; serialNumber: string }>({ url: '', serialNumber: '' })
   // Open invoices (B2B split flow, authorized dealers only) a receipt can close.
-  const [openInvoices, setOpenInvoices] = useState<YpayDocument[]>([])
+  const [openInvoices, setOpenInvoices] = useState<OpenInvoice[]>([])
   const [invoiceById, setInvoiceById] = useState<Map<number, YpayDocument>>(new Map())
-  const [selectedInvoiceDocIds, setSelectedInvoiceDocIds] = useState<number[]>([])
+  // invoiceDocId → amount allocated from the receipt currently being created/
+  // linked. Presence in the map = selected; the value is editable so a
+  // partial cover (paid more than N invoices but less than N+1) is expressible.
+  const [selectedAllocations, setSelectedAllocations] = useState<Record<number, number>>({})
   const [ypayDocs, setYpayDocs] = useState<Array<{ serial_number: string; url: string }>>([])
   const [loadingDocs, setLoadingDocs] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -286,10 +294,19 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     if (profileVatType !== 'authorized') { setOpenInvoices([]); setInvoiceById(new Map()); return }
     const bizProjects = await projectStore.getByBusinessId(businessId)
     const projectNames = new Set(bizProjects.map(p => p.name))
-    const allInvoices = await db.ypayDocuments
-      .filter(d => billingDocTypes.has(d.docType) && !!d.projectName && projectNames.has(d.projectName))
-      .toArray()
-    setOpenInvoices(allInvoices.filter(d => !d.paidAt))
+    // All docs (not just invoices) are needed to sum each invoice's receipt
+    // allocations — computeInvoicePaidAmount scans every receipt's
+    // closesAllocations, not just the ones for this business's projects.
+    const allDocs = await db.ypayDocuments.toArray()
+    const allInvoices = allDocs.filter(d => billingDocTypes.has(d.docType) && !!d.projectName && projectNames.has(d.projectName))
+    const open = allInvoices
+      .filter(inv => !inv.paidAt)
+      .map((inv): OpenInvoice => {
+        const paid = computeInvoicePaidAmount(inv.id!, allDocs)
+        return { ...inv, remainingAmount: invoiceGrossAmount(inv) - paid }
+      })
+      .filter(inv => inv.remainingAmount > 0.01) // paidAt not yet stamped but already fully covered by a same-batch receipt
+    setOpenInvoices(open)
     setInvoiceById(new Map(allInvoices.filter(d => d.id != null).map(d => [d.id as number, d])))
   }
 
@@ -298,7 +315,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     setProjects(activeProjects)
     setSelectingProject(transactionId)
     setEditingProjectContact(null)
-    setSelectedInvoiceDocIds([])
+    setSelectedAllocations({})
     setError(null)
     setLastCreatedUrl(null)
     void loadOpenInvoices()
@@ -338,7 +355,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     setEditingProjectContact(null)
   }
 
-  const handleCreateDocument = async (transaction: TransactionWithDoc, project: Project, closesDocIds?: number[]) => {
+  const handleCreateDocument = async (transaction: TransactionWithDoc, project: Project, closesAllocations?: { docId: number; amount: number }[]) => {
     if (!business || !transaction.id) return
 
     if (!project.contactEmail) {
@@ -362,9 +379,9 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     }
 
     try {
-      const result = await ypayService.createDocument(transaction, business, contact, profileVatType, closesDocIds)
+      const result = await ypayService.createDocument(transaction, business, contact, profileVatType, closesAllocations)
       setLastCreatedUrl(result.url)
-      setSelectedInvoiceDocIds([])
+      setSelectedAllocations({})
       await loadTransactions()
       await loadOpenInvoices()
     } catch (err: any) {
@@ -386,7 +403,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     }
   }
 
-  const handleLinkDocument = async (transaction: TransactionWithDoc, closesDocIds?: number[]) => {
+  const handleLinkDocument = async (transaction: TransactionWithDoc, closesAllocations?: { docId: number; amount: number }[]) => {
     if (!transaction.id || !linkForm.serialNumber.trim()) return
 
     setError(null)
@@ -396,18 +413,15 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
         url: '',
         serialNumber: linkForm.serialNumber.trim(),
         docType: profileVatType === 'authorized' ? YpayDocType.TaxInvoiceReceipt : YpayDocType.Receipt,
-        closesDocIds,
+        closesAllocations,
         createdAt: new Date().toISOString(),
       })
-      // Close the circle — same paidAt-from-transaction-date semantics as
-      // ypayService.createDocument's closesDocIds handling.
-      if (closesDocIds && closesDocIds.length > 0) {
-        const paidAt = new Date(formatDateForYpay(transaction.date)).toISOString()
-        await Promise.all(closesDocIds.map((id) => db.ypayDocuments.update(id, { paidAt })))
+      if (closesAllocations && closesAllocations.length > 0) {
+        await closeFullyPaidInvoices(closesAllocations, new Date(formatDateForYpay(transaction.date)).toISOString())
       }
       setLinkingDoc(null)
       setLinkForm({ url: '', serialNumber: '' })
-      setSelectedInvoiceDocIds([])
+      setSelectedAllocations({})
       await loadTransactions()
       await loadOpenInvoices()
     } catch (err: any) {
@@ -500,9 +514,19 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
   const handleDeleteReceipt = async (transaction: TransactionWithDoc) => {
     const doc = transaction.ypayDoc
     if (!doc?.id) return
+    const affectedInvoiceIds = (doc.closesAllocations || []).map((a) => a.docId)
     await db.ypayDocuments.delete(doc.id)
-    if (doc.closesDocIds && doc.closesDocIds.length > 0) {
-      await Promise.all(doc.closesDocIds.map((id) => db.ypayDocuments.update(id, { paidAt: undefined })))
+    if (affectedInvoiceIds.length > 0) {
+      // Recompute AFTER the delete — an invoice covered by more than one
+      // receipt (partial-then-topped-up) may still be fully paid via the
+      // others, so don't blindly reopen it.
+      const allDocs = await db.ypayDocuments.toArray()
+      const invoices = await db.ypayDocuments.bulkGet(affectedInvoiceIds)
+      await Promise.all(
+        invoices
+          .filter((inv): inv is YpayDocument => !!inv && !!inv.paidAt && !isInvoiceFullyPaid(inv, allDocs))
+          .map((inv) => db.ypayDocuments.update(inv.id!, { paidAt: undefined }))
+      )
     }
     setDeletingReceiptFor(null)
     await loadTransactions()
@@ -741,14 +765,14 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
                             creatingDoc={creatingDoc}
                             linkForm={linkForm}
                             onLinkFormChange={setLinkForm}
-                            onStartLink={(id) => { setLinkingDoc(id); setLinkForm({ url: '', serialNumber: '' }); setSelectedInvoiceDocIds([]); loadExistingDocs(); void loadOpenInvoices() }}
-                            onCancelLink={() => { setLinkingDoc(null); setLinkForm({ url: '', serialNumber: '' }); setSelectedInvoiceDocIds([]) }}
-                            onLinkDocument={(tx, ids) => handleLinkDocument(tx, ids)}
+                            onStartLink={(id) => { setLinkingDoc(id); setLinkForm({ url: '', serialNumber: '' }); setSelectedAllocations({}); loadExistingDocs(); void loadOpenInvoices() }}
+                            onCancelLink={() => { setLinkingDoc(null); setLinkForm({ url: '', serialNumber: '' }); setSelectedAllocations({}) }}
+                            onLinkDocument={(tx, allocations) => handleLinkDocument(tx, allocations)}
                             projects={projects}
                             selectedProjectId={selectedProjectId}
                             onSelectedProjectIdChange={setSelectedProjectId}
                             onStartCreate={(id) => handleStartCreate(id)}
-                            onCancelCreate={() => { setSelectingProject(null); setSelectedProjectId(null); setSelectedInvoiceDocIds([]) }}
+                            onCancelCreate={() => { setSelectingProject(null); setSelectedProjectId(null); setSelectedAllocations({}) }}
                             onCreateNewProject={() => {
                               setCreatingNewProject(true)
                               setEditingProjectContact({
@@ -760,10 +784,10 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
                               })
                             }}
                             onEditProject={setEditingProjectContact}
-                            onCreateDocument={(tx, project, ids) => handleCreateDocument(tx, project, ids)}
+                            onCreateDocument={(tx, project, allocations) => handleCreateDocument(tx, project, allocations)}
                             openInvoices={openInvoices}
-                            selectedInvoiceDocIds={selectedInvoiceDocIds}
-                            onSelectedInvoiceDocIdsChange={setSelectedInvoiceDocIds}
+                            selectedAllocations={selectedAllocations}
+                            onSelectedAllocationsChange={setSelectedAllocations}
                           />
                         </td>
                       </tr>
@@ -793,8 +817,8 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
       <YesNoModal
         isOpen={!!deletingReceiptFor}
         question={
-          deletingReceiptFor?.ypayDoc?.closesDocIds && deletingReceiptFor.ypayDoc.closesDocIds.length > 0
-            ? `למחוק את קבלה #${deletingReceiptFor.ypayDoc.serialNumber}? החשבונית(ות) שנסגרו על ידה ייפתחו מחדש.`
+          deletingReceiptFor?.ypayDoc?.closesAllocations && deletingReceiptFor.ypayDoc.closesAllocations.length > 0
+            ? `למחוק את קבלה #${deletingReceiptFor.ypayDoc.serialNumber}? החשבונית(ות) שנסגרו על ידה ייפתחו מחדש (אלא אם שולמו במלואן ע״י קבלה אחרת).`
             : `למחוק את קבלה #${deletingReceiptFor?.ypayDoc?.serialNumber}?`
         }
         yesText="מחק"

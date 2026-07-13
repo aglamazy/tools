@@ -4,7 +4,7 @@ import React, { useEffect, useState, useCallback } from 'react'
 import { db, type Business, type Project, type YpayDocument } from '@/app/db/financeDB'
 import { businessStore } from '@/app/stores/businessStore'
 import { projectStore } from '@/app/stores/projectStore'
-import { YpayDocType } from '@/app/services/ypayService'
+import { YpayDocType, computeInvoicePaidAmount, invoiceGrossAmount } from '@/app/services/ypayService'
 import { getTaxProfile } from '@/app/components/TaxProfileSection'
 import Modal from '@/app/components/Modal'
 import ItemInvoiceModal from './ItemInvoiceModal'
@@ -32,10 +32,14 @@ function docTypeLabel(docType: number): string {
   }
 }
 
+// An invoice with its remaining balance netted against every receipt
+// allocated toward it so far — a partial payment shows what's still owed.
+type InvoiceWithBalance = YpayDocument & { paidSoFar: number; remainingAmount: number }
+
 export default function InvoicesTab({ businessId }: InvoicesTabProps) {
   const [business, setBusiness] = useState<Business | null>(null)
   const [activeProjects, setActiveProjects] = useState<Project[]>([])
-  const [docs, setDocs] = useState<YpayDocument[]>([])
+  const [docs, setDocs] = useState<InvoiceWithBalance[]>([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -60,11 +64,16 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
     setProfileVatType(profile.vatType)
 
     const projectNames = new Set(all.map(p => p.name))
-    const allDocs = await db.ypayDocuments
-      .filter(d => billingDocTypes.has(d.docType) && !!d.projectName && projectNames.has(d.projectName))
-      .toArray()
-    allDocs.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
-    setDocs(allDocs)
+    // All docs (not just invoices) are needed to sum each invoice's receipt
+    // allocations toward it (computeInvoicePaidAmount scans every receipt).
+    const allDocs = await db.ypayDocuments.toArray()
+    const invoices = allDocs.filter(d => billingDocTypes.has(d.docType) && !!d.projectName && projectNames.has(d.projectName))
+    const withBalance: InvoiceWithBalance[] = invoices.map((inv) => {
+      const paidSoFar = inv.id != null ? computeInvoicePaidAmount(inv.id, allDocs) : 0
+      return { ...inv, paidSoFar, remainingAmount: invoiceGrossAmount(inv) - paidSoFar }
+    })
+    withBalance.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+    setDocs(withBalance)
     setLoading(false)
   }, [businessId])
 
@@ -132,6 +141,7 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
             <tbody>
               {docs.map(doc => {
                 const isItemBased = doc.transactionId.startsWith('invoice-items:')
+                const isPartiallyPaid = !doc.paidAt && doc.paidSoFar > 0.01
                 return (
                   <tr key={doc.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                     <td style={{ padding: '0.75rem', fontWeight: 600 }}>#{doc.serialNumber}</td>
@@ -144,14 +154,25 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
                       {doc.amount != null ? `${doc.amount.toFixed(2)} ₪` : '—'}
                     </td>
                     <td style={{ padding: '0.75rem' }}>
-                      <span style={{
-                        display: 'inline-block', padding: '0.15rem 0.5rem', fontSize: '0.75rem',
-                        borderRadius: '0.25rem',
-                        background: doc.paidAt ? '#f0fdf4' : '#fef3c7',
-                        color: doc.paidAt ? '#16a34a' : '#92400e',
-                        border: `1px solid ${doc.paidAt ? '#bbf7d0' : '#fde68a'}`,
-                      }}>
-                        {doc.paidAt ? `✓ נסגר ${formatDateForDisplay(doc.paidAt)}` : 'פתוח'}
+                      <span
+                        title={
+                          doc.docType === YpayDocType.TaxInvoice
+                            ? `סכום לפני מע״מ: ${(doc.amount ?? 0).toFixed(2)} ₪\nסה״כ כולל מע״מ: ${invoiceGrossAmount(doc).toFixed(2)} ₪\nשולם עד כה: ${doc.paidSoFar.toFixed(2)} ₪\nנותר לתשלום (כולל מע״מ): ${doc.remainingAmount.toFixed(2)} ₪`
+                            : `שולם עד כה: ${doc.paidSoFar.toFixed(2)} ₪\nנותר לתשלום: ${doc.remainingAmount.toFixed(2)} ₪`
+                        }
+                        style={{
+                          display: 'inline-block', padding: '0.15rem 0.5rem', fontSize: '0.75rem',
+                          borderRadius: '0.25rem', cursor: 'help',
+                          background: doc.paidAt ? '#f0fdf4' : isPartiallyPaid ? '#fffbeb' : '#fef3c7',
+                          color: doc.paidAt ? '#16a34a' : '#92400e',
+                          border: `1px solid ${doc.paidAt ? '#bbf7d0' : '#fde68a'}`,
+                        }}
+                      >
+                        {doc.paidAt
+                          ? `✓ נסגר ${formatDateForDisplay(doc.paidAt)}`
+                          : isPartiallyPaid
+                            ? `שולם חלקית — נותרו ${doc.remainingAmount.toFixed(2)} ₪ (כולל מע״מ)`
+                            : 'פתוח'}
                       </span>
                     </td>
                     <td style={{ padding: '0.75rem' }}>

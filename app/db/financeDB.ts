@@ -208,7 +208,7 @@ export interface YpayDocument {
   monthName?: string // For business invoices
   paidAt?: string // ISO timestamp when payment was received
   vatPaymentId?: number // FK → VatPayment.id once reported to the tax authority
-  closesDocIds?: number[] // For a receipt: the ypayDocuments.id(s) of the invoice(s) it closes (B2B split flow — separate tax invoices created ahead of time, then one receipt when paid — a single payment can cover more than one invoice). Setting this also stamps paidAt on each of those invoice docs, closing the circle.
+  closesAllocations?: { docId: number; amount: number }[] // For a receipt: how much of it (gross ₪) goes toward each open invoice (B2B split flow). A receipt can fully cover several invoices and partially cover one more — an invoice is only "closed" (paidAt stamped) once its allocations across ALL receipts sum to its full gross amount; see computeInvoicePaidAmount in ypayService.ts.
   createdAt: string // ISO timestamp
   updatedAt?: string
 }

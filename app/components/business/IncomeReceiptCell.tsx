@@ -2,9 +2,17 @@
 
 import React from 'react'
 import type { Business, Project, YpayDocument } from '@/app/db/financeDB'
-import type { TransactionWithDoc } from './IncomeTab'
+import { YpayDocType } from '@/app/services/ypayService'
+import type { TransactionWithDoc, OpenInvoice } from './IncomeTab'
 
 type LinkForm = { url: string; serialNumber: string }
+type Allocation = { docId: number; amount: number }
+
+function toAllocationArray(allocations: Record<number, number>): Allocation[] {
+  return Object.entries(allocations)
+    .map(([docId, amount]) => ({ docId: Number(docId), amount }))
+    .filter((a) => a.amount > 0)
+}
 
 type IncomeReceiptCellProps = {
   transaction: TransactionWithDoc
@@ -23,7 +31,7 @@ type IncomeReceiptCellProps = {
   onLinkFormChange: (form: LinkForm) => void
   onStartLink: (transactionId: number) => void
   onCancelLink: () => void
-  onLinkDocument: (t: TransactionWithDoc, closesDocIds: number[]) => void
+  onLinkDocument: (t: TransactionWithDoc, allocations: Allocation[]) => void
 
   projects: Project[]
   selectedProjectId: number | null
@@ -32,47 +40,95 @@ type IncomeReceiptCellProps = {
   onCancelCreate: () => void
   onCreateNewProject: () => void
   onEditProject: (p: Project) => void
-  onCreateDocument: (t: TransactionWithDoc, project: Project, closesDocIds: number[]) => void
+  onCreateDocument: (t: TransactionWithDoc, project: Project, allocations: Allocation[]) => void
 
-  openInvoices: YpayDocument[]
-  selectedInvoiceDocIds: number[]
-  onSelectedInvoiceDocIdsChange: (ids: number[]) => void
+  openInvoices: OpenInvoice[]
+  selectedAllocations: Record<number, number>
+  onSelectedAllocationsChange: (allocations: Record<number, number>) => void
 }
 
-// Checkbox list for closing one or more open invoices with a single receipt
-// (a payment can cover more than one invoice) — shows a running total against
-// the receipt amount so a mismatched selection is obvious before saving.
-function InvoiceCloseChecklist({
-  invoices, selectedIds, onChange, receiptAmount,
+// Per-invoice amount picker for closing one or more open invoices with a
+// single receipt — a payment can fully cover several invoices and partially
+// cover one more (paid more than N invoices but less than N+1 together), so
+// each row is an editable amount defaulting to the invoice's full remaining
+// balance, not just a checkbox. Shows a running total against the receipt
+// amount so a mismatched allocation is obvious before saving.
+function InvoiceAllocationList({
+  invoices, allocations, onChange, receiptAmount,
 }: {
-  invoices: YpayDocument[]
-  selectedIds: number[]
-  onChange: (ids: number[]) => void
+  invoices: OpenInvoice[]
+  allocations: Record<number, number>
+  onChange: (allocations: Record<number, number>) => void
   receiptAmount: number
 }) {
   if (invoices.length === 0) return null
-  const toggle = (id: number) => {
-    onChange(selectedIds.includes(id) ? selectedIds.filter(x => x !== id) : [...selectedIds, id])
+
+  const selectedTotal = Object.values(allocations).reduce((s, a) => s + a, 0)
+  const hasSelection = Object.keys(allocations).length > 0
+  const matches = Math.abs(selectedTotal - receiptAmount) < 0.01
+  const unallocated = receiptAmount - selectedTotal
+
+  const toggle = (inv: OpenInvoice) => {
+    if (inv.id == null) return
+    if (inv.id in allocations) {
+      const next = { ...allocations }
+      delete next[inv.id]
+      onChange(next)
+    } else {
+      // Auto-fill with whatever's actually left of the receipt, not the
+      // invoice's full balance — checking invoices in order this way makes a
+      // partial cover fill itself in (e.g. two full invoices + a smaller
+      // remainder on the third), instead of the user having to do the
+      // subtraction by hand.
+      const amount = Math.max(0, Math.min(inv.remainingAmount, unallocated))
+      onChange({ ...allocations, [inv.id]: Math.round(amount * 100) / 100 })
+    }
   }
-  const selectedTotal = invoices
-    .filter(inv => inv.id != null && selectedIds.includes(inv.id))
-    .reduce((s, inv) => s + (inv.amount || 0), 0)
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', padding: '0.3rem', border: '1px solid #e2e8f0', borderRadius: '0.25rem', background: '#fff' }}>
-      <span style={{ fontSize: '0.7rem', color: '#64748b' }}>סגור חשבונית(ות) פתוחה(ות):</span>
-      {invoices.map(inv => (
-        <label key={inv.id} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.75rem', cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={inv.id != null && selectedIds.includes(inv.id)}
-            onChange={() => inv.id != null && toggle(inv.id)}
-          />
-          #{inv.serialNumber} · {inv.projectName} · {inv.amount ? `${inv.amount.toFixed(2)} ₪` : ''}
-        </label>
-      ))}
-      {selectedIds.length > 0 && (
-        <span style={{ fontSize: '0.7rem', color: Math.abs(selectedTotal - receiptAmount) < 0.01 ? '#16a34a' : '#b45309' }}>
-          סה״כ נבחר: {selectedTotal.toFixed(2)} ₪ {Math.abs(selectedTotal - receiptAmount) >= 0.01 && `(סכום הקבלה: ${receiptAmount.toFixed(2)} ₪)`}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', padding: '0.35rem', border: '1px solid #e2e8f0', borderRadius: '0.25rem', background: '#fff' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <span style={{ fontSize: '0.7rem', color: '#64748b' }}>סגור חשבונית(ות) פתוחה(ות):</span>
+        <span style={{ fontSize: '0.7rem', fontWeight: 600, color: Math.abs(unallocated) < 0.01 ? '#16a34a' : '#2563eb' }}>
+          נותר להקצאה: {unallocated.toFixed(2)} ₪
+        </span>
+      </div>
+      {invoices.map((inv) => {
+        if (inv.id == null) return null
+        const checked = inv.id in allocations
+        const amount = allocations[inv.id]
+        const isPartial = checked && amount < inv.remainingAmount - 0.01
+        return (
+          <div key={inv.id} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.75rem' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer', flex: 1 }}>
+              <input type="checkbox" checked={checked} onChange={() => toggle(inv)} />
+              #{inv.serialNumber} · {inv.projectName}
+            </label>
+            {checked && (
+              <>
+                <input
+                  type="number"
+                  min={0}
+                  max={inv.remainingAmount}
+                  step="0.01"
+                  value={amount}
+                  onChange={(e) => onChange({ ...allocations, [inv.id!]: Number(e.target.value) })}
+                  style={{ width: '75px', padding: '0.15rem 0.3rem', fontSize: '0.7rem', border: '1px solid #e2e8f0', borderRadius: '0.2rem', direction: 'ltr' }}
+                />
+                <span
+                  title={inv.docType === YpayDocType.TaxInvoice ? 'הסכום הנותר כולל מע״מ' : undefined}
+                  style={{ color: isPartial ? '#b45309' : '#64748b', whiteSpace: 'nowrap', cursor: inv.docType === YpayDocType.TaxInvoice ? 'help' : undefined }}
+                >
+                  מתוך {inv.remainingAmount.toFixed(2)} ₪{inv.docType === YpayDocType.TaxInvoice ? ' (כולל מע״מ)' : ''}{isPartial ? ' — כיסוי חלקי' : ''}
+                </span>
+              </>
+            )}
+          </div>
+        )
+      })}
+      {hasSelection && (
+        <span style={{ fontSize: '0.7rem', color: matches ? '#16a34a' : '#b45309' }}>
+          סה״כ הוקצה: {selectedTotal.toFixed(2)} ₪ {!matches && `(סכום הקבלה: ${receiptAmount.toFixed(2)} ₪)`}
         </span>
       )}
     </div>
@@ -86,12 +142,12 @@ export default function IncomeReceiptCell(props: IncomeReceiptCellProps) {
     linkForm, onLinkFormChange, onStartLink, onCancelLink, onLinkDocument,
     projects, selectedProjectId, onSelectedProjectIdChange, onStartCreate, onCancelCreate,
     onCreateNewProject, onEditProject, onCreateDocument,
-    openInvoices, selectedInvoiceDocIds, onSelectedInvoiceDocIdsChange,
+    openInvoices, selectedAllocations, onSelectedAllocationsChange,
   } = props
 
   if (t.ypayDoc) {
-    const closedInvoices = (t.ypayDoc.closesDocIds || [])
-      .map(id => invoiceById.get(id)?.serialNumber ?? id)
+    const closedInvoices = (t.ypayDoc.closesAllocations || [])
+      .map((a) => ({ label: invoiceById.get(a.docId)?.serialNumber ?? a.docId, amount: a.amount }))
     return (
       <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', justifyContent: 'center' }}>
         <a
@@ -103,8 +159,15 @@ export default function IncomeReceiptCell(props: IncomeReceiptCellProps) {
           {t.ypayDoc.serialNumber}
         </a>
         {closedInvoices.length > 0 && (
-          <span style={{ fontSize: '0.7rem', color: '#6d28d9' }} title="חשבונית(ות) שנסגרו על ידי קבלה זו">
-            ↪ סוגר #{closedInvoices.join(', #')}
+          <span
+            title={`סוגר: ${closedInvoices.map((c) => `#${c.label} (₪${c.amount.toFixed(2)})`).join(', ')}`}
+            style={{
+              display: 'inline-flex', alignItems: 'center', fontSize: '0.7rem', fontWeight: 600,
+              color: '#6d28d9', background: '#f5f3ff', border: '1px solid #ddd6fe',
+              borderRadius: '999px', padding: '0.05rem 0.4rem', cursor: 'help',
+            }}
+          >
+            ↪ {closedInvoices.length}
           </span>
         )}
         <button
@@ -135,7 +198,7 @@ export default function IncomeReceiptCell(props: IncomeReceiptCellProps) {
 
   if (linkingDoc === t.id) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', minWidth: '200px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', minWidth: '220px' }}>
         <input
           type="text"
           placeholder="מספר קבלה"
@@ -144,15 +207,15 @@ export default function IncomeReceiptCell(props: IncomeReceiptCellProps) {
           style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', border: '1px solid #e2e8f0', borderRadius: '0.25rem', direction: 'rtl' }}
           autoFocus
         />
-        <InvoiceCloseChecklist
+        <InvoiceAllocationList
           invoices={openInvoices}
-          selectedIds={selectedInvoiceDocIds}
-          onChange={onSelectedInvoiceDocIdsChange}
+          allocations={selectedAllocations}
+          onChange={onSelectedAllocationsChange}
           receiptAmount={t.amount}
         />
         <div style={{ display: 'flex', gap: '0.3rem', justifyContent: 'center' }}>
           <button
-            onClick={() => onLinkDocument(t, selectedInvoiceDocIds)}
+            onClick={() => onLinkDocument(t, toAllocationArray(selectedAllocations))}
             disabled={!linkForm.serialNumber.trim()}
             style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#f0fdf4', border: '1px solid #10b981', borderRadius: '0.25rem', cursor: 'pointer', color: '#059669' }}
           >
@@ -176,11 +239,11 @@ export default function IncomeReceiptCell(props: IncomeReceiptCellProps) {
       ? openInvoices.filter(inv => inv.projectName === selected.name)
       : []
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', minWidth: '200px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', minWidth: '220px' }}>
         <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
           <select
             value={selectedProjectId || ''}
-            onChange={(e) => { onSelectedProjectIdChange(e.target.value ? Number(e.target.value) : null); onSelectedInvoiceDocIdsChange([]) }}
+            onChange={(e) => { onSelectedProjectIdChange(e.target.value ? Number(e.target.value) : null); onSelectedAllocationsChange({}) }}
             style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', border: '1px solid #e2e8f0', borderRadius: '0.25rem', direction: 'rtl', flex: 1 }}
           >
             <option value="">בחר לקוח...</option>
@@ -196,15 +259,15 @@ export default function IncomeReceiptCell(props: IncomeReceiptCellProps) {
             +
           </button>
         </div>
-        <InvoiceCloseChecklist
+        <InvoiceAllocationList
           invoices={invoicesForProject}
-          selectedIds={selectedInvoiceDocIds}
-          onChange={onSelectedInvoiceDocIdsChange}
+          allocations={selectedAllocations}
+          onChange={onSelectedAllocationsChange}
           receiptAmount={t.amount}
         />
         <div style={{ display: 'flex', gap: '0.3rem', justifyContent: 'center' }}>
           <button
-            onClick={() => selected && onCreateDocument(t, selected, selectedInvoiceDocIds)}
+            onClick={() => selected && onCreateDocument(t, selected, toAllocationArray(selectedAllocations))}
             disabled={!selected || !hasEmail}
             style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#f0fdf4', border: '1px solid #10b981', borderRadius: '0.25rem', cursor: !selected || !hasEmail ? 'not-allowed' : 'pointer', color: '#059669', opacity: !selected || !hasEmail ? 0.5 : 1 }}
           >

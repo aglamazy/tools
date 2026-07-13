@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react'
 import { db, type YpayDocument, type Project } from '@/app/db/financeDB'
 import { businessStore } from '@/app/stores/businessStore'
 import { projectStore } from '@/app/stores/projectStore'
-import { YpayDocType } from '@/app/services/ypayService'
+import { YpayDocType, computeInvoicePaidAmount, invoiceGrossAmount } from '@/app/services/ypayService'
 import { MONTH_NAMES_HE } from '@/app/lib/dateUtils'
 import { getTaxProfile } from '@/app/components/TaxProfileSection'
 import { billingDocLabel, type VatType } from '@/app/lib/vat'
@@ -44,8 +44,13 @@ const emptyForm: ManualInvoiceForm = {
   url: '',
 }
 
+// An invoice with its remaining balance netted against every receipt
+// allocated toward it so far — a partially-paid invoice shows what's
+// actually still owed, not its original amount.
+type InvoiceWithBalance = YpayDocument & { paidSoFar: number; remainingAmount: number }
+
 export default function OpenDocumentsTab({ businessId }: OpenDocumentsTabProps) {
-  const [documents, setDocuments] = useState<YpayDocument[]>([])
+  const [documents, setDocuments] = useState<InvoiceWithBalance[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const [formData, setFormData] = useState<ManualInvoiceForm | null>(null)
@@ -59,12 +64,16 @@ export default function OpenDocumentsTab({ businessId }: OpenDocumentsTabProps) 
   const loadDocuments = async (projectNames: Set<string>) => {
     // Show both חשבונית עסקה (104) and חשבונית מס (106) — owner status may have
     // changed mid-stream and historical docs of the prior status must remain visible.
-    const docs = await db.ypayDocuments
-      .filter(d => billingDocTypes.has(d.docType))
-      .toArray()
-    const filtered = docs.filter(d => d.projectName && projectNames.has(d.projectName))
-    filtered.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    setDocuments(filtered)
+    // All docs (not just invoices) are needed to sum each invoice's receipt
+    // allocations toward it (computeInvoicePaidAmount scans every receipt).
+    const allDocs = await db.ypayDocuments.toArray()
+    const invoices = allDocs.filter(d => billingDocTypes.has(d.docType) && d.projectName && projectNames.has(d.projectName))
+    const withBalance: InvoiceWithBalance[] = invoices.map((inv) => {
+      const paidSoFar = inv.id != null ? computeInvoicePaidAmount(inv.id, allDocs) : 0
+      return { ...inv, paidSoFar, remainingAmount: invoiceGrossAmount(inv) - paidSoFar }
+    })
+    withBalance.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    setDocuments(withBalance)
     setLoading(false)
   }
 
@@ -127,7 +136,9 @@ export default function OpenDocumentsTab({ businessId }: OpenDocumentsTabProps) 
 
   const openDocs = documents.filter(d => !d.paidAt)
   const paidDocs = documents.filter(d => !!d.paidAt)
-  const totalOpen = openDocs.reduce((sum, d) => sum + (d.amount || 0), 0)
+  // Remaining balance, not the original amount — a partially-paid invoice
+  // should only count what's actually still owed.
+  const totalOpen = openDocs.reduce((sum, d) => sum + d.remainingAmount, 0)
 
   if (loading) return <p>טוען...</p>
 
@@ -262,17 +273,18 @@ export default function OpenDocumentsTab({ businessId }: OpenDocumentsTabProps) 
 }
 
 function DocumentRow({ doc, paid, onMarkPaid, onUnmarkPaid, onDelete }: {
-  doc: YpayDocument
+  doc: InvoiceWithBalance
   paid?: boolean
   onMarkPaid?: () => void
   onUnmarkPaid?: () => void
   onDelete: () => void
 }) {
+  const isPartiallyPaid = !paid && doc.paidSoFar > 0.01
   return (
     <div style={{
       display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-      padding: '1rem', background: paid ? '#f0fdf4' : '#f8fafc',
-      border: `1px solid ${paid ? '#bbf7d0' : '#e2e8f0'}`,
+      padding: '1rem', background: paid ? '#f0fdf4' : isPartiallyPaid ? '#fffbeb' : '#f8fafc',
+      border: `1px solid ${paid ? '#bbf7d0' : isPartiallyPaid ? '#fde68a' : '#e2e8f0'}`,
       borderRadius: '0.5rem', fontSize: '0.95rem',
       opacity: paid ? 0.7 : 1,
     }}>
@@ -289,11 +301,21 @@ function DocumentRow({ doc, paid, onMarkPaid, onUnmarkPaid, onDelete }: {
           {doc.monthName || ''}
           {doc.createdAt && ` · ${new Date(doc.createdAt).toLocaleDateString('he-IL')}`}
           {paid && doc.paidAt && ` · שולם ${new Date(doc.paidAt).toLocaleDateString('he-IL')}`}
+          {isPartiallyPaid && ` · שולם חלקית: ${doc.paidSoFar.toFixed(2)} ₪ מתוך ${invoiceGrossAmount(doc).toFixed(2)} ₪ (כולל מע״מ)`}
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-        <span style={{ fontWeight: 600, fontSize: '1.1rem' }}>
-          {doc.amount ? `${doc.amount.toLocaleString('he-IL', { minimumFractionDigits: 2 })} ₪` : '—'}
+        <span
+          title={
+            doc.docType === YpayDocType.TaxInvoice
+              ? `סכום לפני מע״מ: ${(doc.amount ?? 0).toFixed(2)} ₪\nסה״כ כולל מע״מ: ${invoiceGrossAmount(doc).toFixed(2)} ₪\nשולם עד כה: ${doc.paidSoFar.toFixed(2)} ₪`
+              : `שולם עד כה: ${doc.paidSoFar.toFixed(2)} ₪`
+          }
+          style={{ fontWeight: 600, fontSize: '1.1rem', cursor: isPartiallyPaid ? 'help' : undefined }}
+        >
+          {isPartiallyPaid
+            ? `${doc.remainingAmount.toLocaleString('he-IL', { minimumFractionDigits: 2 })} ₪ נותרו (כולל מע״מ)`
+            : doc.amount ? `${doc.amount.toLocaleString('he-IL', { minimumFractionDigits: 2 })} ₪` : '—'}
         </span>
         {doc.url && (
           <a

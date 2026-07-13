@@ -1,5 +1,6 @@
-import { db, type Transaction, type Business } from '@/app/db/financeDB'
+import { db, type Transaction, type Business, type YpayDocument } from '@/app/db/financeDB'
 import { normalizeDate } from '@/app/utils/parsers/shared'
+import { VAT_RATE_AUTHORIZED_DEALER } from '@/app/lib/vat'
 
 export type YpayCredentials = {
   clientId: string
@@ -87,6 +88,57 @@ function getBillingDocType(business: Business, vatType?: 'exempt' | 'authorized'
   return effective === 'exempt' ? YpayDocType.BusinessInvoice : YpayDocType.TaxInvoice
 }
 
+// Tax invoices (106, authorized dealer) carry a net pre-VAT amount, so the
+// full payable total needs VAT grossed up. Business invoices (104, exempt
+// dealer — no VAT charged at all) can coexist in the same list after a
+// dealer-status change, and their amount is already the full total.
+// A receipt's allocation toward an invoice is always gross (a slice of the
+// actual bank transfer), so both sides need to be in the same (gross) terms.
+export function invoiceGrossAmount(invoice: YpayDocument): number {
+  const amount = invoice.amount || 0
+  return invoice.docType === YpayDocType.TaxInvoice ? amount * (1 + VAT_RATE_AUTHORIZED_DEALER) : amount
+}
+
+// Sum of every receipt's allocation toward this invoice, across ALL receipts
+// (a single invoice can be paid off by more than one receipt over time — a
+// partial payment now, the remainder later). This is computed live rather
+// than denormalized onto the invoice, so there's no stale-total bug to chase.
+export function computeInvoicePaidAmount(invoiceDocId: number, allDocs: YpayDocument[]): number {
+  let total = 0
+  for (const d of allDocs) {
+    for (const alloc of d.closesAllocations || []) {
+      if (alloc.docId === invoiceDocId) total += alloc.amount
+    }
+  }
+  return total
+}
+
+// Epsilon-tolerant "is this invoice fully paid off" check — floating point
+// gross-up arithmetic won't land on an exact cent otherwise.
+export function isInvoiceFullyPaid(invoice: YpayDocument, allDocs: YpayDocument[]): boolean {
+  if (invoice.id == null) return false
+  const paid = computeInvoicePaidAmount(invoice.id, allDocs)
+  return paid >= invoiceGrossAmount(invoice) - 0.01
+}
+
+// Shared by ypayService.createDocument and IncomeTab's handleLinkDocument
+// (the "קשר" manual-link flow, which writes its own ypayDocuments row
+// instead of going through createDocument) — after a receipt with
+// closesAllocations has been saved, stamp paidAt on whichever referenced
+// invoices are now fully covered across ALL their receipts. A partially
+// covered invoice is left untouched — still open, with the remainder
+// discoverable via computeInvoicePaidAmount.
+export async function closeFullyPaidInvoices(closesAllocations: { docId: number; amount: number }[], paidAt: string): Promise<void> {
+  if (closesAllocations.length === 0) return
+  const allDocs = await db.ypayDocuments.toArray()
+  const invoices = await db.ypayDocuments.bulkGet(closesAllocations.map((a) => a.docId))
+  await Promise.all(
+    invoices
+      .filter((inv): inv is YpayDocument => !!inv && !inv.paidAt && isInvoiceFullyPaid(inv, allDocs))
+      .map((inv) => db.ypayDocuments.update(inv.id!, { paidAt }))
+  )
+}
+
 export const ypayService = {
   testConnection: async (credentials: YpayCredentials): Promise<{ success: boolean; message: string }> => {
     const response = await fetch('/api/ypay', {
@@ -97,7 +149,7 @@ export const ypayService = {
     return response.json()
   },
 
-  createDocument: async (transaction: Transaction, business: Business, contact: YpayContact, vatType?: 'exempt' | 'authorized', closesDocIds?: number[]): Promise<{ url: string; serialNumber: string }> => {
+  createDocument: async (transaction: Transaction, business: Business, contact: YpayContact, vatType?: 'exempt' | 'authorized', closesAllocations?: { docId: number; amount: number }[]): Promise<{ url: string; serialNumber: string }> => {
     const credentials = getCredentials(business)
 
     const effectiveVatType = vatType || business.vatType
@@ -114,12 +166,29 @@ export const ypayService = {
     // only that the receipt amount equals the payment-method total (no 3022, since
     // there is no VAT to add/extract). `transaction.amount` is the gross received.
     const docType = YpayDocType.Receipt
+
+    // Item is required by the API but YPAY doesn't render an items breakdown
+    // for receipts at all (docType 108 is explicitly excluded — API docs,
+    // Item object). So a per-invoice split here is silently ignored on the
+    // actual document; the only field that DOES show is `details` (a free-text
+    // note), which is where the invoice references + amounts belong instead.
     const items = [{
       description: transaction.description,
       quantity: 1,
       price: transaction.amount,
       vatIncluded: false,
     }]
+
+    let details: string | undefined
+    if (closesAllocations && closesAllocations.length > 0) {
+      const invoiceDocs = await db.ypayDocuments.bulkGet(closesAllocations.map((a) => a.docId))
+      const refs = closesAllocations.map((a) => {
+        const inv = invoiceDocs.find((d) => d?.id === a.docId)
+        const isPartial = inv ? a.amount < invoiceGrossAmount(inv) - 0.01 : false
+        return `#${inv?.serialNumber ?? a.docId} (₪${a.amount.toFixed(2)}${isPartial ? ', כיסוי חלקי' : ''})`
+      })
+      details = `סוגר חשבוניות: ${refs.join(', ')}`
+    }
 
     const methods = [{
       type: YpayPaymentMethod.BankTransfer,
@@ -137,6 +206,7 @@ export const ypayService = {
         items,
         methods,
         contact,
+        ...(details ? { details } : {}),
       }),
     })
 
@@ -150,18 +220,18 @@ export const ypayService = {
       url: data.url,
       serialNumber: data.serialNumber,
       docType,
-      closesDocIds,
+      closesAllocations,
       createdAt: new Date().toISOString(),
     })
 
-    // Close the circle: a receipt created against one or more open invoices
-    // (B2B split flow — one payment can cover several invoices) marks each
-    // invoice paid, same field/semantics OpenDocumentsTab's manual "שולם"
-    // button already uses. paidAt reflects when the money actually arrived
-    // (the bank transaction's own date), not whenever this button was clicked.
-    if (closesDocIds && closesDocIds.length > 0) {
-      const paidAt = new Date(formatDateForYpay(transaction.date)).toISOString()
-      await Promise.all(closesDocIds.map((id) => db.ypayDocuments.update(id, { paidAt })))
+    // Close the circle: a receipt allocated against one or more open invoices
+    // (B2B split flow — one payment can fully cover several invoices and
+    // partially cover one more) stamps paidAt on each invoice that's now
+    // fully covered across all its receipts — paidAt reflects when the money
+    // actually arrived (the transaction's own date), not whenever this button
+    // was clicked. A partially-covered invoice stays open.
+    if (closesAllocations && closesAllocations.length > 0) {
+      await closeFullyPaidInvoices(closesAllocations, new Date(formatDateForYpay(transaction.date)).toISOString())
     }
 
     return { url: data.url, serialNumber: data.serialNumber }

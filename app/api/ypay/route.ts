@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
 
     // Create document action
     if (action === 'createDocument') {
-      const { docType, items, methods, contact } = body
+      const { docType, items, methods, contact, details } = body
 
       if (!docType || !items) {
         return NextResponse.json({ success: false, message: 'חסרים פרטי מסמך' })
@@ -64,6 +64,7 @@ export async function POST(request: NextRequest) {
           items,
           ...(methods ? { methods } : {}),
           ...(contact ? { contact } : {}),
+          ...(details ? { details } : {}),
         }),
       })
 
