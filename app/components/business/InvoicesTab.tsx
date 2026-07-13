@@ -41,7 +41,9 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
   const [error, setError] = useState<string | null>(null)
   const [profileVatType, setProfileVatType] = useState<'exempt' | 'authorized' | undefined>(undefined)
 
-  const hasYpay = !!(business?.ypayClientId && business?.ypayClientSecret)
+  const hasYpay = business?.ypayUseSandbox
+    ? !!(business?.ypaySandboxClientId && business?.ypaySandboxClientSecret)
+    : !!(business?.ypayClientId && business?.ypayClientSecret)
   const billingDocTypes = new Set<number>([YpayDocType.BusinessInvoice, YpayDocType.TaxInvoice])
 
   const load = useCallback(async () => {
@@ -77,7 +79,17 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-        <h2 style={{ margin: 0, fontSize: '1.1rem' }}>חשבוניות עסקה</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <h2 style={{ margin: 0, fontSize: '1.1rem' }}>חשבוניות עסקה</h2>
+          {business?.ypayUseSandbox && (
+            <span style={{
+              padding: '0.15rem 0.5rem', fontSize: '0.75rem', fontWeight: 700,
+              background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', borderRadius: '0.25rem',
+            }}>
+              Sandbox
+            </span>
+          )}
+        </div>
         <button
           disabled={!hasYpay}
           onClick={() => setShowModal(true)}
@@ -113,6 +125,7 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
                 <th style={{ padding: '0.75rem', borderBottom: '1px solid #e2e8f0' }}>תאריך / חודש</th>
                 <th style={{ padding: '0.75rem', borderBottom: '1px solid #e2e8f0' }}>סוג</th>
                 <th style={{ padding: '0.75rem', borderBottom: '1px solid #e2e8f0', textAlign: 'left' }}>סכום</th>
+                <th style={{ padding: '0.75rem', borderBottom: '1px solid #e2e8f0' }}>סטטוס</th>
                 <th style={{ padding: '0.75rem', borderBottom: '1px solid #e2e8f0' }}></th>
               </tr>
             </thead>
@@ -129,6 +142,17 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
                     </td>
                     <td style={{ padding: '0.75rem', textAlign: 'left', fontWeight: 600 }}>
                       {doc.amount != null ? `${doc.amount.toFixed(2)} ₪` : '—'}
+                    </td>
+                    <td style={{ padding: '0.75rem' }}>
+                      <span style={{
+                        display: 'inline-block', padding: '0.15rem 0.5rem', fontSize: '0.75rem',
+                        borderRadius: '0.25rem',
+                        background: doc.paidAt ? '#f0fdf4' : '#fef3c7',
+                        color: doc.paidAt ? '#16a34a' : '#92400e',
+                        border: `1px solid ${doc.paidAt ? '#bbf7d0' : '#fde68a'}`,
+                      }}>
+                        {doc.paidAt ? `✓ נסגר ${formatDateForDisplay(doc.paidAt)}` : 'פתוח'}
+                      </span>
                     </td>
                     <td style={{ padding: '0.75rem' }}>
                       <a

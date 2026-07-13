@@ -37,8 +37,11 @@ export const fileImportService = {
 
         // Map LLM transactions → saveCreditCardData shape.
         // saveCreditCardData negates amount via -Math.abs(), so pass the raw LLM value.
+        // normalizeDate defends against the LLM ever drifting off its prompted
+        // YYYY-MM-DD format — every other producer (FIBI/credit parsers) already
+        // canonicalizes through it, so this keeps the whole app on one format.
         const payments = llmResult.transactions.map((t) => ({
-          transactionDate: t.date,
+          transactionDate: normalizeDate(t.date) || t.date,
           merchant: t.merchant || t.description || '',
           amount: Math.abs(t.amount ?? 0),
           currentStep: t.currentStep ?? 1,
@@ -105,9 +108,11 @@ export const fileImportService = {
         const effectiveProcessingMonth = processingMonth || llmResult.processingMonth || ''
         const effectiveFileId = fileId || `bank-${effectiveProcessingMonth}`
 
-        // Transactions from LLM already have YYYY-MM-DD dates and normalized descriptions.
+        // Transactions from LLM already have YYYY-MM-DD dates and normalized
+        // descriptions — normalizeDate defends against the LLM drifting off
+        // that format (see importCreditCardFile above for the same guard).
         const transactions = llmResult.transactions.map((t) => ({
-          date: t.date,
+          date: normalizeDate(t.date) || t.date,
           description: t.description,
           amount: t.amount,
           balance: t.balance,

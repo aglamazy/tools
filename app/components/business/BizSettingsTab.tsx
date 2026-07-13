@@ -18,6 +18,9 @@ export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
   const [business, setBusiness] = useState<Business | null>(null)
   const [ypayClientId, setYpayClientId] = useState('')
   const [ypayClientSecret, setYpayClientSecret] = useState('')
+  const [ypayUseSandbox, setYpayUseSandbox] = useState(false)
+  const [ypaySandboxClientId, setYpaySandboxClientId] = useState('')
+  const [ypaySandboxClientSecret, setYpaySandboxClientSecret] = useState('')
   const [ypayStatus, setYpayStatus] = useState<{ type: 'idle' | 'success' | 'error'; message: string }>({ type: 'idle', message: '' })
   const [householdMembers, setHouseholdMembers] = useState<Partner[]>(() =>
     typeof window !== 'undefined' ? partnerStore.getCachedByBusinessId(businessId) : []
@@ -67,6 +70,9 @@ export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
       setBusiness(b)
       setYpayClientId(b.ypayClientId || '')
       setYpayClientSecret(b.ypayClientSecret || '')
+      setYpayUseSandbox(b.ypayUseSandbox || false)
+      setYpaySandboxClientId(b.ypaySandboxClientId || '')
+      setYpaySandboxClientSecret(b.ypaySandboxClientSecret || '')
       setSelectedUserId(b.userId || '')
       setOwnerSharePercent(String(b.ownerSharePercent ?? 100))
     }
@@ -86,15 +92,19 @@ export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
   }
 
   const saveYpayCredentials = async () => {
-    const clientId = ypayClientId.trim()
-    const clientSecret = ypayClientSecret.trim()
-    await businessStore.update(businessId, { ypayClientId: clientId, ypayClientSecret: clientSecret })
+    await businessStore.update(businessId, {
+      ypayClientId: ypayClientId.trim(),
+      ypayClientSecret: ypayClientSecret.trim(),
+      ypayUseSandbox,
+      ypaySandboxClientId: ypaySandboxClientId.trim(),
+      ypaySandboxClientSecret: ypaySandboxClientSecret.trim(),
+    })
     setYpayStatus({ type: 'success', message: 'נשמר' })
   }
 
   const testYpayConnection = async () => {
-    const clientId = ypayClientId.trim()
-    const clientSecret = ypayClientSecret.trim()
+    const clientId = (ypayUseSandbox ? ypaySandboxClientId : ypayClientId).trim()
+    const clientSecret = (ypayUseSandbox ? ypaySandboxClientSecret : ypayClientSecret).trim()
     if (!clientId || !clientSecret) {
       setYpayStatus({ type: 'error', message: 'יש להזין Client ID ו-Secret' })
       return
@@ -102,7 +112,13 @@ export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
     setYpayStatus({ type: 'idle', message: 'בודק...' })
     const result = await ypayService.testConnection({ clientId, clientSecret })
     if (result.success) {
-      await businessStore.update(businessId, { ypayClientId: clientId, ypayClientSecret: clientSecret })
+      await businessStore.update(businessId, {
+        ypayClientId: ypayClientId.trim(),
+        ypayClientSecret: ypayClientSecret.trim(),
+        ypayUseSandbox,
+        ypaySandboxClientId: ypaySandboxClientId.trim(),
+        ypaySandboxClientSecret: ypaySandboxClientSecret.trim(),
+      })
     }
     setYpayStatus({ type: result.success ? 'success' : 'error', message: result.message })
   }
@@ -179,16 +195,38 @@ export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
         )
       })()}
 
-      <section style={{ padding: '1rem', border: '1px solid #e2e8f0', borderRadius: '0.75rem', background: '#faf5ff' }}>
+      <section style={{
+        padding: '1rem', borderRadius: '0.75rem',
+        border: ypayUseSandbox ? '1px solid #fbbf24' : '1px solid #e2e8f0',
+        background: ypayUseSandbox ? '#fffbeb' : '#faf5ff',
+      }}>
         <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem', fontWeight: 600 }}>YPAY - חשבוניות</h3>
         <p style={{ margin: '0 0 1rem', color: '#6b21a8', fontSize: '0.85rem' }}>הגדרות חיבור לשירות החשבוניות של YPAY</p>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={ypayUseSandbox}
+            onChange={(e) => setYpayUseSandbox(e.target.checked)}
+            style={{ width: '1.1rem', height: '1.1rem', cursor: 'pointer' }}
+          />
+          <span style={{ fontWeight: 600 }}>מצב Sandbox (בדיקה)</span>
+          <span style={{ fontSize: '0.8rem', color: '#92400e' }}>— לאימות לפני יצירת מסמכים אמיתיים ב-YPAY</span>
+        </label>
+        {ypayUseSandbox && (
+          <div style={{
+            padding: '0.6rem 0.75rem', marginBottom: '0.75rem', borderRadius: '0.375rem',
+            background: '#fef3c7', border: '1px solid #fde68a', fontSize: '0.8rem', color: '#92400e', fontWeight: 600,
+          }}>
+            ⚠️ מצב Sandbox פעיל — כל מסמך שייווצר יהיה לצורך בדיקה בלבד, לא מסמך אמיתי.
+          </div>
+        )}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <label style={{ minWidth: '90px', fontWeight: 500, fontSize: '0.9rem' }}>Client ID:</label>
             <input
               type="text"
-              value={ypayClientId}
-              onChange={(e) => setYpayClientId(e.target.value)}
+              value={ypayUseSandbox ? ypaySandboxClientId : ypayClientId}
+              onChange={(e) => ypayUseSandbox ? setYpaySandboxClientId(e.target.value) : setYpayClientId(e.target.value)}
               style={{ flex: 1, padding: '0.5rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', fontSize: '0.9rem' }}
               placeholder="Client ID"
             />
@@ -197,8 +235,8 @@ export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
             <label style={{ minWidth: '90px', fontWeight: 500, fontSize: '0.9rem' }}>Secret:</label>
             <input
               type="password"
-              value={ypayClientSecret}
-              onChange={(e) => setYpayClientSecret(e.target.value)}
+              value={ypayUseSandbox ? ypaySandboxClientSecret : ypayClientSecret}
+              onChange={(e) => ypayUseSandbox ? setYpaySandboxClientSecret(e.target.value) : setYpayClientSecret(e.target.value)}
               style={{ flex: 1, padding: '0.5rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', fontSize: '0.9rem' }}
               placeholder="Client Secret"
             />

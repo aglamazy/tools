@@ -75,7 +75,9 @@ export default function TimingTab({ businessId }: TimingTabProps) {
   const [invoiceError, setInvoiceError] = useState<string | null>(null)
   const [createdInvoices, setCreatedInvoices] = useState<Record<string, string>>({})
   const [profileVatType, setProfileVatType] = useState<'exempt' | 'authorized' | undefined>(undefined)
-  const hasYpay = !!(business?.ypayClientId && business?.ypayClientSecret)
+  const hasYpay = business?.ypayUseSandbox
+    ? !!(business?.ypaySandboxClientId && business?.ypaySandboxClientSecret)
+    : !!(business?.ypayClientId && business?.ypayClientSecret)
 
   // Load existing invoices for the selected month
   useEffect(() => {

@@ -23,7 +23,7 @@ export interface Transaction {
   id?: number // Auto-increment primary key
   syncId?: string // UUID for cross-device identity
   type: string
-  date: string // Transaction date (DD/MM/YYYY)
+  date: string // Transaction date. Canonical format is YYYY-MM-DD (normalizeDate() in utils/parsers/shared.ts) — most rows go through it (FIBI/credit parsers, PDF-LLM via synthetic rows), but legacy/edge-case rows can still be DD/MM/YYYY. Parse with parseDateMs()/normalizeDate(), never a raw `.split('/')`.
   amount: number
   description: string
   category?: string
@@ -141,6 +141,9 @@ export interface Business {
   isTaxFree?: boolean
   ypayClientId?: string
   ypayClientSecret?: string
+  ypayUseSandbox?: boolean // When true, use the sandbox credential pair below instead — validate before creating genuine documents
+  ypaySandboxClientId?: string
+  ypaySandboxClientSecret?: string
   btlAdvancePayment?: number // מקדמות ביטוח לאומי — monthly advance set by BTL
   incomeTaxAdvancePercent?: number // מקדמות מס הכנסה — % of monthly income
   incomeTaxAdvancePeriod?: 1 | 2 // תקופת תשלום מקדמות — 1=חודשי, 2=דו-חודשי
@@ -205,6 +208,7 @@ export interface YpayDocument {
   monthName?: string // For business invoices
   paidAt?: string // ISO timestamp when payment was received
   vatPaymentId?: number // FK → VatPayment.id once reported to the tax authority
+  closesDocIds?: number[] // For a receipt: the ypayDocuments.id(s) of the invoice(s) it closes (B2B split flow — separate tax invoices created ahead of time, then one receipt when paid — a single payment can cover more than one invoice). Setting this also stamps paidAt on each of those invoice docs, closing the circle.
   createdAt: string // ISO timestamp
   updatedAt?: string
 }

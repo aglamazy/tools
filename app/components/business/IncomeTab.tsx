@@ -5,17 +5,21 @@ import { db, type Transaction, type YpayDocument, type Business, type Project } 
 import { subjectStore } from '@/app/stores/subjectStore'
 import { businessStore } from '@/app/stores/businessStore'
 import { projectStore } from '@/app/stores/projectStore'
-import { ypayService, YpayDocType } from '@/app/services/ypayService'
+import { ypayService, YpayDocType, formatDateForYpay } from '@/app/services/ypayService'
+import { parseDateMs } from '@/app/utils/parsers/shared'
 import { hasGmailAccess, requestGmailAccess, sendEmail, type EmailAttachment } from '@/app/services/gmailService'
 import { getIdToken } from '@/app/services/firebaseAuthService'
 import { partnerStore, type Partner as Participant } from '@/app/stores/partnerStore'
 import { appSettingsStore, type AccountOwners } from '@/app/stores/appSettingsStore'
 import { getTransactionAttributedUid } from '@/app/utils/transactionAttribution'
 import ProjectEditModal from './ProjectEditModal'
+import IncomeReceiptCell from './IncomeReceiptCell'
+import IncomeFilters from './IncomeFilters'
 import PaymentLinkModal from './PaymentLinkModal'
 import PartnerSplitSummary from './PartnerSplitSummary'
 import PaymentLinksTable, { type PaymentLinkRow } from './PaymentLinksTable'
 import Modal from '@/app/components/Modal'
+import YesNoModal from '@/app/components/YesNoModal'
 import type { Category } from '@/app/types/category'
 import { getTaxProfile } from '@/app/components/TaxProfileSection'
 
@@ -23,16 +27,11 @@ type IncomeTabProps = {
   businessId: number
 }
 
-type TransactionWithDoc = Transaction & {
+export type TransactionWithDoc = Transaction & {
   ypayDoc?: YpayDocument
 }
 
-const parseSortableDate = (date?: string) => {
-  if (!date) return 0
-  const [day, month, year] = date.split('/')
-  const ts = new Date(`${year}-${month}-${day}`).getTime()
-  return Number.isFinite(ts) ? ts : 0
-}
+const parseSortableDate = (date?: string) => parseDateMs(date)
 
 export default function IncomeTab({ businessId }: IncomeTabProps) {
   const [business, setBusiness] = useState<Business | null>(null)
@@ -55,6 +54,10 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
   const [creatingNewProject, setCreatingNewProject] = useState(false)
   const [linkingDoc, setLinkingDoc] = useState<number | null>(null)
   const [linkForm, setLinkForm] = useState<{ url: string; serialNumber: string }>({ url: '', serialNumber: '' })
+  // Open invoices (B2B split flow, authorized dealers only) a receipt can close.
+  const [openInvoices, setOpenInvoices] = useState<YpayDocument[]>([])
+  const [invoiceById, setInvoiceById] = useState<Map<number, YpayDocument>>(new Map())
+  const [selectedInvoiceDocIds, setSelectedInvoiceDocIds] = useState<number[]>([])
   const [ypayDocs, setYpayDocs] = useState<Array<{ serial_number: string; url: string }>>([])
   const [loadingDocs, setLoadingDocs] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -151,6 +154,10 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
       .then(p => setProfileVatType(p.vatType))
     void appSettingsStore.getAccountOwners().then(setAccountOwners)
   }, [businessId])
+
+  // Runs once profileVatType actually resolves (loadOpenInvoices bails early
+  // until then) — also picks up on switching between businesses.
+  useEffect(() => { void loadOpenInvoices() }, [businessId, profileVatType])
 
   useEffect(() => { void loadPaymentLinks() }, [businessId])
 
@@ -267,13 +274,23 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     }))
 
     // Sort by date
-    withDocs.sort((a, b) => {
-      const [aD, aM, aY] = a.date.split('/')
-      const [bD, bM, bY] = b.date.split('/')
-      return new Date(`${aY}-${aM}-${aD}`).getTime() - new Date(`${bY}-${bM}-${bD}`).getTime()
-    })
+    withDocs.sort((a, b) => parseDateMs(a.date) - parseDateMs(b.date))
 
     setTransactions(withDocs)
+  }
+
+  // Open invoices (חשבונית עסקה/מס, not yet paid) this business's receipts can
+  // close — the B2B split flow, relevant for authorized dealers only.
+  const billingDocTypes = new Set<number>([YpayDocType.BusinessInvoice, YpayDocType.TaxInvoice])
+  const loadOpenInvoices = async () => {
+    if (profileVatType !== 'authorized') { setOpenInvoices([]); setInvoiceById(new Map()); return }
+    const bizProjects = await projectStore.getByBusinessId(businessId)
+    const projectNames = new Set(bizProjects.map(p => p.name))
+    const allInvoices = await db.ypayDocuments
+      .filter(d => billingDocTypes.has(d.docType) && !!d.projectName && projectNames.has(d.projectName))
+      .toArray()
+    setOpenInvoices(allInvoices.filter(d => !d.paidAt))
+    setInvoiceById(new Map(allInvoices.filter(d => d.id != null).map(d => [d.id as number, d])))
   }
 
   const handleStartCreate = async (transactionId: number) => {
@@ -281,8 +298,10 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     setProjects(activeProjects)
     setSelectingProject(transactionId)
     setEditingProjectContact(null)
+    setSelectedInvoiceDocIds([])
     setError(null)
     setLastCreatedUrl(null)
+    void loadOpenInvoices()
   }
 
   const handleSaveProjectContact = async (project: Project) => {
@@ -319,7 +338,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     setEditingProjectContact(null)
   }
 
-  const handleCreateDocument = async (transaction: TransactionWithDoc, project: Project) => {
+  const handleCreateDocument = async (transaction: TransactionWithDoc, project: Project, closesDocIds?: number[]) => {
     if (!business || !transaction.id) return
 
     if (!project.contactEmail) {
@@ -343,9 +362,11 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     }
 
     try {
-      const result = await ypayService.createDocument(transaction, business, contact, profileVatType)
+      const result = await ypayService.createDocument(transaction, business, contact, profileVatType, closesDocIds)
       setLastCreatedUrl(result.url)
+      setSelectedInvoiceDocIds([])
       await loadTransactions()
+      await loadOpenInvoices()
     } catch (err: any) {
       setError(err.message || 'שגיאה ביצירת מסמך')
     } finally {
@@ -365,7 +386,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     }
   }
 
-  const handleLinkDocument = async (transaction: TransactionWithDoc) => {
+  const handleLinkDocument = async (transaction: TransactionWithDoc, closesDocIds?: number[]) => {
     if (!transaction.id || !linkForm.serialNumber.trim()) return
 
     setError(null)
@@ -375,11 +396,20 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
         url: '',
         serialNumber: linkForm.serialNumber.trim(),
         docType: profileVatType === 'authorized' ? YpayDocType.TaxInvoiceReceipt : YpayDocType.Receipt,
+        closesDocIds,
         createdAt: new Date().toISOString(),
       })
+      // Close the circle — same paidAt-from-transaction-date semantics as
+      // ypayService.createDocument's closesDocIds handling.
+      if (closesDocIds && closesDocIds.length > 0) {
+        const paidAt = new Date(formatDateForYpay(transaction.date)).toISOString()
+        await Promise.all(closesDocIds.map((id) => db.ypayDocuments.update(id, { paidAt })))
+      }
       setLinkingDoc(null)
       setLinkForm({ url: '', serialNumber: '' })
+      setSelectedInvoiceDocIds([])
       await loadTransactions()
+      await loadOpenInvoices()
     } catch (err: any) {
       setError(err.message || 'שגיאה בשמירת קבלה')
     }
@@ -462,6 +492,23 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     }
   }
 
+  const [deletingReceiptFor, setDeletingReceiptFor] = useState<TransactionWithDoc | null>(null)
+
+  // Unlink/delete a receipt — e.g. a test-sandbox document, or a mistaken
+  // "צור קבלה" click. If it closed an invoice, that invoice reopens too, so
+  // retrying gives a clean slate on both sides of the circle.
+  const handleDeleteReceipt = async (transaction: TransactionWithDoc) => {
+    const doc = transaction.ypayDoc
+    if (!doc?.id) return
+    await db.ypayDocuments.delete(doc.id)
+    if (doc.closesDocIds && doc.closesDocIds.length > 0) {
+      await Promise.all(doc.closesDocIds.map((id) => db.ypayDocuments.update(id, { paidAt: undefined })))
+    }
+    setDeletingReceiptFor(null)
+    await loadTransactions()
+    await loadOpenInvoices()
+  }
+
   const openPaymentModalFromSelection = async () => {
     const selected = visibleTransactions.filter(t => t.id != null && selectedIds.has(t.id))
     const items = selected.map(t => ({ description: t.description, quantity: 1, price: t.amount }))
@@ -488,6 +535,14 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+      {business?.ypayUseSandbox && (
+        <div style={{
+          padding: '0.5rem 0.75rem', borderRadius: '0.375rem',
+          background: '#fef3c7', border: '1px solid #fde68a', fontSize: '0.8rem', color: '#92400e', fontWeight: 600,
+        }}>
+          ⚠️ מצב Sandbox פעיל — מסמכים שייווצרו כאן הם לבדיקה בלבד, לא מסמכים אמיתיים.
+        </div>
+      )}
       {/* #73/#214 — create a YPAY payment page — always shown regardless of income categories */}
       <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
         <button
@@ -537,108 +592,24 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
         </div>
       ) : (
         <>
-          {/* Filter selector */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
-            <label style={{ fontWeight: 600 }}>תקופה:</label>
-            <select
-              value={filterMode}
-              onChange={(e) => {
-                const mode = e.target.value as 'month' | 'year' | 'all'
-                setFilterMode(mode)
-                if (mode === 'year' && !selectedYear) {
-                  const years = [...new Set(availableMonths.map(m => m.split('/')[1]))].sort((a, b) => Number(b) - Number(a))
-                  if (years.length > 0) setSelectedYear(years[0])
-                }
-              }}
-              style={{
-                padding: '0.5rem 1rem',
-                borderRadius: '0.375rem',
-                border: '1px solid #e2e8f0',
-                fontSize: '1rem',
-                direction: 'rtl',
-              }}
-            >
-              <option value="month">חודש</option>
-              <option value="year">שנה</option>
-              <option value="all">הכל</option>
-            </select>
-            {filterMode === 'month' && (
-              <select
-                value={selectedMonth}
-                onChange={(e) => setSelectedMonth(e.target.value)}
-                style={{
-                  padding: '0.5rem 1rem',
-                  borderRadius: '0.375rem',
-                  border: '1px solid #e2e8f0',
-                  fontSize: '1rem',
-                  direction: 'rtl',
-                }}
-              >
-                {availableMonths.map(m => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
-            )}
-            {filterMode === 'year' && (
-              <select
-                value={selectedYear}
-                onChange={(e) => setSelectedYear(e.target.value)}
-                style={{
-                  padding: '0.5rem 1rem',
-                  borderRadius: '0.375rem',
-                  border: '1px solid #e2e8f0',
-                  fontSize: '1rem',
-                  direction: 'rtl',
-                }}
-              >
-                {[...new Set(availableMonths.map(m => m.split('/')[1]))].sort((a, b) => Number(b) - Number(a)).map(y => (
-                  <option key={y} value={y}>{y}</option>
-                ))}
-              </select>
-            )}
-            {partyOptions.length > 1 && (
-              <select
-                value={partyFilter}
-                onChange={(e) => setPartyFilter(e.target.value)}
-                style={{
-                  padding: '0.5rem 1rem',
-                  borderRadius: '0.375rem',
-                  border: '1px solid #e2e8f0',
-                  fontSize: '1rem',
-                  direction: 'rtl',
-                }}
-              >
-                <option value="all">צד: הכל</option>
-                {partyOptions.map((p) => (
-                  <option key={p.value} value={p.value}>{p.label}</option>
-                ))}
-              </select>
-            )}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
-              <label style={{ fontSize: '0.8rem', color: '#64748b' }}>סכום:</label>
-              <input
-                type="number"
-                min="0"
-                placeholder="מינימום"
-                value={amountMinFilter}
-                onChange={(e) => setAmountMinFilter(e.target.value)}
-                style={{ padding: '0.45rem 0.7rem', borderRadius: '0.375rem', border: '1px solid #e2e8f0', fontSize: '0.9rem', width: '110px', direction: 'ltr' }}
-              />
-              <input
-                type="number"
-                min="0"
-                placeholder="מקסימום"
-                value={amountMaxFilter}
-                onChange={(e) => setAmountMaxFilter(e.target.value)}
-                style={{ padding: '0.45rem 0.7rem', borderRadius: '0.375rem', border: '1px solid #e2e8f0', fontSize: '0.9rem', width: '110px', direction: 'ltr' }}
-              />
-            </div>
-            {visibleTransactions.length > 0 && (
-              <span style={{ color: '#64748b', fontSize: '0.9rem' }}>
-                סה"כ: ₪{getMonthTotal().toLocaleString()}
-              </span>
-            )}
-          </div>
+          <IncomeFilters
+            filterMode={filterMode}
+            onFilterModeChange={setFilterMode}
+            availableMonths={availableMonths}
+            selectedMonth={selectedMonth}
+            onSelectedMonthChange={setSelectedMonth}
+            selectedYear={selectedYear}
+            onSelectedYearChange={setSelectedYear}
+            partyOptions={partyOptions}
+            partyFilter={partyFilter}
+            onPartyFilterChange={setPartyFilter}
+            amountMinFilter={amountMinFilter}
+            onAmountMinFilterChange={setAmountMinFilter}
+            amountMaxFilter={amountMaxFilter}
+            onAmountMaxFilterChange={setAmountMaxFilter}
+            hasVisibleTransactions={visibleTransactions.length > 0}
+            monthTotal={getMonthTotal()}
+          />
 
           {error && (
             <div style={{ padding: '0.75rem', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '0.5rem', color: '#dc2626' }}>
@@ -758,149 +729,42 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
                           ₪{t.amount.toLocaleString()}
                         </td>
                         <td style={{ padding: '0.6rem 0.5rem', textAlign: 'center' }}>
-                          {t.ypayDoc ? (
-                            <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', justifyContent: 'center' }}>
-                              <a
-                                href={t.ypayDoc.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                style={{ color: '#10b981', textDecoration: 'none', fontWeight: 500 }}
-                              >
-                                {t.ypayDoc.serialNumber}
-                              </a>
-                              <button
-                                onClick={() => void handleSendReceipt(t)}
-                                disabled={sendingDoc === t.id}
-                                title="שלח ללקוח"
-                                style={{
-                                  padding: '0.2rem 0.5rem', fontSize: '0.75rem',
-                                  background: sendingDoc === t.id ? '#f1f5f9' : '#0ea5e9', color: sendingDoc === t.id ? '#64748b' : 'white',
-                                  border: 'none', borderRadius: '0.25rem',
-                                  cursor: sendingDoc === t.id ? 'wait' : 'pointer',
-                                }}
-                              >{sendingDoc === t.id ? '...' : '📧'}</button>
-                            </div>
-                          ) : linkingDoc === t.id ? (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', minWidth: '200px' }}>
-                              <input
-                                type="text"
-                                placeholder="מספר קבלה"
-                                value={linkForm.serialNumber}
-                                onChange={(e) => setLinkForm(f => ({ ...f, serialNumber: e.target.value }))}
-                                style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', border: '1px solid #e2e8f0', borderRadius: '0.25rem', direction: 'rtl' }}
-                                autoFocus
-                              />
-                              <div style={{ display: 'flex', gap: '0.3rem', justifyContent: 'center' }}>
-                                <button
-                                  onClick={() => handleLinkDocument(t)}
-                                  disabled={!linkForm.serialNumber.trim()}
-                                  style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#f0fdf4', border: '1px solid #10b981', borderRadius: '0.25rem', cursor: 'pointer', color: '#059669' }}
-                                >
-                                  שמור
-                                </button>
-                                <button
-                                  onClick={() => { setLinkingDoc(null); setLinkForm({ url: '', serialNumber: '' }) }}
-                                  style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '0.25rem', cursor: 'pointer', color: '#64748b' }}
-                                >
-                                  ביטול
-                                </button>
-                              </div>
-                            </div>
-                          ) : selectingProject === t.id ? (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', minWidth: '200px' }}>
-                              <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
-                                <select
-                                  value={selectedProjectId || ''}
-                                  onChange={(e) => setSelectedProjectId(e.target.value ? Number(e.target.value) : null)}
-                                  style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', border: '1px solid #e2e8f0', borderRadius: '0.25rem', direction: 'rtl', flex: 1 }}
-                                >
-                                  <option value="">בחר לקוח...</option>
-                                  {projects.map(p => (
-                                    <option key={p.id} value={p.id}>{p.name}{!p.contactEmail ? ' (חסר אימייל)' : ''}</option>
-                                  ))}
-                                </select>
-                                <button
-                                  onClick={() => {
-                                    setCreatingNewProject(true)
-                                    setEditingProjectContact({
-                                      businessId,
-                                      name: '',
-                                      archived: false,
-                                      createdAt: new Date().toISOString(),
-                                      updatedAt: new Date().toISOString(),
-                                    })
-                                  }}
-                                  title="לקוח חדש"
-                                  style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', background: '#eff6ff', border: '1px solid #3b82f6', borderRadius: '0.25rem', cursor: 'pointer', color: '#2563eb', whiteSpace: 'nowrap' }}
-                                >
-                                  +
-                                </button>
-                              </div>
-                              <div style={{ display: 'flex', gap: '0.3rem', justifyContent: 'center' }}>
-                                {(() => {
-                                  const selected = projects.find(p => p.id === selectedProjectId)
-                                  const hasEmail = selected?.contactEmail
-                                  return (
-                                    <>
-                                      <button
-                                        onClick={() => selected && handleCreateDocument(t, selected)}
-                                        disabled={!selected || !hasEmail}
-                                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#f0fdf4', border: '1px solid #10b981', borderRadius: '0.25rem', cursor: !selected || !hasEmail ? 'not-allowed' : 'pointer', color: '#059669', opacity: !selected || !hasEmail ? 0.5 : 1 }}
-                                      >
-                                        צור
-                                      </button>
-                                      <button
-                                        onClick={() => selected && setEditingProjectContact(selected)}
-                                        disabled={!selected}
-                                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '0.25rem', cursor: !selected ? 'not-allowed' : 'pointer', color: '#475569', opacity: !selected ? 0.5 : 1 }}
-                                      >
-                                        ערוך
-                                      </button>
-                                      <button
-                                        onClick={() => { setSelectingProject(null); setSelectedProjectId(null) }}
-                                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '0.25rem', cursor: 'pointer', color: '#64748b' }}
-                                      >
-                                        ביטול
-                                      </button>
-                                    </>
-                                  )
-                                })()}
-                              </div>
-                            </div>
-                          ) : (
-                            <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'center' }}>
-                              <button
-                                onClick={() => handleStartCreate(t.id!)}
-                                disabled={creatingDoc === t.id}
-                                style={{
-                                  padding: '0.35rem 0.75rem',
-                                  fontSize: '0.8rem',
-                                  background: creatingDoc === t.id ? '#f1f5f9' : '#f0fdf4',
-                                  border: '1px solid #10b981',
-                                  borderRadius: '0.375rem',
-                                  cursor: creatingDoc === t.id ? 'not-allowed' : 'pointer',
-                                  color: '#059669',
-                                }}
-                              >
-                                {creatingDoc === t.id ? '...' : 'צור קבלה'}
-                              </button>
-                              <button
-                                onClick={() => { setLinkingDoc(t.id!); setLinkForm({ url: '', serialNumber: '' }); loadExistingDocs() }}
-                                style={{
-                                  padding: '0.35rem 0.75rem',
-                                  fontSize: '0.8rem',
-                                  background: '#f8fafc',
-                                  border: '1px solid #cbd5e1',
-                                  borderRadius: '0.375rem',
-                                  cursor: 'pointer',
-                                  color: '#475569',
-                                }}
-                                title="קשר קבלה קיימת"
-                              >
-                                קשר
-                              </button>
-                            </div>
-                          )}
+                          <IncomeReceiptCell
+                            transaction={t}
+                            business={business}
+                            invoiceById={invoiceById}
+                            sendingDoc={sendingDoc}
+                            onSendReceipt={(tx) => void handleSendReceipt(tx)}
+                            onDeleteReceipt={(tx) => setDeletingReceiptFor(tx)}
+                            linkingDoc={linkingDoc}
+                            selectingProject={selectingProject}
+                            creatingDoc={creatingDoc}
+                            linkForm={linkForm}
+                            onLinkFormChange={setLinkForm}
+                            onStartLink={(id) => { setLinkingDoc(id); setLinkForm({ url: '', serialNumber: '' }); setSelectedInvoiceDocIds([]); loadExistingDocs(); void loadOpenInvoices() }}
+                            onCancelLink={() => { setLinkingDoc(null); setLinkForm({ url: '', serialNumber: '' }); setSelectedInvoiceDocIds([]) }}
+                            onLinkDocument={(tx, ids) => handleLinkDocument(tx, ids)}
+                            projects={projects}
+                            selectedProjectId={selectedProjectId}
+                            onSelectedProjectIdChange={setSelectedProjectId}
+                            onStartCreate={(id) => handleStartCreate(id)}
+                            onCancelCreate={() => { setSelectingProject(null); setSelectedProjectId(null); setSelectedInvoiceDocIds([]) }}
+                            onCreateNewProject={() => {
+                              setCreatingNewProject(true)
+                              setEditingProjectContact({
+                                businessId,
+                                name: '',
+                                archived: false,
+                                createdAt: new Date().toISOString(),
+                                updatedAt: new Date().toISOString(),
+                              })
+                            }}
+                            onEditProject={setEditingProjectContact}
+                            onCreateDocument={(tx, project, ids) => handleCreateDocument(tx, project, ids)}
+                            openInvoices={openInvoices}
+                            selectedInvoiceDocIds={selectedInvoiceDocIds}
+                            onSelectedInvoiceDocIdsChange={setSelectedInvoiceDocIds}
+                          />
                         </td>
                       </tr>
                     )
@@ -925,6 +789,19 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
           <button onClick={() => setStatusMessage(null)} className="file-picker"><span>אישור</span></button>
         </div>
       </Modal>
+
+      <YesNoModal
+        isOpen={!!deletingReceiptFor}
+        question={
+          deletingReceiptFor?.ypayDoc?.closesDocIds && deletingReceiptFor.ypayDoc.closesDocIds.length > 0
+            ? `למחוק את קבלה #${deletingReceiptFor.ypayDoc.serialNumber}? החשבונית(ות) שנסגרו על ידה ייפתחו מחדש.`
+            : `למחוק את קבלה #${deletingReceiptFor?.ypayDoc?.serialNumber}?`
+        }
+        yesText="מחק"
+        noText="ביטול"
+        onYes={() => deletingReceiptFor && void handleDeleteReceipt(deletingReceiptFor)}
+        onNo={() => setDeletingReceiptFor(null)}
+      />
     </div>
   )
 }

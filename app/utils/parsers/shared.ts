@@ -93,6 +93,19 @@ export function normalizeDate(input: string | undefined | null): string | undefi
 }
 
 /**
+ * Sortable millisecond timestamp for a Transaction.date value, tolerant of
+ * both the canonical YYYY-MM-DD and legacy DD/MM/YYYY (via normalizeDate).
+ * Returns 0 (not NaN) for unparseable input, so callers can sort safely
+ * without every call site reimplementing its own DD/MM/YYYY-only splitter.
+ */
+export function parseDateMs(input: string | undefined | null): number {
+  const normalized = normalizeDate(input)
+  if (!normalized) return 0
+  const ts = new Date(normalized).getTime()
+  return Number.isFinite(ts) ? ts : 0
+}
+
+/**
  * Gets a column index from headers using multiple possible names
  */
 export function findColumnIndex(headers: Array<string | number>, possibleNames: string[]): number {

@@ -10,7 +10,9 @@ import { appSettingsStore, type AccountOwners } from '@/app/stores/appSettingsSt
 import { getTaxProfile } from '@/app/components/TaxProfileSection'
 import { VAT_RATE_AUTHORIZED_DEALER, type VatType } from '@/app/lib/vat'
 import { getTransactionAttributedUid } from '@/app/utils/transactionAttribution'
+import { parseDateMs } from '@/app/utils/parsers/shared'
 import type { Category } from '@/app/types/category'
+import DocumentViewModal from '@/app/components/DocumentViewModal'
 
 type SettlementSummaryProps = {
   businessId: number
@@ -58,6 +60,7 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
   // Drill-down: click a paid/received number in the summary table to filter
   // "רשימת תנועות" below to exactly the transactions that make up that number.
   const [drillDown, setDrillDown] = useState<{ uid: string; label: string; kind: DrillDownKind } | null>(null)
+  const [viewDoc, setViewDoc] = useState<ExpenseDocument | null>(null)
 
   const reloadTransactions = async () => {
     const cats = subjectStore.getAll().filter(
@@ -313,21 +316,17 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
   }
 
   // Merge bank txs + partner-paid invoices into one display list, sorted by
-  // date (DD/MM/YYYY) descending — newest first. Discriminator `kind` lets
-  // the renderer treat them differently (partner-paid skips the auto-
-  // attribution select since paidByUid is the canonical field).
+  // date descending — newest first. Discriminator `kind` lets the renderer
+  // treat them differently (partner-paid skips the auto-attribution select
+  // since paidByUid is the canonical field). parseDateMs tolerates both the
+  // canonical YYYY-MM-DD and legacy DD/MM/YYYY transaction date formats.
   type DisplayRow =
     | { kind: 'tx'; date: string; tx: Transaction }
     | { kind: 'doc'; date: string; doc: ExpenseDocument }
-  const parseHebDate = (s: string): number => {
-    const [d, m, y] = s.split('/')
-    if (!d || !m || !y) return 0
-    return new Date(`${y}-${m}-${d}`).getTime()
-  }
   const displayRows: DisplayRow[] = [
     ...transactions.map((t) => ({ kind: 'tx' as const, date: t.date, tx: t })),
     ...partnerPaidDocs.map((d) => ({ kind: 'doc' as const, date: d.date || '', doc: d })),
-  ].sort((a, b) => parseHebDate(b.date) - parseHebDate(a.date))
+  ].sort((a, b) => parseDateMs(b.date) - parseDateMs(a.date))
   const sortedTransactions = displayRows.filter((r): r is Extract<DisplayRow, { kind: 'tx' }> => r.kind === 'tx').map((r) => r.tx)
 
   // Drill-down filter — same collapse logic (toPartnerUid) as the summary
@@ -416,7 +415,27 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
             )
           })}
         </tbody>
+        <tfoot>
+          <tr style={{ borderTop: '2px solid #e2e8f0', fontWeight: 600 }}>
+            <td style={{ padding: '0.6rem 0.5rem' }}>סה״כ</td>
+            <td style={{ padding: '0.6rem 0.5rem' }} />
+            <td style={{ padding: '0.6rem 0.5rem' }} />
+            <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left' }}>{fmt(rows.reduce((s, r) => s + r.paid, 0))}</td>
+            <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left' }}>{fmt(rows.reduce((s, r) => s + r.received, 0))}</td>
+            <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', color: '#6d28d9' }}>{fmt(rows.reduce((s, r) => s + r.settlementPaid, 0))}</td>
+            <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', color: '#6d28d9' }}>{fmt(rows.reduce((s, r) => s + r.settlementReceived, 0))}</td>
+            <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left', color: '#64748b' }}>
+              {fmt(rows.reduce((s, r) => s + r.fairShare, 0))}
+            </td>
+            <td style={{ padding: '0.6rem 0.5rem', textAlign: 'left' }}>{fmt(rows.reduce((s, r) => s + r.balance, 0))}</td>
+          </tr>
+        </tfoot>
       </table>
+
+      <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: '#64748b' }}>
+        נטו עסקי (קיבל − שילם, ללא קיזוז): {fmt(rows.reduce((s, r) => s + (r.received - r.paid), 0))} —
+        זהו הסכום המתחלק בין השותפים לפי "חלקו ההוגן" (סה״כ העמודה = הנטו העסקי).
+      </div>
 
       {settlementLine && (
         <div style={{
@@ -504,7 +523,22 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
                         </span>
                       </td>
                       <td style={{ padding: '0.5rem 0.5rem', color: '#0f172a' }}>
-                        <div>{d.vendor || d.fileName}</div>
+                        {(d.driveWebViewLink || d.externalUrl) ? (
+                          <button
+                            type="button"
+                            onClick={() => setViewDoc(d)}
+                            title="הצג מסמך"
+                            style={{
+                              background: 'none', border: 'none', padding: 0, margin: 0,
+                              color: '#2563eb', cursor: 'pointer', font: 'inherit', textAlign: 'right',
+                              textDecoration: 'underline', textDecorationStyle: 'dotted',
+                            }}
+                          >
+                            {d.vendor || d.fileName}
+                          </button>
+                        ) : (
+                          <div>{d.vendor || d.fileName}</div>
+                        )}
                         <div style={{ fontSize: '0.7rem', color: '#92400e' }}>
                           🧾 חשבונית ששולמה ע״י שותף
                         </div>
@@ -600,6 +634,14 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
           </table>
         )}
       </div>
+
+      <DocumentViewModal
+        isOpen={!!viewDoc}
+        onClose={() => setViewDoc(null)}
+        title={viewDoc?.vendor || viewDoc?.fileName || 'מסמך'}
+        href={viewDoc?.driveWebViewLink || viewDoc?.externalUrl}
+        driveFileId={viewDoc?.driveFileId}
+      />
     </div>
   )
 }

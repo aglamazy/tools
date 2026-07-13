@@ -1,4 +1,5 @@
 import { db, type Transaction, type Business } from '@/app/db/financeDB'
+import { normalizeDate } from '@/app/utils/parsers/shared'
 
 export type YpayCredentials = {
   clientId: string
@@ -60,6 +61,14 @@ export enum YpayCreditCardType {
 }
 
 function getCredentials(business: Business): YpayCredentials {
+  // Sandbox pair is validated first — the whole point is to catch a missing/
+  // wrong sandbox setup before it silently falls through to production creds.
+  if (business.ypayUseSandbox) {
+    if (!business.ypaySandboxClientId || !business.ypaySandboxClientSecret) {
+      throw new Error('מצב Sandbox פעיל אך פרטי ההתחברות לסביבת ה-Sandbox לא הוגדרו')
+    }
+    return { clientId: business.ypaySandboxClientId, clientSecret: business.ypaySandboxClientSecret }
+  }
   if (!business.ypayClientId || !business.ypayClientSecret) {
     throw new Error('פרטי התחברות YPAY לא הוגדרו לעסק')
   }
@@ -88,7 +97,7 @@ export const ypayService = {
     return response.json()
   },
 
-  createDocument: async (transaction: Transaction, business: Business, contact: YpayContact, vatType?: 'exempt' | 'authorized'): Promise<{ url: string; serialNumber: string }> => {
+  createDocument: async (transaction: Transaction, business: Business, contact: YpayContact, vatType?: 'exempt' | 'authorized', closesDocIds?: number[]): Promise<{ url: string; serialNumber: string }> => {
     const credentials = getCredentials(business)
 
     const effectiveVatType = vatType || business.vatType
@@ -141,8 +150,19 @@ export const ypayService = {
       url: data.url,
       serialNumber: data.serialNumber,
       docType,
+      closesDocIds,
       createdAt: new Date().toISOString(),
     })
+
+    // Close the circle: a receipt created against one or more open invoices
+    // (B2B split flow — one payment can cover several invoices) marks each
+    // invoice paid, same field/semantics OpenDocumentsTab's manual "שולם"
+    // button already uses. paidAt reflects when the money actually arrived
+    // (the bank transaction's own date), not whenever this button was clicked.
+    if (closesDocIds && closesDocIds.length > 0) {
+      const paidAt = new Date(formatDateForYpay(transaction.date)).toISOString()
+      await Promise.all(closesDocIds.map((id) => db.ypayDocuments.update(id, { paidAt })))
+    }
 
     return { url: data.url, serialNumber: data.serialNumber }
   },
@@ -394,8 +414,13 @@ export const ypayService = {
   },
 }
 
-// Convert DD/MM/YYYY to YYYY-MM-DD for YPAY API
-function formatDateForYpay(date: string): string {
-  const [day, month, year] = date.split('/')
-  return `${year}-${month}-${day}`
+// YPAY's Method.date field wants Y-m-d (YYYY-MM-DD) — the same canonical
+// format normalizeDate() already produces. Transaction.date is stored as
+// YYYY-MM-DD for most rows (FIBI/credit parsers, PDF-LLM via synthetic
+// rows) but legacy/edge-case rows can still be DD/MM/YYYY — normalizeDate
+// handles both. A naive `.split('/')` here silently produced
+// "undefined-undefined-<date>" for the common YYYY-MM-DD case, which YPAY
+// couldn't parse and defaulted to today's date instead.
+export function formatDateForYpay(date: string): string {
+  return normalizeDate(date) || date
 }
