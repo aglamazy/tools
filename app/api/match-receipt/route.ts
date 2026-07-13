@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getLLMClient } from '@/app/services/llm'
 import { parseClaudeJson } from '@/app/utils/parseClaudeJson'
+import type { GmailInvoiceCandidate, SupplierMatchProposal } from '@/app/types/supplierWizard'
 
 type Candidate = {
   messageId: string
@@ -50,6 +51,8 @@ export async function POST(req: NextRequest) {
       return handleExtractVatPayment(body.pdfBase64, body.mediaType, body.claudeApiKey)
     } else if (action === 'download-pdf') {
       return handleDownloadPdf(body.url)
+    } else if (action === 'match-supplier') {
+      return handleMatchSupplier(body.candidates, body.suppliers)
     }
 
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 })
@@ -121,6 +124,132 @@ ${candidateList}`,
   } catch {
     return NextResponse.json({ messageId: null, confidence: 'low', reason: 'Failed to parse LLM response' })
   }
+}
+
+type SupplierInput = {
+  id: number
+  name: string
+  bankCardAliases: string[]
+}
+
+type SupplierMatchLLMEntry = {
+  candidateIndex: number
+  action: 'link-existing' | 'create-new' | 'no-match'
+  matchedSupplierId?: number | null
+  confidence?: 'high' | 'medium' | 'low'
+  reasoning?: string
+  proposedName?: string | null
+}
+
+/**
+ * Suppliers Wizard step 2: for each Gmail-swept invoice candidate, decide
+ * whether it matches an EXISTING supplier (fuzzy — sender identity vs.
+ * bank/card description have near-zero string similarity, e.g. "Google Cloud
+ * Platform" sender vs. "GOOGLE*CLOUD 4QZ73M" bank line), is a genuinely new
+ * vendor, or isn't actually an invoice/receipt at all. Proposals only —
+ * nothing is written to db.suppliers here (that's the review UI's job).
+ */
+async function handleMatchSupplier(candidates: GmailInvoiceCandidate[], suppliers: SupplierInput[]) {
+  if (!candidates?.length) {
+    return NextResponse.json({ error: 'Missing candidates' }, { status: 400 })
+  }
+  if (!suppliers) {
+    return NextResponse.json({ error: 'Missing suppliers' }, { status: 400 })
+  }
+
+  const gemini = getLLMClient('gemini')
+
+  const supplierList = suppliers.map((s) =>
+    `[${s.id}] ${s.name} | ${s.bankCardAliases.join(', ')}`
+  ).join('\n')
+
+  const candidateList = candidates.map((c, i) =>
+    `[${i}] מאת: ${c.from}\n    נושא: ${c.subject}\n    תאריך: ${c.date}\n    תקציר: ${c.snippet}`
+  ).join('\n\n')
+
+  const result = await gemini.chat({
+    system: `אתה מומחה בזיהוי ספקים מהודעות מייל של חשבוניות/קבלות, והתאמתן לרשימת ספקים קיימת במערכת הנהלת חשבונות.
+
+כללים:
+- שם הספק בשולח המייל לרוב מופיע בצורה שונה מהתיאור בכרטיס אשראי/בנק. דוגמאות התאמה:
+  וואי-פיי = YPAY, שופרסל = SHUFERSAL, הוט מובייל = HOT MOBILE, גוגל = Google Play,
+  VERCEL INC. = Vercel Inc., OPENAI *CHATGPT = OpenAI, GOOGLE *ONE = Google,
+  GOOGLE*CLOUD ... = Google Cloud Platform, CLAUDE.AI = Anthropic, AWS / AMAZON WEB = Amazon,
+  STRIPE = Stripe, MICROSOFT *... = Microsoft.
+- ההתאמה היא סמנטית, לא מחרוזתית — "Google Cloud Platform" (שם ספק) מול "GOOGLE*CLOUD 4QZ73M"
+  (כינוי בנק) יכולה להיות התאמה חזקה למרות דמיון מחרוזתי נמוך.
+- עבור כל הודעת מייל, קבע פעולה אחת:
+  - "link-existing": הספק בהודעה תואם לספק קיים ברשימה (החזר matchedSupplierId עם ה-id שלו).
+  - "create-new": ההודעה היא בבירור חשבונית/קבלה מספק אמיתי שאינו ברשימה.
+  - "no-match": ההודעה כלל אינה חשבונית/קבלה (עדכון, ניוזלטר, אישור הרשמה וכו') — דלג עליה.
+- אם אינך בטוח בין create-new ל-no-match, העדף no-match.
+
+רשימת הספקים הקיימים (מזהה, שם, כינויים בבנק/כרטיס):
+${supplierList || '(אין ספקים קיימים במערכת)'}
+
+חשוב: אל תחשוב בקול רם ואל תסביר את תהליך ההחלטה שלך בטקסט חופשי. החזר אך ורק
+מערך JSON תקין — שום טקסט לפני או אחרי, שום markdown code fence — עם רשומה
+אחת לכל הודעה, לפי הסדר, בפורמט:
+[
+  {
+    "candidateIndex": <מספר>,
+    "action": "link-existing" | "create-new" | "no-match",
+    "matchedSupplierId": <מספר או null>,
+    "confidence": "high" | "medium" | "low",
+    "reasoning": "<הסבר קצר, משפט אחד בלבד>",
+    "proposedName": "<שם ספק מוצע, רק כאשר action הוא create-new, אחרת null>"
+  },
+  ...
+]`,
+    messages: [{
+      role: 'user',
+      content: `הודעות מייל לסיווג:\n\n${candidateList}`,
+    }],
+    maxTokens: 8192,
+  })
+
+  if (result.error) {
+    return NextResponse.json({ error: result.error }, { status: 502 })
+  }
+
+  let parsed: SupplierMatchLLMEntry[]
+  try {
+    parsed = parseClaudeJson<SupplierMatchLLMEntry[]>(result.text)
+  } catch (parseErr) {
+    console.error('[match-receipt] Failed to parse match-supplier response. Raw text (first 800 chars):', result.text.slice(0, 800))
+    console.error('[match-receipt] Parse error:', parseErr)
+    return NextResponse.json({ error: 'Failed to parse LLM response', raw: result.text }, { status: 502 })
+  }
+
+  const supplierById = new Map(suppliers.map((s) => [s.id, s]))
+
+  const proposals: SupplierMatchProposal[] = parsed
+    .map((entry): SupplierMatchProposal | null => {
+      const candidate = candidates[entry.candidateIndex]
+      if (!candidate) return null
+
+      const matchedSupplier = entry.matchedSupplierId != null ? supplierById.get(entry.matchedSupplierId) : undefined
+
+      return {
+        id: candidate.messageId,
+        candidate,
+        action: entry.action,
+        matchedSupplierId: matchedSupplier?.id,
+        matchedSupplierName: matchedSupplier?.name,
+        proposedName: entry.action === 'create-new' ? (entry.proposedName || guessVendorName(candidate)) : undefined,
+        confidence: entry.confidence || 'low',
+        reasoning: entry.reasoning || '',
+      }
+    })
+    .filter((p): p is SupplierMatchProposal => p !== null)
+
+  return NextResponse.json({ proposals })
+}
+
+/** Best-effort vendor-name guess from an email's From/Subject when the LLM didn't propose one. */
+function guessVendorName(candidate: GmailInvoiceCandidate): string {
+  const displayName = candidate.from.match(/^"?([^"<]+)"?\s*</)?.[1]?.trim()
+  return displayName || candidate.from.trim() || candidate.subject.trim()
 }
 
 async function handleExtract(emailBody: string, transaction: TransactionInfo, claudeApiKey?: string) {
