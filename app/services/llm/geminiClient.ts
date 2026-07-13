@@ -24,7 +24,7 @@ export class GeminiClient implements LLMClient {
       return { text: '', error: 'חסר מפתח Gemini API' }
     }
 
-    const { system, messages, enableWebSearch, maxTokens = 4096, tools: fnTools, temperature = 0.7, modelOverride } = options
+    const { system, messages, enableWebSearch, maxTokens = 4096, tools: fnTools, temperature = 0.7, modelOverride, disableThinking } = options
     const model = modelOverride || DEFAULT_MODEL
     const geminiUrl = `${GEMINI_BASE}/${encodeURIComponent(model)}:generateContent`
 
@@ -63,10 +63,15 @@ export class GeminiClient implements LLMClient {
       }
     })
 
+    const generationConfig: Record<string, unknown> = { temperature, maxOutputTokens: maxTokens }
+    if (disableThinking) {
+      generationConfig.thinkingConfig = { thinkingBudget: 0 }
+    }
+
     const body: Record<string, unknown> = {
       systemInstruction: { parts: [{ text: system }] },
       contents,
-      generationConfig: { temperature, maxOutputTokens: maxTokens },
+      generationConfig,
     }
 
     // Build tools array: function declarations + optional google search

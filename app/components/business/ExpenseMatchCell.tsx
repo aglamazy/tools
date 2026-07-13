@@ -2,7 +2,7 @@
 
 import React, { useRef, useState } from 'react'
 import type { ExpenseDocument } from '@/app/db/financeDB'
-import { matchReceiptForTransaction, parseDateFolder, type CheckedCandidate } from '@/app/services/receiptMatchService'
+import { matchReceiptForTransaction, parseDateFolder, type CheckedCandidate, type SearchInfo } from '@/app/services/receiptMatchService'
 import { hasGmailAccess, requestGmailAccess } from '@/app/services/gmailService'
 import { uploadExpenseDocument } from '@/app/services/googleDriveService'
 import SearchResultsModal from './SearchResultsModal'
@@ -22,12 +22,14 @@ type ExpenseMatchCellProps = {
   linkedDoc?: ExpenseDocument
   claudeApiKey: string
   onMatched: (doc: ExpenseDocument) => void
+  onUnlink: (docId: number) => void
 }
 
-export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey, onMatched }: ExpenseMatchCellProps) {
+export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey, onMatched, onUnlink }: ExpenseMatchCellProps) {
   const [status, setStatus] = useState<MatchStatus>('idle')
   const [errorMsg, setErrorMsg] = useState<string>('')
   const [checkedCandidates, setCheckedCandidates] = useState<CheckedCandidate[]>([])
+  const [searchInfo, setSearchInfo] = useState<SearchInfo | null>(null)
   const [showResults, setShowResults] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -39,15 +41,25 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
   const docHref = linkedDoc?.driveWebViewLink || linkedDoc?.externalUrl
   if (docHref) {
     return (
-      <a
-        href={docHref}
-        target="_blank"
-        rel="noopener noreferrer"
-        style={{ color: '#2563eb', textDecoration: 'none', fontSize: '0.85rem' }}
-        title={linkedDoc?.vendor || linkedDoc?.fileName}
-      >
-        מסמך
-      </a>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+        <a
+          href={docHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ color: '#2563eb', textDecoration: 'none', fontSize: '0.85rem' }}
+          title={linkedDoc?.vendor || linkedDoc?.fileName}
+        >
+          מסמך
+        </a>
+        <button
+          type="button"
+          onClick={() => { if (linkedDoc?.id != null) onUnlink(linkedDoc.id) }}
+          title="הסר קישור למסמך — כדי לחפש ולחלץ מחדש"
+          style={{ border: 'none', background: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '0.8rem', padding: 0, lineHeight: 1 }}
+        >
+          ✕
+        </button>
+      </span>
     )
   }
 
@@ -74,10 +86,12 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
       const result = await matchReceiptForTransaction(transaction, claudeApiKey)
       console.log('[ExpenseMatch] result for tx', transaction.id, transaction.description, ':', result)
       setCheckedCandidates(result.checkedCandidates)
+      setSearchInfo(result.searchInfo)
       if (result.status === 'matched') {
         onMatched(result.doc)
       }
       setStatus(result.status)
+      setShowResults(true)
     } catch (err: any) {
       console.error('[ExpenseMatch] exception for tx', transaction.id, transaction.description, ':', err)
       setErrorMsg(err?.message || String(err))
@@ -226,7 +240,7 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
         </button>
       )}
       {showResults && (
-        <SearchResultsModal candidates={checkedCandidates} onClose={() => setShowResults(false)} />
+        <SearchResultsModal candidates={checkedCandidates} searchInfo={searchInfo} onClose={() => setShowResults(false)} />
       )}
     </div>
   )

@@ -18,6 +18,7 @@ import ExpenseFiltersBar from '@/app/components/business/ExpenseFiltersBar'
 import ExpenseCashForm from '@/app/components/business/ExpenseCashForm'
 import ExpenseRowsTable from '@/app/components/business/ExpenseRowsTable'
 import ExpenseMonthSupplierPivot from '@/app/components/business/ExpenseMonthSupplierPivot'
+import DuplicateTransactionsModal from '@/app/components/DuplicateTransactionsModal'
 import type { ExpenseTableRow, MatchStatus } from '@/app/components/business/expenseTabTypes'
 import { useToast } from '@/app/components/ToastContainer'
 
@@ -72,6 +73,7 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
   const [sortKey, setSortKey] = useState<'date' | 'party' | 'amount'>('date')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [loading, setLoading] = useState(true)
+  const [showDuplicates, setShowDuplicates] = useState(false)
   const [matchStatus, setMatchStatus] = useState<Record<number, MatchStatus>>({})
   const [matchedDocs, setMatchedDocs] = useState<Record<number, ExpenseDocument[]>>({})
   const [claudeApiKey, setClaudeApiKey] = useState<string>('')
@@ -633,7 +635,7 @@ const parseSortableDate = (date?: string) => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-      <div style={{ display: 'flex', gap: '0.25rem' }}>
+      <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
         <button
           onClick={() => setViewMode('list')}
           style={{
@@ -654,7 +656,28 @@ const parseSortableDate = (date?: string) => {
         >
           טבלה
         </button>
+        {filterMode === 'month' && selectedMonth && (
+          <button
+            onClick={() => setShowDuplicates(true)}
+            title="בדוק תנועות כפולות בחודש הנבחר (למשל אותו חיוב שיובא גם מ-XLS וגם מ-PDF)"
+            style={{
+              marginRight: '0.5rem', padding: '0.4rem 0.9rem', borderRadius: '0.375rem', border: '1px solid #e2e8f0',
+              background: '#fff', color: '#0f172a', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 500,
+            }}
+          >
+            בדוק כפילויות
+          </button>
+        )}
       </div>
+
+      {showDuplicates && (
+        <DuplicateTransactionsModal
+          isOpen={showDuplicates}
+          month={selectedMonth}
+          onClose={() => setShowDuplicates(false)}
+          onDeleted={() => { void loadTransactions() }}
+        />
+      )}
 
       {viewMode === 'pivot' ? (
         <ExpenseMonthSupplierPivot businessId={businessId} />

@@ -9,8 +9,10 @@ import { uploadExpenseDocument } from '@/app/services/googleDriveService'
 import { parseDateFolder } from '@/app/services/receiptMatchService'
 import { normalizeDate } from '@/app/utils/parsers/shared'
 import { resolveOrCreateSupplier } from '@/app/services/supplierService'
+import { partnerStore } from '@/app/stores/partnerStore'
 import ExpenseMatchCell from './ExpenseMatchCell'
 import SupplierCardModal from './SupplierCardModal'
+import TransactionEditModal from './TransactionEditModal'
 
 const ILS = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
 
@@ -156,6 +158,16 @@ export default function TaxVatSection({
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string>('')
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null)
+  const [showZeroVatRows, setShowZeroVatRows] = useState(true)
+  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null)
+  // Local edits (e.g. fixing a wrongly-attributed transaction) applied on top
+  // of the `transactions` prop — the parent owns the real fetch/refresh cycle,
+  // this just keeps the table in sync without waiting for it.
+  const [transactionOverrides, setTransactionOverrides] = useState<Record<number, Transaction>>({})
+  const effectiveTransactions = useMemo(
+    () => transactions.map((t) => (t.id != null && transactionOverrides[t.id]) ? transactionOverrides[t.id] : t),
+    [transactions, transactionOverrides]
+  )
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Open (or create on the fly) the Supplier behind a vendor/description cell
@@ -215,6 +227,11 @@ export default function TaxVatSection({
     setExpenseDocs(prev => [...prev, { ...doc, id: id as number }])
   }
 
+  const onUnlink = async (docId: number) => {
+    await db.expenseDocuments.delete(docId)
+    setExpenseDocs(prev => prev.filter(d => d.id !== docId))
+  }
+
   const userProjectNames = useMemo(() => {
     const businessIds = new Set(businesses.map(b => b.id).filter((x): x is number => x != null))
     const names = new Set<string>()
@@ -223,6 +240,19 @@ export default function TaxVatSection({
     }
     return names
   }, [businesses, projects])
+
+  // Union of every business's partners — used by the transaction-edit modal's
+  // "שולם על ידי" fix for mis-attributed rows. Not scoped to a single business
+  // since a row's exact business isn't tracked on ExpenseRow.
+  const editParticipants = useMemo(() => {
+    const map = new Map<string, { uid: string; label: string }>()
+    for (const b of businesses) {
+      for (const p of partnerStore.getCachedByBusinessId(b.id)) map.set(p.uid, p)
+    }
+    return Array.from(map.values())
+  }, [businesses])
+
+  const editCategoryOptions = useMemo(() => Array.from(categoryByName.keys()).sort(), [categoryByName])
 
   // The VatPayment (if any) that matches the selected period's date range.
   // Used to decide closed-vs-open and which tagged docs to show.
@@ -283,7 +313,7 @@ export default function TaxVatSection({
     }
 
     const rows: ExpenseRow[] = []
-    for (const t of transactions) {
+    for (const t of effectiveTransactions) {
       if (!t.category || !deductibleCatNames.has(t.category)) continue
       const txDate = parseDmy(t.date)
       if (!txDate) continue
@@ -336,7 +366,7 @@ export default function TaxVatSection({
     }
     rows.sort((a, b) => a.date.getTime() - b.date.getTime())
     return rows
-  }, [transactions, expCategoryMap, categoryByName, expenseDocs, cutoff, personUid, selectedPeriod, isPeriodClosed, selectedPayment])
+  }, [effectiveTransactions, expCategoryMap, categoryByName, expenseDocs, cutoff, personUid, selectedPeriod, isPeriodClosed, selectedPayment])
 
   const totals = useMemo(() => {
     const output = incomeRows.reduce((s, r) => s + r.outputVat, 0)
@@ -345,13 +375,15 @@ export default function TaxVatSection({
   }, [incomeRows, expenseRows])
 
   const missingDocCount = expenseRows.filter(r => !r.hasDoc).length
+  const zeroVatCount = expenseRows.filter(r => r.hasDoc && r.inputVat === 0).length
 
   // Rows with a matched document confirming zero VAT (e.g. foreign vendors like
-  // Vercel that charge none) contribute nothing to input VAT — keep them out of
-  // this table entirely; they're not actionable and just add noise to a report
-  // whose whole point is reclaimable VAT. Undocumented rows stay visible (still
-  // pending, might turn into real credit once a document is matched).
-  const visibleExpenseRows = expenseRows.filter(r => !(r.hasDoc && r.inputVat === 0))
+  // Vercel that charge none) contribute nothing to input VAT and are usually just
+  // noise in a report whose whole point is reclaimable VAT — but hiding them
+  // silently made a real match ("did the search find anything?") indistinguishable
+  // from "nothing happened", so this is a UI toggle, not a hardcoded filter.
+  // Undocumented rows are always visible regardless (still pending).
+  const visibleExpenseRows = showZeroVatRows ? expenseRows : expenseRows.filter(r => !(r.hasDoc && r.inputVat === 0))
 
   const ratesInWindow = useMemo(() => {
     const set = new Set<number>()
@@ -587,7 +619,17 @@ export default function TaxVatSection({
         )}
       </SectionBlock>
 
-      <SectionBlock title={`הוצאות מוכרות (${visibleExpenseRows.length})${missingDocCount ? ` · ${missingDocCount} ללא מסמך ⚠️` : ''}`}>
+      <SectionBlock
+        title={`הוצאות מוכרות (${visibleExpenseRows.length})${missingDocCount ? ` · ${missingDocCount} ללא מסמך ⚠️` : ''}`}
+        headerExtra={
+          zeroVatCount > 0 && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', color: '#64748b', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+              <input type="checkbox" checked={showZeroVatRows} onChange={(e) => setShowZeroVatRows(e.target.checked)} />
+              הצג {zeroVatCount} הוצאות עם 0 מע״מ
+            </label>
+          )
+        }
+      >
         {visibleExpenseRows.length === 0 ? (
           <EmptyHint text="לא נמצאו הוצאות מוכרות בקטגוריות המנוכות מאז התאריך." />
         ) : (
@@ -608,7 +650,21 @@ export default function TaxVatSection({
                 const linked = expenseDocs.find(d => d.transactionId === r.transactionId)
                 return (
                   <tr key={r.key} style={trStyle}>
-                    <td style={tdStyle}>{formatDmy(r.date)}</td>
+                    <td style={tdStyle}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <button
+                          onClick={() => {
+                            const t = effectiveTransactions.find(t => t.id === r.transactionId)
+                            if (t) setEditingTransaction(t)
+                          }}
+                          title="ערוך תנועה — תיאור, סכום, תאריך, נושא, שיוך"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem', padding: 0, color: '#94a3b8', lineHeight: 1 }}
+                        >
+                          ✏️
+                        </button>
+                        {formatDmy(r.date)}
+                      </span>
+                    </td>
                     <td style={tdStyle}>
                       <button
                         onClick={() => openSupplierCard(r.txMerchant || r.txDescription)}
@@ -638,6 +694,7 @@ export default function TaxVatSection({
                         linkedDoc={linked}
                         claudeApiKey={claudeApiKey}
                         onMatched={onMatched}
+                        onUnlink={onUnlink}
                       />
                     </td>
                   </tr>
@@ -701,6 +758,20 @@ export default function TaxVatSection({
           onSaved={() => setEditingSupplier(null)}
         />
       )}
+
+      {editingTransaction && (
+        <TransactionEditModal
+          transaction={editingTransaction}
+          categoryOptions={editCategoryOptions}
+          participants={editParticipants}
+          onClose={() => setEditingTransaction(null)}
+          onSaved={(updated) => {
+            if (updated.id != null) {
+              setTransactionOverrides((prev) => ({ ...prev, [updated.id!]: updated }))
+            }
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -733,10 +804,13 @@ function SummaryCard({ label, value, color, bg, emphasize }: { label: string; va
   )
 }
 
-function SectionBlock({ title, children }: { title: string; children: React.ReactNode }) {
+function SectionBlock({ title, headerExtra, children }: { title: string; headerExtra?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div>
-      <h4 style={{ margin: '0 0 0.5rem', fontSize: '0.95rem', color: '#334155' }}>{title}</h4>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', margin: '0 0 0.5rem' }}>
+        <h4 style={{ margin: 0, fontSize: '0.95rem', color: '#334155' }}>{title}</h4>
+        {headerExtra}
+      </div>
       {children}
     </div>
   )

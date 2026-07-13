@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { forwardRef, useImperativeHandle, useRef, useState } from 'react'
 import Modal from '@/app/components/Modal'
 import { db, type Supplier } from '@/app/db/financeDB'
 
@@ -10,25 +10,35 @@ type SupplierCardModalProps = {
   onSaved: (updated: Supplier) => void
 }
 
-/** Editable string-list field: chips with a remove button + an add row. */
-function StringListEditor({
-  values, onChange, placeholder,
-}: {
+export type StringListEditorHandle = { flush: () => string[] }
+
+function commitDraft(values: string[], draft: string): string[] {
+  const trimmed = draft.trim()
+  if (!trimmed || values.some((v) => v.toLowerCase() === trimmed.toLowerCase())) return values
+  return [...values, trimmed]
+}
+
+/**
+ * Editable string-list field: chips with a remove button + an add row.
+ * Exposes flush() so the parent's Save button can commit whatever's still
+ * sitting in the input box — without it, clicking "שמור" right after typing
+ * (instead of clicking "+ הוסף" first) silently dropped the typed value.
+ */
+const StringListEditor = forwardRef<StringListEditorHandle, {
   values: string[]
   onChange: (next: string[]) => void
   placeholder: string
-}) {
+}>(function StringListEditor({ values, onChange, placeholder }, ref) {
   const [draft, setDraft] = useState('')
 
   const add = () => {
-    const trimmed = draft.trim()
-    if (!trimmed || values.some((v) => v.toLowerCase() === trimmed.toLowerCase())) {
-      setDraft('')
-      return
-    }
-    onChange([...values, trimmed])
+    onChange(commitDraft(values, draft))
     setDraft('')
   }
+
+  useImperativeHandle(ref, () => ({
+    flush: () => commitDraft(values, draft),
+  }))
 
   return (
     <div>
@@ -69,25 +79,29 @@ function StringListEditor({
       </div>
     </div>
   )
-}
+})
 
 export default function SupplierCardModal({ supplier, onClose, onSaved }: SupplierCardModalProps) {
   const [name, setName] = useState(supplier.name)
   const [bankCardAliases, setBankCardAliases] = useState(supplier.bankCardAliases)
   const [emailSenders, setEmailSenders] = useState(supplier.emailSenders)
   const [saving, setSaving] = useState(false)
+  const aliasesRef = useRef<StringListEditorHandle>(null)
+  const sendersRef = useRef<StringListEditorHandle>(null)
 
   const handleSave = async () => {
     const trimmedName = name.trim()
     if (!trimmedName || !supplier.id) return
+    const finalAliases = aliasesRef.current?.flush() ?? bankCardAliases
+    const finalSenders = sendersRef.current?.flush() ?? emailSenders
     setSaving(true)
     try {
       await db.suppliers.update(supplier.id, {
         name: trimmedName,
-        bankCardAliases,
-        emailSenders,
+        bankCardAliases: finalAliases,
+        emailSenders: finalSenders,
       })
-      onSaved({ ...supplier, name: trimmedName, bankCardAliases, emailSenders })
+      onSaved({ ...supplier, name: trimmedName, bankCardAliases: finalAliases, emailSenders: finalSenders })
       onClose()
     } finally {
       setSaving(false)
@@ -113,7 +127,7 @@ export default function SupplierCardModal({ supplier, onClose, onSaved }: Suppli
 
           <div>
             <label style={{ display: 'block', marginBottom: '0.4rem', fontWeight: 600, fontSize: '0.875rem' }}>כינויים בבנק/כרטיס</label>
-            <StringListEditor values={bankCardAliases} onChange={setBankCardAliases} placeholder="למשל: VERCEL INC." />
+            <StringListEditor ref={aliasesRef} values={bankCardAliases} onChange={setBankCardAliases} placeholder="למשל: VERCEL INC." />
           </div>
 
           <div>
@@ -122,7 +136,7 @@ export default function SupplierCardModal({ supplier, onClose, onSaved }: Suppli
               קביעת כתובת ידנית הופכת את חיפוש הקבלות לספק הזה למהיר וממוקד —
               חיפוש ישיר לפי שולח + תאריך, ללא צורך בניחוש.
             </p>
-            <StringListEditor values={emailSenders} onChange={setEmailSenders} placeholder="למשל: no-reply@ypay.co.il" />
+            <StringListEditor ref={sendersRef} values={emailSenders} onChange={setEmailSenders} placeholder="למשל: no-reply@ypay.co.il" />
           </div>
         </div>
 

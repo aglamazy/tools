@@ -4,14 +4,6 @@ import { getLLMClient } from '@/app/services/llm'
 import { parseClaudeJson } from '@/app/utils/parseClaudeJson'
 import type { GmailInvoiceCandidate, SupplierMatchProposal } from '@/app/types/supplierWizard'
 
-type Candidate = {
-  messageId: string
-  from: string
-  subject: string
-  date: string
-  snippet: string
-}
-
 // Surface the ACTUAL provider error to the caller instead of a bare
 // "Claude API error: 400". The receipt matcher was swallowing the real
 // message — e.g. "credit balance is too low" — into a silent "no match",
@@ -34,15 +26,81 @@ type TransactionInfo = {
   merchant?: string
 }
 
+type PickCandidateInput = { index: number; subject: string; from: string; date: string; snippet: string }
+
+/**
+ * Cheap subject-only pre-filter, run before any expensive Claude extraction.
+ * A known-sender search can return non-invoice mail from the same address
+ * (confirmed live: YPAY's no-reply@ypay.co.il sends both real receipts and
+ * login-verification-code emails) — this picks the one candidate that
+ * actually looks like an invoice/receipt by subject line alone, so only that
+ * one gets sent through the slow/costly body+PDF extraction pipeline.
+ */
+async function handlePickCandidate(transaction: TransactionInfo, candidates: PickCandidateInput[]) {
+  if (!transaction || !candidates?.length) {
+    return NextResponse.json({ error: 'Missing transaction or candidates' }, { status: 400 })
+  }
+
+  const gemini = getLLMClient('gemini')
+
+  const candidateList = candidates.map((c) =>
+    `[${c.index}] מאת: ${c.from}\n    נושא: ${c.subject}\n    תאריך: ${c.date}\n    תקציר: ${c.snippet}`
+  ).join('\n\n')
+
+  const result = await gemini.chat({
+    system: `אתה מסנן מיילים לפי נושא בלבד, כדי לזהות אילו מהם הם בבירור חשבונית/קבלה/אישור תשלום עבור עסקת כרטיס אשראי — לפני שליחה לבדיקה יקרה ומלאה.
+
+כללים:
+- בחר אך ורק מייל שכותרתו מעידה בבירור על מסמך חשבונאי (למשל: "חשבונית", "קבלה", "אישור תשלום", "receipt", "invoice", "tax invoice").
+- אל תבחר קוד אימות/התחברות, עדכון מערכת, פרסום, ניוזלטר, או כל מייל שאינו בעצמו מסמך חשבונאי — גם אם הוא מאותו שולח.
+- אם כמה מועמדים נראים כמו חשבונית — בחר את הקרוב ביותר בתאריך לעסקה.
+- אם אף מועמד לא נראה בבירור כמו חשבונית/קבלה — החזר candidateIndex: null.
+
+אל תחשוב בקול רם ואל תסביר את תהליך החשיבה. החזר אך ורק את אובייקט ה-JSON, ללא שום טקסט נוסף:
+{ "candidateIndex": <מספר מהרשימה, או null>, "reason": "<הסבר קצר>" }`,
+    messages: [{
+      role: 'user',
+      content: `עסקה בכרטיס אשראי:
+- תיאור: ${transaction.description}
+- סכום: ₪${Math.abs(transaction.amount)}
+- תאריך: ${transaction.date}
+${transaction.merchant ? `- בית עסק: ${transaction.merchant}` : ''}
+
+מיילים (נושא בלבד, ללא תוכן מלא):
+${candidateList}`,
+    }],
+    maxTokens: 800,
+    disableThinking: true,
+  })
+
+  console.log(`[match-receipt] pick-candidate · candidates:\n${candidateList}`)
+  console.log(`[match-receipt] pick-candidate · Gemini raw result →\n${result.text}`)
+
+  if (result.error) {
+    return NextResponse.json({ error: result.error }, { status: 502 })
+  }
+
+  try {
+    const parsed = parseClaudeJson<{ candidateIndex: number | null; reason?: string }>(result.text)
+    return NextResponse.json({ candidateIndex: parsed.candidateIndex ?? null, reason: parsed.reason || '' })
+  } catch {
+    console.error('[match-receipt] pick-candidate parse failure, raw:', result.text)
+    return NextResponse.json({ candidateIndex: null, reason: 'Failed to parse LLM response' })
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
     const { action } = body
 
-    if (action === 'match') {
-      return handleMatch(body.transaction, body.candidates)
+    if (action === 'pick-candidate') {
+      return handlePickCandidate(body.transaction, body.candidates)
     } else if (action === 'extract') {
-      return handleExtract(body.emailBody, body.transaction, body.claudeApiKey)
+      return handleExtract(body.emailBody, body.transaction, body.claudeApiKey, {
+        subject: body.candidateSubject, from: body.candidateFrom,
+        index: body.candidateIndex, total: body.totalCandidates,
+      })
     } else if (action === 'extract-pdf') {
       return handleExtractPdf(body.pdfBase64, body.transaction, body.claudeApiKey)
     } else if (action === 'extract-image') {
@@ -59,70 +117,6 @@ export async function POST(req: NextRequest) {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error'
     return NextResponse.json({ error: message }, { status: 500 })
-  }
-}
-
-async function handleMatch(transaction: TransactionInfo, candidates: Candidate[]) {
-  if (!transaction || !candidates?.length) {
-    return NextResponse.json({ error: 'Missing transaction or candidates' }, { status: 400 })
-  }
-
-  const gemini = getLLMClient('gemini')
-
-  const candidateList = candidates.map((c, i) =>
-    `[${i}] מאת: ${c.from}\n    נושא: ${c.subject}\n    תאריך: ${c.date}\n    תקציר: ${c.snippet}`
-  ).join('\n\n')
-
-  const result = await gemini.chat({
-    system: `אתה מומחה בהתאמת עסקאות בנקאיות להודעות מייל.
-
-כללים:
-- תיאור העסקה בכרטיס אשראי לרוב מופיע בצורה שונה מהשולח במייל. דוגמאות:
-  וואי-פיי = YPAY, שופרסל = SHUFERSAL, הוט מובייל = HOT MOBILE, גוגל = Google Play,
-  VERCEL INC. = Vercel Inc., OPENAI *CHATGPT = OpenAI, GOOGLE *ONE = Google,
-  CLAUDE.AI = Anthropic, AWS / AMAZON WEB = Amazon, STRIPE = Stripe, MICROSOFT *... = Microsoft.
-- ספקים זרים (Vercel, OpenAI, Google, AWS, Stripe וכו') מחייבים במטבע זר (USD/EUR).
-  הסכום בעסקה הוא בש״ח לאחר המרה — אל תפסול קבלה רק כי הסכום במייל שונה מהסכום בעסקה.
-- אתה צריך לזהות את השולח (from) שמתאים לעסקה, גם אם הנושא לא מכיל קבלה.
-- כאשר שם הספק בתיאור (במלואו או חלקי) מופיע גם בשולח (display name או דומיין) —
-  זוהי **התאמה חזקה** ובדרך כלל מספיקה כדי להחזיר matchIndex, גם בלי התאמה של סכום.
-- התאריך צריך להיות קרוב (עד 10 ימים הפרש).
-
-אם מצאת התאמה ברורה — החזר matchIndex.
-אם אתה מזהה את השולח הנכון אבל לא מצאת את הקבלה עצמה — החזר matchIndex: null אבל הוסף senderHint עם כתובת המייל של השולח שנראה רלוונטי, כדי שנוכל לחפש שוב.
-
-החזר JSON בלבד:
-{ "matchIndex": <מספר או null>, "senderHint": "<כתובת מייל או null>", "confidence": "high"|"medium"|"low", "reason": "<הסבר קצר>" }`,
-    messages: [{
-      role: 'user',
-      content: `עסקה בכרטיס אשראי:
-- תיאור: ${transaction.description}
-- סכום: ₪${Math.abs(transaction.amount)}
-- תאריך: ${transaction.date}
-${transaction.merchant ? `- בית עסק: ${transaction.merchant}` : ''}
-
-הודעות מייל באותה תקופה:
-${candidateList}`,
-    }],
-    maxTokens: 256,
-  })
-
-  if (result.error) {
-    return NextResponse.json({ error: result.error }, { status: 502 })
-  }
-
-  try {
-    const cleaned = result.text.replace(/```json?\s*/g, '').replace(/```/g, '').trim()
-    const parsed = JSON.parse(cleaned)
-    const matchedCandidate = parsed.matchIndex != null ? candidates[parsed.matchIndex] : null
-    return NextResponse.json({
-      messageId: matchedCandidate?.messageId ?? null,
-      senderHint: parsed.senderHint || null,
-      confidence: parsed.confidence || 'low',
-      reason: parsed.reason || '',
-    })
-  } catch {
-    return NextResponse.json({ messageId: null, confidence: 'low', reason: 'Failed to parse LLM response' })
   }
 }
 
@@ -253,10 +247,22 @@ function guessVendorName(candidate: GmailInvoiceCandidate): string {
   return displayName || candidate.from.trim() || candidate.subject.trim()
 }
 
-async function handleExtract(emailBody: string, transaction: TransactionInfo, claudeApiKey?: string) {
+async function handleExtract(
+  emailBody: string,
+  transaction: TransactionInfo,
+  claudeApiKey?: string,
+  candidate?: { subject?: string; from?: string; index?: number; total?: number },
+) {
   if (!emailBody) {
     return NextResponse.json({ error: 'Missing emailBody' }, { status: 400 })
   }
+
+  // Every Gmail-search candidate that reaches this point is about to cost one
+  // Claude call — logged server-side (not just the browser console) so the
+  // dev-server output directly answers "how many candidates got extracted."
+  console.log(
+    `[match-receipt] extract candidate ${candidate?.index ?? '?'}/${candidate?.total ?? '?'} · subject: "${candidate?.subject || ''}" · from: ${candidate?.from || ''} · tx: ${transaction?.description} (₪${transaction?.amount})`
+  )
 
   if (!claudeApiKey) {
     return NextResponse.json({ error: 'Missing Claude API key' }, { status: 400 })
@@ -272,6 +278,8 @@ async function handleExtract(emailBody: string, transaction: TransactionInfo, cl
     .replace(/&nbsp;/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+
+  console.log(`[match-receipt] extract · textContent (${textContent.length} chars, HTML-stripped) →\n${textContent}`)
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -332,6 +340,7 @@ async function handleExtract(emailBody: string, transaction: TransactionInfo, cl
   // extraction that should have worked). Find the actual text block instead.
   const textBlock = Array.isArray(data.content) ? data.content.find((c: any) => c?.type === 'text') : undefined
   const text = textBlock?.text ?? ''
+  console.log(`[match-receipt] extract · Claude raw result →\n${text}`)
 
   try {
     return NextResponse.json(parseClaudeJson(text))

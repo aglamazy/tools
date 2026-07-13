@@ -166,6 +166,11 @@ export default function SelfEmployedSummaryTable({ businesses, transactions, biz
     setExpenseDocs(prev => [...prev, { ...doc, id: id as number }])
   }
 
+  const onDocUnlinked = async (docId: number) => {
+    await db.expenseDocuments.delete(docId)
+    setExpenseDocs(prev => prev.filter(d => d.id !== docId))
+  }
+
   const handleBizSave = async () => {
     if (!editingBiz) return
     await businessStore.saveUI(editingBiz, false)
@@ -416,6 +421,7 @@ export default function SelfEmployedSummaryTable({ businesses, transactions, biz
                               linkedDoc={docByTxId.get(tx.id)}
                               claudeApiKey={claudeApiKey}
                               onMatched={onDocMatched}
+                              onUnlink={onDocUnlinked}
                             />
                           )}
                         </td>

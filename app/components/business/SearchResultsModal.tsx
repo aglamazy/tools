@@ -1,23 +1,35 @@
 'use client'
 
 import Modal from '@/app/components/Modal'
-import type { CheckedCandidate } from '@/app/services/receiptMatchService'
+import type { CheckedCandidate, SearchInfo } from '@/app/services/receiptMatchService'
 
 type SearchResultsModalProps = {
   candidates: CheckedCandidate[]
+  searchInfo?: SearchInfo | null
   onClose: () => void
 }
 
-export default function SearchResultsModal({ candidates, onClose }: SearchResultsModalProps) {
+export default function SearchResultsModal({ candidates, searchInfo, onClose }: SearchResultsModalProps) {
   return (
     <Modal isOpen onClose={onClose} maxWidth="650px">
       <div className="modal-header">
         <h2>מיילים שנבדקו ({candidates.length})</h2>
       </div>
       <div className="modal-body">
+        {searchInfo && (
+          <div style={{ fontSize: '0.8rem', color: '#475569', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '0.5rem', padding: '0.5rem 0.75rem', marginBottom: '0.75rem' }}>
+            <div>
+              <strong>מאת:</strong>{' '}
+              {searchInfo.senders.length > 0 ? searchInfo.senders.join(' · ') : <span style={{ color: '#b45309' }}>לא הוגדרה כתובת מייל לספק</span>}
+            </div>
+            <div><strong>טווח תאריכים:</strong> {searchInfo.dateRange}</div>
+          </div>
+        )}
         {candidates.length === 0 ? (
           <p style={{ color: '#64748b', textAlign: 'center', padding: '1rem' }}>
-            לא נמצא אף מייל תואם לחיפוש — לא היה מה לבדוק.
+            {searchInfo && searchInfo.senders.length === 0
+              ? 'לא הוגדרה כתובת מייל לספק — לא בוצע חיפוש. לחץ על שם הספק כדי להגדיר כתובת מייל.'
+              : 'לא נמצא אף מייל תואם לחיפוש — לא היה מה לבדוק.'}
           </p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '60vh', overflowY: 'auto' }}>

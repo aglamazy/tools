@@ -31,6 +31,17 @@ export type LLMChatOptions = {
    * functionCalls. See chatProcessor.ts ESCALATION_MODEL.
    */
   modelOverride?: string
+  /**
+   * Gemini's thinking tokens share the SAME output budget as the final answer
+   * (maxOutputTokens covers both) — for a simple classification/JSON task,
+   * verbose reasoning can consume the whole budget and truncate the actual
+   * answer before it's written, producing a JSON-parse failure with no
+   * indication anything was wrong on the caller's end (confirmed live:
+   * "Failed to parse LLM response" from a 2-candidate pick-candidate call
+   * that should have been trivial). Set this to skip thinking entirely for
+   * calls where the task doesn't need it. No-op for the Anthropic client.
+   */
+  disableThinking?: boolean
 }
 
 export type GroundingSource = {
