@@ -236,6 +236,7 @@ ${supplierList || '(אין ספקים קיימים במערכת)'}
         action: entry.action,
         matchedSupplierId: matchedSupplier?.id,
         matchedSupplierName: matchedSupplier?.name,
+        matchedBankAlias: matchedSupplier?.bankCardAliases?.[0],
         proposedName: entry.action === 'create-new' ? (entry.proposedName || guessVendorName(candidate)) : undefined,
         confidence: entry.confidence || 'low',
         reasoning: entry.reasoning || '',

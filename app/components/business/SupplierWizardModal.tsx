@@ -29,7 +29,8 @@ const CONFIDENCE_COLOR: Record<SupplierMatchProposal['confidence'], string> = {
 
 function actionLabel(proposal: SupplierMatchProposal): string {
   if (proposal.action === 'link-existing') {
-    return `קישור לספק קיים: ${proposal.matchedSupplierName || ''}`
+    const alias = proposal.matchedBankAlias ? ` (מוכר כ-"${proposal.matchedBankAlias}" בבנק/כרטיס)` : ''
+    return `קישור לספק קיים: ${proposal.matchedSupplierName || ''}${alias}`
   }
   if (proposal.action === 'create-new') {
     return `יצירת ספק חדש: ${proposal.proposedName || proposal.candidate.from}`

@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import SupplierWizardModal from '../business/SupplierWizardModal'
+import SupplierListModal from '../business/SupplierListModal'
 
 const smallBtnStyle: React.CSSProperties = {
   padding: '0.25rem 0.6rem',
@@ -21,6 +22,7 @@ type CategoriesToolbarActionsProps = {
 
 export default function CategoriesToolbarActions({ onReorganizeColors, onExport, onImport }: CategoriesToolbarActionsProps) {
   const [supplierWizardOpen, setSupplierWizardOpen] = useState(false)
+  const [supplierListOpen, setSupplierListOpen] = useState(false)
 
   return (
     <div style={{ marginInlineStart: 'auto', display: 'flex', gap: '0.4rem' }}>
@@ -43,6 +45,13 @@ export default function CategoriesToolbarActions({ onReorganizeColors, onExport,
         <input type="file" accept=".json" onChange={onImport} style={{ display: 'none' }} />
       </label>
       <button
+        onClick={() => setSupplierListOpen(true)}
+        style={smallBtnStyle}
+        title="רשימת כל הספקים הקיימים במערכת, עם כינוייהם"
+      >
+        📋 רשימת ספקים
+      </button>
+      <button
         onClick={() => setSupplierWizardOpen(true)}
         style={smallBtnStyle}
         title="סריקת Gmail לאיתור חשבוניות והתאמתן לספקים במערכת"
@@ -51,6 +60,9 @@ export default function CategoriesToolbarActions({ onReorganizeColors, onExport,
       </button>
       {supplierWizardOpen && (
         <SupplierWizardModal isOpen={supplierWizardOpen} onClose={() => setSupplierWizardOpen(false)} />
+      )}
+      {supplierListOpen && (
+        <SupplierListModal isOpen={supplierListOpen} onClose={() => setSupplierListOpen(false)} />
       )}
     </div>
   )
