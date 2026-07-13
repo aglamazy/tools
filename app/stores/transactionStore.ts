@@ -5,6 +5,7 @@ import { db, Transaction, ImportedFile } from '@/app/db/financeDB'
 import { addMonths } from '@/app/utils/formatters'
 import { canonicalizeForDedup } from '@/app/utils/dedupKey'
 import { findDuplicateTransactions, type DuplicateGroup } from '@/app/utils/findDuplicateTransactions'
+import { parseDateMs } from '@/app/utils/parsers/shared'
 
 /**
  * Extract MM/YYYY month from a date string.
@@ -503,18 +504,60 @@ export const transactionStore = {
         })),
       ]
 
-      // Sort by transaction date (DD/MM/YYYY format)
-      allTransactions.sort((a, b) => {
-        const [aDay, aMonth, aYear] = a.date.split('/').map(Number)
-        const [bDay, bMonth, bYear] = b.date.split('/').map(Number)
-        const aDate = new Date(aYear, aMonth - 1, aDay)
-        const bDate = new Date(bYear, bMonth - 1, bDay)
-        return aDate.getTime() - bDate.getTime()
-      })
+      // Sort by transaction date — parseDateMs tolerates both the canonical
+      // YYYY-MM-DD and legacy DD/MM/YYYY formats (a raw split('/') here
+      // silently broke for the common YYYY-MM-DD case).
+      allTransactions.sort((a, b) => parseDateMs(a.date) - parseDateMs(b.date))
 
       return allTransactions
     } catch (error) {
       console.error('Error getting budget transactions:', error)
+      return []
+    }
+  },
+
+  /**
+   * All transactions (across every month) whose derived "business" label
+   * exactly matches the given supplier name — powers the budget page's
+   * supplier drill-down (click a supplier → see its full history and set
+   * its subject from there). Newest first, unlike getBudgetTransactions.
+   */
+  getTransactionsByBusiness: async (business: string) => {
+    try {
+      const bankTransactions = (await db.transactions.where('type').equals('bank').toArray())
+        .filter((t) => !t.isCreditCardCharge && t.description === business)
+      const creditTransactions = (await db.transactions.where('type').equals('credit').toArray())
+        .filter((t) => (t.merchant || t.description) === business)
+
+      const allTransactions = [
+        ...bankTransactions.map((t) => ({
+          id: String(t.id),
+          date: t.date,
+          business: t.description,
+          category: t.category || '',
+          amount: t.amount,
+          isFixed: t.isFixed,
+          paymentMethod: t.accountNumber || 'Bank',
+          installmentInfo: '',
+          totalAmount: t.amount,
+        })),
+        ...creditTransactions.map((t) => ({
+          id: String(t.id),
+          date: t.date,
+          business: t.merchant || t.description,
+          category: t.category || '',
+          amount: t.amount,
+          isFixed: t.isFixed,
+          paymentMethod: `💳 ${t.cardNumber}`,
+          installmentInfo: t.totalSteps && t.totalSteps > 1 ? `${t.currentStep}/${t.totalSteps}` : '',
+          totalAmount: t.totalAmount || t.amount,
+        })),
+      ]
+
+      allTransactions.sort((a, b) => parseDateMs(b.date) - parseDateMs(a.date))
+      return allTransactions
+    } catch (error) {
+      console.error('Error getting transactions by business:', error)
       return []
     }
   },
