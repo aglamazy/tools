@@ -228,7 +228,20 @@ export default function CategoriesTab() {
 
   const handleSaveCategory = () => {
     if (!editingCategory || !editingCategory.name.trim()) return
-    const savedCategory: Category = { ...editingCategory, updatedAt: new Date().toISOString() }
+    const trimmedName = editingCategory.name.trim()
+
+    const duplicate = categories.find((cat) =>
+      cat.id !== editingCategory.id &&
+      cat.name.trim() === trimmedName &&
+      cat.type === editingCategory.type &&
+      cat.businessId === editingCategory.businessId
+    )
+    if (duplicate) {
+      setAlertModal({ isOpen: true, message: `כבר קיים נושא בשם "${trimmedName}" בהיקף הזה — לא ניתן ליצור כפילות.` })
+      return
+    }
+
+    const savedCategory: Category = { ...editingCategory, name: trimmedName, updatedAt: new Date().toISOString() }
 
     let updatedCategories: Category[]
     if (isAddingNew) {
@@ -242,9 +255,22 @@ export default function CategoriesTab() {
         })
       }
     } else {
+      const original = categories.find((cat) => cat.id === savedCategory.id)
       updatedCategories = categories.map((cat) =>
         cat.id === savedCategory.id ? savedCategory : cat
       )
+      if (original && original.parentId !== savedCategory.parentId) {
+        updatedCategories = updatedCategories.map((cat) => {
+          if (cat.id === original.parentId) {
+            return { ...cat, subCategories: (cat.subCategories || []).filter((id) => id !== savedCategory.id) }
+          }
+          if (savedCategory.parentId && cat.id === savedCategory.parentId) {
+            const existing = cat.subCategories || []
+            return existing.includes(savedCategory.id) ? cat : { ...cat, subCategories: [...existing, savedCategory.id] }
+          }
+          return cat
+        })
+      }
     }
 
     setCategories(updatedCategories)
@@ -637,10 +663,25 @@ export default function CategoriesTab() {
             <div className="modal-body">
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 {editingCategory.parentId && (
-                  <div style={{ padding: '0.75rem', background: '#f0f9ff', borderRadius: '0.5rem', border: '1px solid #bfdbfe' }}>
+                  <div style={{ padding: '0.75rem', background: '#f0f9ff', borderRadius: '0.5rem', border: '1px solid #bfdbfe', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem' }}>
                     <span style={{ fontSize: '0.875rem', color: '#075985' }}>
                       תת-נושא של: <strong>{categories.find((c) => c.id === editingCategory.parentId)?.name}</strong>
                     </span>
+                    <button
+                      onClick={() => setEditingCategory({ ...editingCategory, parentId: undefined })}
+                      style={{
+                        fontSize: '0.8rem',
+                        padding: '0.3rem 0.6rem',
+                        borderRadius: '0.375rem',
+                        border: '1px solid #bfdbfe',
+                        background: 'white',
+                        color: '#075985',
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      ✕ הסר שיוך
+                    </button>
                   </div>
                 )}
                 <div>
