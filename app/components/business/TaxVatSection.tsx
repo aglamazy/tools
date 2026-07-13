@@ -1,14 +1,16 @@
 'use client'
 
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { db, type Business, type Transaction, type YpayDocument, type ExpenseDocument, type Project, type VatPayment } from '@/app/db/financeDB'
+import { db, type Business, type Transaction, type YpayDocument, type ExpenseDocument, type Project, type VatPayment, type Supplier } from '@/app/db/financeDB'
 import type { Category } from '@/app/types/category'
 import { getVatRateForDate } from '@/app/lib/vat'
 import { YpayDocType } from '@/app/services/ypayService'
 import { uploadExpenseDocument } from '@/app/services/googleDriveService'
 import { parseDateFolder } from '@/app/services/receiptMatchService'
 import { normalizeDate } from '@/app/utils/parsers/shared'
+import { resolveOrCreateSupplier } from '@/app/services/supplierService'
 import ExpenseMatchCell from './ExpenseMatchCell'
+import SupplierCardModal from './SupplierCardModal'
 
 const ILS = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
 
@@ -153,7 +155,16 @@ export default function TaxVatSection({
   const [claudeApiKey, setClaudeApiKey] = useState<string>('')
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string>('')
+  const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Open (or create on the fly) the Supplier behind a vendor/description cell
+  // — lets you set the real email sender right where you're already looking
+  // at the failed match, instead of routing through Settings.
+  const openSupplierCard = async (rawVendor: string) => {
+    const supplier = await resolveOrCreateSupplier(rawVendor)
+    setEditingSupplier(supplier)
+  }
 
   const cutoff = useMemo(() => {
     const d = new Date(effectiveDate)
@@ -598,7 +609,15 @@ export default function TaxVatSection({
                 return (
                   <tr key={r.key} style={trStyle}>
                     <td style={tdStyle}>{formatDmy(r.date)}</td>
-                    <td style={tdStyle}>{r.vendor}</td>
+                    <td style={tdStyle}>
+                      <button
+                        onClick={() => openSupplierCard(r.txMerchant || r.txDescription)}
+                        style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }}
+                        title="לחץ לצפייה/עריכת הספק — קביעת כתובת מייל הופכת את החיפוש למהיר וממוקד"
+                      >
+                        {r.vendor}
+                      </button>
+                    </td>
                     <td style={{ ...tdStyle, textAlign: 'left' }}>{ILS(r.amount)}</td>
                     <td style={{ ...tdStyle, textAlign: 'left', color: '#64748b' }}>
                       {r.sharePercent === 100 ? '—' : `${r.sharePercent}%`}
@@ -673,6 +692,14 @@ export default function TaxVatSection({
             </tbody>
           </table>
         </SectionBlock>
+      )}
+
+      {editingSupplier && (
+        <SupplierCardModal
+          supplier={editingSupplier}
+          onClose={() => setEditingSupplier(null)}
+          onSaved={() => setEditingSupplier(null)}
+        />
       )}
     </div>
   )

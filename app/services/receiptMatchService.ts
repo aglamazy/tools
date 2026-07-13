@@ -163,47 +163,49 @@ export async function matchReceiptForTransaction(
     }
   }
 
-  // Vendor-name + receipt-keyword search. The description IS the vendor name,
-  // but a vendor's mail volume can include non-invoice notifications, so we
-  // bias the query toward receipt-shaped messages. We collect a small set of
-  // candidates and try them one-by-one — Claude verification filters out the
-  // ones that aren't actually invoices (e.g. share-link notifications).
+  // Vendor-name + receipt-keyword search — the heavy, guessing-based fallback.
+  // Skipped entirely when the known-sender search above already found
+  // candidates: a direct from:/date: search against a manually-confirmed or
+  // previously-learned sender is strictly more precise than token-guessing a
+  // noisy bank/card description, so there's nothing the token cascade could
+  // usefully add — running it anyway would just burn Gmail/LLM calls for no
+  // benefit. This is what makes editing a supplier's email directly in the
+  // Suppliers list (SupplierCardModal) pay off: matching becomes a single
+  // targeted search instead of the full cascade below.
   let candidateMessageIds: string[] = []
-  const tokens = extractVendorTokens(desc)
-  if (tokens.length > 0) {
-    const receiptKeywords = '(receipt OR invoice OR חשבונית OR קבלה)'
-    // Gmail ANDs space-separated terms, so a trailing bank-generated reference
-    // code (e.g. "GOOGLE CLOUD VPD8D2") poisons the query — the real invoice
-    // email will never contain that code. Try progressively fewer trailing
-    // tokens (3 → 2 → 1) before giving up on the vendor-token search entirely,
-    // since the earliest tokens are the actual vendor name and the noise (if
-    // any) tends to trail.
-    for (let n = tokens.length; n >= 1 && candidateMessageIds.length === 0; n--) {
-      const subset = tokens.slice(0, n)
-      const narrowQuery = `${subset.join(' ')} ${receiptKeywords} ${dateRange}`
-      log('vendor+receipt search · tokens:', subset, '· query:', narrowQuery)
-      const narrow = await searchMessages(narrowQuery, { searchAllMail: true, maxResults: 5 })
-      log('vendor+receipt search →', { count: narrow.messageIds.length, error: narrow.error })
-      candidateMessageIds = narrow.messageIds.slice()
+  if (knownSenderMessageIds.length === 0) {
+    const tokens = extractVendorTokens(desc)
+    if (tokens.length > 0) {
+      const receiptKeywords = '(receipt OR invoice OR חשבונית OR קבלה)'
+      // Gmail ANDs space-separated terms, so a trailing bank-generated reference
+      // code (e.g. "GOOGLE CLOUD VPD8D2") poisons the query — the real invoice
+      // email will never contain that code. Try progressively fewer trailing
+      // tokens (3 → 2 → 1) before giving up on the vendor-token search entirely,
+      // since the earliest tokens are the actual vendor name and the noise (if
+      // any) tends to trail.
+      for (let n = tokens.length; n >= 1 && candidateMessageIds.length === 0; n--) {
+        const subset = tokens.slice(0, n)
+        const narrowQuery = `${subset.join(' ')} ${receiptKeywords} ${dateRange}`
+        log('vendor+receipt search · tokens:', subset, '· query:', narrowQuery)
+        const narrow = await searchMessages(narrowQuery, { searchAllMail: true, maxResults: 5 })
+        log('vendor+receipt search →', { count: narrow.messageIds.length, error: narrow.error })
+        candidateMessageIds = narrow.messageIds.slice()
 
-      // Fallback: if the receipt-keyword query missed it, broaden to vendor-only.
-      if (candidateMessageIds.length === 0) {
-        const broadVendorQuery = `${subset.join(' ')} ${dateRange}`
-        log('vendor-only search · query:', broadVendorQuery)
-        const broad = await searchMessages(broadVendorQuery, { searchAllMail: true, maxResults: 5 })
-        log('vendor-only search →', { count: broad.messageIds.length, error: broad.error })
-        candidateMessageIds = broad.messageIds.slice()
+        // Fallback: if the receipt-keyword query missed it, broaden to vendor-only.
+        if (candidateMessageIds.length === 0) {
+          const broadVendorQuery = `${subset.join(' ')} ${dateRange}`
+          log('vendor-only search · query:', broadVendorQuery)
+          const broad = await searchMessages(broadVendorQuery, { searchAllMail: true, maxResults: 5 })
+          log('vendor-only search →', { count: broad.messageIds.length, error: broad.error })
+          candidateMessageIds = broad.messageIds.slice()
+        }
       }
+    } else {
+      log('no vendor tokens extracted from description')
     }
   } else {
-    log('no vendor tokens extracted from description')
-  }
-
-  // Known-sender candidates go first (highest precision, verified in order
-  // by tryCandidate below); dedupe against the token-search results.
-  if (knownSenderMessageIds.length > 0) {
-    candidateMessageIds = Array.from(new Set([...knownSenderMessageIds, ...candidateMessageIds]))
-    log('merged known-sender + vendor-token candidates →', candidateMessageIds)
+    log('known-sender search already found candidates — skipping the vendor-token cascade entirely')
+    candidateMessageIds = Array.from(new Set(knownSenderMessageIds))
   }
 
   // If the vendor-name search yielded nothing, fall back to broad date-range

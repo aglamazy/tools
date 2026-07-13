@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Modal from '@/app/components/Modal'
 import { db, type Supplier } from '@/app/db/financeDB'
+import SupplierCardModal from './SupplierCardModal'
 
 type SupplierListModalProps = {
   isOpen: boolean
@@ -13,6 +14,7 @@ export default function SupplierListModal({ isOpen, onClose }: SupplierListModal
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState('')
+  const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null)
 
   useEffect(() => {
     if (!isOpen) return
@@ -74,7 +76,15 @@ export default function SupplierListModal({ isOpen, onClose }: SupplierListModal
               <tbody>
                 {filtered.map((s) => (
                   <tr key={s.id}>
-                    <td style={{ fontWeight: 600 }}>{s.name}</td>
+                    <td>
+                      <button
+                        onClick={() => setEditingSupplier(s)}
+                        style={{ fontWeight: 600, color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 'inherit', textDecoration: 'underline', textDecorationStyle: 'dotted' }}
+                        title="לחץ לצפייה/עריכה"
+                      >
+                        {s.name}
+                      </button>
+                    </td>
                     <td style={{ fontSize: '0.8rem', color: '#475569' }}>{s.bankCardAliases.join(', ')}</td>
                     <td style={{ fontSize: '0.8rem', color: '#475569' }}>
                       {s.emailSenders.length > 0 ? s.emailSenders.join(' · ') : <span style={{ color: '#cbd5e1' }}>—</span>}
@@ -89,6 +99,16 @@ export default function SupplierListModal({ isOpen, onClose }: SupplierListModal
           {filtered.length} מתוך {suppliers.length}
         </p>
       </div>
+
+      {editingSupplier && (
+        <SupplierCardModal
+          supplier={editingSupplier}
+          onClose={() => setEditingSupplier(null)}
+          onSaved={(updated) => {
+            setSuppliers((prev) => prev.map((s) => (s.id === updated.id ? updated : s)))
+          }}
+        />
+      )}
     </Modal>
   )
 }
