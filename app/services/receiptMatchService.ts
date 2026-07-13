@@ -5,6 +5,7 @@
 import { db, type ExpenseDocument } from '@/app/db/financeDB'
 import { searchMessages, fetchMessagesMetadata, fetchMessageBody, fetchFirstPdfAttachment } from '@/app/services/gmailService'
 import { uploadExpenseDocument } from '@/app/services/googleDriveService'
+import { findSupplierByAlias, addEmailSenderToSupplier } from '@/app/services/supplierService'
 
 /**
  * Parse a transaction date string in any of the formats we store:
@@ -145,6 +146,23 @@ export async function matchReceiptForTransaction(
 
   log('start', { date: tx.date, amount: tx.amount, dateRange })
 
+  // Known-supplier sender search. If a prior match already taught us this
+  // vendor's real invoice sender address(es), search those directly —
+  // deterministic and far more precise than guessing content tokens from a
+  // noisy bank/card description. Tried first; merged ahead of the
+  // vendor-token results below so tryCandidate() verifies these first.
+  let knownSenderMessageIds: string[] = []
+  const knownSupplier = await findSupplierByAlias(desc)
+  if (knownSupplier && knownSupplier.emailSenders.length > 0) {
+    log('known supplier match:', knownSupplier.name, '· trying known senders first:', knownSupplier.emailSenders)
+    for (const sender of knownSupplier.emailSenders) {
+      const senderQuery = `from:${sender} ${dateRange}`
+      const senderResult = await searchMessages(senderQuery, { searchAllMail: true, maxResults: 5 })
+      log('known-sender search →', sender, { count: senderResult.messageIds.length, error: senderResult.error })
+      knownSenderMessageIds.push(...senderResult.messageIds)
+    }
+  }
+
   // Vendor-name + receipt-keyword search. The description IS the vendor name,
   // but a vendor's mail volume can include non-invoice notifications, so we
   // bias the query toward receipt-shaped messages. We collect a small set of
@@ -154,22 +172,38 @@ export async function matchReceiptForTransaction(
   const tokens = extractVendorTokens(desc)
   if (tokens.length > 0) {
     const receiptKeywords = '(receipt OR invoice OR חשבונית OR קבלה)'
-    const narrowQuery = `${tokens.join(' ')} ${receiptKeywords} ${dateRange}`
-    log('vendor+receipt search · tokens:', tokens, '· query:', narrowQuery)
-    const narrow = await searchMessages(narrowQuery, { searchAllMail: true, maxResults: 5 })
-    log('vendor+receipt search →', { count: narrow.messageIds.length, error: narrow.error })
-    candidateMessageIds = narrow.messageIds.slice()
+    // Gmail ANDs space-separated terms, so a trailing bank-generated reference
+    // code (e.g. "GOOGLE CLOUD VPD8D2") poisons the query — the real invoice
+    // email will never contain that code. Try progressively fewer trailing
+    // tokens (3 → 2 → 1) before giving up on the vendor-token search entirely,
+    // since the earliest tokens are the actual vendor name and the noise (if
+    // any) tends to trail.
+    for (let n = tokens.length; n >= 1 && candidateMessageIds.length === 0; n--) {
+      const subset = tokens.slice(0, n)
+      const narrowQuery = `${subset.join(' ')} ${receiptKeywords} ${dateRange}`
+      log('vendor+receipt search · tokens:', subset, '· query:', narrowQuery)
+      const narrow = await searchMessages(narrowQuery, { searchAllMail: true, maxResults: 5 })
+      log('vendor+receipt search →', { count: narrow.messageIds.length, error: narrow.error })
+      candidateMessageIds = narrow.messageIds.slice()
 
-    // Fallback: if the receipt-keyword query missed it, broaden to vendor-only.
-    if (candidateMessageIds.length === 0) {
-      const broadVendorQuery = `${tokens.join(' ')} ${dateRange}`
-      log('vendor-only search · query:', broadVendorQuery)
-      const broad = await searchMessages(broadVendorQuery, { searchAllMail: true, maxResults: 5 })
-      log('vendor-only search →', { count: broad.messageIds.length, error: broad.error })
-      candidateMessageIds = broad.messageIds.slice()
+      // Fallback: if the receipt-keyword query missed it, broaden to vendor-only.
+      if (candidateMessageIds.length === 0) {
+        const broadVendorQuery = `${subset.join(' ')} ${dateRange}`
+        log('vendor-only search · query:', broadVendorQuery)
+        const broad = await searchMessages(broadVendorQuery, { searchAllMail: true, maxResults: 5 })
+        log('vendor-only search →', { count: broad.messageIds.length, error: broad.error })
+        candidateMessageIds = broad.messageIds.slice()
+      }
     }
   } else {
     log('no vendor tokens extracted from description')
+  }
+
+  // Known-sender candidates go first (highest precision, verified in order
+  // by tryCandidate below); dedupe against the token-search results.
+  if (knownSenderMessageIds.length > 0) {
+    candidateMessageIds = Array.from(new Set([...knownSenderMessageIds, ...candidateMessageIds]))
+    log('merged known-sender + vendor-token candidates →', candidateMessageIds)
   }
 
   // If the vendor-name search yielded nothing, fall back to broad date-range
@@ -292,6 +326,10 @@ async function tryCandidate(
       return null
     }
     log('  ↳ url-only invoice sender — saving externalUrl:', ctaUrl)
+    const urlMatchSupplier = await findSupplierByAlias(desc)
+    if (urlMatchSupplier && bodyResult.from) {
+      await addEmailSenderToSupplier(urlMatchSupplier.id!, bodyResult.from)
+    }
     return {
       transactionId: tx.id,
       fileName: extracted.documentTitle || extracted.vendor || 'invoice',
@@ -399,6 +437,11 @@ async function tryCandidate(
     if (!uploaded.webViewLink) {
       log('  ↳ drive upload did not produce a link — skip')
       return null
+    }
+
+    const driveMatchSupplier = await findSupplierByAlias(desc)
+    if (driveMatchSupplier && bodyResult.from) {
+      await addEmailSenderToSupplier(driveMatchSupplier.id!, bodyResult.from)
     }
 
     return {

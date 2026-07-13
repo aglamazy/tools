@@ -156,6 +156,24 @@ export interface Business {
   updatedAt: string
 }
 
+// Canonical vendor entity — one real-world supplier, many observed aliases.
+// Resolves the "same vendor, different string everywhere" problem: bank/card
+// statements, email senders, and category assignment all reference a vendor
+// by their own loose string; Supplier ties them together by id so a rename,
+// a new alias, or a category link doesn't require touching every consumer.
+export interface Supplier {
+  id?: number
+  syncId?: string
+  businessId?: number // supplier is usually scoped to one business; omit for household-shared vendors
+  name: string // canonical display name, e.g. "Vercel"
+  bankCardAliases: string[] // raw transaction.description/merchant strings seen, e.g. "VERCEL INC."
+  emailSenders: string[] // sender addresses for deterministic invoice search, e.g. "invoice+statements@vercel.com"
+  categoryId?: string // linked Category.id — expenses from this supplier default to this category
+  isForeign?: boolean // no Israeli VAT on their invoices (foreign SaaS vendors etc.)
+  createdAt: string
+  updatedAt?: string
+}
+
 // Harvest (Time Tracking) interfaces
 export interface Project {
   id?: number
@@ -382,6 +400,7 @@ class FinanceDB extends Dexie {
   chats!: Table<Chat, string>
   chatMessages!: Table<ChatMessageRow, string>
   credentials!: Table<CredentialRow, number>
+  suppliers!: Table<Supplier, number>
 
   constructor() {
     super('FinanceDB')
@@ -394,7 +413,7 @@ class FinanceDB extends Dexie {
       'importedFiles', 'transactions', 'tasks', 'financialInstitutions',
       'capitalEntries', 'ypayDocuments', 'expenseDocuments', 'projects', 'harvestTasks',
       'timeEntries', 'taxDocuments', 'advancePayments', 'businessTasks',
-      'chats', 'chatMessages', 'credentials', 'vatPayments',
+      'chats', 'chatMessages', 'credentials', 'vatPayments', 'suppliers',
     ])
 
     // Auto-inject syncId/updatedAt on create/update, and record deletions.
