@@ -356,6 +356,7 @@ export default function HouseholdTab() {
                 >
                   {memberIsOwner ? 'בעלים' : 'חבר/ה'}
                 </span>
+                <span style={{ fontSize: '1rem', color: '#94a3b8' }}>⚙️</span>
               </button>
             )
           })}

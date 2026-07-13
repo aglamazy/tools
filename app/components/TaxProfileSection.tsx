@@ -8,6 +8,7 @@ import { formatDisplayDate } from '@/app/lib/dateUtils'
 import { uploadTaxDocument } from '@/app/services/googleDriveService'
 import { getAccessToken } from '@/app/services/googleTokenService'
 import { getUser } from '@/app/stores/authStore'
+import { normalizeDate } from '@/app/utils/parsers/shared'
 
 export type VatConversion = {
   from: 'exempt' | 'authorized'
@@ -47,6 +48,21 @@ export type TaxProfile = {
   vatReportPeriod?: 1 | 2 // 1=חודשי, 2=דו-חודשי — VAT (מע״מ) reporting cadence for authorized dealer
   taxOrder?: number
   vatConversion?: VatConversion
+}
+
+/**
+ * VAT status effective on a given transaction date — not just "whatever the
+ * dealer is right now". A dealer who converted exempt→authorized (or the
+ * reverse) mid-year has historical transactions on BOTH sides of that date;
+ * applying the current status retroactively to all of them is wrong (e.g.
+ * stripping VAT from a transaction that predates VAT registration). Falls
+ * back to the plain current vatType when no conversion is on record.
+ */
+export function vatTypeForDate(profile: TaxProfile, transactionDate: string): 'exempt' | 'authorized' | undefined {
+  const conversion = profile.vatConversion
+  if (!conversion) return profile.vatType
+  const normalized = normalizeDate(transactionDate) || transactionDate
+  return normalized >= conversion.effectiveDate ? conversion.to : conversion.from
 }
 
 const TAX_PROFILE_LEGACY_KEY = 'taxProfile'

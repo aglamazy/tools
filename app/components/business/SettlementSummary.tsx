@@ -7,7 +7,7 @@ import { subjectStore } from '@/app/stores/subjectStore'
 import { partnerStore, type Partner as Participant } from '@/app/stores/partnerStore'
 import type { BusinessAccessGrant } from '@/app/services/businessShareService'
 import { appSettingsStore, type AccountOwners } from '@/app/stores/appSettingsStore'
-import { getTaxProfile } from '@/app/components/TaxProfileSection'
+import { getTaxProfile, vatTypeForDate, type TaxProfile } from '@/app/components/TaxProfileSection'
 import { VAT_RATE_AUTHORIZED_DEALER, type VatType } from '@/app/lib/vat'
 import { getTransactionAttributedUid } from '@/app/utils/transactionAttribution'
 import { parseDateMs } from '@/app/utils/parsers/shared'
@@ -53,7 +53,10 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
     typeof window !== 'undefined' ? partnerStore.getCachedByBusinessId(businessId) : []
   )
   const [shares, setShares] = useState<BusinessAccessGrant[]>([])
-  const [ownerVatType, setOwnerVatType] = useState<VatType | undefined>(undefined)
+  // Full profile (not just the current vatType) — the owner's VAT status can
+  // change mid-year (vatConversion.effectiveDate), so per-transaction VAT
+  // cleaning needs the whole record, not a single snapshot value.
+  const [ownerTaxProfile, setOwnerTaxProfile] = useState<TaxProfile>({})
   const [accountOwners, setAccountOwners] = useState<AccountOwners>({})
   const [loading, setLoading] = useState(true)
   const [savingTxId, setSavingTxId] = useState<number | null>(null)
@@ -82,7 +85,7 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
 
       const profile = await getTaxProfile(b.userId)
       if (cancelled) return
-      setOwnerVatType(profile.vatType)
+      setOwnerTaxProfile(profile)
 
       const owners = await appSettingsStore.getAccountOwners()
       if (cancelled) return
@@ -200,15 +203,21 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
       .reduce((s, p) => s + (p.sharePercent ?? 0), 0)
     const ownerShare = business.ownerSharePercent ?? Math.max(0, 100 - shareeShareSum)
 
-    // VAT-clean: owner uses their tax profile; sharees default to 'exempt' until
-    // per-partner VAT plumbing is added (TODO: extend partnerStore to surface vatType).
-    const vatTypeOf = (uid: string): VatType | undefined =>
-      uid === ownerUid ? ownerVatType : 'exempt'
+    // VAT-clean: owner's status can change mid-year (vatConversion on file) —
+    // a transaction predating the conversion must use the OLD status, not
+    // whatever the owner is today, so this is date-aware rather than a single
+    // snapshot value. Sharees default to 'exempt' until per-partner VAT
+    // plumbing is added (TODO: extend partnerStore to surface vatType).
+    const vatTypeAt = (uid: string, date: string): VatType | undefined =>
+      uid === ownerUid ? vatTypeForDate(ownerTaxProfile, date) : 'exempt'
+    // Current status only — for the summary table's "סטטוס מע״מ" badge, not money math.
+    const currentVatTypeOf = (uid: string): VatType | undefined =>
+      uid === ownerUid ? ownerTaxProfile.vatType : 'exempt'
 
     return partnerParticipants.map(p => {
       const isOwner = p.uid === ownerUid
       const sharePercent = isOwner ? ownerShare : (p.sharePercent ?? 0)
-      const vatType = vatTypeOf(p.uid)
+      const vatType = currentVatTypeOf(p.uid)
 
       // Attribution: paidByUid → card/bank owner → owner-fallback. Then collapse
       // any non-partner uid (e.g., household-only member) to the owner.
@@ -226,13 +235,14 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
         const gross = Math.abs(t.amount)
         const isIncome = incomeCatNames.has(t.category ?? '')
         const settlementCat = !isIncome ? settlementCategoryByName.get(t.category ?? '') : undefined
+        const txVatType = vatTypeAt(p.uid, t.date)
         // Settlement transfers aren't a taxable event — use the raw amount,
         // not VAT-cleaned, so both sides of the transfer show the same
         // number regardless of either partner's own VAT status.
         if (partnerUid === p.uid) {
-          if (isIncome) received += netOfVat(gross, vatType)
+          if (isIncome) received += netOfVat(gross, txVatType)
           else if (settlementCat) settlementPaid += gross
-          else paid += netOfVat(gross, vatType)
+          else paid += netOfVat(gross, txVatType)
         }
         if (settlementCat?.settlementPartnerUid && toPartnerUid(settlementCat.settlementPartnerUid) === p.uid) {
           settlementReceived += gross
@@ -240,12 +250,12 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
       }
 
       // Partner-paid invoices (no bank tx) always count as expense, attributed
-      // by paidByUid directly. VAT-cleaned with the same per-partner vatType.
+      // by paidByUid directly. VAT-cleaned with the date-aware vatType.
       for (const d of partnerPaidDocs) {
         const partnerUid = toPartnerUid(d.paidByUid)
         if (partnerUid !== p.uid) continue
         const gross = Math.abs(d.amount ?? 0)
-        paid += netOfVat(gross, vatType)
+        paid += netOfVat(gross, vatTypeAt(p.uid, d.date || ''))
       }
 
       return { uid: p.uid, label: p.label, sharePercent, paid, received, settlementPaid, settlementReceived,
@@ -256,7 +266,7 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
       const fairShare = totalNet * (r.sharePercent / 100)
       return { ...r, fairShare, balance: r.netActual - fairShare }
     })
-  }, [business, participants, partnerResolution, transactions, partnerPaidDocs, ownerVatType, incomeCatNames, accountOwners, settlementCategoryByName])
+  }, [business, participants, partnerResolution, transactions, partnerPaidDocs, ownerTaxProfile, incomeCatNames, accountOwners, settlementCategoryByName])
 
   const settlementLine = useMemo(() => {
     if (rows.length < 2) return null
@@ -310,9 +320,9 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
     .map(s => s.uid)
     .filter((u): u is string => typeof u === 'string')
   const renderPartnerUids = new Set<string>(ownerUid ? [ownerUid, ...renderShareeUids] : renderShareeUids)
-  const vatTypeForTx = (resolvedUid: string | undefined): VatType | undefined => {
+  const vatTypeForTx = (resolvedUid: string | undefined, date: string): VatType | undefined => {
     const partnerUid = resolvedUid && renderPartnerUids.has(resolvedUid) ? resolvedUid : ownerUid
-    return partnerUid === ownerUid ? ownerVatType : 'exempt'
+    return partnerUid === ownerUid ? vatTypeForDate(ownerTaxProfile, date) : 'exempt'
   }
 
   // Merge bank txs + partner-paid invoices into one display list, sorted by
@@ -504,7 +514,7 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
                   const resolvedLabel = resolvedUid
                     ? participants.find((p) => p.uid === resolvedUid)?.label ?? '—'
                     : '—'
-                  const vatType = vatTypeForTx(resolvedUid)
+                  const vatType = vatTypeForTx(resolvedUid, d.date || '')
                   const amount = netOfVat(Math.abs(d.amount ?? 0), vatType)
                   return (
                     <tr key={`pp-${d.id}`} style={{ borderBottom: '1px solid #f1f5f9', background: '#fffbeb' }}>
@@ -594,7 +604,7 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
                       )}
                     </td>
                     <td style={{ padding: '0.5rem 0.5rem', textAlign: 'left', whiteSpace: 'nowrap', fontWeight: 500, color: isIncome ? '#16a34a' : '#dc2626' }}>
-                      {isSettlementOnly ? fmt(Math.abs(t.amount)) : fmt(netOfVat(Math.abs(t.amount), vatTypeForTx(resolvedUid)))}
+                      {isSettlementOnly ? fmt(Math.abs(t.amount)) : fmt(netOfVat(Math.abs(t.amount), vatTypeForTx(resolvedUid, t.date)))}
                     </td>
                     <td style={{ padding: '0.5rem 0.5rem', color: '#475569' }}>
                       {resolvedLabel}
