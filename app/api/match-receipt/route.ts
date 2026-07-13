@@ -325,12 +325,19 @@ async function handleExtract(emailBody: string, transaction: TransactionInfo, cl
   }
 
   const data = await response.json()
-  const text = data.content?.[0]?.text ?? ''
+  // data.content[0] isn't reliably the answer — Claude can return other block
+  // types first (e.g. thinking), which have no .text field. Blindly indexing
+  // [0] silently produced an empty string and a useless "Failed to parse"
+  // error with nothing to debug (confirmed live: raw: "" on a real YPAY
+  // extraction that should have worked). Find the actual text block instead.
+  const textBlock = Array.isArray(data.content) ? data.content.find((c: any) => c?.type === 'text') : undefined
+  const text = textBlock?.text ?? ''
 
   try {
     return NextResponse.json(parseClaudeJson(text))
   } catch (parseErr) {
     console.error('[match-receipt] Failed to parse extract response. Raw text (first 800 chars):', text.slice(0, 800))
+    console.error('[match-receipt] Content block types:', Array.isArray(data.content) ? data.content.map((c: any) => c?.type) : typeof data.content)
     console.error('[match-receipt] Parse error:', parseErr)
     return NextResponse.json({ error: 'Failed to parse extraction response', raw: text }, { status: 502 })
   }
@@ -480,12 +487,14 @@ async function handleExtractPdf(pdfBase64: string, transaction: TransactionInfo,
   }
 
   const data = await response.json()
-  const text = data.content?.[0]?.text ?? ''
+  const textBlock = Array.isArray(data.content) ? data.content.find((c: any) => c?.type === 'text') : undefined
+  const text = textBlock?.text ?? ''
 
   try {
     const parsed = parseClaudeJson(text)
     return NextResponse.json(parsed)
   } catch {
+    console.error('[match-receipt] Failed to parse PDF extract response. Content block types:', Array.isArray(data.content) ? data.content.map((c: any) => c?.type) : typeof data.content)
     return NextResponse.json({ error: 'Failed to parse extraction response', raw: text }, { status: 502 })
   }
 }
@@ -553,12 +562,14 @@ async function handleExtractImage(imageBase64: string, mediaType: string, transa
   }
 
   const data = await response.json()
-  const text = data.content?.[0]?.text ?? ''
+  const textBlock = Array.isArray(data.content) ? data.content.find((c: any) => c?.type === 'text') : undefined
+  const text = textBlock?.text ?? ''
 
   try {
     const parsed = parseClaudeJson(text)
     return NextResponse.json(parsed)
   } catch {
+    console.error('[match-receipt] Failed to parse image extract response. Content block types:', Array.isArray(data.content) ? data.content.map((c: any) => c?.type) : typeof data.content)
     return NextResponse.json({ error: 'Failed to parse extraction response', raw: text }, { status: 502 })
   }
 }
@@ -621,11 +632,12 @@ async function handleExtractVatPayment(payloadBase64: string, mediaType: string 
   }
 
   const data = await response.json()
-  const text = data.content?.[0]?.text ?? ''
+  const textBlock = Array.isArray(data.content) ? data.content.find((c: any) => c?.type === 'text') : undefined
+  const text = textBlock?.text ?? ''
   try {
     return NextResponse.json(parseClaudeJson(text))
   } catch (parseErr) {
-    console.error('[match-receipt] Failed to parse VAT payment extract. Raw:', text.slice(0, 800), 'err:', parseErr)
+    console.error('[match-receipt] Failed to parse VAT payment extract. Raw:', text.slice(0, 800), 'err:', parseErr, 'block types:', Array.isArray(data.content) ? data.content.map((c: any) => c?.type) : typeof data.content)
     return NextResponse.json({ error: 'Failed to parse extraction response', raw: text }, { status: 502 })
   }
 }
