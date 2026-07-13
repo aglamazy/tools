@@ -7,14 +7,15 @@ import { getVatRateForDate } from '@/app/lib/vat'
 import { YpayDocType } from '@/app/services/ypayService'
 import { uploadExpenseDocument } from '@/app/services/googleDriveService'
 import { parseDateFolder } from '@/app/services/receiptMatchService'
+import { normalizeDate } from '@/app/utils/parsers/shared'
 import ExpenseMatchCell from './ExpenseMatchCell'
 
 const ILS = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
 
 function parseDmy(date?: string): Date | null {
-  if (!date) return null
-  const [dd, mm, yyyy] = date.split('/')
-  if (!dd || !mm || !yyyy) return null
+  const normalized = normalizeDate(date)
+  if (!normalized) return null
+  const [yyyy, mm, dd] = normalized.split('-')
   return new Date(Number(yyyy), Number(mm) - 1, Number(dd))
 }
 
