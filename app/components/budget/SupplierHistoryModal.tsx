@@ -59,26 +59,26 @@ export default function SupplierHistoryModal({
 
   return (
     <Modal isOpen onClose={onClose} maxWidth="900px">
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
-          <h3 style={{ fontSize: '1.125rem', fontWeight: 600, color: '#0f172a', margin: 0 }}>{business}</h3>
-          <select
-            value={year}
-            onChange={(e) => setYear(e.target.value)}
-            style={{
-              padding: '0.4rem 0.6rem',
-              borderRadius: '0.375rem',
-              border: '1px solid #d1d5db',
-              fontSize: '0.875rem',
-            }}
-          >
-            <option value="all">כל השנים</option>
-            {availableYears.map((y) => (
-              <option key={y} value={y}>{y}</option>
-            ))}
-          </select>
-        </div>
+      <div className="modal-header" style={{ paddingLeft: '3rem' }}>
+        <h2>{business}</h2>
+        <select
+          value={year}
+          onChange={(e) => setYear(e.target.value)}
+          style={{
+            padding: '0.4rem 0.6rem',
+            borderRadius: '0.375rem',
+            border: '1px solid #d1d5db',
+            fontSize: '0.875rem',
+          }}
+        >
+          <option value="all">כל השנים</option>
+          {availableYears.map((y) => (
+            <option key={y} value={y}>{y}</option>
+          ))}
+        </select>
+      </div>
 
+      <div className="modal-body">
         {loading ? (
           <p style={{ color: '#64748b', textAlign: 'center', padding: '1rem' }}>טוען...</p>
         ) : filtered.length === 0 ? (
@@ -125,7 +125,7 @@ export default function SupplierHistoryModal({
                 </tbody>
               </table>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem', color: '#374151' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem', color: '#374151', marginTop: '1rem' }}>
               <span>{filtered.length} עסקאות</span>
               <span style={{ fontWeight: 600 }}>
                 סה"כ: {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(total)}
