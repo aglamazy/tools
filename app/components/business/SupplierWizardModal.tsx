@@ -44,6 +44,8 @@ export default function SupplierWizardModal({ isOpen, onClose }: SupplierWizardM
   const [proposals, setProposals] = useState<SupplierMatchProposal[]>([])
   const [checked, setChecked] = useState<Record<string, boolean>>({})
   const [summary, setSummary] = useState('')
+  const [sweptCount, setSweptCount] = useState(0)
+  const [matchProgress, setMatchProgress] = useState<{ done: number; total: number } | null>(null)
 
   const actionable = proposals.filter((p) => p.action !== 'no-match')
   const checkedCount = actionable.filter((p) => checked[p.id]).length
@@ -68,6 +70,8 @@ export default function SupplierWizardModal({ isOpen, onClose }: SupplierWizardM
     }
 
     setPhase('sweeping')
+    setSweptCount(0)
+    setMatchProgress(null)
     const sweepResult = await sweepGmailForInvoices(monthsBack)
     if (sweepResult.error) {
       setError(sweepResult.error)
@@ -79,10 +83,13 @@ export default function SupplierWizardModal({ isOpen, onClose }: SupplierWizardM
       setPhase('idle')
       return
     }
+    setSweptCount(sweepResult.candidates.length)
 
     setPhase('matching')
     try {
-      const matchResult = await matchCandidatesToSuppliers(sweepResult.candidates)
+      const matchResult = await matchCandidatesToSuppliers(sweepResult.candidates, (done, total) => {
+        setMatchProgress({ done, total })
+      })
       if (matchResult.error) {
         setError(matchResult.error)
         setPhase('idle')
@@ -171,6 +178,18 @@ export default function SupplierWizardModal({ isOpen, onClose }: SupplierWizardM
             {phase === 'sweeping' ? 'סורק מיילים…' : phase === 'matching' ? 'מתאים ספקים…' : 'התחל סריקה'}
           </button>
         </div>
+
+        {phase === 'sweeping' && (
+          <p style={{ color: '#6b7280', fontSize: '0.8rem', marginBottom: '0.75rem' }}>
+            מחפש חשבוניות ב-Gmail…
+          </p>
+        )}
+        {phase === 'matching' && (
+          <p style={{ color: '#6b7280', fontSize: '0.8rem', marginBottom: '0.75rem' }}>
+            {sweptCount} מיילים נמצאו · מתאים ספקים
+            {matchProgress ? ` — קבוצה ${matchProgress.done}/${matchProgress.total}` : '…'}
+          </p>
+        )}
 
         {error && (
           <p style={{ color: '#ef4444', fontSize: '0.875rem', background: '#fef2f2', padding: '0.5rem 0.75rem', borderRadius: '0.375rem' }}>

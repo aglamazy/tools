@@ -17,7 +17,8 @@ const BATCH_SIZE = 12
  * sequentially (not in parallel) to stay under Gmail/LLM rate limits.
  */
 export async function matchCandidatesToSuppliers(
-  candidates: GmailInvoiceCandidate[]
+  candidates: GmailInvoiceCandidate[],
+  onProgress?: (done: number, total: number) => void
 ): Promise<{ proposals: SupplierMatchProposal[]; error?: string }> {
   const allSuppliers = await db.suppliers.toArray()
   const suppliers = allSuppliers
@@ -30,6 +31,8 @@ export async function matchCandidatesToSuppliers(
 
   const proposals: SupplierMatchProposal[] = []
   const errors: string[] = []
+  const totalBatches = Math.ceil(candidates.length / BATCH_SIZE)
+  onProgress?.(0, totalBatches)
 
   for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
     const batch = candidates.slice(i, i + BATCH_SIZE)
@@ -48,6 +51,8 @@ export async function matchCandidatesToSuppliers(
       proposals.push(...(json.proposals ?? []))
     } catch (err: unknown) {
       errors.push(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      onProgress?.(i / BATCH_SIZE + 1, totalBatches)
     }
   }
 
