@@ -138,6 +138,11 @@ type ExpenseRow = {
   sharePercent: number
   hasDoc: boolean
   docUrl?: string
+  // Attached AND actually extracted (real amount/VAT data present) — distinct
+  // from hasDoc, which is also true for a bare doc link with nothing
+  // extracted (e.g. a stalled/failed extraction from before the amount-
+  // extraction fixes). "Handled" is the noise this filter hides.
+  isHandled: boolean
 }
 
 export default function TaxVatSection({
@@ -159,6 +164,7 @@ export default function TaxVatSection({
   const [uploadError, setUploadError] = useState<string>('')
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null)
   const [showZeroVatRows, setShowZeroVatRows] = useState(true)
+  const [showHandledRows, setShowHandledRows] = useState(true)
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null)
   // Local edits (e.g. fixing a wrongly-attributed transaction) applied on top
   // of the `transactions` prop — the parent owns the real fetch/refresh cycle,
@@ -362,6 +368,7 @@ export default function TaxVatSection({
         sharePercent,
         hasDoc: !!linkedDoc,
         docUrl: linkedDoc?.driveWebViewLink || linkedDoc?.externalUrl,
+        isHandled: !!linkedDoc && (linkedDoc.amount != null || linkedDoc.vatAmount != null),
       })
     }
     rows.sort((a, b) => a.date.getTime() - b.date.getTime())
@@ -376,14 +383,20 @@ export default function TaxVatSection({
 
   const missingDocCount = expenseRows.filter(r => !r.hasDoc).length
   const zeroVatCount = expenseRows.filter(r => r.hasDoc && r.inputVat === 0).length
+  const handledCount = expenseRows.filter(r => r.isHandled).length
 
-  // Rows with a matched document confirming zero VAT (e.g. foreign vendors like
-  // Vercel that charge none) contribute nothing to input VAT and are usually just
-  // noise in a report whose whole point is reclaimable VAT — but hiding them
-  // silently made a real match ("did the search find anything?") indistinguishable
-  // from "nothing happened", so this is a UI toggle, not a hardcoded filter.
+  // Two independent noise filters, both UI toggles (not hardcoded) since
+  // hiding silently makes a real match indistinguishable from "nothing
+  // happened":
+  //  - zero-VAT: hasDoc with confirmed ₪0 input VAT (e.g. foreign vendors).
+  //  - handled: attached AND actually extracted (real amount/VAT present) —
+  //    a broader "nothing left to do here" than zero-VAT specifically.
   // Undocumented rows are always visible regardless (still pending).
-  const visibleExpenseRows = showZeroVatRows ? expenseRows : expenseRows.filter(r => !(r.hasDoc && r.inputVat === 0))
+  const visibleExpenseRows = expenseRows.filter(r => {
+    if (!showZeroVatRows && r.hasDoc && r.inputVat === 0) return false
+    if (!showHandledRows && r.isHandled) return false
+    return true
+  })
 
   const ratesInWindow = useMemo(() => {
     const set = new Set<number>()
@@ -622,11 +635,21 @@ export default function TaxVatSection({
       <SectionBlock
         title={`הוצאות מוכרות (${visibleExpenseRows.length})${missingDocCount ? ` · ${missingDocCount} ללא מסמך ⚠️` : ''}`}
         headerExtra={
-          zeroVatCount > 0 && (
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', color: '#64748b', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-              <input type="checkbox" checked={showZeroVatRows} onChange={(e) => setShowZeroVatRows(e.target.checked)} />
-              הצג {zeroVatCount} הוצאות עם 0 מע״מ
-            </label>
+          (zeroVatCount > 0 || handledCount > 0) && (
+            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+              {zeroVatCount > 0 && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', color: '#64748b', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                  <input type="checkbox" checked={showZeroVatRows} onChange={(e) => setShowZeroVatRows(e.target.checked)} />
+                  הצג {zeroVatCount} הוצאות עם 0 מע״מ
+                </label>
+              )}
+              {handledCount > 0 && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', color: '#64748b', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                  <input type="checkbox" checked={showHandledRows} onChange={(e) => setShowHandledRows(e.target.checked)} />
+                  הצג {handledCount} הוצאות מטופלות
+                </label>
+              )}
+            </div>
           )
         }
       >
