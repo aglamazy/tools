@@ -335,6 +335,13 @@ export default function TaxVatSection({
 
   const missingDocCount = expenseRows.filter(r => !r.hasDoc).length
 
+  // Rows with a matched document confirming zero VAT (e.g. foreign vendors like
+  // Vercel that charge none) contribute nothing to input VAT — keep them out of
+  // this table entirely; they're not actionable and just add noise to a report
+  // whose whole point is reclaimable VAT. Undocumented rows stay visible (still
+  // pending, might turn into real credit once a document is matched).
+  const visibleExpenseRows = expenseRows.filter(r => !(r.hasDoc && r.inputVat === 0))
+
   const ratesInWindow = useMemo(() => {
     const set = new Set<number>()
     for (const r of incomeRows) set.add(r.vatRate)
@@ -569,8 +576,8 @@ export default function TaxVatSection({
         )}
       </SectionBlock>
 
-      <SectionBlock title={`הוצאות מוכרות (${expenseRows.length})${missingDocCount ? ` · ${missingDocCount} ללא מסמך ⚠️` : ''}`}>
-        {expenseRows.length === 0 ? (
+      <SectionBlock title={`הוצאות מוכרות (${visibleExpenseRows.length})${missingDocCount ? ` · ${missingDocCount} ללא מסמך ⚠️` : ''}`}>
+        {visibleExpenseRows.length === 0 ? (
           <EmptyHint text="לא נמצאו הוצאות מוכרות בקטגוריות המנוכות מאז התאריך." />
         ) : (
           <table style={tableStyle}>
@@ -586,7 +593,7 @@ export default function TaxVatSection({
               </tr>
             </thead>
             <tbody>
-              {expenseRows.map(r => {
+              {visibleExpenseRows.map(r => {
                 const linked = expenseDocs.find(d => d.transactionId === r.transactionId)
                 return (
                   <tr key={r.key} style={trStyle}>
@@ -619,7 +626,7 @@ export default function TaxVatSection({
               })}
               <tr style={totalRowStyle}>
                 <td style={tdStyle} colSpan={2}>סה״כ</td>
-                <td style={{ ...tdStyle, textAlign: 'left', fontWeight: 700 }}>{ILS(expenseRows.reduce((s, r) => s + r.amount, 0))}</td>
+                <td style={{ ...tdStyle, textAlign: 'left', fontWeight: 700 }}>{ILS(visibleExpenseRows.reduce((s, r) => s + r.amount, 0))}</td>
                 <td style={tdStyle}></td>
                 <td style={tdStyle}></td>
                 <td style={{ ...tdStyle, textAlign: 'left', fontWeight: 700 }}>{ILS(totals.input)}</td>
