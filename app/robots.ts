@@ -8,7 +8,7 @@ const normalizedBase = siteUrl.endsWith('/') ? siteUrl.slice(0, -1) : siteUrl
 
 export default function robots(): MetadataRoute.Robots {
   return {
-    rules: [{ userAgent: '*', allow: '/', disallow: ['/app/', '/admin'] }],
+    rules: [{ userAgent: '*', allow: '/', disallow: ['/app/', '/admin', '/release-notes/'] }],
     sitemap: `${normalizedBase}/sitemap.xml`,
     host: normalizedBase,
   }
