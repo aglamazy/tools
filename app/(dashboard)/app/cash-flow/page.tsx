@@ -5,6 +5,7 @@ import { formatMonthDisplay, addMonths } from '@/app/utils/formatters'
 import { transactionStore } from '@/app/stores/transactionStore'
 import type { Transaction } from '@/app/db/financeDB'
 import * as XLSX from 'xlsx'
+import { normalizeDate, parseDateMs } from '@/app/utils/parsers/shared'
 
 type CreditCardCharge = {
   cardNumber: string
@@ -311,7 +312,10 @@ export default function CashFlowPage() {
                           })),
                           ...expectedFixed.map(f => {
                             // Extract day from previous month's date (DD/MM/YYYY)
-                            const day = f.date ? f.date.split('/')[0] : '01'
+                            const normalized = normalizeDate(f.date)
+                            const day = normalized && /^\d{4}-\d{2}-\d{2}$/.test(normalized)
+                              ? normalized.split('-')[2]
+                              : '01'
                             const fullDate = `${day}/${selectedMonth}` // DD/MM/YYYY
                             return {
                               date: fullDate,
@@ -323,13 +327,7 @@ export default function CashFlowPage() {
 
                         // Sort by date (DD/MM/YYYY format)
                         allExpected.sort((a, b) => {
-                          const [aDay, aMonth, aYear] = a.date.split('/').map(Number)
-                          const [bDay, bMonth, bYear] = b.date.split('/').map(Number)
-
-                          const aDate = new Date(aYear, aMonth - 1, aDay)
-                          const bDate = new Date(bYear, bMonth - 1, bDay)
-
-                          return aDate.getTime() - bDate.getTime()
+                          return parseDateMs(a.date) - parseDateMs(b.date)
                         })
 
                         return allExpected.map((item, index) => {

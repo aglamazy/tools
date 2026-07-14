@@ -21,6 +21,7 @@ import ExpenseMonthSupplierPivot from '@/app/components/business/ExpenseMonthSup
 import DuplicateTransactionsModal from '@/app/components/DuplicateTransactionsModal'
 import type { ExpenseTableRow, MatchStatus } from '@/app/components/business/expenseTabTypes'
 import { useToast } from '@/app/components/ToastContainer'
+import { normalizeDate, parseDateMs } from '@/app/utils/parsers/shared'
 
 type ExpenseTabProps = {
   businessId: number
@@ -132,12 +133,7 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
     }
   }
 
-const parseSortableDate = (date?: string) => {
-  if (!date) return 0
-  const [day, month, year] = date.split('/')
-  const ts = new Date(`${year}-${month}-${day}`).getTime()
-  return Number.isFinite(ts) ? ts : 0
-}
+const parseSortableDate = (date?: string) => parseDateMs(date)
 
   const loadTransactions = async () => {
     const categories = subjectStore.getAll().filter(
@@ -175,9 +171,7 @@ const parseSortableDate = (date?: string) => {
 
     // Sort by date
     expenseTransactions.sort((a, b) => {
-      const [aD, aM, aY] = a.date.split('/')
-      const [bD, bM, bY] = b.date.split('/')
-      return new Date(`${aY}-${aM}-${aD}`).getTime() - new Date(`${bY}-${bM}-${bD}`).getTime()
+      return parseDateMs(a.date) - parseDateMs(b.date)
     })
 
     setTransactions(expenseTransactions)
@@ -444,13 +438,16 @@ const parseSortableDate = (date?: string) => {
       const todayStr = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`
       const extracted = await extractFromFile(cashFile, { date: todayStr, description: 'הוצאה במזומן', amount: 0 }, claudeApiKey)
 
-      // Use extracted date or today, normalize to DD/MM/YYYY
-      let date = extracted.date || todayStr
-      const dateParts = date.split('/')
-      const day = dateParts[0].padStart(2, '0')
-      const monthNum = dateParts[1].padStart(2, '0')
-      const year = dateParts[2].length === 2 ? `20${dateParts[2]}` : dateParts[2]
-      date = `${day}/${monthNum}/${year}`
+      // Use extracted date or today, normalize through the shared parser.
+      const canonicalDate = (() => {
+        const extractedCanonical = normalizeDate(extracted.date)
+        if (extractedCanonical && /^\d{4}-\d{2}-\d{2}$/.test(extractedCanonical)) {
+          return extractedCanonical
+        }
+        return normalizeDate(todayStr) || '1970-01-01'
+      })()
+      const [year, monthNum, day] = canonicalDate.split('-')
+      const date = `${day}/${monthNum}/${year}`
       const month = `${monthNum}/${year}`
       const amount = extracted.amount ? -Math.abs(extracted.amount) : 0
 

@@ -6,6 +6,7 @@ import { subjectStore } from '@/app/stores/subjectStore'
 import { MONTH_NAMES_HE } from '@/app/lib/dateUtils'
 import type { Category } from '@/app/types/category'
 import { pickExpenseLabel } from '@/app/utils/expenseLabel'
+import { normalizeDate } from '@/app/utils/parsers/shared'
 
 type Props = {
   businessId: number
@@ -23,6 +24,16 @@ function supplierLabelForTransaction(t: Transaction, doc?: ExpenseDocument): str
 
 function supplierLabelForDoc(d: ExpenseDocument): string {
   return d.vendor || d.fileName
+}
+
+function getCanonicalDateParts(date?: string): { year: number; month: number } | null {
+  const normalized = normalizeDate(date)
+  if (!normalized || !/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return null
+  const [year, month] = normalized.split('-')
+  const yearNum = Number(year)
+  const monthNum = Number(month)
+  if (!Number.isFinite(yearNum) || !Number.isFinite(monthNum)) return null
+  return { year: yearNum, month: monthNum }
 }
 
 export default function ExpenseMonthSupplierPivot({ businessId }: Props) {
@@ -62,7 +73,10 @@ export default function ExpenseMonthSupplierPivot({ businessId }: Props) {
       // Years available across all matching data, for the year selector.
       const years = new Set<number>()
       for (const t of expenseTransactions) years.add(Number(t.month.split('/')[1]))
-      for (const d of allPartnerDocs) if (d.date) years.add(Number(d.date.split('/')[2]))
+      for (const d of allPartnerDocs) {
+        const parts = getCanonicalDateParts(d.date)
+        if (parts) years.add(parts.year)
+      }
       years.add(currentYear)
 
       const byYearMonth = new Map<string, Map<number, number>>() // supplier -> monthIdx -> sum
@@ -84,10 +98,9 @@ export default function ExpenseMonthSupplierPivot({ businessId }: Props) {
       }
 
       for (const d of allPartnerDocs) {
-        if (!d.date) continue
-        const [, mm, yy] = d.date.split('/')
-        const monthNum = Number(mm)
-        const y = Number(yy)
+        const parts = getCanonicalDateParts(d.date)
+        if (!parts) continue
+        const { year: y, month: monthNum } = parts
         const supplier = supplierLabelForDoc(d)
         addAmount(supplier, monthNum - 1, y, Math.abs(d.amount || 0))
       }
