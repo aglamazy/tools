@@ -1,7 +1,14 @@
 {
-  "storage": {
-    "rules": "storage.rules"
-  },
+  "storage": [
+    {
+      "bucket": "aglamaz-finance.firebasestorage.app",
+      "rules": "storage.rules"
+    },
+    {
+      "bucket": "saliko-prod.firebasestorage.app",
+      "rules": "storage.rules"
+    }
+  ],
   "firestore": {
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"

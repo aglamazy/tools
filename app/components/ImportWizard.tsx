@@ -1,11 +1,12 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import type { ImportedFile } from '@/app/db/financeDB'
+import { db, type ImportedFile } from '@/app/db/financeDB'
 import { formatMonthDisplay } from '@/app/utils/formatters'
 import { requestDirectoryPermission } from '@/app/utils/directoryStorage'
 import { scanDirectoryRecursive } from '@/app/utils/folderScanner'
 import { analyzeImportStatus, type WizardFileEntry, type FileStatus } from '@/app/utils/importWizardAnalyzer'
+import { findBankGaps, findCreditGaps, type GapRange } from '@/app/utils/importGapAnalyzer'
 import { transactionStore } from '@/app/stores/transactionStore'
 
 type ImportWizardProps = {
@@ -19,6 +20,7 @@ export default function ImportWizard({ isOpen, onClose, dirHandle, onFileSelect 
   const [entries, setEntries] = useState<WizardFileEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [gapsByKey, setGapsByKey] = useState<Map<string, GapRange[]>>(new Map())
 
   const entryKey = (e: WizardFileEntry) =>
     `${e.fileType}-${e.month}-${e.accountNumber || e.cardNumber || ''}`
@@ -49,9 +51,34 @@ export default function ImportWizard({ isOpen, onClose, dirHandle, onFileSelect 
     }
   }, [dirHandle])
 
+  const scanGaps = useCallback(async () => {
+    // Pure DB check — runs independently of the folder scan (no dirHandle needed).
+    const allTxns = await db.transactions.toArray()
+    const bankAccounts = new Set(
+      allTxns.filter((t) => t.type === 'bank' && t.accountNumber).map((t) => t.accountNumber!)
+    )
+    const creditCards = new Set(
+      allTxns.filter((t) => t.type === 'credit' && t.cardNumber).map((t) => t.cardNumber!)
+    )
+
+    const map = new Map<string, GapRange[]>()
+    for (const account of bankAccounts) {
+      const gaps = findBankGaps(allTxns, account)
+      if (gaps.length > 0) map.set(`bank|${account}`, gaps)
+    }
+    for (const card of creditCards) {
+      const gaps = findCreditGaps(allTxns, card)
+      if (gaps.length > 0) map.set(`credit-card|${card}`, gaps)
+    }
+    setGapsByKey(map)
+  }, [])
+
   useEffect(() => {
-    if (isOpen) scan()
-  }, [isOpen, scan])
+    if (isOpen) {
+      scan()
+      void scanGaps()
+    }
+  }, [isOpen, scan, scanGaps])
 
   const handleImport = async (entry: WizardFileEntry) => {
     if (!entry.folderFile) return
@@ -135,6 +162,26 @@ export default function ImportWizard({ isOpen, onClose, dirHandle, onFileSelect 
         <div className="modal-body" style={{ maxHeight: '70vh', overflow: 'auto' }}>
           {error && <div className="banner error" style={{ marginBottom: '1rem' }}>{error}</div>}
           {loading && <div className="banner" style={{ marginBottom: '1rem' }}>סורק קבצים...</div>}
+
+          {gapsByKey.size > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
+              {[...gapsByKey.entries()].map(([key, gaps]) => {
+                const [kind, id] = key.split('|')
+                return (
+                  <div key={key} style={{ padding: '0.6rem 0.9rem', background: '#fff7ed', border: '1px solid #fdba74', borderRadius: '0.5rem' }}>
+                    <strong style={{ fontSize: '0.875rem' }}>
+                      ⚠️ {kind === 'bank' ? '🏦 בנק' : '💳 כרטיס אשראי'} {id} — אין קובץ מיובא בטווח זה:
+                    </strong>
+                    {gaps.map((g, i) => (
+                      <div key={i} style={{ fontSize: '0.8rem', color: '#9a3412', marginTop: '0.2rem' }}>
+                        {g.startDate} – {g.endDate}
+                      </div>
+                    ))}
+                  </div>
+                )
+              })}
+            </div>
+          )}
 
           {!loading && entries.length > 0 && (
             <>

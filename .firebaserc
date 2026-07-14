@@ -1,5 +1,8 @@
 {
   "projects": {
-    "default": "aglamaz-finance"
-  }
+    "default": "aglamaz-finance",
+    "saliko-prod": "saliko-prod"
+  },
+  "targets": {},
+  "etags": {}
 }
