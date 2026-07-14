@@ -6,6 +6,7 @@
 
 import { subscribeToAuthState, type AuthUser } from '@/app/services/firebaseAuthService'
 import { userTierStore, UserTier } from '@/app/stores/userTierStore'
+import { clearLocalUserState } from '@/app/services/clearLocalUserState'
 
 export type { AuthUser }
 
@@ -39,11 +40,18 @@ export function initializeAuth() {
   if (unsubscribeFirebase) return // Already initialized
 
   unsubscribeFirebase = subscribeToAuthState((user) => {
+    const wasSignedIn = state.user !== null
+
     if (user) {
       userTierStore.subscribeFirestore(user.uid)
     } else {
       userTierStore.unsubscribeFirestore()
       userTierStore.set(UserTier.FREE)
+      // Sign-out transition (was signed in, now isn't) — wipe local caches so
+      // the next user in this browser doesn't see stale data.
+      if (wasSignedIn) {
+        void clearLocalUserState()
+      }
     }
 
     state = {
