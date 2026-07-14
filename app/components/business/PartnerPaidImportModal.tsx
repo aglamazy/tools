@@ -5,6 +5,7 @@ import { db, type ExpenseDocument } from '@/app/db/financeDB'
 import { uploadExpenseDocument } from '@/app/services/googleDriveService'
 import type { Partner as Participant } from '@/app/stores/partnerStore'
 import type { Category } from '@/app/types/category'
+import { normalizeDate } from '@/app/utils/parsers/shared'
 
 interface PartnerPaidImportModalProps {
   open: boolean
@@ -91,19 +92,21 @@ async function extractFromFile(
 }
 
 function normalizeDateDdMmYyyy(input: string | undefined, fallbackTodayStr: string): string {
-  if (!input) return fallbackTodayStr
-  const parts = input.split('/')
-  if (parts.length !== 3) return fallbackTodayStr
-  const day = parts[0].padStart(2, '0')
-  const month = parts[1].padStart(2, '0')
-  const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2]
+  const normalized = normalizeDate(input)
+  const canonical = normalized && /^\d{4}-\d{2}-\d{2}$/.test(normalized)
+    ? normalized
+    : normalizeDate(fallbackTodayStr)
+
+  if (!canonical || !/^\d{4}-\d{2}-\d{2}$/.test(canonical)) return fallbackTodayStr
+  const [year, month, day] = canonical.split('-')
   return `${day}/${month}/${year}`
 }
 
 function monthFromDateDdMmYyyy(date: string): string {
-  const parts = date.split('/')
-  if (parts.length !== 3) return ''
-  return `${parts[1].padStart(2, '0')}/${parts[2]}`
+  const normalized = normalizeDate(date)
+  if (!normalized || !/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return ''
+  const [year, month] = normalized.split('-')
+  return `${month}/${year}`
 }
 
 export default function PartnerPaidImportModal({

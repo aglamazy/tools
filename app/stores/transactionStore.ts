@@ -5,7 +5,7 @@ import { db, Transaction, ImportedFile } from '@/app/db/financeDB'
 import { addMonths } from '@/app/utils/formatters'
 import { canonicalizeForDedup } from '@/app/utils/dedupKey'
 import { findDuplicateTransactions, type DuplicateGroup } from '@/app/utils/findDuplicateTransactions'
-import { parseDateMs } from '@/app/utils/parsers/shared'
+import { normalizeDate, parseDateMs } from '@/app/utils/parsers/shared'
 
 /**
  * Extract MM/YYYY month from a date string.
@@ -719,7 +719,7 @@ async function getCreditTransactionsForBudget(selectedMonth: string) {
   // Extract cutoff day
   let cutoffDay = 15
   if (currentStatement.length > 0 && currentStatement[0].chargingDate) {
-    cutoffDay = parseInt(currentStatement[0].chargingDate.split('/')[0], 10)
+    cutoffDay = getDayOfMonth(currentStatement[0].chargingDate)
   }
 
   const result: any[] = []
@@ -727,7 +727,7 @@ async function getCreditTransactionsForBudget(selectedMonth: string) {
   // Add transactions from current statement
   currentStatement.forEach((t) => {
     const isInstallment = (t.totalSteps || 1) > 1
-    const transactionDay = parseInt(t.date.split('/')[0], 10)
+    const transactionDay = getDayOfMonth(t.date)
 
     if (isInstallment || transactionDay <= cutoffDay) {
       result.push(formatCreditTransaction(t))
@@ -739,7 +739,7 @@ async function getCreditTransactionsForBudget(selectedMonth: string) {
   nextStatement.forEach((t) => {
     const isNewInstallment = t.currentStep === 1 && (t.totalSteps || 1) > 1
     const isSinglePayment = (t.totalSteps || 1) === 1
-    const transactionDay = parseInt(t.date.split('/')[0], 10)
+    const transactionDay = getDayOfMonth(t.date)
 
     if ((isNewInstallment || isSinglePayment) && transactionDay > cutoffDay && transactionDay <= lastDayOfMonth) {
       result.push(formatCreditTransaction(t))
@@ -761,6 +761,13 @@ function formatCreditTransaction(t: Transaction) {
     installmentInfo: t.totalSteps && t.totalSteps > 1 ? `${t.currentStep}/${t.totalSteps}` : '',
     totalAmount: t.totalAmount || t.amount,
   }
+}
+
+function getDayOfMonth(dateStr?: string): number {
+  const normalized = normalizeDate(dateStr)
+  if (!normalized || !/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return 0
+  const day = Number(normalized.split('-')[2])
+  return Number.isFinite(day) ? day : 0
 }
 
 async function getExpectedFixedTransactions(selectedMonth: string) {
