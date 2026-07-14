@@ -6,9 +6,10 @@ import type { Notification } from '@/app/types/notifications'
 type NotificationCenterProps = {
   notifications: Notification[]
   onClear: () => void
+  onDismiss: (id: string) => void
 }
 
-export default function NotificationCenter({ notifications, onClear }: NotificationCenterProps) {
+export default function NotificationCenter({ notifications, onClear, onDismiss }: NotificationCenterProps) {
   const [isOpen, setIsOpen] = useState(false)
 
   const getEmoji = (type: Notification['type']) => {
@@ -40,6 +41,7 @@ export default function NotificationCenter({ notifications, onClear }: Notificat
     <div style={{ position: 'relative' }}>
       {/* Bell Icon */}
       <button
+        type="button"
         onClick={() => setIsOpen(!isOpen)}
         style={{
           position: 'relative',
@@ -118,6 +120,7 @@ export default function NotificationCenter({ notifications, onClear }: Notificat
               <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>התראות</h3>
               {notifications.length > 0 && (
                 <button
+                  type="button"
                   onClick={onClear}
                   style={{
                     background: 'none',
@@ -178,7 +181,29 @@ export default function NotificationCenter({ notifications, onClear }: Notificat
                         {formatTime(notification.timestamp)}
                       </span>
                     </div>
-                    {notification.href && <span style={{ fontSize: '0.85rem', color: '#3b82f6' }}>{'◀'}</span>}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      {notification.href && <span style={{ fontSize: '0.85rem', color: '#3b82f6' }}>{'◀'}</span>}
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onDismiss(notification.id)
+                        }}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#9ca3af',
+                          cursor: 'pointer',
+                          fontSize: '1rem',
+                          lineHeight: 1,
+                          padding: '0.25rem',
+                        }}
+                        aria-label="Dismiss notification"
+                        title="Dismiss notification"
+                      >
+                        ×
+                      </button>
+                    </div>
                   </div>
                 ))
               )}
