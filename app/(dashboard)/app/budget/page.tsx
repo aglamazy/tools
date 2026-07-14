@@ -7,6 +7,7 @@ import { transactionStore } from '@/app/stores/transactionStore'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { appSettingsStore } from '@/app/stores/appSettingsStore'
 import { getHouseholdInfo } from '@/app/services/householdService'
+import { resolveSupplierDisplayName } from '@/app/services/supplierService'
 import { subscribeToAuth } from '@/app/stores/authStore'
 import type { BudgetTransaction } from '@/app/types/transactions'
 import type { Category } from '@/app/types/category'
@@ -55,6 +56,7 @@ function BudgetPageContent() {
   const [smartAgentOpen, setSmartAgentOpen] = useState(false)
   const [focusedTxId, setFocusedTxId] = useState<string | null>(null)
   const [supplierModal, setSupplierModal] = useState<string | null>(null)
+  const [supplierDisplayNames, setSupplierDisplayNames] = useState<Map<string, string>>(new Map())
   const { sortKey, sortDir, toggleSort, sortTransactions } = useTransactionSort()
 
   // Load household members for card owner filter
@@ -163,6 +165,17 @@ function BudgetPageContent() {
     }
     loadTransactions()
   }, [selectedMonth])
+
+  // Resolve raw business strings to canonical Supplier.name for display only —
+  // the underlying transaction.business grouping key stays the raw string.
+  useEffect(() => {
+    let cancelled = false
+    const businesses = Array.from(new Set(transactions.map((t) => t.business)))
+    Promise.all(businesses.map(async (raw) => [raw, await resolveSupplierDisplayName(raw)] as const)).then((pairs) => {
+      if (!cancelled) setSupplierDisplayNames(new Map(pairs))
+    })
+    return () => { cancelled = true }
+  }, [transactions])
 
   // Build sets of special category names to exclude from daily totals
   const capitalNames = new Set(
@@ -631,7 +644,7 @@ function BudgetPageContent() {
                               style={{ cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }}
                               title="לחץ להיסטוריית עסקאות"
                             >
-                              {transaction.business}
+                              {supplierDisplayNames.get(transaction.business) ?? transaction.business}
                             </span>
                             {isAutoClassified && (
                               <span style={{ marginLeft: '0.5rem', fontSize: '0.875rem' }}>✨</span>

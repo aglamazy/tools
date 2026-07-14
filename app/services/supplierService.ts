@@ -45,3 +45,9 @@ export async function resolveOrCreateSupplier(raw: string): Promise<Supplier> {
   const created = await db.suppliers.get(id)
   return created!
 }
+
+/** Resolve a raw bank/card description to its canonical Supplier.name, falling back to the raw string. */
+export async function resolveSupplierDisplayName(raw: string): Promise<string> {
+  const supplier = await findSupplierByAlias(raw)
+  return supplier?.name ?? raw
+}

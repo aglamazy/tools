@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Modal from '@/app/components/Modal'
 import SubjectSelect from '@/app/components/budget/SubjectSelect'
 import { transactionStore } from '@/app/stores/transactionStore'
+import { resolveSupplierDisplayName } from '@/app/services/supplierService'
 import type { BudgetTransaction } from '@/app/types/transactions'
 import type { Category } from '@/app/types/category'
 
@@ -24,6 +25,7 @@ export default function SupplierHistoryModal({
   const [transactions, setTransactions] = useState<BudgetTransaction[]>([])
   const [loading, setLoading] = useState(true)
   const [year, setYear] = useState<string>(String(new Date().getFullYear()))
+  const [displayName, setDisplayName] = useState(business)
 
   useEffect(() => {
     let cancelled = false
@@ -33,6 +35,14 @@ export default function SupplierHistoryModal({
         setTransactions(rows)
         setLoading(false)
       }
+    })
+    return () => { cancelled = true }
+  }, [business])
+
+  useEffect(() => {
+    let cancelled = false
+    resolveSupplierDisplayName(business).then((name) => {
+      if (!cancelled) setDisplayName(name)
     })
     return () => { cancelled = true }
   }, [business])
@@ -60,7 +70,7 @@ export default function SupplierHistoryModal({
   return (
     <Modal isOpen onClose={onClose} maxWidth="900px">
       <div className="modal-header" style={{ paddingLeft: '3rem' }}>
-        <h2>{business}</h2>
+        <h2>{displayName}</h2>
         <select
           value={year}
           onChange={(e) => setYear(e.target.value)}
