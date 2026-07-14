@@ -1,5 +1,16 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // ~/develop/Aglamaz (the parent dir, Aglamaz-Libs' own repo root) has
+  // acquired its own package.json/package-lock.json — Turbopack's
+  // multi-lockfile auto-detection was climbing up and picking THAT as the
+  // workspace root, resolving deps (e.g. tailwindcss) against the wrong
+  // node_modules and failing `next build`. That silently blocked every
+  // `git push` on this repo (husky's pre-push build check), stranding
+  // commits locally for an unknown stretch (found 2026-07-15, via Hopper's
+  // own auto-push-failing alert). Pin the root explicitly so it can't
+  // wander again regardless of what shows up one level up.
+  turbopack: { root: import.meta.dirname },
+
   // Per-flavor build dir so `dev` and `dev:saliko` can run in parallel
   // without colliding on .next/dev/lock.
   distDir: process.env.NEXT_DIST_DIR || '.next',
