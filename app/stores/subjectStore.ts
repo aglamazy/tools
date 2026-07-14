@@ -209,4 +209,13 @@ export const subjectStore = {
   /** Categories scoped to a specific business. */
   getForBusiness: (businessId: number): Category[] =>
     subjectStore.getAll().filter((c) => c.businessId === businessId),
+
+  /** Wipe — call on logout so the next user can't read stale categories. */
+  clear: (): void => {
+    try {
+      localStorage.removeItem(STORAGE_KEY)
+    } catch (err) {
+      console.error('Error clearing subject store:', err)
+    }
+  },
 }
