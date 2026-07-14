@@ -7,19 +7,46 @@
  * so postbuild stays a no-op outside of production builds.
  */
 
+import fs from 'node:fs'
+import path from 'node:path'
+
 const INDEXNOW_KEY = 'a8c4f6e12b5d9047c3e8f61b4d2a5c9e'
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://aglamazo.com'
 
-const URLS = [
+// Static fallback if the generated sitemap can't be read. Intentionally excludes
+// noindex routes (e.g. /form-filler) — see app/sitemap.ts NOINDEX_ROUTES.
+const FALLBACK_PATHS = [
   '/',
   '/about',
   '/contact',
   '/demo-form',
-  '/form-filler',
   '/guide',
+  '/machshevon',
+  '/madrich',
   '/pricing',
+  '/template',
   '/terms',
-].map((path) => `${SITE_URL}${path}`)
+]
+
+/**
+ * Derive the URL list from the sitemap that Next just prerendered, so IndexNow
+ * always mirrors the real public route set (content hubs + their children
+ * included) instead of drifting from a hand-maintained list. Falls back to the
+ * static list above if the sitemap body isn't on disk.
+ */
+function resolveUrls() {
+  const sitemapBody = path.join(process.cwd(), '.next', 'server', 'app', 'sitemap.xml.body')
+  try {
+    const xml = fs.readFileSync(sitemapBody, 'utf8')
+    const locs = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1].trim())
+    if (locs.length) return [...new Set(locs)]
+  } catch {
+    // fall through to the static list
+  }
+  return FALLBACK_PATHS.map((p) => `${SITE_URL}${p}`)
+}
+
+const URLS = resolveUrls()
 
 const isVercel = process.env.VERCEL === '1'
 const vercelEnv = process.env.VERCEL_ENV

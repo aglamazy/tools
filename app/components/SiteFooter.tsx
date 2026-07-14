@@ -29,6 +29,19 @@ export default function SiteFooter() {
           </div>
         )}
 
+        {/* Content hubs — linked sitewide (not only from the homepage) so every
+            page passes crawl equity to the guides/calculators/templates. These
+            were "URL unknown to Google" precisely because the homepage was their
+            only inbound internal link. */}
+        {!isSaliko && (
+          <div className="site-footer-section">
+            <h4>מדריכים וכלים</h4>
+            <Link href="/madrich">מדריכים לבעל עסק</Link>
+            <Link href="/machshevon">מחשבונים לעצמאי</Link>
+            <Link href="/template">תבניות אקסל חינם</Link>
+          </div>
+        )}
+
         {isSaliko && (
           <div className="site-footer-section">
             <h4>משפטי</h4>
