@@ -17,12 +17,27 @@ import {
  * Saliko-specific (only Saliko ever acts on the user's behalf with stored
  * credentials), and surfacing it under the Aglamazo brand would be misleading.
  */
+const SALIKO_URL = 'https://saliko.co.il'
+
 export const metadata: Metadata = {
   title: `מדיניות פרטיות | ${VARIANT_CONFIG.name}`,
   description: `מדיניות הפרטיות של ${VARIANT_CONFIG.name} — שלוש רמות פרטיות, הסבר מה נשמר ומי ניגש.`,
   alternates: { canonical: '/privacy' },
   robots: { index: VARIANT === 'saliko', follow: VARIANT === 'saliko' },
 }
+
+// BreadcrumbList for the saliko inner page (Home > Privacy) — gives Google a
+// crawlable hierarchy signal that was previously absent on saliko.co.il.
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: VARIANT_CONFIG.name, item: `${SALIKO_URL}/` },
+      { '@type': 'ListItem', position: 2, name: 'מדיניות פרטיות', item: `${SALIKO_URL}/privacy` },
+    ],
+  },
+]
 
 export default function SalikoPrivacyPage() {
   // Hard gate: this page exists only under the Saliko variant. Aglamazo has
@@ -40,6 +55,10 @@ export default function SalikoPrivacyPage() {
         lineHeight: 1.8,
       }}
     >
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
       <h1 style={{ fontSize: '1.75rem', marginBottom: '0.5rem' }}>מדיניות פרטיות</h1>
       <p style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
         גרסה <code>{SALIKO_PRIVACY_VERSION}</code> · לפניות:{' '}

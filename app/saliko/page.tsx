@@ -4,16 +4,50 @@ import { routes } from '@/app/config'
 import { VARIANT_CONFIG } from '@/app/config/variants'
 import ReturningUserRedirect from '@/app/components/ReturningUserRedirect'
 
+const SALIKO_URL = 'https://saliko.co.il'
+
 export const metadata: Metadata = {
   title: `${VARIANT_CONFIG.name} — ${VARIANT_CONFIG.tagline}`,
   description: `${VARIANT_CONFIG.name} — ${VARIANT_CONFIG.homeHero.subheadline}`,
-  alternates: { canonical: 'https://saliko.co.il' },
+  alternates: {
+    canonical: SALIKO_URL,
+    languages: {
+      'he-IL': SALIKO_URL,
+      'x-default': SALIKO_URL,
+    },
+  },
 }
+
+// BreadcrumbList lets Google render a breadcrumb trail in results and
+// strengthens the site-hierarchy signal for saliko.co.il (was missing —
+// only Aglamazo pages carried breadcrumbs).
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: VARIANT_CONFIG.name, item: `${SALIKO_URL}/` },
+    ],
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'WebPage',
+    name: `${VARIANT_CONFIG.name} — ${VARIANT_CONFIG.tagline}`,
+    description: `${VARIANT_CONFIG.name} — ${VARIANT_CONFIG.homeHero.subheadline}`,
+    url: `${SALIKO_URL}/`,
+    inLanguage: 'he-IL',
+    isPartOf: { '@type': 'WebSite', name: VARIANT_CONFIG.name, url: `${SALIKO_URL}/` },
+  },
+]
 
 export default function SalikoLanding() {
   const { name, homeHero } = VARIANT_CONFIG
   return (
     <div className="landing" dir="rtl">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
       <ReturningUserRedirect />
       <section className="landing-hero">
         <h1 className="landing-title">{name}</h1>
