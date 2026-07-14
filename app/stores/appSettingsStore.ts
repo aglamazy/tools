@@ -1,7 +1,8 @@
 // App Settings Store - Uses IndexedDB via Dexie
 
-import { db, AppSettings } from '@/app/db/financeDB'
+import { db } from '@/app/db/financeDB'
 import { config } from '@/app/config'
+import type { Notification, StoredNotification } from '@/app/types/notifications'
 
 export interface CardTypeIndicatorsSettings {
   indicators: string[]
@@ -25,6 +26,60 @@ const DEFAULT_CARD_INDICATORS: CardTypeIndicatorsSettings = {
 const DEFAULT_DRIVE_SYNC_SETTINGS: DriveSyncSettings = {
   frequencyMinutes: config.syncIntervalMinutes,
   standaloneMode: undefined,
+}
+
+const BELL_NOTIFICATIONS_KEY = 'bellNotifications'
+const MAX_BELL_NOTIFICATIONS = 50
+
+type BellNotificationsSetting = {
+  items: StoredNotification[]
+}
+
+const sortBellNotifications = (items: StoredNotification[]) =>
+  [...items].sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+
+const trimBellNotifications = (items: StoredNotification[]) => sortBellNotifications(items).slice(0, MAX_BELL_NOTIFICATIONS)
+
+const isBellNotificationActive = (item: StoredNotification) => !item.clearedAt
+
+const toNotification = (item: StoredNotification): Notification => ({
+  id: item.id,
+  type: item.type,
+  message: item.message,
+  timestamp: new Date(item.timestamp),
+  href: item.href,
+})
+
+const readBellNotificationsSetting = async (): Promise<BellNotificationsSetting> => {
+  const setting = await db.appSettings.where('key').equals(BELL_NOTIFICATIONS_KEY).first()
+  if (!setting) return { items: [] }
+
+  const raw = setting.value as BellNotificationsSetting | StoredNotification[] | null | undefined
+  if (Array.isArray(raw)) {
+    return { items: raw }
+  }
+  if (raw && Array.isArray((raw as BellNotificationsSetting).items)) {
+    return raw as BellNotificationsSetting
+  }
+  return { items: [] }
+}
+
+const writeBellNotificationsSetting = async (setting: BellNotificationsSetting): Promise<void> => {
+  const value = { items: trimBellNotifications(setting.items) }
+  const existing = await db.appSettings.where('key').equals(BELL_NOTIFICATIONS_KEY).first()
+
+  if (existing) {
+    await db.appSettings.update(existing.id!, {
+      value,
+      updatedAt: new Date().toISOString(),
+    })
+  } else {
+    await db.appSettings.add({
+      key: BELL_NOTIFICATIONS_KEY,
+      value,
+      updatedAt: new Date().toISOString(),
+    })
+  }
 }
 
 export const appSettingsStore = {
@@ -329,6 +384,78 @@ export const appSettingsStore = {
     } catch (error) {
       console.error('Error setting defaultPage:', error)
       throw error
+    }
+  },
+
+  /**
+   * Get active bell notifications for the notification center.
+   */
+  getBellNotifications: async (): Promise<Notification[]> => {
+    try {
+      const setting = await readBellNotificationsSetting()
+      return sortBellNotifications(setting.items)
+        .filter(isBellNotificationActive)
+        .map(toNotification)
+    } catch (error) {
+      console.error('Error getting bellNotifications:', error)
+      return []
+    }
+  },
+
+  /**
+   * Append a new bell notification and persist it.
+   */
+  addBellNotification: async (notification: Notification): Promise<void> => {
+    try {
+      const setting = await readBellNotificationsSetting()
+      const nextItems: StoredNotification[] = [
+        {
+          id: notification.id,
+          type: notification.type,
+          message: notification.message,
+          timestamp: notification.timestamp.toISOString(),
+          href: notification.href,
+        },
+        ...setting.items,
+      ]
+
+      await writeBellNotificationsSetting({ items: nextItems })
+    } catch (error) {
+      console.error('Error adding bellNotification:', error)
+    }
+  },
+
+  /**
+   * Mark a single bell notification as cleared.
+   */
+  clearBellNotification: async (notificationId: string): Promise<void> => {
+    try {
+      const setting = await readBellNotificationsSetting()
+      const now = new Date().toISOString()
+      const nextItems = setting.items.map((item) =>
+        item.id === notificationId ? { ...item, clearedAt: item.clearedAt ?? now } : item,
+      )
+
+      await writeBellNotificationsSetting({ items: nextItems })
+    } catch (error) {
+      console.error('Error clearing bellNotification:', error)
+    }
+  },
+
+  /**
+   * Mark all active bell notifications as cleared.
+   */
+  clearBellNotifications: async (): Promise<void> => {
+    try {
+      const setting = await readBellNotificationsSetting()
+      if (setting.items.length === 0) return
+
+      const now = new Date().toISOString()
+      const nextItems = setting.items.map((item) => (isBellNotificationActive(item) ? { ...item, clearedAt: now } : item))
+
+      await writeBellNotificationsSetting({ items: nextItems })
+    } catch (error) {
+      console.error('Error clearing bellNotifications:', error)
     }
   },
 

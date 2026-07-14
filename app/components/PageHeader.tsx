@@ -22,7 +22,7 @@ const ALL_PUBLIC_LINKS = [
 const publicLinks = VARIANT === 'saliko' ? [] : ALL_PUBLIC_LINKS
 
 export default function PageHeader() {
-  const { notifications, clearNotifications } = useToast()
+  const { notifications, clearNotifications, dismissNotification } = useToast()
   const pathname = usePathname()
   const isApp = pathname.startsWith('/app')
 
@@ -43,7 +43,11 @@ export default function PageHeader() {
               <h1>{branding.name}</h1>
             </Link>
             <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-              <NotificationCenter notifications={notifications} onClear={clearNotifications} />
+              <NotificationCenter
+                notifications={notifications}
+                onClear={clearNotifications}
+                onDismiss={dismissNotification}
+              />
               <AuthStatus />
             </div>
           </>

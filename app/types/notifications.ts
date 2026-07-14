@@ -15,3 +15,12 @@ export type Notification = {
   timestamp: Date
   href?: string
 }
+
+export type StoredNotification = {
+  id: string
+  type: ToastType
+  message: string
+  timestamp: string
+  href?: string
+  clearedAt?: string
+}
