@@ -29,11 +29,12 @@ if (!tableMatches) {
 }
 const syncedTables = [...tableMatches[1].matchAll(/'(\w+)'/g)].map(m => m[1])
 
-const LOCALSTORAGE_STORES = [
-  'subjectStore',
-  'timerStore',
-]
-
+// subjectStore + timerStore were the last two localStorage-backed persistent
+// stores (see CLAUDE.md's "No new localStorage-backed stores" rule) — both
+// migrated to real Dexie synced tables (`subjects`/`subjectClassifications`,
+// and appSettings key `activeTimer`) in the subjectStore/timerStore → Dexie
+// migration. No more legacy exceptions remain, so the LOCALSTORAGE_STORES
+// allowlist and its checks below were removed rather than left empty.
 let hasErrors = false
 
 console.log('Checking sync services use SYNCED_DB_TABLES from syncedTables.ts...\n')
@@ -58,58 +59,13 @@ for (const { name, content } of services) {
   }
 }
 
-// Check localStorage stores in backupService
-console.log('\nlocalStorage stores in backupService.ts:')
-for (const store of LOCALSTORAGE_STORES) {
-  const hasExport = backupServiceContent.includes(`${store}.export()`)
-  const hasImport = backupServiceContent.includes(`${store}.import(`)
-
-  if (hasExport && hasImport) {
-    console.log(`  ✅ ${store}`)
-  } else {
-    const missing = [
-      !hasExport && 'export',
-      !hasImport && 'import'
-    ].filter(Boolean).join(', ')
-    console.log(`  ❌ ${store} - missing: ${missing}`)
-    hasErrors = true
-  }
-}
-
-// Anomaly guard: a localStorage store is OUTSIDE the generic Dexie sync path
-// (syncId-merge + deletion ledger), so its incremental-sync import MUST be a
-// per-record MERGE, never a whole-blob overwrite. A blind overwrite let a
-// thinner-but-newer remote clobber the local subjectStore and wiped every
-// business-scoped subject (data-loss incident 2026-07-11). Enforce that the
-// incremental sync (applyMergedBackupService) merges each localStorage store.
-console.log('\nlocalStorage store sync-safety (must MERGE on incremental sync, not overwrite):')
-for (const store of LOCALSTORAGE_STORES) {
-  // timerStore is intentionally NOT imported on incremental sync (local timer
-  // always wins) — only merged-into on full restore. Skip the merge assertion
-  // for stores the incremental sync doesn't touch.
-  const importedIncrementally = applyServiceContent.includes(`${store}.import(`)
-  if (!importedIncrementally) {
-    console.log(`  ⏭️  ${store} — not imported on incremental sync (skip)`)
-    continue
-  }
-  // Require the merge option on the incremental-sync import call.
-  const mergeRe = new RegExp(`${store}\\.import\\([^)]*merge\\s*:\\s*true`)
-  if (mergeRe.test(applyServiceContent)) {
-    console.log(`  ✅ ${store} — incremental sync uses { merge: true }`)
-  } else {
-    console.log(`  ❌ ${store} — incremental sync import is NOT a merge (overwrite = data-loss risk)`)
-    hasErrors = true
-  }
-}
-
 console.log('')
 
 if (hasErrors) {
   console.error('❌ Data-store sync is not safe!')
   console.error('   - All sync services must import SYNCED_DB_TABLES from syncedTables.ts')
-  console.error('   - Every localStorage store imported on incremental sync must MERGE (not overwrite).')
   process.exit(1)
 } else {
-  console.log('✅ Sync services use the SSOT and all localStorage stores merge safely on sync')
+  console.log('✅ Sync services use the SSOT')
   process.exit(0)
 }

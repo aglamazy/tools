@@ -64,9 +64,10 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
   // "רשימת תנועות" below to exactly the transactions that make up that number.
   const [drillDown, setDrillDown] = useState<{ uid: string; label: string; kind: DrillDownKind } | null>(null)
   const [viewDoc, setViewDoc] = useState<ExpenseDocument | null>(null)
+  const [allCategories, setAllCategories] = useState<Category[]>([])
 
   const reloadTransactions = async () => {
-    const cats = subjectStore.getAll().filter(
+    const cats = (await subjectStore.getAll()).filter(
       (c: Category) => (c.type === 'income' || c.type === 'expense') && c.businessId === businessId
     )
     const catNames = new Set(cats.map(c => c.name))
@@ -92,7 +93,10 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
       setAccountOwners(owners)
 
       // Income + expense category names mapped to this business
-      const cats = subjectStore.getAll().filter(
+      const allCats = await subjectStore.getAll()
+      if (cancelled) return
+      setAllCategories(allCats)
+      const cats = allCats.filter(
         (c: Category) => (c.type === 'income' || c.type === 'expense') && c.businessId === businessId
       )
       const catNames = new Set(cats.map(c => c.name))
@@ -132,11 +136,11 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
 
   const incomeCatNames = useMemo(() => {
     return new Set(
-      subjectStore.getAll()
+      allCategories
         .filter((c: Category) => c.type === 'income' && c.businessId === businessId)
         .map(c => c.name)
     )
-  }, [businessId])
+  }, [allCategories, businessId])
 
   // Categories flagged "קיזוז שותפים בלבד" — still count toward settlement
   // (paid/received) but aren't real business expenses, so the per-row list
@@ -147,13 +151,13 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
   // credited on received for the same amount.
   const settlementCategoryByName = useMemo(() => {
     const map = new Map<string, Category>()
-    for (const c of subjectStore.getAll()) {
+    for (const c of allCategories) {
       if (c.type === 'expense' && c.businessId === businessId && c.excludeFromBusinessTotals) {
         map.set(c.name, c)
       }
     }
     return map
-  }, [businessId])
+  }, [allCategories, businessId])
   const settlementOnlyCatNames = useMemo(
     () => new Set(settlementCategoryByName.keys()),
     [settlementCategoryByName]

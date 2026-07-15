@@ -76,6 +76,7 @@ export default function SmartClassifierAgent({ month, onClose, onApplied }: Prop
   const [askIdx, setAskIdx] = useState(0)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [savedSubjectsCount, setSavedSubjectsCount] = useState(0)
+  const [categories, setCategories] = useState<Category[]>([])
   // Map txId → business so we can save rules without searching the original transaction list.
   const businessByTxIdRef = useRef<Map<string, string>>(new Map())
   // Map txId → original transaction so the confident review can show date + amount.
@@ -132,7 +133,8 @@ export default function SmartClassifierAgent({ month, onClose, onApplied }: Prop
           return
         }
 
-        const categories: Category[] = subjectStore.getAll()
+        const categories: Category[] = await subjectStore.getAll()
+        if (!cancelled) setCategories(categories)
 
         if (!cancelled) setLoadingStep('בודק היסטוריית סיווגים...')
 
@@ -475,7 +477,7 @@ export default function SmartClassifierAgent({ month, onClose, onApplied }: Prop
                           <SubjectSelect
                             value=""
                             amount={m.tx.amount}
-                            categories={subjectStore.getAll()}
+                            categories={categories}
                             placeholder="נושא אחר…"
                             skipTaxOptions
                             onChange={(v) => { if (v) onPickOption(v) }}
@@ -568,7 +570,7 @@ export default function SmartClassifierAgent({ month, onClose, onApplied }: Prop
                               <SubjectSelect
                                 value={c.subject}
                                 amount={tx?.amount ?? 0}
-                                categories={subjectStore.getAll()}
+                                categories={categories}
                                 skipTaxOptions
                                 onChange={(next) => {
                                   setConfident((prev) => prev.map((row) => row.txId === c.txId ? { ...row, subject: next } : row))

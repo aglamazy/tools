@@ -78,11 +78,13 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
   const [matchStatus, setMatchStatus] = useState<Record<number, MatchStatus>>({})
   const [matchedDocs, setMatchedDocs] = useState<Record<number, ExpenseDocument[]>>({})
   const [claudeApiKey, setClaudeApiKey] = useState<string>('')
+  const [allCategories, setAllCategories] = useState<Category[]>([])
   const { showToast } = useToast()
 
   useEffect(() => {
     loadBusiness()
     loadClaudeKey()
+    subjectStore.getAll().then(setAllCategories)
   }, [businessId])
 
   useEffect(() => {
@@ -106,7 +108,7 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
   }
 
   const loadAvailableMonths = async () => {
-    const categories = subjectStore.getAll().filter(
+    const categories = (await subjectStore.getAll()).filter(
       (c: Category) => c.type === 'expense' && c.businessId === businessId && !c.excludeFromBusinessTotals
     )
     if (categories.length === 0) {
@@ -136,7 +138,7 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
 const parseSortableDate = (date?: string) => parseDateMs(date)
 
   const loadTransactions = async () => {
-    const categories = subjectStore.getAll().filter(
+    const categories = (await subjectStore.getAll()).filter(
       (c: Category) => c.type === 'expense' && c.businessId === businessId && !c.excludeFromBusinessTotals
     )
     const categoryNames = categories.map(c => c.name)
@@ -615,7 +617,7 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
     return <p>עסק לא נמצא</p>
   }
 
-  const categories = subjectStore.getAll().filter(
+  const categories = allCategories.filter(
     (c: Category) => c.type === 'expense' && c.businessId === businessId
   )
 
@@ -756,7 +758,7 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
         onClose={() => setShowPartnerImportModal(false)}
         businessId={businessId}
         participants={participants}
-        categories={subjectStore.getAll()}
+        categories={allCategories}
         selfUid={getUser()?.uid}
         claudeApiKey={claudeApiKey}
         onImported={(count) => {

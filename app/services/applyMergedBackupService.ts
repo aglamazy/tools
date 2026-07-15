@@ -13,7 +13,6 @@
  */
 
 import { db } from '@/app/db/financeDB'
-import { subjectStore } from '@/app/stores/subjectStore'
 import { initializeAppSettings } from '@/app/services/appSettingsService'
 import type { BackupData } from './backupService'
 import { SYNCED_DB_TABLES, getSyncedDexieTables, getUniqueKeyTables } from './syncedTables'
@@ -26,6 +25,7 @@ const CONTENT_KEY_FNS: Record<string, (r: any) => string> = {
   categories: (r) => `${r.name}|${r.type}`,
   tasks: (r) => `${r.title}|${r.createdAt}`,
   taxDocuments: (r) => `${r.businessId}|${r.month}|${r.fileName}`,
+  subjects: (r) => `${r.name}|${r.type}|${r.businessId ?? 'household'}`,
 }
 
 // Parent→child FK relationships for cloud-only children. Each table may have
@@ -64,6 +64,13 @@ const FK_RELATIONS: Record<string, FkRelation[]> = {
   // y25131 received the Agents Head shared backup but expenses + settlement
   // tabs rendered empty (incomes worked because of a different code path).
   categories: [{ fkField: 'businessId', parentTable: 'businesses' }],
+  // Same rationale as `categories` above, for the new subjectStore-replacement
+  // table — businessId must be remapped per-device or shared-business filters
+  // (ExpenseTab/IncomeTab/SettlementSummary) silently show nothing for a sharee.
+  subjects: [{ fkField: 'businessId', parentTable: 'businesses' }],
+  // transactionId here is a genuine number (see SubjectClassification in
+  // financeDB.ts), same shape as expenseDocuments' transactionId FK.
+  subjectClassifications: [{ fkField: 'transactionId', parentTable: 'transactions' }],
 }
 
 function getTimestamp(record: any): string {
@@ -344,17 +351,19 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
     },
   )
 
-  // Import non-DB stores via a per-record MERGE, never a timestamp-gated
-  // overwrite. The old "import whole blob only if cloud is newer" logic let a
-  // thinner-but-newer remote clobber a richer local subjectStore and wiped
-  // every business-scoped subject (data-loss incident 2026-07-11). Merging
-  // unions both sides so no local-only subject is ever lost — and it runs
-  // unconditionally (both directions are safe under a union).
-  if (cloud.stores.subjectStore) {
-    await subjectStore.import(cloud.stores.subjectStore, { merge: true })
-  }
-  // Local timer always wins — don't restore cloud timer (user may have stopped it locally)
-  // timerStore is only imported during full restore (importAllStores), not incremental sync
+  // subjects/subjectClassifications are now real Dexie synced tables, handled
+  // generically by the transaction loop above (per-record syncId merge +
+  // FK_RELATIONS remap) — no bespoke post-transaction step needed anymore.
+  // The old "import whole blob only if cloud is newer" bespoke logic here is
+  // exactly what let a thinner-but-newer remote clobber a richer local
+  // subjectStore and wipe every business-scoped subject (data-loss incident
+  // 2026-07-11) — the generic per-record merge is the actual fix.
+  //
+  // timerStore's replacement (appSettings key `activeTimer`) is part of the
+  // generic appSettings sync above too. Local timer state winning over an
+  // incoming cloud value on an active session is a UI-layer concern (the
+  // active-timer UI reads its own live state, not a mid-session cloud pull),
+  // not something the storage layer needs to special-case.
 
   await initializeAppSettings()
 }

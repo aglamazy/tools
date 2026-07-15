@@ -352,6 +352,57 @@ export interface VatPayment {
 // Chat persistence (v26) — multi-thread chat with per-message rows.
 // Replaces the old localStorage-only single-thread store. Both tables
 // participate in encrypted sync via SYNCED_DB_TABLES.
+// Dexie-backed replacement for the old localStorage `subjectStore` (key
+// `finance-categories`). `id` keeps the exact string scheme the app has
+// always used for categories (`custom-${Date.now()}`) as the Dexie primary
+// key — not an auto-increment surrogate — so every existing reference
+// (businessCategories, transaction linkage, parentId/subCategories trees)
+// keeps working unchanged. See app/types/category.ts's `Category` for the
+// full field docs; kept in sync deliberately (not imported) since this is
+// the DB row shape, not the domain type import surface.
+export interface Subject {
+  id: string
+  syncId?: string
+  name: string
+  type: 'income' | 'expense'
+  color?: string
+  createdAt?: string
+  isFixed?: boolean
+  isCapital?: boolean
+  isExternal?: boolean
+  isDeductible?: boolean
+  deductibleByMember?: Record<string, number>
+  businessId?: number
+  excludeFromBusinessTotals?: boolean
+  settlementPartnerUid?: string
+  parentId?: string
+  subCategories?: string[]
+  updatedAt?: string
+}
+
+// Dexie-backed replacement for subjectStore's `classifications` array.
+// `id` (auto-increment) is the primary key — required by the generic
+// cross-device merge machinery, which assumes every synced table's PK is
+// named `id`. `transactionId` is a unique secondary index instead: it's a
+// device-local FK into `transactions` (remapped per device via
+// FK_RELATIONS in applyMergedBackupService.ts), so it can't double as the
+// primary key, but &transactionId still DB-enforces the live app's own
+// invariant of at most one classification per transaction.
+export interface SubjectClassification {
+  id?: number
+  transactionId: number
+  syncId?: string
+  categoryId: string
+  monthYear: string
+  classifiedAt: string
+  descriptionKey?: string
+  amount?: number
+  sign?: 'income' | 'expense'
+  matchDeltaPct?: number
+  matchSourceMonthYear?: string
+  amountChangeWarningPct?: number
+}
+
 export interface Chat {
   id: string          // uuid (string PK — not auto-increment)
   syncId?: string
@@ -401,6 +452,8 @@ class FinanceDB extends Dexie {
   chatMessages!: Table<ChatMessageRow, string>
   credentials!: Table<CredentialRow, number>
   suppliers!: Table<Supplier, number>
+  subjects!: Table<Subject, string>
+  subjectClassifications!: Table<SubjectClassification, number>
 
   constructor() {
     super('FinanceDB')
@@ -414,6 +467,7 @@ class FinanceDB extends Dexie {
       'capitalEntries', 'ypayDocuments', 'expenseDocuments', 'projects', 'harvestTasks',
       'timeEntries', 'taxDocuments', 'advancePayments', 'businessTasks',
       'chats', 'chatMessages', 'credentials', 'vatPayments', 'suppliers',
+      'subjects', 'subjectClassifications',
     ])
 
     // Auto-inject syncId/updatedAt on create/update, and record deletions.

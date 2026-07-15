@@ -670,4 +670,25 @@ export function defineSchemaVersions(db: Dexie): void {
     vatPayments: '++id, syncId, userId, periodStart, periodEnd, paymentDate',
     suppliers: '++id, syncId, businessId, name, categoryId, *bankCardAliases, *emailSenders',
   })
+
+  // Replaces the localStorage-backed subjectStore (categories + per-transaction
+  // classifications) with real Dexie synced tables — see Subject/SubjectClassification
+  // in financeDB.ts for the "why" (2026-07-11 whole-blob-overwrite wipe incident).
+  // `subjects.id` keeps subjectStore's existing string id scheme as the Dexie
+  // primary key (not a new auto-increment surrogate), so every existing
+  // reference (businessCategories, transaction linkage, parent/subCategory
+  // trees) keeps working unchanged. `subjectClassifications.transactionId` is
+  // its primary key, matching the one-classification-per-transaction invariant
+  // the old array-based store already enforced.
+  db.version(32).stores({
+    subjects: 'id, syncId, name, type, businessId, [businessId+type]',
+    // ++id (not transactionId) — the generic cross-device merge machinery
+    // (applyMergedBackupService.ts) requires every synced table's primary key
+    // to be named `id`; transactionId is a device-local auto-increment FK
+    // into `transactions` (remapped per-device via FK_RELATIONS) so it can't
+    // double as the primary key. &transactionId enforces the one-
+    // classification-per-transaction invariant as a proper unique index
+    // instead, which getUniqueKeyTables() picks up automatically for dedup.
+    subjectClassifications: '++id, syncId, &transactionId, categoryId, monthYear, [categoryId+monthYear]',
+  })
 }

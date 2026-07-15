@@ -39,7 +39,7 @@
 - Don't commit until user confirms it works in the browser
 - Keep console.log until feature is verified working
 - Use Store classes for data access, not direct localStorage/IndexedDB
-- **No new localStorage-backed stores.** All persistent app state goes in a Dexie synced table (registered in `SYNCED_DB_TABLES`) so it gets the generic syncId-merge + deletion-ledger for free. localStorage stores sit outside that path and sync by whole-blob overwrite — a thinner-but-newer remote wiped every business-scoped subject on 2026-07-11. The two legacy exceptions (`subjectStore`, `timerStore`) are being migrated to Dexie; don't add a third. `scripts/check-backup-stores.js` (pre-commit) fails if a localStorage store's incremental sync isn't a `{ merge: true }` call.
+- **No localStorage-backed stores.** All persistent app state goes in a Dexie synced table (registered in `SYNCED_DB_TABLES`) so it gets the generic syncId-merge + deletion-ledger for free. localStorage stores sit outside that path and sync by whole-blob overwrite — a thinner-but-newer remote wiped every business-scoped subject on 2026-07-11. `subjectStore`/`timerStore` were the last two exceptions; both are now Dexie-backed (`subjects`/`subjectClassifications` tables, and appSettings key `activeTimer`) — no exceptions remain, don't add one.
 - Extension changes: bump version in `extension/manifest.json`
 
 ## Landmines (worker-facing — `task-prepare` copies this into every baked spec)

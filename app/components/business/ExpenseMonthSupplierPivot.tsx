@@ -47,7 +47,7 @@ export default function ExpenseMonthSupplierPivot({ businessId }: Props) {
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      const categories = subjectStore.getAll().filter(
+      const categories = (await subjectStore.getAll()).filter(
         (c: Category) => c.type === 'expense' && c.businessId === businessId && !c.excludeFromBusinessTotals
       )
       const categoryNames = categories.map(c => c.name)

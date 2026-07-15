@@ -131,7 +131,7 @@ function BudgetPageContent() {
       }
 
       // Load categories from settings
-      setCategories(subjectStore.getAll())
+      setCategories(await subjectStore.getAll())
 
       setLoading(false)
     }
@@ -465,7 +465,7 @@ function BudgetPageContent() {
 
           {subjectsDrawerOpen && <SubjectsOverlay onClose={() => {
             setSubjectsDrawerOpen(false)
-            setCategories(subjectStore.getAll())
+            subjectStore.getAll().then(setCategories)
           }} />}
           {smartAgentOpen && selectedMonth && (
             <SmartClassifierAgent month={selectedMonth} onClose={() => setSmartAgentOpen(false)} onApplied={async () => { setTransactions(await transactionStore.getBudgetTransactions(selectedMonth)) }} />

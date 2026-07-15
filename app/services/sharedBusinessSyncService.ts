@@ -142,16 +142,17 @@ async function exportBusinessData(businessSyncId: string): Promise<BackupData | 
     : []
 
   // Source of truth for "categories scoped to this business" is the in-app
-  // subjectStore (localStorage `finance-categories`) — that's where Category
-  // rows carry their `businessId`. The IndexedDB `categories` table is a
-  // sync mirror whose rows currently all have `businessId = null` (the
-  // [[project_business_attribution_hole]]), so a businessId-filter against it
-  // returns 0 — which is why pre-fix sharees got empty Expenses/Income tabs.
+  // subjectStore (Dexie `subjects` table) — that's where Category rows carry
+  // their `businessId`. The old fossil IndexedDB `categories` table (dead
+  // since a one-time historical migration) has its own separate, stale rows
+  // with `businessId = null` (the [[project_business_attribution_hole]]) — a
+  // businessId-filter against IT returns 0, which is why pre-fix sharees got
+  // empty Expenses/Income tabs.
   //
   // We pull AH-scoped categories straight from subjectStore, derive the name
   // list, and also keep any legacy `businessCategories` rows that genuinely
   // mention this business (mostly empty in current data, harmless to ship).
-  const scopedCategories = subjectStore.getForBusiness(businessId)
+  const scopedCategories = await subjectStore.getForBusiness(businessId)
   const categoryNames = Array.from(new Set(
     scopedCategories.map(c => c.name).filter(Boolean)
   ))
@@ -318,7 +319,7 @@ async function applySharedBackup(
   }
 
   // Sharee-side: merge the owner's business-scoped categories into the local
-  // subjectStore (localStorage). Owner-side: skip — owner already authored them.
+  // subjectStore (Dexie). Owner-side: skip — owner already authored them.
   //
   // Categories carry the OWNER's local businessId (e.g. 5); the sharee's local
   // AH business has its own auto-incremented id (e.g. 1). We remap by looking
@@ -330,7 +331,7 @@ async function applySharedBackup(
     if (incomingCats.length > 0) {
       const localBiz = await db.businesses.where('syncId').equals(businessSyncId).first()
       const localBizId = localBiz?.id
-      const raw = subjectStore.getRaw() || { categories: [], classifications: [] }
+      const raw = (await subjectStore.getRaw()) || { categories: [], classifications: [] }
       const existing: any[] = Array.isArray(raw.categories) ? raw.categories : []
       const byId = new Map<string, any>()
       for (const c of existing) if (c?.id) byId.set(String(c.id), c)
@@ -338,7 +339,7 @@ async function applySharedBackup(
         if (!c?.id) continue
         byId.set(String(c.id), localBizId != null ? { ...c, businessId: localBizId } : c)
       }
-      subjectStore.saveAll(Array.from(byId.values()))
+      await subjectStore.saveAll(Array.from(byId.values()))
     }
   }
 

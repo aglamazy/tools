@@ -36,7 +36,7 @@ export default function HomePage() {
   useEffect(() => {
     const loadData = async () => {
       const months = await transactionStore.getAvailableMonths()
-      const categories = subjectStore.getAll()
+      const categories = await subjectStore.getAll()
       const capitalNames = new Set(
         categories.filter((c) => c.isCapital).map((c) => c.name)
       )
@@ -89,7 +89,7 @@ export default function HomePage() {
     if (!latestMonth) return
     const loadCategories = async () => {
       const transactions = await transactionStore.getBudgetTransactions(latestMonth.monthYear)
-      const categories = subjectStore.getAll()
+      const categories = await subjectStore.getAll()
       const nonDailyNames = new Set(
         categories.filter((c) => c.isCapital || c.isExternal).map((c) => c.name)
       )

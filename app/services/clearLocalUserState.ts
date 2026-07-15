@@ -9,7 +9,7 @@ import { subjectStore } from '@/app/stores/subjectStore'
 import { partnerStore } from '@/app/stores/partnerStore'
 
 export async function clearLocalUserState(): Promise<void> {
-  subjectStore.clear()
+  await subjectStore.clear()
   partnerStore.clear()
   await Promise.all(db.tables.map((table) => table.clear()))
 }

@@ -113,7 +113,7 @@ function AnnualSummarySubTab() {
       ])
 
       // Build business → category names map from subjectStore (income + expense)
-      const categories = subjectStore.getAll() as Category[]
+      const categories = await subjectStore.getAll()
       const catMap = new Map<number, string[]>()
       const expCatMap = new Map<number, string[]>()
       for (const cat of categories) {

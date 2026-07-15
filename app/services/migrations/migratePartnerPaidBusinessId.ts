@@ -81,11 +81,12 @@ export async function migratePartnerPaidBusinessId(
   // canonical Category type from app/types/category for type-safe access.
   const dexieCats = dexieCatsRaw as unknown as Category[]
   // The category that the user picks in PartnerPaidImportModal comes from
-  // `subjectStore` (localStorage key 'finance-categories'), NOT db.categories.
-  // For #74's lookup we union both stores, then resolve by businessId and
+  // `subjectStore` (Dexie `subjects` table), NOT the old fossil db.categories
+  // table (dead since a one-time historical migration; nothing writes to it
+  // anymore). For #74's lookup we union both stores, then resolve by businessId and
   // refuse ambiguous same-name matches so we do not move a doc to the wrong
   // business during a repair pass.
-  const subjectCats = subjectStore.getAll()
+  const subjectCats = await subjectStore.getAll()
 
   const catCandidatesByName = new Map<string, CategoryLookup[]>()
   const addCandidate = (category: Category, source: CategoryLookup['source']) => {

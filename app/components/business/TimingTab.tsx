@@ -237,12 +237,13 @@ export default function TimingTab({ businessId }: TimingTabProps) {
 
   // Load active timer from store
   useEffect(() => {
-    const timer = timerStore.get()
-    if (timer) {
-      setActiveTimer(timer)
-      setSelectedProjectId(timer.projectId)
-      setSelectedTaskId(timer.taskId)
-    }
+    timerStore.get().then((timer) => {
+      if (timer) {
+        setActiveTimer(timer)
+        setSelectedProjectId(timer.projectId)
+        setSelectedTaskId(timer.taskId)
+      }
+    })
   }, [])
 
   // Timer tick
@@ -314,7 +315,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
       startedAt: new Date().toISOString(),
     }
     setActiveTimer(timer)
-    timerStore.set(timer)
+    await timerStore.set(timer)
   }
 
   const handleStartFromEntry = async (entry: WeekEntry) => {
@@ -336,7 +337,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
       startedAt: new Date().toISOString(),
     }
     setActiveTimer(timer)
-    timerStore.set(timer)
+    await timerStore.set(timer)
   }
 
   const loadWeekEntries = async () => {
@@ -423,7 +424,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     // Clear timer immediately so it can't come back via re-render or sync
     const stoppedTimer = activeTimer
     setActiveTimer(null)
-    timerStore.clear()
+    await timerStore.clear()
 
     const hours = elapsedSeconds / 3600
     const today = formatLocalDate(new Date())

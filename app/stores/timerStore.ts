@@ -1,6 +1,13 @@
-// Timer Store - Active timer state in localStorage
+// Timer Store — active timer state, backed by appSettings key `activeTimer`.
+// Was localStorage (key `harvest-active-timer`) until the subjectStore/
+// timerStore → Dexie migration (see financeDB.ts's Subject docs) folded this
+// into the existing appSettings synced table — a single-row settings value
+// fits appSettings' established &key pattern exactly, so no new table was
+// needed. Every method is async now.
 
-const TIMER_STORAGE_KEY = 'harvest-active-timer'
+import { db } from '@/app/db/financeDB'
+
+const TIMER_KEY = 'activeTimer'
 
 export type ActiveTimer = {
   projectId: number
@@ -9,36 +16,38 @@ export type ActiveTimer = {
 }
 
 export const timerStore = {
-  get: (): ActiveTimer | null => {
+  get: async (): Promise<ActiveTimer | null> => {
     try {
-      const stored = localStorage.getItem(TIMER_STORAGE_KEY)
-      if (stored) {
-        return JSON.parse(stored) as ActiveTimer
-      }
-      return null
+      const row = await db.appSettings.where('key').equals(TIMER_KEY).first()
+      return (row?.value as ActiveTimer | undefined) ?? null
     } catch {
-      localStorage.removeItem(TIMER_STORAGE_KEY)
       return null
     }
   },
 
-  set: (timer: ActiveTimer): void => {
-    localStorage.setItem(TIMER_STORAGE_KEY, JSON.stringify(timer))
+  set: async (timer: ActiveTimer): Promise<void> => {
+    const existing = await db.appSettings.where('key').equals(TIMER_KEY).first()
+    if (existing) {
+      await db.appSettings.update(existing.id!, { value: timer, updatedAt: new Date().toISOString() })
+    } else {
+      await db.appSettings.add({ key: TIMER_KEY, value: timer, updatedAt: new Date().toISOString() })
+    }
   },
 
-  clear: (): void => {
-    localStorage.removeItem(TIMER_STORAGE_KEY)
+  clear: async (): Promise<void> => {
+    const existing = await db.appSettings.where('key').equals(TIMER_KEY).first()
+    if (existing) await db.appSettings.delete(existing.id!)
   },
 
-  export: (): ActiveTimer | null => {
+  export: async (): Promise<ActiveTimer | null> => {
     return timerStore.get()
   },
 
-  import: (data: ActiveTimer | null): void => {
+  import: async (data: ActiveTimer | null): Promise<void> => {
     if (data) {
-      timerStore.set(data)
+      await timerStore.set(data)
     } else {
-      timerStore.clear()
+      await timerStore.clear()
     }
   },
 }

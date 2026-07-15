@@ -80,9 +80,9 @@ export default function CategoriesTab() {
     }
   }
 
-  const loadCategories = () => {
+  const loadCategories = async () => {
     try {
-      const cats = subjectStore.getAll()
+      const cats = await subjectStore.getAll()
       if (cats.length > 0) {
         const normalized = cats.map((cat: Category) => ({
           ...cat,

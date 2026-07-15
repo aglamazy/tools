@@ -16,10 +16,9 @@
  */
 
 import { db } from '@/app/db/financeDB'
-import { subjectStore } from '@/app/stores/subjectStore'
-import { timerStore } from '@/app/stores/timerStore'
 import { initializeAppSettings } from '@/app/services/appSettingsService'
 import { SYNCED_DB_TABLES } from './syncedTables'
+import { convertLegacySubjectStoreBlob } from './migrations/legacySubjectStoreConversion'
 
 // Keys we must never ship to cloud backup. Refresh tokens are device-scoped
 // (and security-sensitive); if they get synced and then merged back over a
@@ -56,9 +55,13 @@ export interface BackupData {
     expenseDocuments?: any[]
     advancePayments?: any[]
     vatPayments?: any[]
-    // localStorage data
-    subjectStore: any
-    timerStore: any
+    subjects?: any[]
+    subjectClassifications?: any[]
+    // Legacy shape, kept optional so an OLD backup file (from before the
+    // subjectStore/timerStore → Dexie migration) can still be restored —
+    // see importAllStores' backward-compat block. Never written anymore.
+    subjectStore?: any
+    timerStore?: any
   }
 }
 
@@ -82,13 +85,9 @@ export async function exportAllStores(): Promise<BackupData> {
       }
     })
 
-    // Let stores export their own data
-    const [subjectStoreData, timerStoreData] = await Promise.all([
-      subjectStore.export(),
-      Promise.resolve(timerStore.export()),
-    ])
-    stores.subjectStore = subjectStoreData
-    stores.timerStore = timerStoreData
+    // subjects/subjectClassifications (ex-subjectStore) and the activeTimer
+    // appSettings row (ex-timerStore) are already covered by the generic
+    // SYNCED_DB_TABLES loop above — nothing bespoke to export anymore.
 
     return {
       version: '1.0',
@@ -163,13 +162,23 @@ export async function importAllStores(backup: BackupData): Promise<void> {
       }
     }
 
-    // Let stores import their own data
-    await Promise.all([
-      stores.subjectStore ? subjectStore.import(stores.subjectStore) : Promise.resolve(),
-    ])
-
-    // Import timer (sync, not async)
-    timerStore.import(stores.timerStore ?? null)
+    // Backward-compat: a backup file taken before the subjectStore/timerStore
+    // → Dexie migration still has the old shape. The generic loop above
+    // already imported `subjects`/`subjectClassifications`/`appSettings` if
+    // the backup HAS the new shape (counts.subjects > 0 etc, so the `!data ||
+    // data.length === 0` guard skipped this legacy conversion entirely) — this
+    // only fires for a genuinely old backup.
+    if ((!counts.subjects || counts.subjects === 0) && stores.subjectStore) {
+      const { subjects, subjectClassifications } = convertLegacySubjectStoreBlob(stores.subjectStore)
+      if (subjects.length > 0) await db.subjects.bulkAdd(subjects)
+      if (subjectClassifications.length > 0) await db.subjectClassifications.bulkAdd(subjectClassifications)
+    }
+    if (stores.timerStore) {
+      const existingTimer = await db.appSettings.where('key').equals('activeTimer').first()
+      if (!existingTimer) {
+        await db.appSettings.add({ key: 'activeTimer', value: stores.timerStore, updatedAt: new Date().toISOString() })
+      }
+    }
 
     // Ensure new settings keys exist even if backup predates them
     await initializeAppSettings()

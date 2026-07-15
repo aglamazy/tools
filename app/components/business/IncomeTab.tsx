@@ -51,6 +51,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
   const [sortKey, setSortKey] = useState<'date' | 'party' | 'amount'>('date')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [loading, setLoading] = useState(true)
+  const [allCategories, setAllCategories] = useState<Category[]>([])
   const [creatingDoc, setCreatingDoc] = useState<number | null>(null)
   const [selectingProject, setSelectingProject] = useState<number | null>(null)
   const [projects, setProjects] = useState<Project[]>([])
@@ -161,6 +162,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
       .then(b => getTaxProfile(b?.userId))
       .then(p => setProfileVatType(p.vatType))
     void appSettingsStore.getAccountOwners().then(setAccountOwners)
+    subjectStore.getAll().then(setAllCategories)
   }, [businessId])
 
   // Runs once profileVatType actually resolves (loadOpenInvoices bails early
@@ -215,7 +217,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
 
   const loadAvailableMonths = async () => {
     // Get income categories mapped to this business
-    const categories = subjectStore.getAll().filter(
+    const categories = (await subjectStore.getAll()).filter(
       (c: Category) => c.type === 'income' && c.businessId === businessId
     )
     if (categories.length === 0) {
@@ -245,7 +247,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
   }
 
   const loadTransactions = async () => {
-    const categories = subjectStore.getAll().filter(
+    const categories = (await subjectStore.getAll()).filter(
       (c: Category) => c.type === 'income' && c.businessId === businessId
     )
     const categoryNames = categories.map(c => c.name)
@@ -553,7 +555,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     return <p>עסק לא נמצא</p>
   }
 
-  const categories = subjectStore.getAll().filter(
+  const categories = allCategories.filter(
     (c: Category) => c.type === 'income' && c.businessId === businessId
   )
 

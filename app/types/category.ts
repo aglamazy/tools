@@ -20,7 +20,7 @@ export type Category = {
 }
 
 export type Classification = {
-  transactionId: string
+  transactionId: number
   categoryId: string
   monthYear: string // "MM/YYYY" format
   classifiedAt: string

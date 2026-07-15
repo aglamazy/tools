@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { migrateFromLocalStorage } from '@/app/db/migration'
 import { migrateBusinessCategories } from '@/app/db/businessCategoryMigration'
 import { runNormalizeTransactionsOnce } from '@/app/services/migrations/normalizeTransactions'
+import { runMigrateLegacyLocalStorageStoresOnce } from '@/app/services/migrations/migrateLegacyLocalStorageStores'
 
 export default function MigrationRunner() {
   const [, setMigrationStatus] = useState<'pending' | 'running' | 'success' | 'error'>('pending')
@@ -30,6 +31,9 @@ export default function MigrationRunner() {
 
       // Normalize legacy transaction date/amount formats (one-time)
       await runNormalizeTransactionsOnce()
+
+      // subjectStore/timerStore localStorage → Dexie synced tables (one-time)
+      await runMigrateLegacyLocalStorageStoresOnce()
 
       setMigrationStatus('success')
     }
