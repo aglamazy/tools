@@ -178,6 +178,8 @@ export interface ChatBrainResult {
   attendedCheckoutContext?: AttendedCheckoutContext
   /** Set when a Shufersal trigger_order started a small-step checkout session (#275) — caller must drive add-batch/finalize. */
   checkoutSession?: { checkoutId: string; totalBatches: number; storeLabel: string }
+  /** Set when find_setting resolves to a single confident match (#261). */
+  navigateTo?: { path: string; label: string }
 }
 
 // --- Context builder (per-turn server state injected into the system prompt) ---
@@ -442,5 +444,6 @@ export async function processChatMessage(input: ChatBrainInput): Promise<ChatBra
     anonStoreCreds: toolCtx.anonCredsTouched ? (toolCtx.anonStoreCreds ?? null) : undefined,
     attendedCheckoutContext: toolCtx.attendedCheckout,
     checkoutSession: toolCtx.checkoutSession,
+    navigateTo: toolCtx.navigateTo,
   }
 }

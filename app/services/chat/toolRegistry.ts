@@ -18,6 +18,8 @@ export interface AglamazoToolContext {
   attendedCheckout?: AttendedCheckoutContext;
   /** Set when a Shufersal trigger_order started a small-step checkout session (#275). */
   checkoutSession?: { checkoutId: string; totalBatches: number; storeLabel: string };
+  /** Set when find_setting resolves to a single confident match (#261). */
+  navigateTo?: { path: string; label: string };
   /**
    * C01 same-turn consent defense: whether Tier-3 server-creds consent existed
    * BEFORE this user turn began. Snapshotted once in processChatMessage and
@@ -82,6 +84,10 @@ export function createAglamazoToolRegistry(): {
 
       if (out.checkoutSession) {
         context.checkoutSession = out.checkoutSession;
+      }
+
+      if (out.navigateTo) {
+        context.navigateTo = out.navigateTo;
       }
 
       let stop = false;

@@ -171,6 +171,9 @@ export async function POST(request: NextRequest) {
       // completion via /api/grocery/checkout/add-batch (× totalBatches)
       // then /finalize. See AppChat.tsx's runCheckoutSession().
       ...(result.checkoutSession ? { checkoutSession: result.checkoutSession } : {}),
+      // find_setting resolved to a confident match (#261) — client navigates
+      // there directly. See AppChat.tsx's navigateTo handling.
+      ...(result.navigateTo ? { navigateTo: result.navigateTo } : {}),
     })
   } catch (err) {
     console.error('[AppChat] Error:', err)

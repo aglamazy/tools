@@ -13,6 +13,7 @@ import { selectProduct } from '@/app/services/chat/pendingSearchService'
 import { processChatMessage, handleReset, handleClear } from '@/app/services/chatBrain'
 import { enqueueChatMessage } from '@/app/services/chatQueue'
 import { fireNextCheckoutStep } from '@/app/services/grocery/checkoutContinuation'
+import { APP_URL } from '@/app/services/navConcierge/appUrl'
 import { panicAdmin } from '@/app/services/adminPanic'
 import { VARIANT_CONFIG } from '@/app/config/variants'
 import type { TelegramCallbackQuery, TelegramUpdate, TelegramMessage } from '@/app/services/telegram/types'
@@ -167,6 +168,13 @@ export async function POST(request: NextRequest) {
         telegramChatId: message.chat.id,
         batchIndex: 0,
       })
+    }
+
+    // find_setting (#261): Telegram has no browser to navigate — send the
+    // link as plain text instead (Telegram auto-linkifies URLs). result.reply
+    // above already carries the label + description from the tool's followUp.
+    if (result.navigateTo) {
+      await sendMessage(message.chat.id, `${APP_URL}${result.navigateTo.path}`)
     }
 
   } catch (err: unknown) {

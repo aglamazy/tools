@@ -6,6 +6,17 @@ import type { FunctionDeclaration } from '@/app/services/llm/types'
 
 export const ACTION_DECLARATIONS: FunctionDeclaration[] = [
   {
+    name: 'find_setting',
+    description: 'מצא איפה במערכת מוגדרת/נמצאת הגדרה או מסך מסוים, ונווט לשם. השתמש כששואלים "איפה מוגדר X" / "איפה אני משנה את X" / "קח אותי ל-X" — לגבי הגדרות, מסכי עסק, או מסכי האפליקציה הראשיים (לא מוצרי מכולת). אל תנחש נתיב — אם לא בטוח, קרא לכלי הזה במקום להשיב מהזיכרון.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'מה המשתמש מחפש, בשפה חופשית (למשל "סטטוס מעמ", "פרטי YPAY")' },
+      },
+      required: ['query'],
+    },
+  },
+  {
     name: 'set_session',
     description: 'עדכן מצב סשן — קרא כשהמשתמש משנה חנות פעילה',
     parameters: {
