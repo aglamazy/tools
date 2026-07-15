@@ -53,7 +53,12 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
   {
     id: 'subjects-settings',
     label: 'נושאי הכנסה/הוצאה',
-    synonyms: ['קטגוריות', 'categories', 'subjects', 'תקציב ונושאים'],
+    // "קיזוז" alone is genuinely ambiguous with business-settlement's own
+    // "קיזוז שותפים" synonym below — a bare "איפה הקיזוז" could mean either
+    // this category-level flag or the settlement screen. Listed here
+    // deliberately so find_setting comes back ambiguous (asks which) instead
+    // of silently picking one (surfaced by the #283 test plan, 2026-07-15).
+    synonyms: ['קטגוריות', 'categories', 'subjects', 'תקציב ונושאים', 'קיזוז', 'קיזוז שותפים בלבד', 'excludeFromBusinessTotals'],
     path: '/app/settings?tab=categories',
     description: 'ניהול נושאי הכנסה/הוצאה, כולל דגל "קיזוז שותפים בלבד" (excludeFromBusinessTotals) על כל נושא',
   },

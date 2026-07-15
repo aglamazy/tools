@@ -19,11 +19,12 @@ one test business first (needed for the `requiresBusinessId` cases below).
 | 3 | "קח אותי לנושאים" | Resolves to `subjects-settings`, lands on `/app/settings?tab=categories` | Confirm categories tab selected |
 | 4 | "הכנסות" (single word, business-scoped) | Resolves to `business-income` — same ask-which-business behavior as #2 | Confirm it asks |
 
-## Ambiguous query (2+ real candidates close in score)
+## Disambiguated by exact-length synonym match
 
 | # | Ask | Expect |
 |---|---|---|
-| 5 | "קיזוז" | Matches `business-settlement` (synonym "קיזוז שותפים") but the intended registry ALSO has a category-level קיזוז concept (`excludeFromBusinessTotals`, part of `subjects-settings`'s description, not yet its own synonym) — worth checking whether this comes back ambiguous or confidently picks settlement. If it silently picks one when a real user would find this genuinely ambiguous, that's a registry synonym gap to fix (add "קיזוז" to subjects-settings' synonyms), not a matching-algorithm bug. |
+| 5a | "קיזוז" (bare word) | Fixed 2026-07-15 (Buddy flagged): originally silently matched `business-settlement`, wrong when the user meant the category-level flag. Added "קיזוז" as its own exact synonym on `subjects-settings` too — the scorer favors an exact single-token match over a longer phrase, so this now resolves confidently to `subjects-settings` (categories tab). Verify this is actually the more common intent live — if not, worth reconsidering. |
+| 5b | "קיזוז שותפים" (the 2-word phrase) | Still resolves to `business-settlement` — its own synonym, unaffected by 5a's fix. Confirm both stay correct together, not just in isolation. |
 
 ## Nonsense / not-found queries (must NOT fabricate a path)
 
