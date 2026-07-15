@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react'
+import { useRouter } from 'next/navigation'
 import { useToast } from '@/app/components/ToastContainer'
 import { getIdToken } from '@/app/services/firebaseAuthService'
 import { subscribeToAuth } from '@/app/stores/authStore'
@@ -321,6 +322,7 @@ async function runAttendedCheckout(ctx: AttendedCheckoutContext): Promise<{ succ
 
 export default function AppChat() {
   const { showToast } = useToast()
+  const router = useRouter()
   const [messages, setMessages] = useState<Message[]>([])
   const [pendingSelections, setPendingSelections] = useState<PendingSelection[]>([])
   const [input, setInput] = useState('')
@@ -481,6 +483,8 @@ export default function AppChat() {
           }
           /** Small-step Shufersal checkout (#275) — client drives add-batch/finalize. */
           checkoutSession?: { checkoutId: string; totalBatches: number; storeLabel: string }
+          /** find_setting resolved to a confident match (#261) — client navigates directly. */
+          navigateTo?: { path: string; label: string }
         }
         try {
           const token = await getIdToken()
@@ -600,6 +604,12 @@ export default function AppChat() {
               setMessages(prev => prev.map(m => m._key === finalKey ? errMsg : m))
               await chatHistoryStore.appendMessage(uid, activeChatId, errMsg)
             }
+          }
+          // find_setting resolved to a confident match (#261) — navigate the
+          // SPA directly. data.reply (already shown above) already carries
+          // the label + description; this just does the actual navigation.
+          if (data.navigateTo) {
+            router.push(data.navigateTo.path)
           }
           setRetryStatus(null)
           return

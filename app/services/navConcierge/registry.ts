@@ -309,12 +309,70 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     path: '/app/business-categories',
     description: 'טבלת ניהול BusinessCategory — שיוך שם קטגוריה גולמי מהבנק לקטגוריה/עסק. אין פרמטרים.',
   },
+
+  // ---------------------------------------------------------------------
+  // Top-level app screens — added post-v1 once task 2 (find_setting) needed
+  // to resolve requests for these too (2026-07-15). Standalone pages, no
+  // tab system, so no tabOwnerFile.
+  // ---------------------------------------------------------------------
+  {
+    id: 'budget',
+    label: 'תקציב',
+    synonyms: ['budget', 'סיווג עסקאות'],
+    path: '/app/budget',
+    description: 'תקציב חודשי וסיווג עסקאות לנושאים.',
+  },
+  {
+    id: 'capital',
+    label: 'הון',
+    synonyms: ['capital', 'חסכונות', 'פנסיה'],
+    path: '/app/capital',
+    description: 'מעקב אחר חסכונות/פנסיה/השקעות.',
+  },
+  {
+    id: 'cash-flow',
+    label: 'תזרים מזומנים',
+    synonyms: ['cash flow', 'תזרים'],
+    path: '/app/cash-flow',
+  },
+  {
+    id: 'credit-cards',
+    label: 'כרטיסי אשראי',
+    synonyms: ['credit cards'],
+    path: '/app/credit-cards',
+  },
+  {
+    id: 'future-payments',
+    label: 'תשלומים עתידיים',
+    synonyms: ['future payments'],
+    path: '/app/future-payments',
+    description: 'תשלומים עתידיים/הוראות קבע.',
+  },
+  {
+    id: 'import-wizard',
+    label: 'ייבוא קבצים',
+    synonyms: ['import', 'ייבוא PDF', 'ייבוא בנק'],
+    path: '/app/import',
+    description: 'ייבוא דפי חשבון/כרטיס אשראי (כולל PDF).',
+  },
+  {
+    id: 'grocery-stores',
+    label: 'חנויות/קניות',
+    synonyms: ['grocery', 'שופרסל', 'קניות'],
+    path: '/app/stores',
+    description: 'הגדרות רשימת קניות אוטומטית וחנויות.',
+  },
+  {
+    id: 'todo',
+    label: 'משימות (מטריצת אייזנהאואר)',
+    synonyms: ['todo', 'tasks', 'מטריצת אייזנהאואר'],
+    path: '/app/todo',
+  },
 ]
 
 /** Follow-up: top-level app screens intentionally left out of v1 (not settings/flow concepts) —
- *  dashboard, import, cash-flow, budget, credit-cards, future-payments, capital, stores, chat,
- *  todo, market-research, gmail, profile, dev-db, admin, guide, about. Add them here if/when
- *  task 2 (navigate tool) needs to resolve requests for those screens too. */
+ *  dashboard, chat, market-research, gmail, profile, dev-db, admin, guide, about. Add them here
+ *  if/when task 2 (navigate tool) needs to resolve requests for those screens too. */
 
 export function findNavEntry(id: string): NavRegistryEntry | undefined {
   return NAV_REGISTRY.find((entry) => entry.id === id)

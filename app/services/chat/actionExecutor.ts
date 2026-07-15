@@ -6,6 +6,7 @@
 import type { ChatAction } from './chatProcessor'
 import { filterSearchResults } from './chatProcessor'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
+import { handleFindSetting } from '@/app/services/navConcierge/findSetting'
 import {
   mergeList,
   type GroceryItem,
@@ -36,7 +37,7 @@ import { getUserStores, setDefaultStore, addActiveStore, getStoreData, addToStor
 import type { OtpStorePlugin, CredentialsStorePlugin, StoreOrder } from '@/app/services/grocery/storeTypes'
 import { preflightOrderSafety, finalizeOrderSuccess, finalizeOrderFailure, checkOrderSize } from '@/app/services/grocery/orderSafety'
 
-import { listTasks, createTask, updateTask, deleteTask, findTasks } from '@/app/services/taskFirestoreService'
+import { TASK_ACTIONS, handleTaskAction } from '@/app/services/chat/taskActionHandler'
 import { deleteMapping, lookupMapping, saveProductMapping } from '@/app/services/grocery/productResolver'
 import { loadLatestPendingSearch, selectProduct, type PendingProductSelection } from './pendingSearchService'
 import { startShufersalCheckout } from '@/app/services/grocery/shufersalCheckoutFlow'
@@ -144,6 +145,8 @@ export interface ActionResult {
    * checkoutOrchestrator.ts) since there's no persistent client to drive it.
    */
   checkoutSession?: { checkoutId: string; totalBatches: number; storeLabel: string }
+  /** Set when find_setting resolves to a single confident match (#261). */
+  navigateTo?: { path: string; label: string }
 }
 
 
@@ -163,6 +166,7 @@ export async function executeActions(
   let anonCredsTouched = false
   let attendedCheckoutContext: AttendedCheckoutContext | undefined
   let checkoutSession: ActionResult['checkoutSession']
+  let navigateTo: ActionResult['navigateTo']
 
   // Same-turn consent defense (C01): use the turn-start consent snapshot threaded
   // in by the caller — NOT a live read here, since toolRegistry calls executeActions
@@ -191,6 +195,7 @@ export async function executeActions(
         if (r.checkoutSession) {
           checkoutSession = r.checkoutSession
         }
+        if (r.navigateTo) navigateTo = r.navigateTo
       } else {
         results.push({ name: action.action, result: 'ok' })
       }
@@ -211,6 +216,7 @@ export async function executeActions(
     anonStoreCreds: anonCredsTouched ? workingAnonCreds ?? null : undefined,
     attendedCheckoutContext,
     checkoutSession,
+    navigateTo,
   }
 }
 
@@ -226,6 +232,8 @@ interface ExecuteOneResult {
   attendedCheckoutContext?: AttendedCheckoutContext
   /** Set when a Shufersal trigger_order started a small-step checkout session (#275). */
   checkoutSession?: ActionResult['checkoutSession']
+  /** Set when find_setting resolves to a single confident match (#261). */
+  navigateTo?: ActionResult['navigateTo']
 }
 
 async function executeOne(
@@ -268,6 +276,9 @@ async function executeOne(
   }
 
   switch (action.action) {
+    case 'find_setting':
+      return handleFindSetting(action.query)
+
     case 'product_details': {
       const productName = typeof action.name === 'string' ? action.name.trim() : ''
       if (!productName) return null
@@ -1059,68 +1070,8 @@ async function executeOne(
       return `חנות ברירת מחדל שונתה ל${store.label}.`
     }
 
-    case 'create_task': {
-      const title = typeof action.title === 'string' ? action.title.trim() : ''
-      if (!title) return 'חסר כותרת למשימה.'
-      const task = await createTask(uid, title, {
-        priority: typeof action.priority === 'string' ? action.priority as any : undefined,
-        quadrant: typeof action.quadrant === 'string' ? action.quadrant as any : undefined,
-        deadline: typeof action.deadline === 'string' ? action.deadline : undefined,
-      })
-      const deadlineStr = task.deadline ? ` (עד ${task.deadline})` : ''
-      return `✅ משימה נוצרה: "${task.title}"${deadlineStr}`
-    }
-
-    case 'list_tasks': {
-      const query = typeof action.query === 'string' ? action.query : ''
-      const tasks = query ? await findTasks(uid, query) : await listTasks(uid)
-      if (tasks.length === 0) return query ? `לא נמצאו משימות עם "${query}".` : 'אין משימות.'
-      const lines = tasks.map(t => {
-        const status = t.completed ? '✓' : '○'
-        const deadline = t.deadline ? ` — עד ${t.deadline}` : ''
-        return `${status} [${t.id.slice(-4)}] ${t.title}${deadline}`
-      })
-      return `משימות${query ? ` (חיפוש: "${query}")` : ''}:\n${lines.join('\n')}`
-    }
-
-    case 'complete_task': {
-      const taskId = typeof action.id === 'string' ? action.id : ''
-      if (!taskId) return 'חסר מזהה משימה.'
-      // Support short id (last 4 chars)
-      const tasks = await listTasks(uid)
-      const task = tasks.find(t => t.id === taskId || t.id.endsWith(taskId))
-      if (!task) return `לא נמצאה משימה עם מזהה "${taskId}".`
-      await updateTask(uid, task.id, { completed: true })
-      return `✅ משימה סומנה כהושלמה: "${task.title}"`
-    }
-
-    case 'update_task': {
-      const taskId = typeof action.id === 'string' ? action.id : ''
-      if (!taskId) return 'חסר מזהה משימה.'
-      const tasks = await listTasks(uid)
-      const task = tasks.find(t => t.id === taskId || t.id.endsWith(taskId))
-      if (!task) return `לא נמצאה משימה עם מזהה "${taskId}".`
-      const updates: Record<string, unknown> = {}
-      if (typeof action.title === 'string') updates.title = action.title.trim()
-      if (typeof action.deadline === 'string') updates.deadline = action.deadline
-      if (typeof action.priority === 'string') updates.priority = action.priority
-      if (typeof action.quadrant === 'string') updates.quadrant = action.quadrant
-      if (typeof action.completed === 'boolean') updates.completed = action.completed
-      await updateTask(uid, task.id, updates as any)
-      return `✏️ משימה עודכנה: "${task.title}"`
-    }
-
-    case 'delete_task': {
-      const taskId = typeof action.id === 'string' ? action.id : ''
-      if (!taskId) return 'חסר מזהה משימה.'
-      const tasks = await listTasks(uid)
-      const task = tasks.find(t => t.id === taskId || t.id.endsWith(taskId))
-      if (!task) return `לא נמצאה משימה עם מזהה "${taskId}".`
-      await deleteTask(uid, task.id)
-      return `🗑️ משימה נמחקה: "${task.title}"`
-    }
-
     default:
+      if (TASK_ACTIONS.has(action.action)) return handleTaskAction(uid, action)
       return null
   }
 }
