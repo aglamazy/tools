@@ -7,6 +7,7 @@
 // plain text, no OCR needed), so gemini-2.5-flash is sufficient and cheaper.
 import { NextRequest, NextResponse } from 'next/server'
 import * as XLSX from 'xlsx'
+import { extractJsonWithFallback } from '@/app/services/llm/extractionLadder'
 import type { XlsExtraction } from '@/app/types/xlsExtraction'
 
 const SYSTEM_PROMPT = `אתה מומחה בקריאת דפי בנק ופירוטי כרטיסי אשראי מכל הבנקים בישראל ובעולם.
@@ -93,34 +94,6 @@ function xlsToText(base64: string): string {
   return sections.join('\n\n')
 }
 
-async function extractViaGemini(tableText: string, geminiApiKey: string): Promise<string> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${geminiApiKey}`
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-      contents: [{ role: 'user', parts: [{ text: tableText }] }],
-      generationConfig: {
-        temperature: 0,
-        maxOutputTokens: 32000,
-        responseMimeType: 'application/json',
-        responseSchema: GEMINI_SCHEMA,
-      },
-    }),
-  })
-
-  if (!res.ok) {
-    const errorBody = await res.text()
-    console.error('[extract-xls-statement] Gemini API error:', res.status, errorBody)
-    throw new Error(`Gemini API error: ${res.status}`)
-  }
-
-  const data = await res.json()
-  const parts = data.candidates?.[0]?.content?.parts
-  return Array.isArray(parts) ? parts.map((p: { text?: string }) => p.text ?? '').join('') : ''
-}
-
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
@@ -128,11 +101,6 @@ export async function POST(req: NextRequest) {
 
     if (!xlsBase64) {
       return NextResponse.json({ error: 'Missing xlsBase64' }, { status: 400 })
-    }
-
-    const geminiApiKey = process.env.GEMINI_API_KEY
-    if (!geminiApiKey) {
-      return NextResponse.json({ error: 'XLS extraction unavailable — Gemini key not configured.' }, { status: 400 })
     }
 
     let tableText: string
@@ -150,30 +118,38 @@ export async function POST(req: NextRequest) {
     const hintSuffix = hint ? `\nסוג מסמך צפוי: ${hint === 'bank' ? 'דף בנק' : 'פירוט אשראי'}.` : ''
     const userMessage = `חלץ את הנתונים הפיננסיים מהגיליון הבא:${hintSuffix}\n\n${tableText}`
 
-    const text = await extractViaGemini(userMessage, geminiApiKey)
-    console.log(`[extract-xls-statement] extracted via gemini, ${text.length} chars`)
+    const result = await extractJsonWithFallback<XlsExtraction>({
+      routeName: 'extract-xls-statement',
+      systemPrompt: SYSTEM_PROMPT,
+      userParts: [{ type: 'text', text: userMessage }],
+      geminiModel: GEMINI_MODEL,
+      geminiMaxTokens: 32000,
+      geminiTemperature: 0,
+      geminiResponseSchema: GEMINI_SCHEMA,
+      anthropicModel: 'claude-sonnet-5',
+      anthropicMaxTokens: 32000,
+      validate: (extraction) => {
+        if (extraction.kind !== 'bank' && extraction.kind !== 'credit') {
+          return 'המסמך אינו דף בנק או פירוט כרטיס אשראי — אנא בדוק את הקובץ שהועלה.'
+        }
+        return null
+      },
+    })
 
-    let extraction: XlsExtraction
-    try {
-      const noFence = text.replace(/```json?\s*/gi, '').replace(/```/g, '')
-      const firstBrace = noFence.indexOf('{')
-      const lastBrace = noFence.lastIndexOf('}')
-      if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
-        throw new Error('no JSON object found in response')
-      }
-      extraction = JSON.parse(noFence.slice(firstBrace, lastBrace + 1)) as XlsExtraction
-    } catch {
-      return NextResponse.json({ error: 'Failed to parse extraction response', raw: text }, { status: 502 })
-    }
-
-    if (extraction.kind !== 'bank' && extraction.kind !== 'credit') {
+    if (!result.ok) {
       return NextResponse.json(
-        { error: 'המסמך אינו דף בנק או פירוט כרטיס אשראי — אנא בדוק את הקובץ שהועלה.', raw: extraction },
-        { status: 422 },
+        {
+          error: result.error,
+          provider: result.provider,
+          providerError: result.providerError ?? true,
+          details: result.details,
+          raw: result.raw,
+        },
+        { status: result.status ?? 422 },
       )
     }
 
-    return NextResponse.json(extraction)
+    return NextResponse.json(result.data)
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error'
     return NextResponse.json({ error: message }, { status: 500 })
