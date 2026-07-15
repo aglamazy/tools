@@ -7,8 +7,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { setUserClaims, getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import { FieldValue } from 'firebase-admin/firestore'
 import { requireTc } from '@/app/lib/apiGuard'
+import { withServiceCall } from '@/app/lib/observe'
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   const guard = await requireTc(request)
   if (guard.error) return guard.error
   const uid = guard.uid
@@ -147,3 +148,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'שגיאת שרת', errorCode: 'unknown' })
   }
 }
+
+export const POST = withServiceCall(POSTHandler)

@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { extractJsonWithFallback, type ExtractionFailure } from '@/app/services/llm/extractionLadder'
 import type { GmailInvoiceCandidate, SupplierMatchProposal } from '@/app/types/supplierWizard'
+import { withServiceCall } from '@/app/lib/observe'
 
 type TransactionInfo = {
   date: string
@@ -80,7 +81,7 @@ ${candidateList}`,
   return NextResponse.json({ candidateIndex: result.data.candidateIndex ?? null, reason: result.data.reason || '' })
 }
 
-export async function POST(req: NextRequest) {
+async function POSTHandler(req: NextRequest) {
   try {
     const body = await req.json()
     const { action } = body
@@ -508,3 +509,5 @@ async function handleExtractVatPayment(payloadBase64: string, mediaType: string 
 
   return NextResponse.json(result.data)
 }
+
+export const POST = withServiceCall(POSTHandler)

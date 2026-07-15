@@ -7,6 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getLLMClient, type LLMProvider, type LLMMessage } from '@/app/services/llm'
+import { withServiceCall } from '@/app/lib/observe'
 
 const SYSTEM_PROMPT = `אתה עוזר למוזיקאים למצוא הזדמנויות קונקרטיות: אודישנים, תחרויות, הופעות, קולות קוראים.
 
@@ -53,7 +54,7 @@ const SYSTEM_PROMPT = `אתה עוזר למוזיקאים למצוא הזדמנ�
 עדכן את הפרומפט בכל תשובה על פי מה שלמדת מהמשתמש.
 ענה תמיד בעברית.`
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   try {
     const { messages, provider, apiKey } = await request.json()
 
@@ -107,3 +108,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'שגיאה בתקשורת עם AI' }, { status: 500 })
   }
 }
+
+export const POST = withServiceCall(POSTHandler)

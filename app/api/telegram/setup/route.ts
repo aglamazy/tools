@@ -7,8 +7,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/app/lib/apiGuard'
 import { setWebhook, deleteWebhook, getWebhookInfo, getMe, isConfigured } from '@/app/services/telegram/telegramClient'
+import { withServiceCall } from '@/app/lib/observe'
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   const guard = await requireAuth(request)
   if (guard.error) return guard.error
   if (guard.tier !== 'owner') {
@@ -54,7 +55,7 @@ export async function POST(request: NextRequest) {
   })
 }
 
-export async function GET(request: NextRequest) {
+async function GETHandler(request: NextRequest) {
   const guard = await requireAuth(request)
   if (guard.error) return guard.error
   if (guard.tier !== 'owner') {
@@ -73,3 +74,6 @@ export async function GET(request: NextRequest) {
     webhook,
   })
 }
+
+export const POST = withServiceCall(POSTHandler)
+export const GET = withServiceCall(GETHandler)

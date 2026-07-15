@@ -1,6 +1,7 @@
 // CALLER-KEYED ROUTE — authenticated via caller's YPAY credentials
 import { NextRequest, NextResponse } from 'next/server'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
+import { withServiceCall } from '@/app/lib/observe'
 
 const BASE_URL = 'https://ypay.co.il/api/v1'
 
@@ -24,7 +25,7 @@ async function getAccessToken(clientId: string, clientSecret: string): Promise<s
   return data.access_token
 }
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   try {
     const body = await request.json()
     const { action, clientId, clientSecret } = body
@@ -236,3 +237,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, message: error.message || 'שגיאת שרת' })
   }
 }
+
+export const POST = withServiceCall(POSTHandler)

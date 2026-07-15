@@ -2,11 +2,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireBotAuth } from '@/app/lib/agentAuth'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
+import { withServiceCall } from '@/app/lib/observe'
 
 type RouteContext = { params: Promise<{ id: string }> }
 
 /** PATCH /api/agent/tasks/[id] — bot updates task status + result */
-export async function PATCH(request: NextRequest, context: RouteContext) {
+async function PATCHHandler(request: NextRequest, context: RouteContext) {
   const auth = await requireBotAuth(request)
   if (auth.error) return auth.error
 
@@ -44,3 +45,5 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
   return NextResponse.json({ success: true })
 }
+
+export const PATCH = withServiceCall(PATCHHandler)

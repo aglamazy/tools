@@ -7,11 +7,12 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getAdminFirestore, getAdminAuth, isAdminConfigured } from '@/app/lib/firebaseAdmin'
+import { withServiceCall } from '@/app/lib/observe'
 
 const SEED_USERNAME = 'root'
 const SEED_PASSWORD = 'ABC123'
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   if (process.env.NODE_ENV === 'production') {
     return NextResponse.json({ success: false, error: 'לא זמין' }, { status: 403 })
   }
@@ -49,3 +50,5 @@ export async function POST(request: NextRequest) {
   const customToken = await getAdminAuth().createCustomToken('local-auth-user', { localAuth: true, tier: 'owner' })
   return NextResponse.json({ success: true, customToken })
 }
+
+export const POST = withServiceCall(POSTHandler)

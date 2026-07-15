@@ -19,6 +19,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
+import { withServiceCall } from '@/app/lib/observe'
 import {
   getStoreData,
   mergeStoreList,
@@ -96,7 +97,7 @@ async function notify(chatId: number | null, text: string): Promise<void> {
   }
 }
 
-export async function GET(request: NextRequest) {
+async function GETHandler(request: NextRequest) {
   // Verify cron secret (Vercel sends this header). Auth runs BEFORE any
   // healthcheck ping so unauthenticated callers can't trip the probe.
   const authHeader = request.headers.get('authorization')
@@ -371,3 +372,5 @@ function parseDeliveryDate(dateStr: string, time?: string): Date | null {
     return null
   }
 }
+
+export const GET = withServiceCall(GETHandler)

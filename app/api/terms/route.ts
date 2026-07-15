@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAdminFirestore, setUserClaims } from '@/app/lib/firebaseAdmin'
 import { requireAuth } from '@/app/lib/apiGuard'
 import { config } from '@/app/config'
+import { withServiceCall } from '@/app/lib/observe'
 
 const TC_COLLECTION = 'tcVersions'
 
@@ -20,7 +21,7 @@ async function getLatestTcVersion(firestore: FirebaseFirestore.Firestore) {
 
 // PUBLIC ROUTE
 // GET — return latest T&C text (public) + acceptance status (if logged in)
-export async function GET(request: NextRequest) {
+async function GETHandler(request: NextRequest) {
   try {
     const firestore = getAdminFirestore()
     const latestTc = await getLatestTcVersion(firestore)
@@ -51,7 +52,7 @@ export async function GET(request: NextRequest) {
 }
 
 // POST — accept T&C (stores latest version date)
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   const guard = await requireAuth(request)
   if (guard.error) return guard.error
   const uid = guard.uid
@@ -80,3 +81,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'שגיאה בשמירת אישור תנאי שימוש' }, { status: 500 })
   }
 }
+
+export const GET = withServiceCall(GETHandler)
+export const POST = withServiceCall(POSTHandler)

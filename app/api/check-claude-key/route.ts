@@ -5,10 +5,11 @@
 // "credit balance too low" failure was previously invisible until a receipt
 // match silently failed. This does NOT extract anything; it only probes the key.
 import { NextRequest, NextResponse } from 'next/server'
+import { withServiceCall } from '@/app/lib/observe'
 
 export type ClaudeKeyReason = 'ok' | 'no-credit' | 'invalid' | 'rate-limit' | 'error'
 
-export async function POST(req: NextRequest) {
+async function POSTHandler(req: NextRequest) {
   const { apiKey } = await req.json().catch(() => ({ apiKey: undefined }))
   if (!apiKey || typeof apiKey !== 'string') {
     return NextResponse.json({ ok: false, reason: 'invalid', message: 'לא הוזן מפתח' } as const)
@@ -56,3 +57,5 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({ ok: false, reason, message })
 }
+
+export const POST = withServiceCall(POSTHandler)

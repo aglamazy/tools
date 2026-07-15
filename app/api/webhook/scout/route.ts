@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireBotAuth } from '@/app/lib/agentAuth'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
+import { withServiceCall } from '@/app/lib/observe'
 
 const VALID_PRIORITIES = ['low', 'medium', 'high']
 const VALID_CLASSIFICATIONS = ['LEAD', 'MENTION', 'COMPETITOR', 'INSIGHT']
@@ -18,7 +19,7 @@ const SOURCE_EMOJI: Record<string, string> = {
  * Uses bot auth (X-Bot-Handle + Bearer token).
  * Creates an agentTask in Firestore with lead metadata in ext field.
  */
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   let auth
   try {
     auth = await requireBotAuth(request)
@@ -102,3 +103,5 @@ export async function POST(request: NextRequest) {
     taskId: docRef.id,
   }, { status: 201 })
 }
+
+export const POST = withServiceCall(POSTHandler)

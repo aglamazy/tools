@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/app/lib/apiGuard'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
+import { withServiceCall } from '@/app/lib/observe'
 
 function generateHandle(): string {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789'
@@ -26,7 +27,7 @@ async function hashToken(token: string): Promise<string> {
 }
 
 /** GET /api/agent/bots — list user's bots */
-export async function GET(request: NextRequest) {
+async function GETHandler(request: NextRequest) {
   const guard = await requireAuth(request)
   if (guard.error) return guard.error
 
@@ -47,7 +48,7 @@ export async function GET(request: NextRequest) {
 }
 
 /** POST /api/agent/bots — create a new bot */
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   const guard = await requireAuth(request)
   if (guard.error) return guard.error
 
@@ -80,3 +81,6 @@ export async function POST(request: NextRequest) {
     },
   })
 }
+
+export const GET = withServiceCall(GETHandler)
+export const POST = withServiceCall(POSTHandler)

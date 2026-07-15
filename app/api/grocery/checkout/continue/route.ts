@@ -19,12 +19,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { addCheckoutBatch, finalizeShufersalCheckoutSession } from '@/app/services/grocery/shufersalCheckoutFlow'
 import { fireNextCheckoutStep, type CheckoutContinueBody } from '@/app/services/grocery/checkoutContinuation'
 import { sendMessage } from '@/app/services/telegram/telegramClient'
+import { withServiceCall } from '@/app/lib/observe'
 
 const CRON_SECRET = process.env.CRON_SECRET
 
 export const maxDuration = 30
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   const authHeader = request.headers.get('authorization')
   if (CRON_SECRET && authHeader !== `Bearer ${CRON_SECRET}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -62,3 +63,5 @@ export async function POST(request: NextRequest) {
   await sendMessage(body.telegramChatId, telegramMessage).catch(err => console.warn('[CheckoutContinue] sendMessage failed:', err))
   return NextResponse.json({ ok: finalized.ok })
 }
+
+export const POST = withServiceCall(POSTHandler)

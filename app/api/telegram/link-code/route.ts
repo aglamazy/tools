@@ -7,10 +7,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/app/lib/apiGuard'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import { randomBytes } from 'crypto'
+import { withServiceCall } from '@/app/lib/observe'
 
 const CODE_TTL_MINUTES = 10
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   const guard = await requireAuth(request)
   if (guard.error) return guard.error
 
@@ -34,7 +35,7 @@ export async function POST(request: NextRequest) {
 /**
  * GET /api/telegram/link-code — check if user has an active Telegram link.
  */
-export async function GET(request: NextRequest) {
+async function GETHandler(request: NextRequest) {
   const guard = await requireAuth(request)
   if (guard.error) return guard.error
 
@@ -56,3 +57,6 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({ success: true, links })
 }
+
+export const POST = withServiceCall(POSTHandler)
+export const GET = withServiceCall(GETHandler)

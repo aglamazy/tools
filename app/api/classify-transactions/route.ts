@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import type { BudgetTransaction } from '@/app/types/transactions'
 import type { Category } from '@/app/types/category'
 import { parseClaudeJson } from '@/app/utils/parseClaudeJson'
+import { withServiceCall } from '@/app/lib/observe'
 
 type HistoryEntry = { business: string; category: string }
 
@@ -14,7 +15,7 @@ type ClassifyBody = {
   history: HistoryEntry[]
 }
 
-export async function POST(req: NextRequest) {
+async function POSTHandler(req: NextRequest) {
   try {
     const body = (await req.json()) as Partial<ClassifyBody>
     const { apiKey, monthStr, transactions, categories, history } = body
@@ -174,3 +175,5 @@ ${JSON.stringify(batch, null, 2)}
     )
   }
 }
+
+export const POST = withServiceCall(POSTHandler)

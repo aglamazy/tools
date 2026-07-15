@@ -23,6 +23,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import { requireAuth } from '@/app/lib/apiGuard'
 import { VARIANT } from '@/app/config/variants'
+import { withServiceCall } from '@/app/lib/observe'
 import {
   SALIKO_PRIVACY_HTML,
   SALIKO_PRIVACY_VERSION,
@@ -43,7 +44,7 @@ async function getLatestPrivacyVersion(firestore: FirebaseFirestore.Firestore) {
 
 // PUBLIC ROUTE (Saliko only).
 // GET — return latest privacy text + acceptance status (if logged in).
-export async function GET(request: NextRequest) {
+async function GETHandler(request: NextRequest) {
   if (VARIANT !== 'saliko') {
     return NextResponse.json(
       { success: false, error: 'Not found' },
@@ -99,3 +100,5 @@ export async function GET(request: NextRequest) {
     )
   }
 }
+
+export const GET = withServiceCall(GETHandler)

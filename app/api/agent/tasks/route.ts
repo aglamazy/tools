@@ -2,9 +2,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireBotAuth } from '@/app/lib/agentAuth'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
+import { withServiceCall } from '@/app/lib/observe'
 
 /** GET /api/agent/tasks — bot polls for its pending tasks */
-export async function GET(request: NextRequest) {
+async function GETHandler(request: NextRequest) {
   const auth = await requireBotAuth(request)
   if (auth.error) return auth.error
 
@@ -23,3 +24,5 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({ success: true, tasks })
 }
+
+export const GET = withServiceCall(GETHandler)

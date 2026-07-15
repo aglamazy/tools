@@ -2,8 +2,9 @@
 import { NextResponse } from 'next/server'
 import { readFile, readdir } from 'fs/promises'
 import { join } from 'path'
+import { withServiceCall } from '@/app/lib/observe'
 
-export async function GET() {
+async function GETHandler() {
   try {
     const dir = join(process.cwd(), 'public', 'extension')
     const files = await readdir(dir)
@@ -29,3 +30,5 @@ export async function GET() {
     )
   }
 }
+
+export const GET = withServiceCall(GETHandler)

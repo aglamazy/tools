@@ -8,10 +8,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/app/lib/apiGuard'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
+import { withServiceCall } from '@/app/lib/observe'
 
 export const runtime = 'nodejs'
 
-export async function GET(request: NextRequest) {
+async function GETHandler(request: NextRequest) {
   const guard = await requireAuth(request)
   if (guard.error) return guard.error
 
@@ -35,3 +36,5 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ success: false, message: err instanceof Error ? err.message : 'error', links: [] })
   }
 }
+
+export const GET = withServiceCall(GETHandler)

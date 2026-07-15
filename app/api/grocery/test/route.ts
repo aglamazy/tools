@@ -19,6 +19,7 @@ import { initStores } from '@/app/services/grocery/initStores'
 import { getAuthenticatedCookies, checkSession, cartRead, orderLoadToCart, _debugFetchHtml, preselectSlot } from '@/app/services/grocery/shufersalClient'
 import { processChatMessage, handleReset } from '@/app/services/chatBrain'
 import { selectProduct } from '@/app/services/chat/pendingSearchService'
+import { withServiceCall } from '@/app/lib/observe'
 
 export const maxDuration = 60
 
@@ -216,5 +217,8 @@ async function handle(request: NextRequest) {
   }
 }
 
-export async function GET(request: NextRequest) { return handle(request) }
-export async function POST(request: NextRequest) { return handle(request) }
+async function GETHandler(request: NextRequest) { return handle(request) }
+async function POSTHandler(request: NextRequest) { return handle(request) }
+
+export const GET = withServiceCall(GETHandler)
+export const POST = withServiceCall(POSTHandler)

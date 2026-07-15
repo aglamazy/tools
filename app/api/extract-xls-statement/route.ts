@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import * as XLSX from 'xlsx'
 import { extractJsonWithFallback } from '@/app/services/llm/extractionLadder'
 import type { XlsExtraction } from '@/app/types/xlsExtraction'
+import { withServiceCall } from '@/app/lib/observe'
 
 const SYSTEM_PROMPT = `אתה מומחה בקריאת דפי בנק ופירוטי כרטיסי אשראי מכל הבנקים בישראל ובעולם.
 קיבלת גיליון אקסל (בפורמט TSV) המכיל תנועות פיננסיות.
@@ -94,7 +95,7 @@ function xlsToText(base64: string): string {
   return sections.join('\n\n')
 }
 
-export async function POST(req: NextRequest) {
+async function POSTHandler(req: NextRequest) {
   try {
     const body = await req.json()
     const { xlsBase64, hint } = body as { xlsBase64?: string; hint?: 'bank' | 'credit' }
@@ -155,3 +156,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }
+
+export const POST = withServiceCall(POSTHandler)

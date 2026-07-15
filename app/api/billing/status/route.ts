@@ -18,6 +18,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { VARIANT, VARIANT_CONFIG } from '@/app/config/variants'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import type { BillingStatus, BillingStatusMap } from '@/app/types/billing'
+import { withServiceCall } from '@/app/lib/observe'
 
 export const runtime = 'nodejs'
 
@@ -29,7 +30,7 @@ function checkReadToken(request: NextRequest): boolean {
   return token === expected
 }
 
-export async function GET(request: NextRequest) {
+async function GETHandler(request: NextRequest) {
   if (!checkReadToken(request)) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
   }
@@ -58,3 +59,5 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'Internal error' }, { status: 500 })
   }
 }
+
+export const GET = withServiceCall(GETHandler)

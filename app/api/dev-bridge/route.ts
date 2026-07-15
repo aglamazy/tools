@@ -2,12 +2,13 @@
 // Dev-only message bridge for cross-tab extension testing
 // Returns 404 in production — never affects deployed behavior
 import { NextResponse } from 'next/server'
+import { withServiceCall } from '@/app/lib/observe'
 
 const queues: Record<string, unknown[]> = { sidebar: [], form: [] }
 
 const cors = { 'Access-Control-Allow-Origin': '*' }
 
-export async function GET(req: Request) {
+async function GETHandler(req: Request) {
   if (process.env.NODE_ENV === 'production')
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
@@ -19,7 +20,7 @@ export async function GET(req: Request) {
   return NextResponse.json({ messages }, { headers: cors })
 }
 
-export async function POST(req: Request) {
+async function POSTHandler(req: Request) {
   if (process.env.NODE_ENV === 'production')
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
@@ -29,7 +30,7 @@ export async function POST(req: Request) {
   return NextResponse.json({ ok: true }, { headers: cors })
 }
 
-export async function OPTIONS() {
+async function OPTIONSHandler() {
   return new NextResponse(null, {
     headers: {
       'Access-Control-Allow-Origin': '*',
@@ -38,3 +39,7 @@ export async function OPTIONS() {
     },
   })
 }
+
+export const GET = withServiceCall(GETHandler)
+export const POST = withServiceCall(POSTHandler)
+export const OPTIONS = withServiceCall(OPTIONSHandler)

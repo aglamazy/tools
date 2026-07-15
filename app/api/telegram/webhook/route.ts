@@ -16,13 +16,14 @@ import { fireNextCheckoutStep } from '@/app/services/grocery/checkoutContinuatio
 import { panicAdmin } from '@/app/services/adminPanic'
 import { VARIANT_CONFIG } from '@/app/config/variants'
 import type { TelegramCallbackQuery, TelegramUpdate, TelegramMessage } from '@/app/services/telegram/types'
+import { withServiceCall } from '@/app/lib/observe'
 
 const HISTORY_COLLECTION = 'telegramChatHistory'
 const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET
 
 export const maxDuration = 30
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   // Validate Telegram secret token
   const secret = request.headers.get('x-telegram-bot-api-secret-token')
   if (!WEBHOOK_SECRET || secret !== WEBHOOK_SECRET) {
@@ -310,3 +311,5 @@ async function handleCallbackQuery(query: TelegramCallbackQuery) {
     await answerCallbackQuery(query.id, msg)
   }
 }
+
+export const POST = withServiceCall(POSTHandler)

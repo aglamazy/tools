@@ -1,10 +1,11 @@
 // PUBLIC ROUTE — browser extension update manifest
 import { NextResponse } from 'next/server'
+import { withServiceCall } from '@/app/lib/observe'
 
 const EXTENSION_VERSION = '1.0.0'
 const DOWNLOAD_URL = 'https://aglamazo.com/api/extension/download'
 
-export async function GET() {
+async function GETHandler() {
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <gupdate xmlns="http://www.google.com/update2/response" protocol="2.0">
   <app appid="aglamaz-form-assistant">
@@ -19,3 +20,5 @@ export async function GET() {
     },
   })
 }
+
+export const GET = withServiceCall(GETHandler)

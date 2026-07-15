@@ -17,8 +17,9 @@ import { requireAuth } from '@/app/lib/apiGuard'
 import { VARIANT } from '@/app/config/variants'
 import { saveCredentials } from '@/app/services/grocery/shufersalClient'
 import { NoTier3ConsentError } from '@/app/services/consentService'
+import { withServiceCall } from '@/app/lib/observe'
 
-export async function PUT(request: NextRequest) {
+async function PUTHandler(request: NextRequest) {
   if (VARIANT !== 'saliko') {
     return NextResponse.json({ success: false, error: 'Not found' }, { status: 404 })
   }
@@ -47,3 +48,5 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ success: false, error: msg }, { status: 500 })
   }
 }
+
+export const PUT = withServiceCall(PUTHandler)

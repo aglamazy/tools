@@ -1,5 +1,6 @@
 // PUBLIC ROUTE — OAuth callback endpoint
 import { NextRequest, NextResponse } from 'next/server'
+import { withServiceCall } from '@/app/lib/observe'
 
 /**
  * GET /api/auth/google-token/callback
@@ -8,7 +9,7 @@ import { NextRequest, NextResponse } from 'next/server'
  * Returns an HTML page that posts the code to the opener window
  * via postMessage and closes itself.
  */
-export async function GET(request: NextRequest) {
+async function GETHandler(request: NextRequest) {
   const code = request.nextUrl.searchParams.get('code')
   const error = request.nextUrl.searchParams.get('error')
 
@@ -38,3 +39,5 @@ export async function GET(request: NextRequest) {
     headers: { 'Content-Type': 'text/html' },
   })
 }
+
+export const GET = withServiceCall(GETHandler)

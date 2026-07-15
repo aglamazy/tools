@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { extractJsonWithFallback } from '@/app/services/llm/extractionLadder'
 import { toSheetRows, findZeroAmountRows, type Extraction } from '@/app/utils/pdfExtractionRows'
+import { withServiceCall } from '@/app/lib/observe'
 
 const SYSTEM_PROMPT = `אתה מומחה בקריאת דפי בנק וכרטיסי אשראי ישראליים מקובץ PDF.
 המסמך הוא או דף תנועות בחשבון בנק, או פירוט עסקאות בכרטיס אשראי לחודש מסוים.
@@ -65,7 +66,7 @@ const GEMINI_RESPONSE_SCHEMA = {
 
 const GEMINI_PDF_MODEL = 'gemini-2.5-pro'
 
-export async function POST(req: NextRequest) {
+async function POSTHandler(req: NextRequest) {
   try {
     const body = await req.json()
     const { pdfBase64, hint, exampleContext } = body as {
@@ -154,3 +155,5 @@ ${exampleContext}
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }
+
+export const POST = withServiceCall(POSTHandler)

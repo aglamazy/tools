@@ -5,11 +5,12 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getAdminFirestore, isAdminConfigured } from '@/app/lib/firebaseAdmin'
+import { withServiceCall } from '@/app/lib/observe'
 
 const COLLECTION = 'contactMessages'
 
 // PUBLIC ROUTE
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   try {
     if (!isAdminConfigured()) {
       return NextResponse.json({ error: 'Server not configured' }, { status: 500 })
@@ -45,3 +46,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'שגיאה בשליחת ההודעה' }, { status: 500 })
   }
 }
+
+export const POST = withServiceCall(POSTHandler)

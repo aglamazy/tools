@@ -4,8 +4,9 @@ import type { LLMMessage } from '@/app/services/llm'
 import type { SearchStrategyId } from '@/app/services/product-search/types'
 import { strategies } from '@/app/services/product-search/strategies'
 import { enrichProducts } from '@/app/services/product-search/enrich'
+import { withServiceCall } from '@/app/lib/observe'
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   try {
     const { messages, strategy: strategyId, apiKey } = await request.json()
 
@@ -36,3 +37,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: message }, { status: 500 })
   }
 }
+
+export const POST = withServiceCall(POSTHandler)

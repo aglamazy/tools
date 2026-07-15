@@ -7,8 +7,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAdminAuth, getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import { requireTier } from '@/app/lib/apiGuard'
 import { UserTier } from '@/app/stores/userTierStore'
+import { withServiceCall } from '@/app/lib/observe'
 
-export async function GET(request: NextRequest) {
+async function GETHandler(request: NextRequest) {
   const guard = await requireTier(request, 'owner')
   if (guard.error) return guard.error
 
@@ -111,3 +112,5 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'שגיאת שרת', errorCode: 'unknown' })
   }
 }
+
+export const GET = withServiceCall(GETHandler)

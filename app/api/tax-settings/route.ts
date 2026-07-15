@@ -5,9 +5,10 @@
 
 import { NextResponse } from 'next/server'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
+import { withServiceCall } from '@/app/lib/observe'
 
 // PUBLIC ROUTE
-export async function GET() {
+async function GETHandler() {
   try {
     const firestore = getAdminFirestore()
     const doc = await firestore.collection('platformSettings').doc('taxConfig').get()
@@ -28,3 +29,5 @@ export async function GET() {
     return NextResponse.json({ success: false, error: 'שגיאת שרת' }, { status: 500 })
   }
 }
+
+export const GET = withServiceCall(GETHandler)

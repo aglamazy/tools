@@ -1,7 +1,8 @@
 // CALLER-KEYED ROUTE — authenticated via caller's YPAY credentials
 import { NextRequest, NextResponse } from 'next/server'
+import { withServiceCall } from '@/app/lib/observe'
 
-export async function GET(request: NextRequest) {
+async function GETHandler(request: NextRequest) {
   const url = request.nextUrl.searchParams.get('url')
   if (!url || !url.startsWith('https://ypay.co.il/')) {
     return NextResponse.json({ success: false, message: 'URL לא תקין' })
@@ -22,3 +23,5 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({ success: true, base64 })
 }
+
+export const GET = withServiceCall(GETHandler)

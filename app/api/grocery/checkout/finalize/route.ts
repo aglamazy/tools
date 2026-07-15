@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireTc } from '@/app/lib/apiGuard'
 import { initStores } from '@/app/services/grocery/initStores'
 import { finalizeShufersalCheckoutSession } from '@/app/services/grocery/shufersalCheckoutFlow'
+import { withServiceCall } from '@/app/lib/observe'
 
 export const maxDuration = 30
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   const guard = await requireTc(request)
   if (guard.error) return guard.error
 
@@ -29,3 +30,5 @@ export async function POST(request: NextRequest) {
   console.log(`[CheckoutFinalizeRoute] responding uid=${guard.uid} checkoutId=${body.checkoutId}: ${JSON.stringify(payload)}`)
   return NextResponse.json(payload)
 }
+
+export const POST = withServiceCall(POSTHandler)

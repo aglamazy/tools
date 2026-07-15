@@ -11,6 +11,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { processChatMessage } from '@/app/services/chatBrain'
+import { withServiceCall } from '@/app/lib/observe'
 import {
   listPendingEntries,
   recordFailedAttempt,
@@ -27,7 +28,7 @@ const CRON_SECRET = process.env.CRON_SECRET
 
 export const maxDuration = 60
 
-export async function GET(request: NextRequest) {
+async function GETHandler(request: NextRequest) {
   const authHeader = request.headers.get('authorization')
   if (CRON_SECRET && authHeader !== `Bearer ${CRON_SECRET}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -103,3 +104,5 @@ async function notifyGiveUp(entry: ChatQueueEntry): Promise<void> {
     console.warn(`[ChatQueue Cron] give-up notify failed entry=${entry.id}:`, err)
   }
 }
+
+export const GET = withServiceCall(GETHandler)

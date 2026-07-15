@@ -2,8 +2,9 @@
 import { NextResponse } from 'next/server'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
+import { withServiceCall } from '@/app/lib/observe'
 
-export async function GET() {
+async function GETHandler() {
   try {
     const manifestPath = join(process.cwd(), 'extension', 'manifest.json')
     const manifest = JSON.parse(await readFile(manifestPath, 'utf-8'))
@@ -19,3 +20,5 @@ export async function GET() {
     )
   }
 }
+
+export const GET = withServiceCall(GETHandler)

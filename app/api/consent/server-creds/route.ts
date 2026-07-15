@@ -17,6 +17,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/app/lib/apiGuard'
 import { VARIANT } from '@/app/config/variants'
+import { withServiceCall } from '@/app/lib/observe'
 import {
   grantServerCredsConsent,
   revokeServerCredsConsent,
@@ -30,7 +31,7 @@ function variantGate(): NextResponse | null {
   return null
 }
 
-export async function GET(request: NextRequest) {
+async function GETHandler(request: NextRequest) {
   const gate = variantGate(); if (gate) return gate
   const guard = await requireAuth(request)
   if (guard.error) return guard.error
@@ -38,7 +39,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ success: true, consent })
 }
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   const gate = variantGate(); if (gate) return gate
   const guard = await requireAuth(request)
   if (guard.error) return guard.error
@@ -52,7 +53,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export async function DELETE(request: NextRequest) {
+async function DELETEHandler(request: NextRequest) {
   const gate = variantGate(); if (gate) return gate
   const guard = await requireAuth(request)
   if (guard.error) return guard.error
@@ -65,3 +66,7 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ success: false, error: msg }, { status: 500 })
   }
 }
+
+export const GET = withServiceCall(GETHandler)
+export const POST = withServiceCall(POSTHandler)
+export const DELETE = withServiceCall(DELETEHandler)

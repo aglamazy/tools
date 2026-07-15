@@ -8,11 +8,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import { requireTc } from '@/app/lib/apiGuard'
+import { withServiceCall } from '@/app/lib/observe'
 
 const COLLECTION = 'profileQAs'
 
 // GET — fetch all ProfileQA entries for a user (optionally filtered by businessId)
-export async function GET(request: NextRequest) {
+async function GETHandler(request: NextRequest) {
   const guard = await requireTc(request)
   if (guard.error) return guard.error
   const uid = guard.uid
@@ -40,7 +41,7 @@ export async function GET(request: NextRequest) {
 }
 
 // POST — save new facts from form filler
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   const guard = await requireTc(request)
   if (guard.error) return guard.error
   const uid = guard.uid
@@ -109,7 +110,7 @@ export async function POST(request: NextRequest) {
 }
 
 // PUT — update an existing ProfileQA entry
-export async function PUT(request: NextRequest) {
+async function PUTHandler(request: NextRequest) {
   const guard = await requireTc(request)
   if (guard.error) return guard.error
   const uid = guard.uid
@@ -142,7 +143,7 @@ export async function PUT(request: NextRequest) {
 }
 
 // DELETE — delete a ProfileQA entry
-export async function DELETE(request: NextRequest) {
+async function DELETEHandler(request: NextRequest) {
   const guard = await requireTc(request)
   if (guard.error) return guard.error
   const uid = guard.uid
@@ -169,3 +170,8 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'שגיאה במחיקת נתונים' }, { status: 500 })
   }
 }
+
+export const GET = withServiceCall(GETHandler)
+export const POST = withServiceCall(POSTHandler)
+export const PUT = withServiceCall(PUTHandler)
+export const DELETE = withServiceCall(DELETEHandler)

@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireBotAuth } from '@/app/lib/agentAuth'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
+import { withServiceCall } from '@/app/lib/observe'
 
 const VALID_PRIORITIES = ['low', 'medium', 'high']
 const VALID_QUADRANTS = ['do', 'schedule', 'delegate', 'eliminate']
@@ -11,7 +12,7 @@ const VALID_QUADRANTS = ['do', 'schedule', 'delegate', 'eliminate']
  * Uses bot auth (X-Bot-Handle + Bearer token).
  * Creates an agentTask in Firestore; the client auto-imports it into Dexie.
  */
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   let auth
   try {
     auth = await requireBotAuth(request)
@@ -82,3 +83,5 @@ export async function POST(request: NextRequest) {
     message: 'Task created successfully',
   }, { status: 201 })
 }
+
+export const POST = withServiceCall(POSTHandler)

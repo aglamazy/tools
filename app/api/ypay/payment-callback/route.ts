@@ -19,6 +19,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import { upsertBillingStatus } from '@/app/lib/billingLedger'
+import { withServiceCall } from '@/app/lib/observe'
 
 export const runtime = 'nodejs'
 
@@ -44,7 +45,7 @@ async function parseBody(request: NextRequest): Promise<unknown> {
   }
 }
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   const url = new URL(request.url)
   const { searchParams } = url
   const cid = searchParams.get('cid') || ''
@@ -108,3 +109,5 @@ export async function POST(request: NextRequest) {
   // YPAY only needs a 200 to consider the notify delivered.
   return NextResponse.json({ ok: true })
 }
+
+export const POST = withServiceCall(POSTHandler)

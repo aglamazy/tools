@@ -7,10 +7,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAdminFirestore, setUserClaims } from '@/app/lib/firebaseAdmin'
 import { requireTier } from '@/app/lib/apiGuard'
 import { UserTier } from '@/app/stores/userTierStore'
+import { withServiceCall } from '@/app/lib/observe'
 
 const VALID_TIERS = Object.values(UserTier)
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   const guard = await requireTier(request, 'owner')
   if (guard.error) return guard.error
 
@@ -75,3 +76,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'שגיאת שרת', errorCode: 'unknown' })
   }
 }
+
+export const POST = withServiceCall(POSTHandler)

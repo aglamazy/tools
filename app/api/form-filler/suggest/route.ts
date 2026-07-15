@@ -7,6 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getLLMClient, type LLMProvider } from '@/app/services/llm'
+import { withServiceCall } from '@/app/lib/observe'
 
 interface FormField {
   id: string
@@ -93,7 +94,7 @@ Updated response format:
   "field_id_3": { "value": "", "source": "none", "translatedLabel": "Phone number" }
 }`
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   try {
     const body = await request.json()
     const { fields, profileData, provider, apiKey, pageUrl, hostname } = body as {
@@ -166,3 +167,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'שגיאה בניתוח הטופס' }, { status: 500 })
   }
 }
+
+export const POST = withServiceCall(POSTHandler)

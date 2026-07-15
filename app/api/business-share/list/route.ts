@@ -15,8 +15,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAdminFirestore, getAdminAuth } from '@/app/lib/firebaseAdmin'
 import { requireAuth } from '@/app/lib/apiGuard'
 import { ensureMigratedForOwner, ensureGrantsForRecipient } from '@/app/lib/businessShareMigration'
+import { withServiceCall } from '@/app/lib/observe'
 
-export async function GET(request: NextRequest) {
+async function GETHandler(request: NextRequest) {
   const guard = await requireAuth(request)
   if (guard.error) return guard.error
   const uid = guard.uid
@@ -170,3 +171,5 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'שגיאת שרת', errorCode: 'unknown' })
   }
 }
+
+export const GET = withServiceCall(GETHandler)

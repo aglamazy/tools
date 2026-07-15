@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireTc } from '@/app/lib/apiGuard'
 import { selectProduct } from '@/app/services/chat/pendingSearchService'
 import { initStores } from '@/app/services/grocery/initStores'
+import { withServiceCall } from '@/app/lib/observe'
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   const guard = await requireTc(request)
   if (guard.error) return guard.error
 
@@ -30,3 +31,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: msg }, { status: msg === 'החיפוש פג תוקף' ? 404 : 500 })
   }
 }
+
+export const POST = withServiceCall(POSTHandler)

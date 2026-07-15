@@ -6,8 +6,9 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyIdToken, getAdminFirestore, isAdminConfigured, setUserClaims } from '@/app/lib/firebaseAdmin'
+import { withServiceCall } from '@/app/lib/observe'
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   if (!isAdminConfigured()) {
     return NextResponse.json({ success: false, error: 'שרת לא מוגדר', errorCode: 'not-configured' })
   }
@@ -73,3 +74,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'שגיאת שרת', errorCode: 'unknown' })
   }
 }
+
+export const POST = withServiceCall(POSTHandler)

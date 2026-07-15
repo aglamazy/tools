@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/app/lib/apiGuard'
 import { initStores } from '@/app/services/grocery/initStores'
 import { getAllStores } from '@/app/services/grocery/storeRegistry'
+import { withServiceCall } from '@/app/lib/observe'
 import {
   getStoreData,
   addToStoreStanding,
@@ -114,7 +115,7 @@ async function buildHistory(
   return { history: Array.from(byKey.values()), activeOrders, error }
 }
 
-export async function GET(request: NextRequest) {
+async function GETHandler(request: NextRequest) {
   const guard = await requireAuth(request)
   if (guard.error) return guard.error
 
@@ -139,7 +140,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ success: true, stores: payload })
 }
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   const guard = await requireAuth(request)
   if (guard.error) return guard.error
 
@@ -204,3 +205,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: msg }, { status: 500 })
   }
 }
+
+export const GET = withServiceCall(GETHandler)
+export const POST = withServiceCall(POSTHandler)

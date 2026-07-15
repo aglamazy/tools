@@ -4,6 +4,7 @@
 // strips frame-busting headers, and injects the form-extraction script.
 import { NextResponse } from 'next/server'
 import { getInjectedScript } from './injected-script'
+import { withServiceCall } from '@/app/lib/observe'
 
 const COMMON_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -95,7 +96,7 @@ function processHtmlResponse(response: Response, html: string, targetUrl: string
   })
 }
 
-export async function GET(req: Request) {
+async function GETHandler(req: Request) {
   const { searchParams } = new URL(req.url)
   const targetUrl = searchParams.get('url')
 
@@ -127,7 +128,7 @@ export async function GET(req: Request) {
   }
 }
 
-export async function POST(req: Request) {
+async function POSTHandler(req: Request) {
   const { searchParams } = new URL(req.url)
   const targetUrl = searchParams.get('url')
 
@@ -166,3 +167,6 @@ export async function POST(req: Request) {
     )
   }
 }
+
+export const GET = withServiceCall(GETHandler)
+export const POST = withServiceCall(POSTHandler)

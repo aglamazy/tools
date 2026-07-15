@@ -1,5 +1,6 @@
 // PUBLIC ROUTE — OAuth code exchange endpoint
 import { NextRequest, NextResponse } from 'next/server'
+import { withServiceCall } from '@/app/lib/observe'
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 
@@ -10,7 +11,7 @@ const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
  * 1. { code, redirectUri } — exchange authorization code for tokens
  * 2. { refreshToken }      — refresh an expired access token
  */
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET
 
@@ -110,3 +111,5 @@ export async function POST(request: NextRequest) {
     )
   }
 }
+
+export const POST = withServiceCall(POSTHandler)
