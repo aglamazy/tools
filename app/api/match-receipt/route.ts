@@ -1,23 +1,7 @@
 // CALLER-KEYED ROUTE — uses platform Gemini key + caller's Claude API key
 import { NextRequest, NextResponse } from 'next/server'
-import { getLLMClient } from '@/app/services/llm'
-import { parseClaudeJson } from '@/app/utils/parseClaudeJson'
+import { extractJsonWithFallback, type ExtractionFailure } from '@/app/services/llm/extractionLadder'
 import type { GmailInvoiceCandidate, SupplierMatchProposal } from '@/app/types/supplierWizard'
-
-// Surface the ACTUAL provider error to the caller instead of a bare
-// "Claude API error: 400". The receipt matcher was swallowing the real
-// message — e.g. "credit balance is too low" — into a silent "no match",
-// so the user saw "לא נמצא" while the real problem was depleted Anthropic
-// credits. `providerError: true` lets the client distinguish a systemic
-// provider failure (abort + tell the user) from a genuine non-match.
-function claudeErrorResponse(status: number, errorBody: string) {
-  let providerMsg = ''
-  try { providerMsg = JSON.parse(errorBody)?.error?.message || '' } catch { /* non-JSON body */ }
-  const friendly = /credit balance is too low/i.test(providerMsg)
-    ? 'יתרת הקרדיט ב-Anthropic נמוכה מדי — טען קרדיט או הסר את מפתח Claude בהגדרות כדי לעבוד עם Gemini.'
-    : (providerMsg || `Claude API error: ${status}`)
-  return NextResponse.json({ error: friendly, providerError: true }, { status })
-}
 
 type TransactionInfo = {
   date: string
@@ -27,6 +11,19 @@ type TransactionInfo = {
 }
 
 type PickCandidateInput = { index: number; subject: string; from: string; date: string; snippet: string }
+
+function extractionFailureResponse(result: ExtractionFailure, statusOverride?: number) {
+  return NextResponse.json(
+    {
+      error: result.error,
+      provider: result.provider,
+      providerError: result.providerError ?? true,
+      details: result.details,
+      raw: result.raw,
+    },
+    { status: statusOverride ?? result.status ?? 502 },
+  )
+}
 
 /**
  * Cheap subject-only pre-filter, run before any expensive Claude extraction.
@@ -41,14 +38,13 @@ async function handlePickCandidate(transaction: TransactionInfo, candidates: Pic
     return NextResponse.json({ error: 'Missing transaction or candidates' }, { status: 400 })
   }
 
-  const gemini = getLLMClient('gemini')
-
   const candidateList = candidates.map((c) =>
     `[${c.index}] מאת: ${c.from}\n    נושא: ${c.subject}\n    תאריך: ${c.date}\n    תקציר: ${c.snippet}`
   ).join('\n\n')
 
-  const result = await gemini.chat({
-    system: `אתה מסנן מיילים לפי נושא בלבד, כדי לזהות אילו מהם הם בבירור חשבונית/קבלה/אישור תשלום עבור עסקת כרטיס אשראי — לפני שליחה לבדיקה יקרה ומלאה.
+  const result = await extractJsonWithFallback<{ candidateIndex: number | null; reason?: string }>({
+    routeName: 'match-receipt',
+    systemPrompt: `אתה מסנן מיילים לפי נושא בלבד, כדי לזהות אילו מהם הם בבירור חשבונית/קבלה/אישור תשלום עבור עסקת כרטיס אשראי — לפני שליחה לבדיקה יקרה ומלאה.
 
 כללים:
 - בחר אך ורק מייל שכותרתו מעידה בבירור על מסמך חשבונאי (למשל: "חשבונית", "קבלה", "אישור תשלום", "receipt", "invoice", "tax invoice").
@@ -58,9 +54,9 @@ async function handlePickCandidate(transaction: TransactionInfo, candidates: Pic
 
 אל תחשוב בקול רם ואל תסביר את תהליך החשיבה. החזר אך ורק את אובייקט ה-JSON, ללא שום טקסט נוסף:
 { "candidateIndex": <מספר מהרשימה, או null>, "reason": "<הסבר קצר>" }`,
-    messages: [{
-      role: 'user',
-      content: `עסקה בכרטיס אשראי:
+    userParts: [{
+      type: 'text',
+      text: `עסקה בכרטיס אשראי:
 - תיאור: ${transaction.description}
 - סכום: ₪${Math.abs(transaction.amount)}
 - תאריך: ${transaction.date}
@@ -69,24 +65,19 @@ ${transaction.merchant ? `- בית עסק: ${transaction.merchant}` : ''}
 מיילים (נושא בלבד, ללא תוכן מלא):
 ${candidateList}`,
     }],
-    maxTokens: 800,
-    disableThinking: true,
+    geminiModel: 'gemini-2.5-flash',
+    geminiMaxTokens: 800,
+    geminiTemperature: 0,
   })
 
   console.log(`[match-receipt] pick-candidate · candidates:\n${candidateList}`)
-  console.log(`[match-receipt] pick-candidate · Gemini raw result →\n${result.text}`)
 
-  if (result.error) {
-    return NextResponse.json({ error: result.error }, { status: 502 })
+  if (!result.ok) {
+    return extractionFailureResponse(result)
   }
 
-  try {
-    const parsed = parseClaudeJson<{ candidateIndex: number | null; reason?: string }>(result.text)
-    return NextResponse.json({ candidateIndex: parsed.candidateIndex ?? null, reason: parsed.reason || '' })
-  } catch {
-    console.error('[match-receipt] pick-candidate parse failure, raw:', result.text)
-    return NextResponse.json({ candidateIndex: null, reason: 'Failed to parse LLM response' })
-  }
+  console.log(`[match-receipt] pick-candidate · ${result.provider} raw result →\n${result.text}`)
+  return NextResponse.json({ candidateIndex: result.data.candidateIndex ?? null, reason: result.data.reason || '' })
 }
 
 export async function POST(req: NextRequest) {
@@ -151,8 +142,6 @@ async function handleMatchSupplier(candidates: GmailInvoiceCandidate[], supplier
     return NextResponse.json({ error: 'Missing suppliers' }, { status: 400 })
   }
 
-  const gemini = getLLMClient('gemini')
-
   const supplierList = suppliers.map((s) =>
     `[${s.id}] ${s.name} | ${s.bankCardAliases.join(', ')}`
   ).join('\n')
@@ -161,8 +150,9 @@ async function handleMatchSupplier(candidates: GmailInvoiceCandidate[], supplier
     `[${i}] מאת: ${c.from}\n    נושא: ${c.subject}\n    תאריך: ${c.date}\n    תקציר: ${c.snippet}`
   ).join('\n\n')
 
-  const result = await gemini.chat({
-    system: `אתה מומחה בזיהוי ספקים מהודעות מייל של חשבוניות/קבלות, והתאמתן לרשימת ספקים קיימת במערכת הנהלת חשבונות.
+  const result = await extractJsonWithFallback<SupplierMatchLLMEntry[]>({
+    routeName: 'match-receipt',
+    systemPrompt: `אתה מומחה בזיהוי ספקים מהודעות מייל של חשבוניות/קבלות, והתאמתן לרשימת ספקים קיימת במערכת הנהלת חשבונות.
 
 כללים:
 - שם הספק בשולח המייל לרוב מופיע בצורה שונה מהתיאור בכרטיס אשראי/בנק. דוגמאות התאמה:
@@ -195,29 +185,19 @@ ${supplierList || '(אין ספקים קיימים במערכת)'}
   },
   ...
 ]`,
-    messages: [{
-      role: 'user',
-      content: `הודעות מייל לסיווג:\n\n${candidateList}`,
-    }],
-    maxTokens: 8192,
+    userParts: [{ type: 'text', text: `הודעות מייל לסיווג:\n\n${candidateList}` }],
+    geminiModel: 'gemini-2.5-flash',
+    geminiMaxTokens: 8192,
+    geminiTemperature: 0,
   })
 
-  if (result.error) {
-    return NextResponse.json({ error: result.error }, { status: 502 })
-  }
-
-  let parsed: SupplierMatchLLMEntry[]
-  try {
-    parsed = parseClaudeJson<SupplierMatchLLMEntry[]>(result.text)
-  } catch (parseErr) {
-    console.error('[match-receipt] Failed to parse match-supplier response. Raw text (first 800 chars):', result.text.slice(0, 800))
-    console.error('[match-receipt] Parse error:', parseErr)
-    return NextResponse.json({ error: 'Failed to parse LLM response', raw: result.text }, { status: 502 })
+  if (!result.ok) {
+    return extractionFailureResponse(result)
   }
 
   const supplierById = new Map(suppliers.map((s) => [s.id, s]))
 
-  const proposals: SupplierMatchProposal[] = parsed
+  const proposals: SupplierMatchProposal[] = result.data
     .map((entry): SupplierMatchProposal | null => {
       const candidate = candidates[entry.candidateIndex]
       if (!candidate) return null
@@ -264,10 +244,6 @@ async function handleExtract(
     `[match-receipt] extract candidate ${candidate?.index ?? '?'}/${candidate?.total ?? '?'} · subject: "${candidate?.subject || ''}" · from: ${candidate?.from || ''} · tx: ${transaction?.description} (₪${transaction?.amount})`
   )
 
-  if (!claudeApiKey) {
-    return NextResponse.json({ error: 'Missing Claude API key' }, { status: 400 })
-  }
-
   // Truncate very long emails
   const truncated = emailBody.length > 50000 ? emailBody.substring(0, 50000) : emailBody
 
@@ -281,17 +257,9 @@ async function handleExtract(
 
   console.log(`[match-receipt] extract · textContent (${textContent.length} chars, HTML-stripped) →\n${textContent}`)
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': claudeApiKey,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-5',
-      max_tokens: 1024,
-      system: `אתה מומחה לחילוץ נתונים מקבלות וחשבוניות ישראליות שנשלחו במייל.
+  const result = await extractJsonWithFallback<Record<string, unknown>>({
+    routeName: 'match-receipt',
+    systemPrompt: `אתה מומחה לחילוץ נתונים מקבלות וחשבוניות ישראליות שנשלחו במייל.
 חלץ את השדות הבאים והחזר JSON בלבד, ללא markdown, ללא הסברים.
 
 השדות:
@@ -319,37 +287,19 @@ async function handleExtract(
 העסקה הבנקאית לעיון: ${transaction.description}, ₪${Math.abs(transaction.amount)}, ${transaction.date}
 
 החזר אך ורק JSON תקין.`,
-      messages: [{
-        role: 'user',
-        content: `חלץ נתוני קבלה מהמייל הבא:\n\n${textContent}`,
-      }],
-    }),
+    userParts: [{ type: 'text', text: `חלץ נתוני קבלה מהמייל הבא:\n\n${textContent}` }],
+    anthropicApiKey: claudeApiKey,
+    geminiModel: 'gemini-2.5-flash',
+    geminiMaxTokens: 1024,
+    geminiTemperature: 0,
   })
 
-  if (!response.ok) {
-    const errorBody = await response.text()
-    console.error('[match-receipt] Claude API error:', response.status, errorBody)
-    return claudeErrorResponse(response.status, errorBody)
+  if (!result.ok) {
+    return extractionFailureResponse(result, result.status ?? 502)
   }
 
-  const data = await response.json()
-  // data.content[0] isn't reliably the answer — Claude can return other block
-  // types first (e.g. thinking), which have no .text field. Blindly indexing
-  // [0] silently produced an empty string and a useless "Failed to parse"
-  // error with nothing to debug (confirmed live: raw: "" on a real YPAY
-  // extraction that should have worked). Find the actual text block instead.
-  const textBlock = Array.isArray(data.content) ? data.content.find((c: any) => c?.type === 'text') : undefined
-  const text = textBlock?.text ?? ''
-  console.log(`[match-receipt] extract · Claude raw result →\n${text}`)
-
-  try {
-    return NextResponse.json(parseClaudeJson(text))
-  } catch (parseErr) {
-    console.error('[match-receipt] Failed to parse extract response. Raw text (first 800 chars):', text.slice(0, 800))
-    console.error('[match-receipt] Content block types:', Array.isArray(data.content) ? data.content.map((c: any) => c?.type) : typeof data.content)
-    console.error('[match-receipt] Parse error:', parseErr)
-    return NextResponse.json({ error: 'Failed to parse extraction response', raw: text }, { status: 502 })
-  }
+  console.log(`[match-receipt] extract · ${result.provider} raw result →\n${result.text}`)
+  return NextResponse.json(result.data)
 }
 
 async function handleDownloadPdf(url: string) {
@@ -429,21 +379,9 @@ async function handleExtractPdf(pdfBase64: string, transaction: TransactionInfo,
   if (!pdfBase64) {
     return NextResponse.json({ error: 'Missing pdfBase64' }, { status: 400 })
   }
-  if (!claudeApiKey) {
-    return NextResponse.json({ error: 'Missing Claude API key' }, { status: 400 })
-  }
-
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': claudeApiKey,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-5',
-      max_tokens: 1024,
-      system: `אתה מומחה לחילוץ נתונים מקבלות וחשבוניות ישראליות.
+  const result = await extractJsonWithFallback<Record<string, unknown>>({
+    routeName: 'match-receipt',
+    systemPrompt: `אתה מומחה לחילוץ נתונים מקבלות וחשבוניות ישראליות.
 חלץ את השדות הבאים והחזר JSON בלבד, ללא markdown, ללא הסברים.
 
 השדות:
@@ -469,64 +407,30 @@ async function handleExtractPdf(pdfBase64: string, transaction: TransactionInfo,
 העסקה הבנקאית לעיון: ${transaction.description}, ₪${Math.abs(transaction.amount)}, ${transaction.date}
 
 החזר אך ורק JSON תקין.`,
-      messages: [{
-        role: 'user',
-        content: [
-          {
-            type: 'document',
-            source: {
-              type: 'base64',
-              media_type: 'application/pdf',
-              data: pdfBase64,
-            },
-          },
-          {
-            type: 'text',
-            text: 'חלץ נתוני קבלה מהמסמך המצורף.',
-          },
-        ],
-      }],
-    }),
+    userParts: [
+      { type: 'document', data: pdfBase64 },
+      { type: 'text', text: 'חלץ נתוני קבלה מהמסמך המצורף.' },
+    ],
+    anthropicApiKey: claudeApiKey,
+    geminiModel: 'gemini-2.5-pro',
+    geminiMaxTokens: 1024,
+    geminiTemperature: 0,
   })
 
-  if (!response.ok) {
-    const errorBody = await response.text()
-    console.error('[match-receipt] Claude PDF extraction error:', response.status, errorBody)
-    return claudeErrorResponse(response.status, errorBody)
+  if (!result.ok) {
+    return extractionFailureResponse(result, result.status ?? 502)
   }
 
-  const data = await response.json()
-  const textBlock = Array.isArray(data.content) ? data.content.find((c: any) => c?.type === 'text') : undefined
-  const text = textBlock?.text ?? ''
-
-  try {
-    const parsed = parseClaudeJson(text)
-    return NextResponse.json(parsed)
-  } catch {
-    console.error('[match-receipt] Failed to parse PDF extract response. Content block types:', Array.isArray(data.content) ? data.content.map((c: any) => c?.type) : typeof data.content)
-    return NextResponse.json({ error: 'Failed to parse extraction response', raw: text }, { status: 502 })
-  }
+  return NextResponse.json(result.data)
 }
 
 async function handleExtractImage(imageBase64: string, mediaType: string, transaction: TransactionInfo, claudeApiKey?: string) {
   if (!imageBase64) {
     return NextResponse.json({ error: 'Missing imageBase64' }, { status: 400 })
   }
-  if (!claudeApiKey) {
-    return NextResponse.json({ error: 'Missing Claude API key' }, { status: 400 })
-  }
-
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': claudeApiKey,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-5',
-      max_tokens: 1024,
-      system: `אתה מומחה לחילוץ נתונים מקבלות וחשבוניות ישראליות.
+  const result = await extractJsonWithFallback<Record<string, unknown>>({
+    routeName: 'match-receipt',
+    systemPrompt: `אתה מומחה לחילוץ נתונים מקבלות וחשבוניות ישראליות.
 חלץ את השדות הבאים והחזר JSON בלבד, ללא markdown, ללא הסברים.
 
 השדות:
@@ -544,43 +448,21 @@ async function handleExtractImage(imageBase64: string, mediaType: string, transa
 העסקה הבנקאית לעיון: ${transaction.description}, ₪${Math.abs(transaction.amount)}, ${transaction.date}
 
 החזר אך ורק JSON תקין.`,
-      messages: [{
-        role: 'user',
-        content: [
-          {
-            type: 'image',
-            source: {
-              type: 'base64',
-              media_type: mediaType,
-              data: imageBase64,
-            },
-          },
-          {
-            type: 'text',
-            text: 'חלץ נתוני קבלה מהתמונה המצורפת.',
-          },
-        ],
-      }],
-    }),
+    userParts: [
+      { type: 'image', data: imageBase64, mimeType: mediaType },
+      { type: 'text', text: 'חלץ נתוני קבלה מהתמונה המצורפת.' },
+    ],
+    anthropicApiKey: claudeApiKey,
+    geminiModel: 'gemini-2.5-flash',
+    geminiMaxTokens: 1024,
+    geminiTemperature: 0,
   })
 
-  if (!response.ok) {
-    const errorBody = await response.text()
-    console.error('[match-receipt] Claude image extraction error:', response.status, errorBody)
-    return NextResponse.json({ error: `Claude API error: ${response.status}` }, { status: response.status })
+  if (!result.ok) {
+    return extractionFailureResponse(result, result.status ?? 502)
   }
 
-  const data = await response.json()
-  const textBlock = Array.isArray(data.content) ? data.content.find((c: any) => c?.type === 'text') : undefined
-  const text = textBlock?.text ?? ''
-
-  try {
-    const parsed = parseClaudeJson(text)
-    return NextResponse.json(parsed)
-  } catch {
-    console.error('[match-receipt] Failed to parse image extract response. Content block types:', Array.isArray(data.content) ? data.content.map((c: any) => c?.type) : typeof data.content)
-    return NextResponse.json({ error: 'Failed to parse extraction response', raw: text }, { status: 502 })
-  }
+  return NextResponse.json(result.data)
 }
 
 /**
@@ -591,26 +473,10 @@ async function handleExtractVatPayment(payloadBase64: string, mediaType: string 
   if (!payloadBase64) {
     return NextResponse.json({ error: 'Missing pdfBase64' }, { status: 400 })
   }
-  if (!claudeApiKey) {
-    return NextResponse.json({ error: 'Missing Claude API key' }, { status: 400 })
-  }
-
   const isPdf = !mediaType || mediaType === 'application/pdf'
-  const docPart = isPdf
-    ? { type: 'document' as const, source: { type: 'base64' as const, media_type: 'application/pdf', data: payloadBase64 } }
-    : { type: 'image' as const, source: { type: 'base64' as const, media_type: mediaType as 'image/png' | 'image/jpeg' | 'image/webp', data: payloadBase64 } }
-
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': claudeApiKey,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-5',
-      max_tokens: 1024,
-      system: `אתה מומחה לחילוץ נתונים מאישור תשלום מע״מ של רשות המסים בישראל.
+  const result = await extractJsonWithFallback<Record<string, unknown>>({
+    routeName: 'match-receipt',
+    systemPrompt: `אתה מומחה לחילוץ נתונים מאישור תשלום מע״מ של רשות המסים בישראל.
 חלץ את השדות הבאים והחזר JSON בלבד, ללא markdown, ללא הסברים.
 
 השדות:
@@ -624,29 +490,21 @@ async function handleExtractVatPayment(payloadBase64: string, mediaType: string 
 - confirmationNumber: מספר אסמכתא / קבלה (מחרוזת או null)
 
 החזר אך ורק JSON תקין.`,
-      messages: [{
-        role: 'user',
-        content: [
-          docPart,
-          { type: 'text', text: 'חלץ נתוני אישור תשלום מע״מ מהמסמך המצורף.' },
-        ],
-      }],
-    }),
+    userParts: [
+      isPdf
+        ? { type: 'document', data: payloadBase64 }
+        : { type: 'image', data: payloadBase64, mimeType: mediaType as 'image/png' | 'image/jpeg' | 'image/webp' },
+      { type: 'text', text: 'חלץ נתוני אישור תשלום מע״מ מהמסמך המצורף.' },
+    ],
+    anthropicApiKey: claudeApiKey,
+    geminiModel: 'gemini-2.5-flash',
+    geminiMaxTokens: 1024,
+    geminiTemperature: 0,
   })
 
-  if (!response.ok) {
-    const errorBody = await response.text()
-    console.error('[match-receipt] Claude VAT-payment extract error:', response.status, errorBody)
-    return NextResponse.json({ error: `Claude API error: ${response.status}` }, { status: response.status })
+  if (!result.ok) {
+    return extractionFailureResponse(result, result.status ?? 502)
   }
 
-  const data = await response.json()
-  const textBlock = Array.isArray(data.content) ? data.content.find((c: any) => c?.type === 'text') : undefined
-  const text = textBlock?.text ?? ''
-  try {
-    return NextResponse.json(parseClaudeJson(text))
-  } catch (parseErr) {
-    console.error('[match-receipt] Failed to parse VAT payment extract. Raw:', text.slice(0, 800), 'err:', parseErr, 'block types:', Array.isArray(data.content) ? data.content.map((c: any) => c?.type) : typeof data.content)
-    return NextResponse.json({ error: 'Failed to parse extraction response', raw: text }, { status: 502 })
-  }
+  return NextResponse.json(result.data)
 }

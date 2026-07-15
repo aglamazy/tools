@@ -1,14 +1,14 @@
 // CALLER-KEYED ROUTE — authenticated via caller's Claude API key
 import { NextRequest, NextResponse } from 'next/server'
-import { parseClaudeJson } from '@/app/utils/parseClaudeJson'
+import { extractJsonWithFallback } from '@/app/services/llm/extractionLadder'
 
 export async function POST(req: NextRequest) {
   try {
     const { apiKey, fileBase64, mimeType } = await req.json()
 
-    if (!apiKey || !fileBase64 || !mimeType) {
+    if (!fileBase64 || !mimeType) {
       return NextResponse.json(
-        { error: 'Missing required fields: apiKey, fileBase64, mimeType' },
+        { error: 'Missing required fields: fileBase64, mimeType' },
         { status: 400 },
       )
     }
@@ -30,74 +30,36 @@ export async function POST(req: NextRequest) {
 
 החזר אך ורק JSON תקין. אל תעטוף בבלוק קוד. אל תוסיף טקסט לפני או אחרי ה-JSON.`
 
-    // Build the content block based on file type
-    const isPdf = mimeType === 'application/pdf'
-    const fileContent = isPdf
-      ? {
-          type: 'document' as const,
-          source: {
-            type: 'base64' as const,
-            media_type: 'application/pdf' as const,
-            data: fileBase64,
-          },
-        }
-      : {
-          type: 'image' as const,
-          source: {
-            type: 'base64' as const,
-            media_type: mimeType as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
-            data: fileBase64,
-          },
-        }
-
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-beta': 'pdfs-2024-09-25',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-5',
-        max_tokens: 1024,
-        system: systemPrompt,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              fileContent,
-              {
-                type: 'text',
-                text: 'חלץ את הנתונים מהקבלה / חשבונית הזו והחזר JSON בלבד.',
-              },
-            ],
-          },
-        ],
-      }),
+    const result = await extractJsonWithFallback<Record<string, unknown>>({
+      routeName: 'extract-expense-doc',
+      systemPrompt,
+      userParts: [
+        mimeType === 'application/pdf'
+          ? { type: 'document', data: fileBase64 }
+          : { type: 'image', data: fileBase64, mimeType },
+        { type: 'text', text: 'חלץ את הנתונים מהקבלה / חשבונית הזו והחזר JSON בלבד.' },
+      ],
+      anthropicApiKey: apiKey,
+      geminiModel: 'gemini-2.5-flash',
+      geminiMaxTokens: 1024,
+      anthropicModel: 'claude-sonnet-5',
+      anthropicMaxTokens: 1024,
     })
 
-    if (!response.ok) {
-      const errorBody = await response.text()
-      console.error('[extract-expense-doc] Claude API error:', response.status, errorBody)
+    if (!result.ok) {
       return NextResponse.json(
-        { error: `Claude API error: ${response.status}`, details: errorBody },
-        { status: response.status },
+        {
+          error: result.error,
+          provider: result.provider,
+          providerError: result.providerError ?? true,
+          details: result.details,
+          raw: result.raw,
+        },
+        { status: result.status ?? 502 },
       )
     }
 
-    const data = await response.json()
-    const text = data.content?.[0]?.text ?? ''
-
-    try {
-      const parsed = parseClaudeJson(text)
-      return NextResponse.json(parsed)
-    } catch {
-      return NextResponse.json(
-        { error: 'Failed to parse Claude response as JSON', raw: text },
-        { status: 502 },
-      )
-    }
+    return NextResponse.json(result.data)
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error'
     return NextResponse.json(
