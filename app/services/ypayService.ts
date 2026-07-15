@@ -157,26 +157,34 @@ export const ypayService = {
       throw new Error('סוג עוסק לא הוגדר — הגדר בפרופיל')
     }
 
-    // Always קבלה (Receipt, docType 108) — this button records a PAYMENT received.
-    // The tax invoice (חשבונית מס / חשבונית עסקה) is issued separately at billing
-    // time (createBusinessInvoice / createItemBasedInvoice), so issuing a
-    // חשבונית מס קבלה (109) here would DOUBLE-issue a tax invoice. A קבלה has no
-    // VAT line at all — it just acknowledges the amount received — so the same
-    // doc type works for both exempt and authorized dealers, and YPAY validates
-    // only that the receipt amount equals the payment-method total (no 3022, since
-    // there is no VAT to add/extract). `transaction.amount` is the gross received.
-    const docType = YpayDocType.Receipt
+    // קבלה (Receipt, docType 108) records a PAYMENT received — used whenever
+    // there's a separate tax invoice already covering the VAT: exempt dealers
+    // never charge VAT at all, and an authorized-dealer payment that's closing
+    // an existing invoice (closesAllocations set, case 3's B2B-split flow)
+    // already had its VAT reported on that invoice — issuing 109 here too
+    // would DOUBLE-issue it. But an authorized-dealer payment with NO linked
+    // invoice (B2C-style: paid directly, no separate billing step) never had
+    // its VAT reported anywhere — that case needs the combined חשבונית מס קבלה
+    // (109), same as createPaymentLink's docType choice for a direct charge.
+    const closesExistingInvoice = !!closesAllocations && closesAllocations.length > 0
+    const docType = effectiveVatType === 'exempt' || closesExistingInvoice
+      ? YpayDocType.Receipt
+      : YpayDocType.TaxInvoiceReceipt
 
     // Item is required by the API but YPAY doesn't render an items breakdown
     // for receipts at all (docType 108 is explicitly excluded — API docs,
-    // Item object). So a per-invoice split here is silently ignored on the
-    // actual document; the only field that DOES show is `details` (a free-text
-    // note), which is where the invoice references + amounts belong instead.
+    // Item object). So a per-invoice split here is silently ignored on a 108
+    // document; the only field that DOES show is `details` (a free-text note),
+    // which is where the invoice references + amounts belong instead. A 109
+    // DOES render items and DOES need correct VAT math: `transaction.amount`
+    // is the gross amount actually received, so `vatIncluded: true` tells YPAY
+    // to extract VAT out of that total rather than add VAT on top of it —
+    // keeping the document total equal to `methods[].total` below.
     const items = [{
       description: transaction.description,
       quantity: 1,
       price: transaction.amount,
-      vatIncluded: false,
+      vatIncluded: docType === YpayDocType.TaxInvoiceReceipt,
     }]
 
     let details: string | undefined
