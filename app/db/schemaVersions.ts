@@ -670,4 +670,50 @@ export function defineSchemaVersions(db: Dexie): void {
     vatPayments: '++id, syncId, userId, periodStart, periodEnd, paymentDate',
     suppliers: '++id, syncId, businessId, name, categoryId, *bankCardAliases, *emailSenders',
   })
+
+  // v32: subjectCategories / subjectClassifications / activeTimer — Dexie-backed
+  // replacements for the subjectStore/timerStore localStorage stores (#253
+  // phase 1). NOT the existing `categories` table: that one already holds
+  // unrelated, actively-used data (numeric-id categories from the file-import
+  // flow, see app/db/migration.ts + migratePartnerPaidBusinessId.ts) with a
+  // different shape than subjectStore's string-id Category, so a new table
+  // avoids a PK-type collision and a silent data clash.
+  //
+  // subjectCategories keeps the app-generated string `id` subjectStore
+  // already assigns (e.g. Supplier.categoryId links to it) as the primary key.
+  // subjectClassifications is keyed by transactionId — saveClassification()'s
+  // own invariant is "at most one classification per transaction", so the
+  // unique index enforces it at the DB level.
+  // activeTimer is a singleton row keyed by a fixed `key`, mirroring appSettings.
+  db.version(32).stores({
+    transactions: '++id, syncId, type, month, accountNumber, cardNumber, date, chargingDate, [type+month], [cardNumber+month], [accountNumber+month], fileId',
+    importedFiles: '++id, syncId, fileName, fileType, processingMonth, [fileType+processingMonth], [cardNumber+processingMonth]',
+    categories: '++id, syncId, name, type',
+    businessCategories: '++id, syncId, &business',
+    tasks: '++id, syncId, createdAt, priority, quadrant, deadline, delegatedTo, autoTaskId, botId, taskType, subject',
+    appSettings: '++id, syncId, &key',
+    businesses: '++id, syncId, &name, type, userId',
+    projects: '++id, syncId, businessId, name, archived',
+    harvestTasks: '++id, syncId, projectId, name, archived',
+    timeEntries: '++id, syncId, taskId, date, startTime, endTime, [taskId+date]',
+    capitalEntries: '++id, syncId, date, institution, accountNumber, description, assetType, currency, employer, investmentTrack, agent, soldDate, [institution+accountNumber+description], fileId',
+    financialInstitutions: '++id, syncId, name, type',
+    ypayDocuments: '++id, syncId, &transactionId, docType, vatPaymentId',
+    students: '++id, syncId, businessId, name, archived',
+    profileQAs: '++id, syncId, businessId, [businessId+answerType]',
+    scoutResults: '++id, syncId, businessId, status, [businessId+status]',
+    scoutConfigs: '++id, syncId, &businessId',
+    taxDocuments: '++id, syncId, businessId, userId, month, year, [businessId+year]',
+    expenseDocuments: '++id, syncId, transactionId, date, vendor, category, sourceType, vatPaymentId',
+    businessTasks: '++id, syncId, businessId, recurrence, archived',
+    advancePayments: '++id, syncId, businessId, month, type, [businessId+month+type]',
+    chats: '&id, syncId, uid, updatedAt, [uid+updatedAt]',
+    chatMessages: '&id, syncId, chatId, uid, createdAt, [chatId+createdAt]',
+    credentials: '++id, syncId, &service',
+    vatPayments: '++id, syncId, userId, periodStart, periodEnd, paymentDate',
+    suppliers: '++id, syncId, businessId, name, categoryId, *bankCardAliases, *emailSenders',
+    subjectCategories: '&id, syncId, name, type, businessId',
+    subjectClassifications: '++id, syncId, &transactionId, monthYear, categoryId',
+    activeTimer: '++id, syncId, &key',
+  })
 }

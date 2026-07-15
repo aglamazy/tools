@@ -7,6 +7,7 @@
 import { subscribeToAuthState, type AuthUser } from '@/app/services/firebaseAuthService'
 import { userTierStore, UserTier } from '@/app/stores/userTierStore'
 import { clearLocalUserState } from '@/app/services/clearLocalUserState'
+import { migrateLegacyStoresToDexie } from '@/app/services/migrations/migrateLegacyStoresToDexie'
 
 export type { AuthUser }
 
@@ -44,6 +45,7 @@ export function initializeAuth() {
 
     if (user) {
       userTierStore.subscribeFirestore(user.uid)
+      void migrateLegacyStoresToDexie()
     } else {
       userTierStore.unsubscribeFirestore()
       userTierStore.set(UserTier.FREE)

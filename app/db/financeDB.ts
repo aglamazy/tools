@@ -9,6 +9,7 @@ import type { ScoutConfig } from '@/app/types/scoutConfig'
 import type { AgentTaskStatus } from '@/app/types/bot'
 import { BusinessType } from '@/app/types/business'
 import type { CredentialRow } from '@/app/types/credential'
+import type { Category as SubjectCategory, Classification as SubjectClassification } from '@/app/types/category'
 
 // Re-export types for convenience
 export type { CapitalEntry } from '@/app/types/capital'
@@ -374,6 +375,20 @@ export interface ChatMessageRow {
   updatedAt?: string
 }
 
+// subjectStore/timerStore Dexie tables (v32, #253 phase 1). See schemaVersions.ts
+// v32 comment for why these are new tables rather than reusing `categories`.
+export type SubjectClassificationRow = SubjectClassification & { id?: number; syncId?: string; updatedAt?: string }
+
+export interface ActiveTimerRow {
+  id?: number
+  syncId?: string
+  key: string        // fixed singleton key, e.g. 'active'
+  projectId: number
+  taskId: number
+  startedAt: string   // ISO timestamp
+  updatedAt?: string
+}
+
 class FinanceDB extends Dexie {
   transactions!: Table<Transaction, number>
   importedFiles!: Table<ImportedFile, number>
@@ -401,6 +416,9 @@ class FinanceDB extends Dexie {
   chatMessages!: Table<ChatMessageRow, string>
   credentials!: Table<CredentialRow, number>
   suppliers!: Table<Supplier, number>
+  subjectCategories!: Table<SubjectCategory, string>
+  subjectClassifications!: Table<SubjectClassificationRow, number>
+  activeTimer!: Table<ActiveTimerRow, number>
 
   constructor() {
     super('FinanceDB')
@@ -414,6 +432,7 @@ class FinanceDB extends Dexie {
       'capitalEntries', 'ypayDocuments', 'expenseDocuments', 'projects', 'harvestTasks',
       'timeEntries', 'taxDocuments', 'advancePayments', 'businessTasks',
       'chats', 'chatMessages', 'credentials', 'vatPayments', 'suppliers',
+      'subjectCategories', 'subjectClassifications', 'activeTimer',
     ])
 
     // Auto-inject syncId/updatedAt on create/update, and record deletions.

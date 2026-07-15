@@ -1,6 +1,16 @@
-// Timer Store - Active timer state in localStorage
+// Timer Store - Active timer state
+//
+// Dexie-backed (db.activeTimer, a singleton row keyed by ACTIVE_KEY) as of
+// #253 phase 1 — every method here is now ASYNC. readLegacyLocalStorage() is
+// the one exception — a read-only escape hatch for the one-time migration
+// (see app/services/migrations/migrateLegacyStoresToDexie.ts) to reach the
+// old localStorage blob; every other method here is Dexie-only.
+
+import { db } from '@/app/db/financeDB'
 
 const TIMER_STORAGE_KEY = 'harvest-active-timer'
+
+const ACTIVE_KEY = 'active'
 
 export type ActiveTimer = {
   projectId: number
@@ -9,36 +19,61 @@ export type ActiveTimer = {
 }
 
 export const timerStore = {
-  get: (): ActiveTimer | null => {
+  // Read-only escape hatch for the one-time legacy migration — the only
+  // place in this store that still touches localStorage.
+  readLegacyLocalStorage: (): ActiveTimer | null => {
     try {
       const stored = localStorage.getItem(TIMER_STORAGE_KEY)
-      if (stored) {
-        return JSON.parse(stored) as ActiveTimer
-      }
-      return null
-    } catch {
-      localStorage.removeItem(TIMER_STORAGE_KEY)
+      return stored ? (JSON.parse(stored) as ActiveTimer) : null
+    } catch (err) {
+      console.error('Error reading legacy timerStore localStorage:', err)
       return null
     }
   },
 
-  set: (timer: ActiveTimer): void => {
-    localStorage.setItem(TIMER_STORAGE_KEY, JSON.stringify(timer))
+  get: async (): Promise<ActiveTimer | null> => {
+    try {
+      const row = await db.activeTimer.where('key').equals(ACTIVE_KEY).first()
+      if (!row) return null
+      return { projectId: row.projectId, taskId: row.taskId, startedAt: row.startedAt }
+    } catch (err) {
+      console.error('Error loading active timer:', err)
+      return null
+    }
   },
 
-  clear: (): void => {
-    localStorage.removeItem(TIMER_STORAGE_KEY)
+  set: async (timer: ActiveTimer): Promise<void> => {
+    try {
+      await db.transaction('rw', db.activeTimer, async () => {
+        const existing = await db.activeTimer.where('key').equals(ACTIVE_KEY).first()
+        if (existing?.id != null) {
+          await db.activeTimer.update(existing.id, { ...timer, key: ACTIVE_KEY })
+        } else {
+          await db.activeTimer.add({ key: ACTIVE_KEY, ...timer })
+        }
+      })
+    } catch (err) {
+      console.error('Error saving active timer:', err)
+    }
   },
 
-  export: (): ActiveTimer | null => {
+  clear: async (): Promise<void> => {
+    try {
+      await db.activeTimer.where('key').equals(ACTIVE_KEY).delete()
+    } catch (err) {
+      console.error('Error clearing active timer:', err)
+    }
+  },
+
+  export: async (): Promise<ActiveTimer | null> => {
     return timerStore.get()
   },
 
-  import: (data: ActiveTimer | null): void => {
+  import: async (data: ActiveTimer | null): Promise<void> => {
     if (data) {
-      timerStore.set(data)
+      await timerStore.set(data)
     } else {
-      timerStore.clear()
+      await timerStore.clear()
     }
   },
 }

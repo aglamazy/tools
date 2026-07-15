@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react'
 import { migratePartnerPaidBusinessId } from '@/app/services/migrations/migratePartnerPaidBusinessId'
+import { migrateLegacyStoresToDexie } from '@/app/services/migrations/migrateLegacyStoresToDexie'
 import { db } from '@/app/db/financeDB'
 
 /**
@@ -19,12 +20,15 @@ import { db } from '@/app/db/financeDB'
  *     dryRun: false,
  *     vendorRules: [{ vendorPattern: /^Meta/i, toBusinessId: <AH_ID> }],
  *   })
+ *   // One-time copy of subjectStore/timerStore localStorage data into Dexie (#253 phase 1)
+ *   await window.aglamazoMigrations.legacyStoresToDexie()
  */
 export default function MigrationsRegistry() {
   useEffect(() => {
     if (typeof window === 'undefined') return
     const migrations = {
       partnerPaidBusinessId: migratePartnerPaidBusinessId,
+      legacyStoresToDexie: migrateLegacyStoresToDexie,
       dumpBusinesses: async () => {
         const rows = await db.businesses.toArray()
         return rows.map((b: any) => ({

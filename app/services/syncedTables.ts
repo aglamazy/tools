@@ -35,6 +35,9 @@ export const SYNCED_DB_TABLES = [
   'credentials',
   'vatPayments',
   'suppliers',
+  'subjectCategories',
+  'subjectClassifications',
+  'activeTimer',
 ] as const
 
 export type SyncedTableName = (typeof SYNCED_DB_TABLES)[number]
