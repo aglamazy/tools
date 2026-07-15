@@ -1,8 +1,9 @@
 // CALLER-KEYED ROUTE — authenticated via caller's Claude API key
 import { NextRequest, NextResponse } from 'next/server'
 import { extractJsonWithFallback } from '@/app/services/llm/extractionLadder'
+import { withServiceCall } from 'agents-observe/next'
 
-export async function POST(req: NextRequest) {
+async function handler(req: NextRequest) {
   try {
     const { apiKey, fileBase64, mimeType } = await req.json()
 
@@ -68,3 +69,5 @@ export async function POST(req: NextRequest) {
     )
   }
 }
+
+export const POST = withServiceCall((req, ...args) => handler(req as NextRequest, ...args as []))

@@ -1,5 +1,6 @@
 // CALLER-KEYED ROUTE — authenticated via caller's Claude API key
 import { NextRequest, NextResponse } from 'next/server'
+import { withServiceCall } from 'agents-observe/next'
 import type { BudgetTransaction } from '@/app/types/transactions'
 import type { Category } from '@/app/types/category'
 import { parseClaudeJson } from '@/app/utils/parseClaudeJson'
@@ -14,7 +15,7 @@ type ClassifyBody = {
   history: HistoryEntry[]
 }
 
-export async function POST(req: NextRequest) {
+async function handler(req: NextRequest) {
   try {
     const body = (await req.json()) as Partial<ClassifyBody>
     const { apiKey, monthStr, transactions, categories, history } = body
@@ -174,3 +175,5 @@ ${JSON.stringify(batch, null, 2)}
     )
   }
 }
+
+export const POST = withServiceCall((req, ...args) => handler(req as NextRequest, ...args as []))

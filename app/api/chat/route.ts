@@ -3,6 +3,7 @@ import { requireAuth } from '@/app/lib/apiGuard'
 import { processChatMessage, handleReset, handleClear, isAnonUid, ANON_PREFIX, refreshOpenOrderCaches } from '@/app/services/chatBrain'
 import { clearAllPendingState } from '@/app/services/chat/pendingSearchService'
 import { panicAdmin } from '@/app/services/adminPanic'
+import { withServiceCall } from 'agents-observe/next'
 
 const COLLECTION = 'appChatHistory'
 
@@ -74,7 +75,7 @@ function parseAnonStoreCreds(raw: ChatRequestBody['anonStoreCreds']): {
   }
 }
 
-export async function POST(request: NextRequest) {
+async function handler(request: NextRequest) {
   const { uid, displayName } = await resolveChatIdentity(request)
 
   let body: ChatRequestBody
@@ -184,3 +185,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'Server error' }, { status: 500 })
   }
 }
+
+export const POST = withServiceCall((req, ...args) => handler(req as NextRequest, ...args as []))
