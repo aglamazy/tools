@@ -2,6 +2,7 @@
 // XLSX export, so the existing classifier/parsers consume them unchanged.
 //
 import { NextRequest, NextResponse } from 'next/server'
+import { withServiceCall } from 'agents-observe/next'
 import { extractJsonWithFallback } from '@/app/services/llm/extractionLadder'
 import { toSheetRows, findZeroAmountRows, type Extraction } from '@/app/utils/pdfExtractionRows'
 
@@ -65,7 +66,7 @@ const GEMINI_RESPONSE_SCHEMA = {
 
 const GEMINI_PDF_MODEL = 'gemini-2.5-pro'
 
-export async function POST(req: NextRequest) {
+async function handler(req: NextRequest) {
   try {
     const body = await req.json()
     const { pdfBase64, hint, exampleContext } = body as {
@@ -154,3 +155,5 @@ ${exampleContext}
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }
+
+export const POST = withServiceCall((req, ...args) => handler(req as NextRequest, ...args as []))
