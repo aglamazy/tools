@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server'
 import { requireAuth } from '@/app/lib/apiGuard'
 import { processChatMessage, handleReset, handleClear, isAnonUid, ANON_PREFIX, refreshOpenOrderCaches } from '@/app/services/chatBrain'
-import { clearAllPendingState } from '@/app/services/chat/actionExecutor'
+import { clearAllPendingState } from '@/app/services/chat/pendingSearchService'
 import { panicAdmin } from '@/app/services/adminPanic'
 
 const COLLECTION = 'appChatHistory'
@@ -167,6 +167,10 @@ export async function POST(request: NextRequest) {
       // Tier-2 attended checkout context — client must complete the order
       // using Dexie credentials + /api/grocery/shufersal/attended-checkout.
       ...(result.attendedCheckoutContext ? { attendedCheckoutContext: result.attendedCheckoutContext } : {}),
+      // Small-step checkout session (#275) — client must drive it to
+      // completion via /api/grocery/checkout/add-batch (× totalBatches)
+      // then /finalize. See AppChat.tsx's runCheckoutSession().
+      ...(result.checkoutSession ? { checkoutSession: result.checkoutSession } : {}),
     })
   } catch (err) {
     console.error('[AppChat] Error:', err)

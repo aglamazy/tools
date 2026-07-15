@@ -663,6 +663,26 @@ export async function checkout(
     }
   }
 
+  return finalizeCheckout(uid, options)
+}
+
+/**
+ * Everything checkout() does AFTER the cart is already built: fetch/select a
+ * delivery slot, then commit (auth → SSO → JWT → placeOrder). Split out
+ * (#275) so the small-step checkout endpoints (start/add-batch/finalize) can
+ * build the cart across several quick idempotent calls — each Shufersal
+ * cart-add is ~1s and a 15+ item order routinely blew the chat route's 30s
+ * budget doing them all in one call — and only run this (fast, bounded)
+ * tail once, in the finalize step. `checkout()` itself is unchanged for the
+ * cron path (maxDuration=300, no need to split there).
+ */
+export async function finalizeCheckout(
+  uid: string,
+  options: { day?: string; time?: string; nearest?: boolean; dryRun?: boolean },
+): Promise<CheckoutResult> {
+  const creds = await loadCredentials(uid)
+  if (!creds) return { success: false, requiresAttendedCheckout: true }
+
   // Reload cookies after cart build (cartAddMany saves updated session)
   const cookies = await getAuthenticatedCookies(uid)
 

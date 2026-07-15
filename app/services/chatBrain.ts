@@ -32,6 +32,8 @@ function summarizeAction(name: string, args: Record<string, unknown>): string {
       return str('query') ? `חיפשתי "${str('query')}".` : 'חיפשתי מוצר.'
     case 're_search':
       return str('query') ? `חיפוש מחדש על "${str('query')}".` : 'חיפוש מחדש.'
+    case 'select_pending_product':
+      return 'הוספתי את הבחירה לרשימה.'
     case 'product_details':
       return str('name') ? `פרטים על ${str('name')}.` : 'הצגתי פרטי מוצר.'
     case 'remove_items':
@@ -129,7 +131,8 @@ export function isFirstWordGreeting(text: string): boolean {
 
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import { buildContextBlock, SYSTEM_PROMPT, type UserContext } from '@/app/services/chat/chatProcessor'
-import { savePendingSearch, clearAllPendingState, type PendingProductSelection, type AnonStoreCreds, type AttendedCheckoutContext } from '@/app/services/chat/actionExecutor'
+import { type AnonStoreCreds, type AttendedCheckoutContext } from '@/app/services/chat/actionExecutor'
+import { savePendingSearch, clearAllPendingState, type PendingProductSelection } from '@/app/services/chat/pendingSearchService'
 import { getUserStores, getStoreData, setOpenOrderCache } from '@/app/services/grocery/groceryStoreMulti'
 import { getAllStores } from '@/app/services/grocery/storeRegistry'
 import { initStores } from '@/app/services/grocery/initStores'
@@ -173,6 +176,8 @@ export interface ChatBrainResult {
   anonStoreCreds?: AnonStoreCreds | null
   /** Set when Shufersal trigger_order requires Tier-2 attended checkout from the client. */
   attendedCheckoutContext?: AttendedCheckoutContext
+  /** Set when a Shufersal trigger_order started a small-step checkout session (#275) — caller must drive add-batch/finalize. */
+  checkoutSession?: { checkoutId: string; totalBatches: number; storeLabel: string }
 }
 
 // --- Context builder (per-turn server state injected into the system prompt) ---
@@ -436,5 +441,6 @@ export async function processChatMessage(input: ChatBrainInput): Promise<ChatBra
     upstreamError: undefined,
     anonStoreCreds: toolCtx.anonCredsTouched ? (toolCtx.anonStoreCreds ?? null) : undefined,
     attendedCheckoutContext: toolCtx.attendedCheckout,
+    checkoutSession: toolCtx.checkoutSession,
   }
 }

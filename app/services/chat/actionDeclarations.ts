@@ -43,6 +43,18 @@ export const ACTION_DECLARATIONS: FunctionDeclaration[] = [
     },
   },
   {
+    name: 'select_pending_product',
+    description: 'בחר תוצאה מרשימה ממוספרת שכבר הוצגה (מ-search_product/re_search) לפי מספר. השתמש בזה כשהמשתמש עונה עם מספר / תיאור / כמות על רשימה שכבר נראתה ("2", "השני", "תוסיף 2 מהראשון") — אל תקרא ל-search_product שוב במקרה כזה, גם אם המשתמש הזכיר כמות חדשה.',
+    parameters: {
+      type: 'object',
+      properties: {
+        resultIndex: { type: 'integer', description: 'המספר שהמשתמש בחר, לפי הרשימה הממוספרת שהוצגה (1 = הראשון)' },
+        qty: { type: 'integer', description: 'כמות, רק אם המשתמש ציין/שינה כמות בתגובה. ללא ערך = הכמות המקורית מהחיפוש.' },
+      },
+      required: ['resultIndex'],
+    },
+  },
+  {
     name: 'remove_items',
     description: 'הסר פריטים מההזמנה השבועית. "בלי X" / "השבוע בלי X" / "תוריד את X לשבועיים"',
     parameters: {

@@ -193,6 +193,8 @@ export async function preflightOrderSafety(params: PreflightParams): Promise<Pre
   if (cycle?.lockedAt) {
     const lockedMs = now.getTime() - new Date(cycle.lockedAt).getTime()
     if (lockedMs >= 0 && lockedMs < LOCK_TTL_MS) {
+      const clearsAt = new Date(new Date(cycle.lockedAt).getTime() + LOCK_TTL_MS).toISOString()
+      console.log(`[OrderSafety] DEBUG locked-by-other-run: uid=${uid} storeId=${storeId} lockedAt=${cycle.lockedAt} ageMs=${lockedMs} clearsAt=${clearsAt} fullCycle=${JSON.stringify(cycle)}`)
       return { skipped: true, decision: 'locked-by-other-run', reason: 'locked-by-other-run' }
     }
   }
@@ -219,21 +221,29 @@ export async function preflightOrderSafety(params: PreflightParams): Promise<Pre
   }
 
   // 4. Take the lock and proceed.
+  // Self-healing: only carry forward status/orderId/lastError/attempts when
+  // the stored cycle is THIS SAME cycle (same idempotencyKey) — e.g. a retry
+  // after a failed attempt earlier today. A cycle for a DIFFERENT (older)
+  // idempotencyKey is stale and must not leak its status/orderId/lastError
+  // into today's lock — that's how a weeks-old broken record (e.g. a
+  // CREDS_CORRUPTED failure from 2026-06-27) kept resurfacing on every later
+  // attempt even though those attempts had nothing to do with it.
+  const sameCycle = cycle?.idempotencyKey === idempotencyKey
   const nowIso = now.toISOString()
   const locked: OrderCycle = {
-    status: cycle?.status ?? 'draft',
-    orderId: cycle?.orderId,
-    slot: cycle?.slot,
-    idempotencyKey: cycle?.idempotencyKey,
-    lastError: cycle?.lastError,
-    attempts: cycle?.attempts,
-    createdAt: cycle?.createdAt ?? nowIso,
+    status: sameCycle ? cycle?.status ?? 'draft' : 'draft',
+    orderId: sameCycle ? cycle?.orderId : undefined,
+    slot: sameCycle ? cycle?.slot : undefined,
+    idempotencyKey,
+    lastError: sameCycle ? cycle?.lastError : undefined,
+    attempts: sameCycle ? cycle?.attempts : undefined,
+    createdAt: sameCycle ? cycle?.createdAt ?? nowIso : nowIso,
     updatedAt: nowIso,
     lockedAt: nowIso,
   }
   await setStoreOrderCycle(uid, storeId, locked)
 
-  return { skipped: false, decision: 'proceed', idempotencyKey, cycle }
+  return { skipped: false, decision: 'proceed', idempotencyKey, cycle: sameCycle ? cycle : null }
 }
 
 export interface FinalizeSuccessParams {

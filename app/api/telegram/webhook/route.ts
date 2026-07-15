@@ -9,9 +9,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import { sendMessage, sendWithKeyboard, answerCallbackQuery } from '@/app/services/telegram/telegramClient'
-import { selectProduct } from '@/app/services/chat/actionExecutor'
+import { selectProduct } from '@/app/services/chat/pendingSearchService'
 import { processChatMessage, handleReset, handleClear } from '@/app/services/chatBrain'
 import { enqueueChatMessage } from '@/app/services/chatQueue'
+import { fireNextCheckoutStep } from '@/app/services/grocery/checkoutContinuation'
 import { panicAdmin } from '@/app/services/adminPanic'
 import { VARIANT_CONFIG } from '@/app/config/variants'
 import type { TelegramCallbackQuery, TelegramUpdate, TelegramMessage } from '@/app/services/telegram/types'
@@ -151,6 +152,21 @@ export async function POST(request: NextRequest) {
           { inline_keyboard: buttons },
         )
       }
+    }
+
+    // Small-step checkout (#275): Telegram has no client to loop
+    // add-batch/finalize the way AppChat.tsx does, so we self-chain —
+    // fire the first step unawaited; each step fires the next as a genuinely
+    // new invocation, so no single call risks the 30s budget. result.reply
+    // above already told the user "פותח הזמנה..."; the final result arrives
+    // as a follow-up message once the chain completes.
+    if (result.checkoutSession) {
+      fireNextCheckoutStep({
+        uid: link.uid,
+        checkoutId: result.checkoutSession.checkoutId,
+        telegramChatId: message.chat.id,
+        batchIndex: 0,
+      })
     }
 
   } catch (err: unknown) {

@@ -8,7 +8,21 @@ import { chatHistoryStore, type ChatMessage } from '@/app/stores/chatHistoryStor
 import { VARIANT_CONFIG } from '@/app/config/variants'
 import { credentialStore } from '@/app/stores/credentialStore'
 
-type Message = { role: 'user' | 'assistant'; content: string; thinking?: string }
+type Message = { role: 'user' | 'assistant'; content: string; thinking?: string; _key?: string }
+
+let messageKeyCounter = 0
+/** Stable id for update-in-place tracking across async React state updates —
+ * see runCheckoutSession's progress bubble for why matching by object
+ * identity (a mutable `let` reassigned inside setState updaters) is unsafe:
+ * back-to-back updates queue their updater functions before React runs any
+ * of them, so every closure ends up reading the SAME final variable value
+ * and none of them match what's actually in the array (Agla, 2026-07-15 —
+ * confirmed live: 6/6 batches + a real order completed server-side while
+ * the chat stayed frozen at "1/6" with no result ever shown). */
+function nextMessageKey(): string {
+  messageKeyCounter += 1
+  return `m${messageKeyCounter}`
+}
 
 type ProductResult = {
   catalogId: string
@@ -209,6 +223,102 @@ function sleepAbortable(ms: number, signal: AbortSignal): Promise<void> {
   })
 }
 
+/**
+ * Drives a small-step Shufersal checkout (#275) — the frontend calls
+ * add-batch once per batch (each is quick + idempotent: a retried batch
+ * index is a safe no-op server-side) then finalize, instead of the old
+ * single /api/chat call that built the whole cart synchronously and
+ * routinely blew the 30s function budget on carts of ~15+ items.
+ */
+type AttendedCheckoutContext = {
+  storeId: string
+  items: { code: string; qty: number }[]
+  day?: string
+  time?: string
+  nearest?: boolean
+}
+
+type CheckoutOutcome =
+  | { success: boolean; message: string }
+  | { requiresAttendedCheckout: true; message: string; ctx: AttendedCheckoutContext }
+
+async function runCheckoutSession(
+  session: { checkoutId: string; totalBatches: number; storeLabel: string },
+  onProgress: (completed: number, total: number) => void,
+): Promise<CheckoutOutcome> {
+  const token = await getIdToken()
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  for (let batchIndex = 0; batchIndex < session.totalBatches; batchIndex++) {
+    const res = await fetch('/api/grocery/checkout/add-batch', {
+      method: 'POST', headers,
+      body: JSON.stringify({ checkoutId: session.checkoutId, batchIndex }),
+    })
+    const data = await res.json()
+    if (!data.success) {
+      return { success: false, message: data.message || 'שגיאה בהוספת פריטים לעגלה.' }
+    }
+    onProgress(data.completed ?? batchIndex + 1, data.total ?? session.totalBatches)
+  }
+
+  const finalizeRes = await fetch('/api/grocery/checkout/finalize', {
+    method: 'POST', headers,
+    body: JSON.stringify({ checkoutId: session.checkoutId }),
+  })
+  const finalizeData = await finalizeRes.json()
+  console.log('[AppChat] finalize response:', finalizeRes.status, finalizeData)
+  // Server-side credentials couldn't be decrypted (corrupted, or a local-dev
+  // env missing SALIKO_CREDS_ENCRYPTION_KEY) — that's functionally "no
+  // server-side creds", so fall back to the client's own Dexie credentials
+  // via attended checkout instead of just reporting failure (Agla, 2026-07-14:
+  // "No key = tier 2").
+  if (finalizeData.requiresAttendedCheckout) {
+    console.log('[AppChat] finalize requires attended checkout, falling back to Tier-2:', finalizeData.message)
+    return {
+      requiresAttendedCheckout: true,
+      message: finalizeData.message || 'החיבור לשופרסל בשרת לא זמין — מנסה עם הפרטים השמורים בדפדפן שלך.',
+      ctx: { storeId: 'shufersal', items: finalizeData.items, day: finalizeData.day, time: finalizeData.time, nearest: !finalizeData.day },
+    }
+  }
+  return { success: !!finalizeData.success, message: finalizeData.message || 'שגיאה בסגירת ההזמנה.' }
+}
+
+/** Completes a Shufersal order using the client's own Dexie-stored credentials (Tier-2). */
+async function runAttendedCheckout(ctx: AttendedCheckoutContext): Promise<{ success: boolean; message: string }> {
+  const cred = await credentialStore.getByService('shufersal')
+  if (!cred) {
+    // Conversational, not a dead-end redirect (Agla, 2026-07-15): the user
+    // already gave Shufersal credentials once — that's the whole reason
+    // we're in this fallback (the server-side copy can't be decrypted).
+    // Invite them to just send the email/password here; the chat agent
+    // handles it via its normal set_credentials flow on the next turn.
+    return { success: false, message: 'לא הצלחתי להשתמש בפרטי הכניסה השמורים בשרת לשופרסל. אפשר לשלוח לי כאן את האימייל והסיסמה של שופרסל ואמשיך מיד עם ההזמנה.' }
+  }
+  const orderToken = await getIdToken()
+  const orderRes = await fetch('/api/grocery/shufersal/attended-checkout', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(orderToken ? { Authorization: `Bearer ${orderToken}` } : {}),
+    },
+    body: JSON.stringify({
+      email: cred.userCode, password: cred.password,
+      items: ctx.items, day: ctx.day, time: ctx.time, nearest: ctx.nearest,
+    }),
+  })
+  const orderData = await orderRes.json()
+  if (orderData.success) {
+    const dw = orderData.deliveryWindow
+    return { success: true, message: `✅ הזמנה בוצעה בשופרסל! #${orderData.orderId || ''}\nמשלוח: ${dw?.day || ''} ${dw?.date || ''} ${dw?.time || ''}` }
+  }
+  if (orderData.dryRun) {
+    const dw = orderData.deliveryWindow
+    return { success: true, message: `דמה-ריצה: לא בוצעה הזמנה. חלון: ${dw?.day || ''} ${dw?.date || ''} ${dw?.time || ''}` }
+  }
+  return { success: false, message: `שגיאה בהזמנה: ${orderData.error || 'שגיאה לא ידועה'}` }
+}
+
 export default function AppChat() {
   const { showToast } = useToast()
   const [messages, setMessages] = useState<Message[]>([])
@@ -369,6 +479,8 @@ export default function AppChat() {
             time?: string
             nearest?: boolean
           }
+          /** Small-step Shufersal checkout (#275) — client drives add-batch/finalize. */
+          checkoutSession?: { checkoutId: string; totalBatches: number; storeLabel: string }
         }
         try {
           const token = await getIdToken()
@@ -424,55 +536,68 @@ export default function AppChat() {
           if (Object.prototype.hasOwnProperty.call(data, 'anonStoreCreds')) {
             writeAnonStoreCreds(data.anonStoreCreds ?? null)
           }
-          // Tier-2 attended checkout: server has no credentials — read from
-          // Dexie and complete the order via the attended-checkout endpoint.
+          // Tier-2 attended checkout: server has no usable credentials — read
+          // from Dexie and complete the order via the attended-checkout endpoint.
           if (data.attendedCheckoutContext) {
             const ctx = data.attendedCheckoutContext
-            const cred = await credentialStore.getByService('shufersal')
-            if (!cred) {
-              const noCredMsg: Message = { role: 'assistant', content: 'לא נמצאו פרטי כניסה לשופרסל. שמור אותם בהגדרות ← חיבורים חיצוניים ונסה שוב.' }
-              setMessages(prev => [...prev, noCredMsg])
-              await chatHistoryStore.appendMessage(uid, activeChatId, noCredMsg)
-              setRetryStatus(null)
-              return
-            }
-            const orderingMsg: Message = { role: 'assistant', content: '⏳ מבצע הזמנה עם פרטי הכניסה שלך...' }
-            setMessages(prev => [...prev, orderingMsg])
+            const key = nextMessageKey()
+            setMessages(prev => [...prev, { role: 'assistant', content: '⏳ מבצע הזמנה עם פרטי הכניסה שלך...', _key: key }])
+            let outcome: { success: boolean; message: string }
             try {
-              const orderToken = await getIdToken()
-              const orderRes = await fetch('/api/grocery/shufersal/attended-checkout', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  ...(orderToken ? { Authorization: `Bearer ${orderToken}` } : {}),
-                },
-                body: JSON.stringify({
-                  email: cred.userCode,
-                  password: cred.password,
-                  items: ctx.items,
-                  day: ctx.day,
-                  time: ctx.time,
-                  nearest: ctx.nearest,
-                }),
-              })
-              const orderData = await orderRes.json()
-              let resultContent: string
-              if (orderData.success) {
-                const dw = orderData.deliveryWindow
-                resultContent = `✅ הזמנה בוצעה בשופרסל! #${orderData.orderId || ''}\nמשלוח: ${dw?.day || ''} ${dw?.date || ''} ${dw?.time || ''}`
-              } else if (orderData.dryRun) {
-                const dw = orderData.deliveryWindow
-                resultContent = `דמה-ריצה: לא בוצעה הזמנה. חלון: ${dw?.day || ''} ${dw?.date || ''} ${dw?.time || ''}`
-              } else {
-                resultContent = `שגיאה בהזמנה: ${orderData.error || 'שגיאה לא ידועה'}`
-              }
-              const resultMsg: Message = { role: 'assistant', content: resultContent }
-              setMessages(prev => prev.map(m => m === orderingMsg ? resultMsg : m))
-              await chatHistoryStore.appendMessage(uid, activeChatId, resultMsg)
+              outcome = await runAttendedCheckout(ctx)
             } catch (orderErr) {
-              const errContent = `שגיאה בביצוע ההזמנה: ${orderErr instanceof Error ? orderErr.message : 'שגיאת רשת'}`
-              const errMsg: Message = { role: 'assistant', content: errContent }
-              setMessages(prev => prev.map(m => m === orderingMsg ? errMsg : m))
+              outcome = { success: false, message: `שגיאה בביצוע ההזמנה: ${orderErr instanceof Error ? orderErr.message : 'שגיאת רשת'}` }
+            }
+            const resultMsg: Message = { role: 'assistant', content: outcome.message, _key: key }
+            setMessages(prev => prev.map(m => m._key === key ? resultMsg : m))
+            await chatHistoryStore.appendMessage(uid, activeChatId, resultMsg)
+          }
+          // Small-step checkout (#275): drive add-batch/finalize ourselves —
+          // this is "the frontend" Agla's fix relies on. Each step is quick,
+          // so no single call risks the old 504/stuck-lock failure mode.
+          //
+          // Bubbles are tracked by a stable `_key`, NOT object identity —
+          // add-batch calls often resolve back-to-back fast enough that
+          // several onProgress calls queue their setState updaters before
+          // React processes any of them; a mutable `let currentMsg`
+          // reassigned between those calls meant every queued updater ended
+          // up comparing against the SAME final value, so none of them
+          // matched and the bubble froze mid-progress even though the
+          // backend finished cleanly (Agla, 2026-07-15 — confirmed live: a
+          // real order placed while the UI sat stuck at "1/6").
+          if (data.checkoutSession) {
+            const session = data.checkoutSession
+            const key = nextMessageKey()
+            let finalKey = key
+            setMessages(prev => [...prev, { role: 'assistant', content: `⏳ מוסיף פריטים לעגלה ב${session.storeLabel}... (0/${session.totalBatches})`, _key: key }])
+            try {
+              const outcome = await runCheckoutSession(session, (completed, total) => {
+                setMessages(prev => prev.map(m => m._key === key
+                  ? { ...m, content: `⏳ מוסיף פריטים לעגלה ב${session.storeLabel}... (${completed}/${total})` }
+                  : m))
+              })
+              // Server-side creds couldn't be decrypted mid-flow — surface WHY
+              // before silently switching paths (Agla, 2026-07-15: a
+              // success:false response with no visible explanation is a bug
+              // in itself, not just a client rendering detail), then degrade
+              // to the client's own Dexie credentials instead of failing.
+              let finalOutcome: { success: boolean; message: string }
+              if ('requiresAttendedCheckout' in outcome) {
+                setMessages(prev => prev.map(m => m._key === key ? { ...m, content: outcome.message } : m))
+                await chatHistoryStore.appendMessage(uid, activeChatId, { role: 'assistant', content: outcome.message })
+                finalKey = nextMessageKey()
+                setMessages(prev => [...prev, { role: 'assistant', content: '⏳ מבצע הזמנה עם פרטי הכניסה השמורים בדפדפן שלך...', _key: finalKey }])
+                finalOutcome = await runAttendedCheckout(outcome.ctx)
+              } else {
+                finalOutcome = outcome
+              }
+              const resultMsg: Message = { role: 'assistant', content: finalOutcome.message, _key: finalKey }
+              setMessages(prev => prev.map(m => m._key === finalKey ? resultMsg : m))
+              await chatHistoryStore.appendMessage(uid, activeChatId, resultMsg)
+            } catch (checkoutErr) {
+              console.error('[AppChat] checkoutSession flow threw:', checkoutErr)
+              const errMsg: Message = { role: 'assistant', content: `שגיאה בהזמנה: ${checkoutErr instanceof Error ? checkoutErr.message : 'שגיאת רשת'}`, _key: finalKey }
+              setMessages(prev => prev.map(m => m._key === finalKey ? errMsg : m))
               await chatHistoryStore.appendMessage(uid, activeChatId, errMsg)
             }
           }

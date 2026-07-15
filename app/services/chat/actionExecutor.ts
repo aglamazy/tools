@@ -37,8 +37,9 @@ import type { OtpStorePlugin, CredentialsStorePlugin, StoreOrder } from '@/app/s
 import { preflightOrderSafety, finalizeOrderSuccess, finalizeOrderFailure, checkOrderSize } from '@/app/services/grocery/orderSafety'
 
 import { listTasks, createTask, updateTask, deleteTask, findTasks } from '@/app/services/taskFirestoreService'
-import { randomBytes } from 'crypto'
 import { deleteMapping, lookupMapping, saveProductMapping } from '@/app/services/grocery/productResolver'
+import { loadLatestPendingSearch, selectProduct, type PendingProductSelection } from './pendingSearchService'
+import { startShufersalCheckout } from '@/app/services/grocery/shufersalCheckoutFlow'
 
 /**
  * Actions that require a connected store (auth-gated). Catalog reads
@@ -81,100 +82,6 @@ async function resolveActionStore(uid: string, action: ChatAction, sessionStore?
   if (sessionStore) return sessionStore
   const meta = await getUserStores(uid)
   return meta.defaultStore
-}
-
-// --- Pending search storage (for callback_data 64-byte limit) ---
-
-export async function savePendingSearch(uid: string, selection: PendingProductSelection): Promise<string> {
-  const key = randomBytes(3).toString('hex')
-  // Strip undefined values — Firestore rejects them
-  const clean = JSON.parse(JSON.stringify(selection))
-  await getAdminFirestore().collection('groceries').doc(uid)
-    .collection('private').doc('pendingSearches').set(
-      { [key]: { ...clean, createdAt: new Date().toISOString() } },
-      { merge: true },
-    )
-  return key
-}
-
-export async function loadPendingSearch(uid: string, key: string): Promise<PendingProductSelection | null> {
-  const doc = await getAdminFirestore().collection('groceries').doc(uid)
-    .collection('private').doc('pendingSearches').get()
-  if (!doc.exists) return null
-  const entry = doc.data()?.[key]
-  if (!entry) return null
-  // Expire after 24h
-  if (entry.createdAt && Date.now() - new Date(entry.createdAt).getTime() > 24 * 60 * 60 * 1000) return null
-  return entry as PendingProductSelection
-}
-
-export async function deletePendingSearch(uid: string, key: string): Promise<void> {
-  const { FieldValue } = await import('firebase-admin/firestore')
-  await getAdminFirestore().collection('groceries').doc(uid)
-    .collection('private').doc('pendingSearches').update({ [key]: FieldValue.delete() })
-}
-
-/**
- * Wipe ALL pending product-picker searches for this user. Called on greeting
- * (soft-reset) — a stale picker from yesterday is the wrong context for a
- * fresh "שלום" turn, and the user can't see+dismiss it from the floating
- * widget. Cheap: one Firestore overwrite, zero reads.
- */
-export async function clearAllPendingSearches(uid: string): Promise<void> {
-  await getAdminFirestore().collection('groceries').doc(uid)
-    .collection('private').doc('pendingSearches').set({})
-}
-
-/**
- * Clear all pending cart state for the user's active stores, plus any stale
- * product-picker searches. Leaves chat history and standing lists intact.
- */
-export async function clearAllPendingState(uid: string): Promise<void> {
-  const meta = await getUserStores(uid)
-  await Promise.all([
-    clearAllPendingSearches(uid),
-    ...meta.activeStores.map(store => clearStorePending(uid, store)),
-  ])
-}
-
-/**
- * Select a product from a pending search and save it to the appropriate list.
- * Returns a confirmation message. Used by both Telegram callback and app chat select.
- */
-export async function selectProduct(uid: string, searchKey: string, resultIndex: number): Promise<{ message: string; target: string }> {
-  const pendingSearch = await loadPendingSearch(uid, searchKey)
-  if (!pendingSearch || resultIndex >= pendingSearch.results.length) {
-    throw new Error('החיפוש פג תוקף')
-  }
-
-  const selected = pendingSearch.results[resultIndex]
-  const unit = selected.unitPrice?.split('/')?.pop()?.trim()
-  const item = {
-    name: selected.name, qty: pendingSearch.qty, catalogId: selected.catalogId,
-    ...(unit ? { unit } : {}),
-    ...(selected.sellingUnitId != null ? { sellingUnitId: selected.sellingUnitId } : {}),
-  }
-
-  const selStoreId = pendingSearch.store || 'shufersal'
-  if (pendingSearch.target === 'standing') {
-    await addToStoreStanding(uid, selStoreId, [item])
-  } else {
-    await addStorePendingItems(uid, selStoreId, [item], { validTo: pendingSearch.validTo })
-  }
-
-  await saveProductMapping(uid, pendingSearch.query, selected.catalogId, selected.name)
-  await deletePendingSearch(uid, searchKey)
-
-  // NOTE: even when there's an open order, we do NOT push to the live order
-  // here. Each live edit is a full ~30s login→merge→commit cycle (the
-  // 33.9s-per-item problem). Instead the item just buffers into pendingChanges,
-  // and the user applies the whole batch in one commit via the `update_order`
-  // tool after the agent asks for approval. See the "הזמנה פתוחה" prompt section.
-  const targetLabel = pendingSearch.target === 'standing' ? 'קבועה' : 'הזמנה'
-  return {
-    message: `✅ ${selected.name} (x${pendingSearch.qty}) נוסף לרשימה ${targetLabel}`,
-    target: targetLabel,
-  }
 }
 
 /**
@@ -229,17 +136,16 @@ export interface ActionResult {
    * Client must read Dexie credentials and call the attended-checkout route.
    */
   attendedCheckoutContext?: AttendedCheckoutContext
+  /**
+   * Set when a Shufersal trigger_order started a small-step checkout session
+   * (#275) — the caller must drive it to completion via
+   * /api/grocery/checkout/add-batch (× totalBatches) then /finalize. Web:
+   * the client loop does this. Telegram: the webhook self-chains (see
+   * checkoutOrchestrator.ts) since there's no persistent client to drive it.
+   */
+  checkoutSession?: { checkoutId: string; totalBatches: number; storeLabel: string }
 }
 
-export interface PendingProductSelection {
-  query: string
-  qty: number
-  target: 'pending' | 'standing'
-  store?: string  // which store these results came from
-  /** ISO date/datetime — only meaningful for target='pending'. Absent = single-shot. */
-  validTo?: string
-  results: { catalogId: string; name: string; brand: string; price: string; unitPrice: string; sellingUnitId?: number }[]
-}
 
 export async function executeActions(
   uid: string,
@@ -256,6 +162,7 @@ export async function executeActions(
   let workingAnonCreds: AnonStoreCreds | null | undefined = inboundAnonCreds
   let anonCredsTouched = false
   let attendedCheckoutContext: AttendedCheckoutContext | undefined
+  let checkoutSession: ActionResult['checkoutSession']
 
   // Same-turn consent defense (C01): use the turn-start consent snapshot threaded
   // in by the caller — NOT a live read here, since toolRegistry calls executeActions
@@ -281,6 +188,9 @@ export async function executeActions(
         if (r.attendedCheckoutContext) {
           attendedCheckoutContext = r.attendedCheckoutContext
         }
+        if (r.checkoutSession) {
+          checkoutSession = r.checkoutSession
+        }
       } else {
         results.push({ name: action.action, result: 'ok' })
       }
@@ -300,6 +210,7 @@ export async function executeActions(
     // from "wipe it" (null).
     anonStoreCreds: anonCredsTouched ? workingAnonCreds ?? null : undefined,
     attendedCheckoutContext,
+    checkoutSession,
   }
 }
 
@@ -313,6 +224,8 @@ interface ExecuteOneResult {
   anonStoreCreds?: AnonStoreCreds | null
   /** Set when Shufersal needs Tier-2 attended checkout. */
   attendedCheckoutContext?: AttendedCheckoutContext
+  /** Set when a Shufersal trigger_order started a small-step checkout session (#275). */
+  checkoutSession?: ActionResult['checkoutSession']
 }
 
 async function executeOne(
@@ -468,6 +381,30 @@ async function executeOne(
       } catch (err) {
         console.error(`[ActionExecutor] Search failed for "${query}" (${storeId}):`, err)
         return `שגיאה בחיפוש "${query}" ב${store.label}.`
+      }
+    }
+
+    // Resolves a free-text reply to the picker just shown by search_product
+    // (e.g. "2", "השני", "תוסיף 2 מהראשון") — #276: previously the LLM had no
+    // tool for this and fell back to calling search_product again, which
+    // re-ran a fresh search instead of picking from what was already shown.
+    case 'select_pending_product': {
+      const resultIndex = typeof action.resultIndex === 'number' ? Math.round(action.resultIndex) - 1 : NaN
+      if (!Number.isInteger(resultIndex) || resultIndex < 0) return null
+      const qtyOverride = typeof action.qty === 'number' && action.qty > 0 ? action.qty : undefined
+
+      const latest = await loadLatestPendingSearch(uid)
+      if (!latest) return 'אין חיפוש פתוח לבחור ממנו — צריך לחפש שוב.'
+      if (resultIndex >= latest.entry.results.length) {
+        return `יש רק ${latest.entry.results.length} תוצאות — מספר לא תקין.`
+      }
+
+      try {
+        const { message } = await selectProduct(uid, latest.key, resultIndex, qtyOverride)
+        return message
+      } catch (err) {
+        console.error(`[ActionExecutor] select_pending_product failed:`, err)
+        return 'החיפוש פג תוקף — צריך לחפש שוב.'
       }
     }
 
@@ -683,7 +620,33 @@ async function executeOne(
         }
       }
 
-      // --- Logged-in branch ---
+      // --- Logged-in branch: Shufersal → small-step checkout (#275) ---
+      // A synchronous cart build (one HTTP round-trip per item) routinely
+      // blew /api/chat's 30s budget on carts of ~15+ items, 504ing mid-flow
+      // and leaving the order-safety lock stuck. Agla's call: the FRONTEND
+      // drives checkout across several quick idempotent steps instead — this
+      // just starts the session; the caller (chatBrain → web client loop or
+      // the Telegram webhook's self-chaining) drives add-batch/finalize.
+      if (storeId === 'shufersal') {
+        const started = await startShufersalCheckout(uid, day, time)
+        if (!started.ok) {
+          if ('requiresAttendedCheckout' in started) {
+            return {
+              followUp: `הזמנה ב${store.label} דורשת אימות — מסירה לאפליקציה`,
+              attendedCheckoutContext: {
+                storeId, items: started.items, day: started.day, time: started.time, nearest: !started.day,
+              },
+            }
+          }
+          return started.message
+        }
+        return {
+          followUp: `פותח הזמנה ב${started.storeLabel}...`,
+          checkoutSession: { checkoutId: started.checkoutId, totalBatches: started.totalBatches, storeLabel: started.storeLabel },
+        }
+      }
+
+      // --- Logged-in branch (other stores) ---
       // Safety gate — same contract as grocery cron. Prevents duplicate
       // orders from a stale cycle doc, mid-flight race, or existing live
       // order that upstream logic missed.

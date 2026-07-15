@@ -18,7 +18,7 @@ import { getStore } from '@/app/services/grocery/storeRegistry'
 import { initStores } from '@/app/services/grocery/initStores'
 import { getAuthenticatedCookies, checkSession, cartRead, orderLoadToCart, _debugFetchHtml, preselectSlot } from '@/app/services/grocery/shufersalClient'
 import { processChatMessage, handleReset } from '@/app/services/chatBrain'
-import { selectProduct } from '@/app/services/chat/actionExecutor'
+import { selectProduct } from '@/app/services/chat/pendingSearchService'
 
 export const maxDuration = 60
 
