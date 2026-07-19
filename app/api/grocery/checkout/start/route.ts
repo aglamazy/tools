@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireTc } from '@/app/lib/apiGuard'
 import { initStores } from '@/app/services/grocery/initStores'
 import { startShufersalCheckout } from '@/app/services/grocery/shufersalCheckoutFlow'
+import { withServiceCall } from 'agents-observe/next'
 
 export const maxDuration = 30
 
-export async function POST(request: NextRequest) {
+async function handler(request: NextRequest) {
   const guard = await requireTc(request)
   if (guard.error) return guard.error
 
@@ -32,3 +33,5 @@ export async function POST(request: NextRequest) {
     storeLabel: result.storeLabel,
   })
 }
+
+export const POST = withServiceCall((req, ...args) => handler(req as NextRequest, ...args as []))

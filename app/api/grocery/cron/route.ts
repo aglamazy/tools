@@ -37,6 +37,7 @@ import {
 import { sendMessage } from '@/app/services/telegram/telegramClient'
 import { withTimeout } from '@/app/services/grocery/timeoutUtil'
 import { CredsCorruptedError } from '@/app/services/security/credEncryption'
+import { withServiceCall } from 'agents-observe/next'
 
 // 300 s is the Vercel Pro hard cap. Two stores × ~45 s iteration timeout
 // + the trailing /success ping does NOT fit in 60 s when one iteration
@@ -96,7 +97,7 @@ async function notify(chatId: number | null, text: string): Promise<void> {
   }
 }
 
-export async function GET(request: NextRequest) {
+async function getHandler(request: NextRequest) {
   // Verify cron secret (Vercel sends this header). Auth runs BEFORE any
   // healthcheck ping so unauthenticated callers can't trip the probe.
   const authHeader = request.headers.get('authorization')
@@ -339,6 +340,8 @@ async function runCron(hcUrl: string | undefined) {
 
   return NextResponse.json({ ok: true, results })
 }
+
+export const GET = withServiceCall((req, ...args) => getHandler(req as NextRequest, ...args as []))
 
 /**
  * Resolve uid → Telegram chatId for notifications.

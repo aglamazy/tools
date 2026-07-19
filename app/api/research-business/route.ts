@@ -2,6 +2,7 @@
 // Used by the smart-classifier to look up unfamiliar vendors via Google Search grounding.
 import { NextRequest, NextResponse } from 'next/server'
 import { getLLMClient } from '@/app/services/llm'
+import { withServiceCall } from 'agents-observe/next'
 
 export const maxDuration = 30
 
@@ -34,7 +35,7 @@ const SYSTEM = `אתה עוזר חוקר עסקים ישראליים. המשתמ
 
 ללא markdown. JSON תקין בלבד.`
 
-export async function POST(req: NextRequest) {
+async function handler(req: NextRequest) {
   try {
     const body = (await req.json()) as RequestBody
     const { business, options, allSubjects, amountSign } = body
@@ -87,3 +88,5 @@ allSubjects (אם options לא מתאים): ${allSubjects.join(', ')}
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 })
   }
 }
+
+export const POST = withServiceCall((req, ...args) => handler(req as NextRequest, ...args as []))

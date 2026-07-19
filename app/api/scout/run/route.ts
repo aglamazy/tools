@@ -7,6 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getLLMClient, type LLMProvider } from '@/app/services/llm'
+import { withServiceCall } from 'agents-observe/next'
 
 const SYSTEM_PROMPT = `אתה סוכן חיפוש הזדמנויות למוזיקאים. תקבל פרומפט חיפוש שמתאר מה המשתמש מחפש.
 
@@ -35,7 +36,7 @@ const SYSTEM_PROMPT = `אתה סוכן חיפוש הזדמנויות למוזי�
 חפש לפחות 5 הזדמנויות. התמקד בהזדמנויות עדכניות עם דדליין פתוח.
 אל תמציא — ספק רק תוצאות שמצאת בפועל עם קישורים אמיתיים.`
 
-export async function POST(request: NextRequest) {
+async function handler(request: NextRequest) {
   try {
     const { businessId, searchPrompt, feedback, provider, apiKey } = await request.json()
 
@@ -129,3 +130,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'שגיאה בחיפוש' }, { status: 500 })
   }
 }
+
+export const POST = withServiceCall((req, ...args) => handler(req as NextRequest, ...args as []))
