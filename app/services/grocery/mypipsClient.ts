@@ -1,5 +1,6 @@
 /**
- * mypips.app Firestore REST client — direct commit writes to carts/{cartId}.
+ * mypips.app Firestore REST client — direct commit writes to carts/{cartId},
+ * plus the captured callable-function finalize step.
  *
  * mypips.app has no custom REST API for cart/order placement: the site's Firebase
  * JS SDK writes directly to Firestore, gated only by Firestore security rules
@@ -7,9 +8,8 @@
  * Firestore REST `commit` endpoint instead of the WebChannel/gRPC-over-HTTP the
  * browser SDK uses — same auth, same result, no streaming/session state to manage.
  *
- * Cart document shape and the REST call shape below were captured live via Chrome
- * DevTools MCP against a real mypips.app account/cart on 2026-07-13 (mashtelatharoe
- * store). See the task description for the full capture notes.
+ * The finalize step is a Firebase Callable Function captured live via Chrome DevTools
+ * MCP against a real mypips.app account/cart on 2026-07-13 (mashtelatharoe store).
  *
  * Every function here takes the caller's Firebase ID token directly — this module
  * has no opinion on how that token is obtained (that's the mypips auth-client task).
@@ -85,6 +85,40 @@ interface FirestoreWrite {
   currentDocument?: { exists: boolean }
 }
 
+interface FirestoreDocument {
+  name: string
+  fields?: Record<string, FirestoreValue>
+}
+
+function fromFirestoreValue(value: FirestoreValue): unknown {
+  if ('nullValue' in value) return null
+  if ('booleanValue' in value) return value.booleanValue
+  if ('integerValue' in value) return Number(value.integerValue)
+  if ('doubleValue' in value) return value.doubleValue
+  if ('stringValue' in value) return value.stringValue
+  if ('arrayValue' in value) {
+    const arrayValue = value.arrayValue as { values?: FirestoreValue[] } | undefined
+    return (arrayValue?.values || []).map(fromFirestoreValue)
+  }
+  if ('mapValue' in value) {
+    const mapValue = value.mapValue as { fields?: Record<string, FirestoreValue> } | undefined
+    return fromFirestoreFields(mapValue?.fields || {})
+  }
+  if ('timestampValue' in value) return value.timestampValue
+  if ('referenceValue' in value) return value.referenceValue
+  if ('geoPointValue' in value) return value.geoPointValue
+  if ('bytesValue' in value) return value.bytesValue
+  throw new Error(`mypipsClient: cannot decode Firestore value ${JSON.stringify(value)}`)
+}
+
+function fromFirestoreFields(fields: Record<string, FirestoreValue>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(fields)) {
+    out[key] = fromFirestoreValue(value)
+  }
+  return out
+}
+
 async function commit(idToken: string, writes: FirestoreWrite[]): Promise<unknown> {
   const res = await fetch(`${FIRESTORE_BASE}:commit`, {
     method: 'POST',
@@ -99,6 +133,49 @@ async function commit(idToken: string, writes: FirestoreWrite[]): Promise<unknow
     throw new Error(`mypips Firestore commit failed (${res.status}): ${text}`)
   }
   return res.json()
+}
+
+async function fetchCartDoc(idToken: string, cartId: string): Promise<Record<string, unknown>> {
+  const res = await fetch(`${FIRESTORE_BASE}/carts/${cartId}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${idToken}`,
+    },
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`mypips Firestore get cart failed (${res.status}): ${text}`)
+  }
+  const doc = await res.json() as FirestoreDocument
+  const fields = fromFirestoreFields(doc.fields || {})
+  return { id: cartId, ...fields }
+}
+
+async function callFinalizeOrder(payload: Record<string, unknown>, idToken: string): Promise<unknown> {
+  const res = await fetch('https://me-west1-plantonic-eco.cloudfunctions.net/functionsOrdersFinalizeOrderNew', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${idToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ data: payload }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`mypips finalize-order callable failed (${res.status}): ${text}`)
+  }
+  return res.json()
+}
+
+function generatePipsId(): string {
+  const bytes = new Uint8Array(8)
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    crypto.getRandomValues(bytes)
+  } else {
+    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256)
+  }
+  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
+  return `${hex}-${Date.now()}`
 }
 
 const TOUCH_TIMESTAMP: FirestoreWrite['updateTransforms'] = [
@@ -197,25 +274,39 @@ export async function updateOrderDetails(idToken: string, cartId: string, orderD
   }])
 }
 
-/**
- * NOT IMPLEMENTED — deliberately.
- *
- * The final "place order" write (checkout step 4, תשלום ואישור) was never captured.
- * It is likely more than `finalized: true` on the cart doc — the task notes call out
- * a probable `me-west1-plantonic-eco.cloudfunctions.net` vendor-notification call
- * (payment here is a deferred manual phone call, not an immediate charge, per the
- * "confirm order" / paymentNotice message strings in get-store-data).
- *
- * Guessing this write is unacceptable: it would commit a real order with a real
- * vendor against a real user's account. Do not implement this by inference from the
- * cart-building shape above — capture the real network traffic for step 4 first
- * (supervised Chrome DevTools session against a real mypips.app account), then
- * replace this function.
- */
-export async function placeOrder(_idToken: string, _cartId: string): Promise<never> {
-  throw new Error(
-    'mypipsClient.placeOrder() is not implemented: the final "place order" network call ' +
-    '(checkout step 4) has not been captured yet. See app/services/grocery/mypipsClient.ts ' +
-    'and the mypips cart/order task description for what to capture before implementing this.'
-  )
+export async function placeOrder(idToken: string, cartId: string): Promise<unknown> {
+  const cart = await fetchCartDoc(idToken, cartId)
+  const orderDetails = (cart['orderDetails'] ?? null) as Record<string, unknown> | null
+  const deliveryOption = (
+    cart['deliveryOption'] ??
+    (orderDetails ? (orderDetails['deliveryOption'] ?? null) : null) ??
+    null
+  ) as Record<string, unknown> | null
+  const payload = {
+    cartId,
+    orderDetails,
+    deliveryOption,
+    shouldSendOrderConfirmation: true,
+    shouldDeleteCard: false,
+    guestOrder: false,
+    passedIsManager: false,
+    params: {
+      cart,
+      uid: cart['uid'] ?? cart['ownerId'] ?? null,
+      groupId: cart['groupId'] ?? null,
+      sum: cart['sum'] ?? null,
+      vat: cart['vat'] ?? null,
+      totalVatFreeSum: cart['totalVatFreeSum'] ?? null,
+      lang: 'he',
+      textToDisplay: 'הזמנה חדשה',
+      action: 'suspended',
+      type: 'user_checkout',
+    },
+    queryParams: {},
+    referrer: '',
+    pipsId: generatePipsId(),
+    myppsinId: '',
+    approveOwnershipTransfer: false,
+  }
+  return callFinalizeOrder(payload, idToken)
 }
