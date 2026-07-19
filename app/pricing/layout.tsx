@@ -11,7 +11,10 @@ export const metadata: Metadata = {
   title: `מחירים | ${branding.name}`,
   description: `תוכניות ומחירים של ${branding.name}. בחרו את התוכנית המתאימה לעסק שלכם — חינם, בסיסי או פרימיום.`,
   keywords: ['מחירים Aglamazo', 'תוכנית חינם', 'תוכנית פרימיום', 'מנוי חודשי', 'מחיר ניהול פיננסי', 'תוכנית עסקים'],
-  robots: { index: true, follow: true, googleBot: { index: true, follow: true, 'max-video-preview': -1, 'max-image-preview': 'large', 'max-snippet': -1 } },
+  // Aglamazo is an invite-only personal tool, not a self-serve SaaS: the ₪99 plan has no
+  // purchase path (the CTA opens a mailto). Keep this page reachable by URL but out of the index
+  // rather than advertising a plan we don't actually sell.
+  robots: { index: false, follow: true, googleBot: { index: false, follow: true } },
   alternates: {
     canonical: '/pricing',
     languages: {
@@ -70,7 +73,6 @@ const jsonLd = [
           '@type': 'SoftwareApplication',
           name: `${branding.name} חינם`,
           applicationCategory: 'FinanceApplication',
-          offers: { '@type': 'Offer', price: '0', priceCurrency: 'ILS', availability: 'https://schema.org/InStock' },
         },
       },
       {
@@ -80,7 +82,6 @@ const jsonLd = [
           '@type': 'SoftwareApplication',
           name: `${branding.name} מקצועי`,
           applicationCategory: 'FinanceApplication',
-          offers: { '@type': 'Offer', price: '99', priceCurrency: 'ILS', availability: 'https://schema.org/InStock' },
         },
       },
     ],

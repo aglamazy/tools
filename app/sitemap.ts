@@ -27,7 +27,16 @@ const EXCLUDED_DIRS = new Set([
 ])
 
 /** Routes that should not appear in the sitemap (e.g. require query params) */
-const EXCLUDED_ROUTES = new Set(['/invite'])
+const EXCLUDED_ROUTES = new Set([
+  '/invite',
+  // Storefront surface — Aglamazo is an invite-only personal tool, not a self-serve SaaS.
+  // /pricing advertises a ₪99 plan whose only CTA is a mailto; the /machshevon "calculators"
+  // are static pages with no inputs. Don't invite search traffic to either.
+  '/pricing',
+  '/machshevon',
+  '/machshevon/vat-calculator',
+  '/machshevon/income-tax-advance-calculator',
+])
 
 interface DiscoveredRoute {
   routePath: string
