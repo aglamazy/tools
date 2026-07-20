@@ -1,6 +1,7 @@
 /**
  * mypips.app Firestore REST client — direct commit writes to carts/{cartId},
- * plus the captured callable-function finalize step.
+ * the captured callable-function finalize step, and the public (unauthenticated)
+ * catalog/search read path.
  *
  * mypips.app has no custom REST API for cart/order placement: the site's Firebase
  * JS SDK writes directly to Firestore, gated only by Firestore security rules
@@ -11,8 +12,16 @@
  * The finalize step is a Firebase Callable Function captured live via Chrome DevTools
  * MCP against a real mypips.app account/cart on 2026-07-13 (mashtelatharoe store).
  *
- * Every function here takes the caller's Firebase ID token directly — this module
- * has no opinion on how that token is obtained (that's the mypips auth-client task).
+ * The catalog/search functions below (resolveStoreGroupId, getStoreMetadata,
+ * getCatalog, searchCatalog) are fully unauthenticated — captured 2026-07-13 firing
+ * before any sign-in against https://mypips.app/mashtelatharoe. They use the
+ * Firestore REST `runQuery` endpoint (public security rules) plus a plain JSON
+ * REST endpoint for store metadata. No credentials needed; keep this section
+ * callable independent of the auth/order-placing functions above.
+ *
+ * Every cart/order function here takes the caller's Firebase ID token directly —
+ * this module has no opinion on how that token is obtained (that's the mypips
+ * auth-client task).
  */
 
 const PROJECT_ID = 'plantonic-eco'
@@ -133,6 +142,24 @@ async function commit(idToken: string, writes: FirestoreWrite[]): Promise<unknow
     throw new Error(`mypips Firestore commit failed (${res.status}): ${text}`)
   }
   return res.json()
+}
+
+/** Unauthenticated Firestore REST `runQuery` — public security rules, no ID token. */
+async function runQuery(structuredQuery: Record<string, unknown>): Promise<Array<{ document?: FirestoreDocument }>> {
+  const res = await fetch(`${FIRESTORE_BASE}:runQuery`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ structuredQuery }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`mypips Firestore runQuery failed (${res.status}): ${text}`)
+  }
+  return res.json()
+}
+
+function docIdFromName(name: string): string {
+  return name.split('/').pop() as string
 }
 
 async function fetchCartDoc(idToken: string, cartId: string): Promise<Record<string, unknown>> {
@@ -309,4 +336,120 @@ export async function placeOrder(idToken: string, cartId: string): Promise<unkno
     approveOwnershipTransfer: false,
   }
   return callFinalizeOrder(payload, idToken)
+}
+
+// --- Catalog + search (public, unauthenticated) ---
+
+export interface MypipsStoreMetadata {
+  id: string
+  name: string
+  description?: string
+  categories: string[]
+  orderOptions?: {
+    cycle?: string
+    startingAt?: { day: string; hour: string }
+    endingAt?: { day: string; hour: string }
+  }
+  deliveryOptions?: Array<{ text: string; active: boolean; method: string }>
+  paymentOptions?: Record<string, { method: string; active: boolean; text: string } & Record<string, unknown>>
+  taxId?: string
+  settings?: Record<string, unknown>
+  takingOrders?: boolean
+  active?: boolean
+  [key: string]: unknown
+}
+
+export interface MypipsProduct {
+  id: string
+  name: string
+  description?: string
+  category?: string
+  sku?: string
+  supplierName?: string
+  prices?: Record<string, number | string>
+  forSale: boolean
+  inStock: boolean
+  isDeleted: boolean
+  outOfStock?: boolean
+  onSale?: boolean
+  allowOrderInUnits?: boolean
+  unitWeight?: number
+  [key: string]: unknown
+}
+
+function productFromDoc(doc: FirestoreDocument): MypipsProduct {
+  return { id: docIdFromName(doc.name), ...fromFirestoreFields(doc.fields || {}) } as MypipsProduct
+}
+
+/**
+ * Resolve a store's URL slug (e.g. "mashtelatharoe") to its Firestore groupId
+ * (e.g. "UrfVezdFWrauwqv584rs"). The slug is not the doc id — it's a lookup by
+ * the `groupHandle` field on the `groups` collection.
+ */
+export async function resolveStoreGroupId(slug: string): Promise<string | null> {
+  const rows = await runQuery({
+    from: [{ collectionId: 'groups' }],
+    where: {
+      fieldFilter: { field: { fieldPath: 'groupHandle' }, op: 'EQUAL', value: { stringValue: slug } },
+    },
+    orderBy: [{ field: { fieldPath: '__name__' }, direction: 'ASCENDING' }],
+    limit: 1,
+  })
+  const doc = rows.find(row => row.document)?.document
+  return doc ? docIdFromName(doc.name) : null
+}
+
+/**
+ * Store metadata — categories, delivery/payment options, weekly order-cycle
+ * window, description, contact info. Plain public JSON REST endpoint, no
+ * Firestore query involved.
+ */
+export async function getStoreMetadata(slug: string): Promise<MypipsStoreMetadata> {
+  const res = await fetch(`https://mypips.app/api/get-store-data/${slug}`)
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`mypips get-store-data failed (${res.status}): ${text}`)
+  }
+  return res.json()
+}
+
+/** Fetch the sellable catalog for a store: forSale && inStock && !isDeleted. */
+export async function getCatalog(groupId: string): Promise<MypipsProduct[]> {
+  const rows = await runQuery({
+    from: [{ collectionId: 'new_products' }],
+    where: {
+      compositeFilter: {
+        op: 'AND',
+        filters: [
+          { fieldFilter: { field: { fieldPath: 'groupId' }, op: 'EQUAL', value: { stringValue: groupId } } },
+          { fieldFilter: { field: { fieldPath: 'forSale' }, op: 'EQUAL', value: { booleanValue: true } } },
+          { fieldFilter: { field: { fieldPath: 'inStock' }, op: 'EQUAL', value: { booleanValue: true } } },
+          { fieldFilter: { field: { fieldPath: 'isDeleted' }, op: 'EQUAL', value: { booleanValue: false } } },
+        ],
+      },
+    },
+    orderBy: [{ field: { fieldPath: '__name__' }, direction: 'ASCENDING' }],
+  })
+  return rows.filter(row => row.document).map(row => productFromDoc(row.document as FirestoreDocument))
+}
+
+/**
+ * Search the catalog by free-text match against name/description/category.
+ *
+ * No distinct server-side search query was observed in the captured session —
+ * `settings.showProductsSearch` on get-store-data just gates a search box that
+ * filters the already-fetched catalog client-side. This reproduces that: fetch
+ * the catalog, then filter locally.
+ */
+export async function searchCatalog(groupId: string, query: string): Promise<MypipsProduct[]> {
+  const catalog = await getCatalog(groupId)
+  const needle = query.trim().toLowerCase()
+  if (!needle) return catalog
+  return catalog.filter(product => {
+    const haystack = [product.name, product.description, product.category]
+      .filter((value): value is string => typeof value === 'string')
+      .join(' ')
+      .toLowerCase()
+    return haystack.includes(needle)
+  })
 }
