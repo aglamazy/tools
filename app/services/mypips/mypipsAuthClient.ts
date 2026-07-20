@@ -18,9 +18,8 @@
 
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 
-// Firebase Web API key for plantonic-eco — public client-side key, safe to hardcode
-const FIREBASE_API_KEY =
-  process.env.MYPIPS_FIREBASE_API_KEY ?? 'AIzaSyB_TlgEShaTgAEV9mulKZAjveQgDbO4bGg'
+// Firebase Web API key for plantonic-eco (a third-party project) — held in .env.local, never committed
+const FIREBASE_API_KEY = process.env.MYPIPS_FIREBASE_API_KEY
 
 // Firebase uid of the household account (yaakov.aglamaz@gmail.com)
 export const MYPIPS_LOCAL_ID = 'GnUkCt101SWCXYj9V7uMsX3LPFG3'
@@ -102,6 +101,13 @@ async function persistRefreshToken(refreshToken: string): Promise<void> {
 export async function getMypipsIdToken(): Promise<string> {
   if (_cachedToken && Date.now() < _cacheExpiresAt) {
     return _cachedToken
+  }
+
+  if (!FIREBASE_API_KEY) {
+    throw new MypipsAuthError(
+      'MYPIPS_FIREBASE_API_KEY is not set. Add it to .env.local ' +
+      '(see scripts/mypips-capture-token.md).',
+    )
   }
 
   const refreshToken = await loadStoredRefreshToken()

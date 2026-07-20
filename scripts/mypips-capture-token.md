@@ -50,6 +50,6 @@ takes over from there.
 
 ## Known values (confirmed 2026-07-13)
 - Firebase project: `plantonic-eco`
-- Firebase Web API key: `AIzaSyB_TlgEShaTgAEV9mulKZAjveQgDbO4bGg`
+- Firebase Web API key: in `.env.local` as `MYPIPS_FIREBASE_API_KEY` (git-ignored, not documented here)
 - Household Firebase uid (localId): `GnUkCt101SWCXYj9V7uMsX3LPFG3`
 - Account email: yaakov.aglamaz@gmail.com

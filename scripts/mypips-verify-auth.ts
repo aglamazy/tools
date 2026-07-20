@@ -12,8 +12,11 @@
 import { loadEnv } from './_load-env'
 loadEnv()
 
-const FIREBASE_API_KEY =
-  process.env.MYPIPS_FIREBASE_API_KEY ?? 'AIzaSyB_TlgEShaTgAEV9mulKZAjveQgDbO4bGg'
+const FIREBASE_API_KEY = process.env.MYPIPS_FIREBASE_API_KEY
+if (!FIREBASE_API_KEY) {
+  console.error('ERROR: MYPIPS_FIREBASE_API_KEY not set in .env.local')
+  process.exit(1)
+}
 const MYPIPS_PROJECT_ID = 'plantonic-eco'
 const MYPIPS_LOCAL_ID = 'GnUkCt101SWCXYj9V7uMsX3LPFG3'
 const MYPIPS_FIRESTORE_BASE =
