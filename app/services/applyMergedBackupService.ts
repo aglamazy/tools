@@ -131,6 +131,22 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
   // transaction — it reads db.tables which is safe outside rw context.
   const uniqueKeyTables = getUniqueKeyTables()
 
+  // ypayDocuments.closesAllocations[].docId is a SELF-referential FK — a
+  // receipt pointing at the invoice(s) it closes, both rows in this same
+  // table. It can't go through the generic FK_RELATIONS loop below: that
+  // loop resolves a table's FK against syncIdToLocalId[parentTable], but for
+  // a self-reference parentTable === tableName, and that table's OWN local-id
+  // map isn't complete until every one of its records has been processed —
+  // a record processed early can reference one processed later. Collected
+  // here during the main loop (only when cloud data actually gets WRITTEN —
+  // mirrors the loop's own whole-record-wins semantics, not per-field), then
+  // remapped in one pass after the loop, once syncIdToLocalId['ypayDocuments']
+  // is complete. Root-caused 2026-07-22: a receipt's payment silently
+  // attributed to the wrong invoice after cloud sync (raw cloud-device docIds
+  // written verbatim, coincidentally valid-looking local ids on the
+  // receiving device).
+  const pendingCloseAllocRemaps: { localId: number; raw: { docId: number; amount: number }[] }[] = []
+
   await db.transaction('rw',
     getSyncedDexieTables(),
     async () => {
@@ -250,6 +266,9 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
             if (cloudTime > localTime) {
               const { id: _dropId, syncId: _dropSyncId, ...updates } = cloudRec
               await table.update(existingLocal.id, updates)
+              if (tableName === 'ypayDocuments' && Array.isArray(cloudRec.closesAllocations) && cloudRec.closesAllocations.length > 0) {
+                pendingCloseAllocRemaps.push({ localId: existingLocal.id, raw: cloudRec.closesAllocations })
+              }
               updated++
             } else {
               // Timestamp says local wins for content — but if any FK we
@@ -301,6 +320,9 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
                   if (cloudTime > localTime) {
                     const { id: _dropId, syncId: _dropSyncId, ...updates } = cloudRec
                     await table.update(localMatch.id, updates)
+                    if (tableName === 'ypayDocuments' && Array.isArray(cloudRec.closesAllocations) && cloudRec.closesAllocations.length > 0) {
+                      pendingCloseAllocRemaps.push({ localId: localMatch.id, raw: cloudRec.closesAllocations })
+                    }
                     updated++
                   } else {
                     skipped++
@@ -321,6 +343,9 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
               const { id: _dropId, ...withoutId } = cloudRec
               const newId = await table.add(withoutId)
               tableIdMap.set(cloudRec.syncId, newId as number)
+              if (tableName === 'ypayDocuments' && Array.isArray(cloudRec.closesAllocations) && cloudRec.closesAllocations.length > 0) {
+                pendingCloseAllocRemaps.push({ localId: newId as number, raw: cloudRec.closesAllocations })
+              }
             }
             inserted++
           }
@@ -331,6 +356,38 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
         }
 
         syncIdToLocalId[tableName] = tableIdMap
+      }
+
+      // Remap ypayDocuments.closesAllocations[].docId now that
+      // syncIdToLocalId['ypayDocuments'] is complete (see the declaration
+      // comment above pendingCloseAllocRemaps for why this can't happen
+      // inside the main loop above).
+      if (pendingCloseAllocRemaps.length > 0) {
+        const cloudYpayIdToSyncId = new Map<number, string>()
+        for (const rec of (cloud.stores as any).ypayDocuments || []) {
+          if (rec.id !== undefined && rec.syncId) cloudYpayIdToSyncId.set(rec.id, rec.syncId)
+        }
+        const localYpaySyncIdToId = syncIdToLocalId['ypayDocuments'] || new Map<string, number>()
+        const ypayDeletions = allDeletions['ypayDocuments']
+        for (const { localId, raw } of pendingCloseAllocRemaps) {
+          const remapped = raw
+            .map((alloc) => {
+              const parentSyncId = cloudYpayIdToSyncId.get(alloc.docId)
+              const localDocId = parentSyncId ? localYpaySyncIdToId.get(parentSyncId) : undefined
+              if (localDocId !== undefined) return { ...alloc, docId: localDocId }
+              // Parent invoice deleted+tombstoned locally → this allocation
+              // is stale, drop it (mirrors the generic orphan-tombstone
+              // handling above). Otherwise the parent just hasn't synced
+              // down yet — keep the raw (cloud-space) docId rather than
+              // silently losing a real payment allocation; it self-heals
+              // once the parent syncs and this record syncs again.
+              if (parentSyncId && ypayDeletions?.has(parentSyncId)) return null
+              console.warn(`[ApplyCloud] ypayDocuments.closesAllocations: could not remap docId ${alloc.docId} for local record ${localId} (parent syncId ${parentSyncId ?? 'unknown'})`)
+              return alloc
+            })
+            .filter((a): a is { docId: number; amount: number } => a !== null)
+          await db.ypayDocuments.update(localId, { closesAllocations: remapped })
+        }
       }
 
       // Persist the combined deletion ledger so local-only deletions survive into the next export
