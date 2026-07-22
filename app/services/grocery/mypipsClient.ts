@@ -205,7 +205,7 @@ function generatePipsId(): string {
   return `${hex}-${Date.now()}`
 }
 
-const TOUCH_TIMESTAMP: FirestoreWrite['updateTransforms'] = [
+const TOUCH_TIMESTAMP: NonNullable<FirestoreWrite['updateTransforms']> = [
   { fieldPath: 'lastUpdatedAt', setToServerValue: 'REQUEST_TIME' },
 ]
 
