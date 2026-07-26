@@ -34,7 +34,10 @@ export const metadata: Metadata = {
   description: branding.tagline,
   manifest: '/manifest.json',
   verification: {
-    google: 'PBaxmxYIxQXOOVSDCgPt9-Kd0CeHyPxcEXrlisDZSMU',
+    google: [
+      'PBaxmxYIxQXOOVSDCgPt9-Kd0CeHyPxcEXrlisDZSMU',
+      '-iM_PUHrHishiMHgUsy6F_Eo_6GjPo5KuGjjobUFa-s',
+    ],
   },
   appleWebApp: {
     capable: true,
