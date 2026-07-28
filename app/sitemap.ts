@@ -98,9 +98,25 @@ const HIGH_PRIORITY_PREFIXES = ['/madrich/', '/template/', '/machshevon/']
  */
 const NOINDEX_ROUTES = new Set(['/share-invite', '/pay/success', '/pay/failure', '/saliko', '/saliko/privacy', '/form-filler'])
 
+const isSaliko = process.env.NEXT_PUBLIC_PRODUCT === 'saliko'
+
+/**
+ * On the Saliko build, proxy.ts's salikoRewrite() sends every public path X
+ * to /saliko/X (and '/' to /saliko) — routes outside app/saliko/ genuinely
+ * 404 there. Discovering from app/ directly (as the Aglamazo build does)
+ * previously listed Aglamazo-only marketing pages (/about, /contact,
+ * /demo-form, /guide, /machshevon...) as if they existed on saliko.co.il,
+ * which is exactly what Google Search Console flagged as newly-excluded
+ * pages. Discover from app/saliko/ instead and strip the prefix so the
+ * sitemap only ever lists paths the rewrite can actually serve.
+ */
+function discoverSalikoRoutes(appDir: string): DiscoveredRoute[] {
+  return discoverPublicRoutes(path.join(appDir, 'saliko'))
+}
+
 export default function sitemap(): MetadataRoute.Sitemap {
   const appDir = path.join(process.cwd(), 'app')
-  const routes = discoverPublicRoutes(appDir)
+  const routes = isSaliko ? discoverSalikoRoutes(appDir) : discoverPublicRoutes(appDir)
   const logoUrl = `${normalizedBase}/logo.png`
 
   return routes
