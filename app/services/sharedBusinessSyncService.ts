@@ -22,6 +22,7 @@ import { db } from '@/app/db/financeDB'
 import type { BackupData } from './backupService'
 import { applyCloudBackup } from './applyMergedBackupService'
 import { subjectStore } from '@/app/stores/subjectStore'
+import { getTaxProfile } from '@/app/components/TaxProfileSection'
 import { classifySyncError } from './syncErrorClassifier'
 import { VARIANT } from '@/app/config/variants'
 
@@ -235,6 +236,27 @@ async function exportBusinessData(businessSyncId: string): Promise<BackupData | 
     // sharee's own household categories. Sharee-side merge in
     // applySharedBackup() does the safe add.
     sharedSubjectCategories: scopedCategories,
+    // The settlement tab VAT-cleans partner amounts (netOfVat) using the
+    // OWNER's VAT status, read via getTaxProfile(business.userId) — an
+    // appSettings row that is deliberately NOT in this scoped backup. Without
+    // it a sharee silently computed GROSS figures and showed a different
+    // balance than the owner for the same data (found 2026-07-29 on y25131).
+    //
+    // PRIVACY: allow-list, not a filtered copy — only the exact fields
+    // vatTypeForDate() reads. TaxProfile also holds btlAdvancePayment /
+    // btlNotices / incomeTaxAdvancePercent / taxOrder / isTaxFree (personal
+    // tax data), and vatConversion itself carries certificateDriveFileId /
+    // certificateDriveWebViewLink / certificateFileName — a Drive link to the
+    // owner's VAT certificate PDF. None of that may reach a partner; only
+    // from/to/effectiveDate are needed to date-resolve the VAT status.
+    sharedOwnerVatProfile: await (async () => {
+      const profile = await getTaxProfile(business.userId)
+      const c = profile.vatConversion
+      return {
+        vatType: profile.vatType,
+        ...(c ? { vatConversion: { from: c.from, to: c.to, effectiveDate: c.effectiveDate } } : {}),
+      }
+    })(),
   }
 
   return {
@@ -313,6 +335,27 @@ async function applySharedBackup(
   // business. Categories carry the OWNER's local businessId; the sharee's
   // local business row has its own syncId-stable identity, resolved here by
   // businessSyncId after the IndexedDB merge above has landed it.
+  // Sharee-side: persist the owner's VAT status so the settlement tab can
+  // VAT-clean the same way the owner's device does (see the export comment).
+  //
+  // Written under `sharedVatProfile:{businessSyncId}` — deliberately NOT
+  // `taxProfile:{ownerUid}`: that key holds a FULL personal tax profile, and
+  // writing this two-field subset there would destroy the owner's own
+  // btlNotices/incomeTax data if this ever ran on their device. A distinct
+  // key can't collide, and the isOwner guard is belt-and-braces on top.
+  if (!isOwner) {
+    const vatProfile = (cloud.stores as any).sharedOwnerVatProfile
+    if (vatProfile && (vatProfile.vatType || vatProfile.vatConversion)) {
+      const key = `sharedVatProfile:${businessSyncId}`
+      const existing = await db.appSettings.where('key').equals(key).first()
+      if (existing) {
+        await db.appSettings.update(existing.id!, { value: vatProfile, updatedAt: new Date().toISOString() })
+      } else {
+        await db.appSettings.add({ key, value: vatProfile, updatedAt: new Date().toISOString() })
+      }
+    }
+  }
+
   if (!isOwner) {
     const incomingCats: any[] = (cloud.stores as any).sharedSubjectCategories || []
     if (incomingCats.length > 0) {

@@ -84,7 +84,17 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
       setBusiness(b || null)
       if (!b) { setLoading(false); return }
 
-      const profile = await getTaxProfile(b.userId)
+      let profile = await getTaxProfile(b.userId)
+      // Sharee devices don't have the owner's taxProfile appSettings row (it's
+      // personal tax data, deliberately outside the shared-business scope), so
+      // this comes back empty and every amount below would stay GROSS —
+      // silently producing a different balance than the owner sees for the
+      // same data. The scoped backup carries a two-field VAT subset instead;
+      // fall back to it. (#302, found 2026-07-29 on the y25131 partner device.)
+      if (!profile.vatType && !profile.vatConversion && b.syncId) {
+        const shared = await db.appSettings.where('key').equals(`sharedVatProfile:${b.syncId}`).first()
+        if (shared?.value) profile = shared.value as TaxProfile
+      }
       if (cancelled) return
       setOwnerTaxProfile(profile)
 

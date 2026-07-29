@@ -140,7 +140,10 @@ async function fetchAll(businessSyncId: string): Promise<CachedBusinessPartners>
   if (anyGrant?.ownerUid && !participants.find(p => p.uid === anyGrant.ownerUid)) {
     participants.push({
       uid: anyGrant.ownerUid,
-      label: anyGrant.ownerEmail || anyGrant.ownerDisplayName || anyGrant.ownerUid,
+      // Display name first, email only as fallback — every other participant
+      // path below already prefers the name; this one didn't, which is why a
+      // sharee saw the owner as a raw email address in the settlement table.
+      label: anyGrant.ownerDisplayName || anyGrant.ownerEmail || anyGrant.ownerUid,
     })
   }
 
