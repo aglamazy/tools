@@ -97,6 +97,7 @@ export async function POST(request: NextRequest) {
         payments, mail, lang, currency, appOrigin,
         businessId, businessName, ownerUserId, amount,
         saveToken,
+        billingOwnerId, billingTier, billingKind, billingMonths,
       } = body
 
       if (!items || !Array.isArray(items) || items.length === 0) {
@@ -164,6 +165,18 @@ export async function POST(request: NextRequest) {
       // payer is anon on another device — they can't see the owner's Dexie/backup)
       // and what the income page lists. The webhook flips `status` on payment.
       try {
+        // Billing-ledger metadata (#299): billingOwnerId is the CUSTOMER's
+        // stable billing id (Project.externalBillingId) — a deliberately
+        // separate field from ownerUserId (the Aglamazo account owner, used
+        // to scope /api/ypay/payment-links). upsertBillingStatus keys
+        // billingStatus/{billingOwnerId} off it on payment success.
+        const billingMeta = billingOwnerId && billingTier && billingKind ? {
+          billingOwnerId: String(billingOwnerId),
+          billingTier: String(billingTier),
+          billingKind: String(billingKind),
+          ...(typeof billingMonths === 'number' ? { billingMonths } : {}),
+        } : null
+
         await getAdminFirestore().collection('ypayPaymentLinks').doc(chargeIdentifier).set({
           chargeIdentifier,
           businessId: businessId ?? null,
@@ -177,7 +190,21 @@ export async function POST(request: NextRequest) {
           paymentUrl: payData.url,
           status: 'pending',
           createdAt: new Date().toISOString(),
+          ...(billingMeta || {}),
         })
+
+        // Seed upayPaymentLinks/{cid} with the same billing metadata: card
+        // payments run inside the Upay clearance iframe, and it's the UPAY
+        // webhook (/api/upay/payment-callback) that may fire for them — it
+        // reads its OWN doc, not ypayPaymentLinks. Without this seed the
+        // ledger upsert silently no-ops for iframe card payments.
+        if (billingMeta) {
+          await getAdminFirestore().collection('upayPaymentLinks').doc(chargeIdentifier).set({
+            chargeIdentifier,
+            createdAt: new Date().toISOString(),
+            ...billingMeta,
+          }, { merge: true })
+        }
       } catch (err) {
         // Don't fail link creation on a persistence hiccup — the YPAY url still
         // works; we just won't have it listed / wrapped. Log loudly.

@@ -23,6 +23,9 @@ export type BillingStatusMap = Record<string, BillingStatus>
  * When present, the payment-callback upserts billingStatus on success.
  */
 export type PaymentLinkBillingMeta = {
+  /** The CUSTOMER's stable billing id (Project.externalBillingId) — the
+   *  billingStatus/{id} document key. NOT the Aglamazo owner's uid. */
+  billingOwnerId: string
   billingTier: string
   billingKind: BillingKind
   billingMonths?: number  // defaults to 1 when absent

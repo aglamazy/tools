@@ -70,6 +70,14 @@ export default function PaymentLinkModal({ business, projects, vatType, initialI
   const [resultUrl, setResultUrl] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [saveToken, setSaveToken] = useState(false)
+  // Billing-ledger metadata (#299) — only offered when the selected customer
+  // carries an externalBillingId (i.e. a horizontal like AH polls
+  // /api/billing/status for them). Off by default: a regular one-off invoice
+  // to a billing-tracked customer shouldn't extend their paid_through.
+  const [billingEnabled, setBillingEnabled] = useState(false)
+  const [billingTier, setBillingTier] = useState('retainer')
+  const [billingKind, setBillingKind] = useState<'one_time' | 'recurring'>('recurring')
+  const [billingMonths, setBillingMonths] = useState(1)
 
   useEffect(() => {
     if (projectId == null && projects.length > 0) setProjectId(projects[0].id ?? null)
@@ -131,6 +139,14 @@ export default function PaymentLinkModal({ business, projects, vatType, initialI
         // the clearance page to a single payment instead of offering 1..12.
         payments,
         saveToken,
+        ...(billingEnabled && project.externalBillingId ? {
+          billing: {
+            ownerId: project.externalBillingId,
+            tier: billingTier.trim() || 'retainer',
+            kind: billingKind,
+            months: billingMonths,
+          },
+        } : {}),
       })
       // Share OUR branded page (logo + itemized details + YPAY iframe), not the
       // raw YPAY clearance url.
@@ -238,6 +254,34 @@ export default function PaymentLinkModal({ business, projects, vatType, initialI
               <input type="checkbox" checked={saveToken} onChange={(e) => setSaveToken(e.target.checked)} />
               שמור טוקן אשראי לחיובים עתידיים (ריטיינר)
             </label>
+
+            {project?.externalBillingId && (
+              <div style={{ marginBottom: '1rem', padding: '0.6rem', border: '1px solid #ddd6fe', borderRadius: '0.4rem', background: '#f5f3ff' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', cursor: 'pointer', fontWeight: 600, color: '#5b21b6' }}>
+                  <input type="checkbox" checked={billingEnabled} onChange={(e) => setBillingEnabled(e.target.checked)} />
+                  תשלום מנוי — עדכן סטטוס חיוב עבור ״{project.externalBillingId}״
+                </label>
+                {billingEnabled && (
+                  <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.6rem', flexWrap: 'wrap' }}>
+                    <div style={{ flex: '1 1 120px' }}>
+                      <label style={label}>Tier</label>
+                      <input style={{ ...input, direction: 'ltr' }} value={billingTier} onChange={(e) => setBillingTier(e.target.value)} />
+                    </div>
+                    <div style={{ flex: '1 1 110px' }}>
+                      <label style={label}>סוג</label>
+                      <select style={input} value={billingKind} onChange={(e) => setBillingKind(e.target.value as 'one_time' | 'recurring')}>
+                        <option value="recurring">מתחדש</option>
+                        <option value="one_time">חד-פעמי</option>
+                      </select>
+                    </div>
+                    <div style={{ flex: '1 1 90px' }}>
+                      <label style={label}>חודשי כיסוי</label>
+                      <input type="number" min={1} max={24} style={input} value={billingMonths} onChange={(e) => setBillingMonths(Math.max(1, Number(e.target.value) || 1))} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div style={{ marginBottom: '1rem' }}>
               <label style={label}>מספר תשלומים</label>

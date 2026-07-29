@@ -12,16 +12,22 @@ import type { Firestore } from 'firebase-admin/firestore'
 import type { BillingKind } from '@/app/types/billing'
 
 /**
- * Upsert billingStatus/{ownerUserId} if the payment link has billing metadata.
- * No-op if the link lacks billingTier, billingKind, or ownerUserId.
+ * Upsert billingStatus/{billingOwnerId} if the payment link has billing metadata.
+ * No-op if the link lacks billingTier, billingKind, or billingOwnerId.
  * Swallows errors — callers must never fail YPAY/Upay webhooks on our side.
+ *
+ * NOTE (#299): the key is `billingOwnerId` — the CUSTOMER's stable billing id
+ * (Project.externalBillingId, e.g. "ilan-oz") — NOT `ownerUserId`, which is
+ * the Aglamazo account owner's uid and exists on every link for list-scoping.
+ * Reading ownerUserId here would silently write the owner's own uid into
+ * billingStatus instead of the customer's.
  */
 export async function upsertBillingStatus(
   firestore: Firestore,
   link: Record<string, unknown>,
   paid: boolean,
 ): Promise<void> {
-  const uid = link.ownerUserId as string | undefined
+  const uid = link.billingOwnerId as string | undefined
   const tier = link.billingTier as string | undefined
   const kind = link.billingKind as BillingKind | undefined
 

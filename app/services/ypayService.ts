@@ -263,6 +263,15 @@ export const ypayService = {
     amount?: number
     /** Save the customer's CC token for future/recurring charges (retainer). */
     saveToken?: boolean
+    /**
+     * Billing-ledger metadata (#299): when the payment confirms, the webhook
+     * upserts billingStatus/{ownerId} so a horizontal (AH, etc.) polling
+     * GET /api/billing/status sees the customer as paid. `ownerId` is the
+     * customer's stable billing id (Project.externalBillingId) — deliberately
+     * a SEPARATE field from ownerUserId, which is the Aglamazo account owner
+     * and is used to scope the owner's own link list.
+     */
+    billing?: { ownerId: string; tier: string; kind: 'one_time' | 'recurring'; months?: number }
   }): Promise<{ url: string; chargeIdentifier: string }> => {
     const credentials = getCredentials(business)
     const effectiveVatType = params.vatType || business.vatType
@@ -291,6 +300,12 @@ export const ypayService = {
         ownerUserId: business.userId,
         ...(params.amount !== undefined ? { amount: params.amount } : {}),
         ...(params.saveToken ? { saveToken: true } : {}),
+        ...(params.billing ? {
+          billingOwnerId: params.billing.ownerId,
+          billingTier: params.billing.tier,
+          billingKind: params.billing.kind,
+          ...(params.billing.months ? { billingMonths: params.billing.months } : {}),
+        } : {}),
         appOrigin,
       }),
     })
