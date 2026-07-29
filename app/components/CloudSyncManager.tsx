@@ -53,6 +53,18 @@ export function clearSyncPassword(): void {
   }
 }
 
+// Temporary debug escape hatch: lets a manual cloud-backup repair (e.g. a
+// force-upload after fixing a poisoned deletion ledger) run without racing
+// the periodic auto-sync, which would otherwise re-download the still-broken
+// cloud copy mid-repair and undo it. Session-scoped, off by default.
+function isAutoSyncDisabled(): boolean {
+  try {
+    return sessionStorage.getItem('DISABLE_AUTO_SYNC') === '1'
+  } catch {
+    return false
+  }
+}
+
 /**
  * CloudSyncManager
  * Handles automatic periodic backup to cloud storage
@@ -180,6 +192,7 @@ export default function CloudSyncManager() {
 
   useEffect(() => {
     const runSync = async () => {
+      if (isAutoSyncDisabled()) return
       if (isSyncingRef.current) return
       if (!userTierStore.hasAccess(UserTier.HOME)) return
       if (!initialCheckDoneRef.current) return
@@ -275,6 +288,7 @@ export default function CloudSyncManager() {
     const isSyncingShared = { current: false }
 
     const runSharedSync = async () => {
+      if (isAutoSyncDisabled()) return
       if (isSyncingShared.current) return
       isSyncingShared.current = true
       try {

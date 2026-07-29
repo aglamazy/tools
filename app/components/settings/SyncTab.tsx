@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react'
 import { exportAllStores, importAllStores, type BackupData } from '@/app/services/backupService'
+import { applyCloudBackup } from '@/app/services/applyMergedBackupService'
 import YesNoModal from '../YesNoModal'
 import Modal from '../Modal'
 import CloudSyncSection from './sync/CloudSyncSection'
@@ -9,6 +10,7 @@ import LocalBackup from './sync/LocalBackup'
 
 export default function SyncTab() {
   const [importConfirm, setImportConfirm] = useState<{ isOpen: boolean; file: File | null }>({ isOpen: false, file: null })
+  const [mergeConfirm, setMergeConfirm] = useState<{ isOpen: boolean; file: File | null }>({ isOpen: false, file: null })
   const [alertModal, setAlertModal] = useState<{ isOpen: boolean; message: string }>({ isOpen: false, message: '' })
 
   const handleExportAllData = async () => {
@@ -72,17 +74,57 @@ export default function SyncTab() {
     reader.readAsText(importConfirm.file)
   }
 
+  const handleMergeImportData = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    setMergeConfirm({ isOpen: true, file })
+    event.target.value = ''
+  }
+
+  const confirmMergeImport = () => {
+    if (!mergeConfirm.file) return
+
+    const reader = new FileReader()
+    reader.onload = async (e) => {
+      try {
+        const content = e.target?.result as string
+        const backup = JSON.parse(content) as BackupData
+
+        if (!backup.version || !backup.stores) {
+          setAlertModal({ isOpen: true, message: 'פורמט קובץ לא תקין' })
+          return
+        }
+
+        await applyCloudBackup(backup)
+        setMergeConfirm({ isOpen: false, file: null })
+        setAlertModal({ isOpen: true, message: 'הנתונים מוזגו בהצלחה! הדף יטען מחדש.' })
+        setTimeout(() => window.location.reload(), 1500)
+      } catch (err) {
+        console.error('Error merging backup file:', err)
+        setAlertModal({ isOpen: true, message: 'שגיאה במיזוג הקובץ' })
+      }
+    }
+    reader.readAsText(mergeConfirm.file)
+  }
+
   return (
     <>
       <CloudSyncSection />
 
-      <LocalBackup onExport={handleExportAllData} onImport={handleImportAllData} />
+      <LocalBackup onExport={handleExportAllData} onImport={handleImportAllData} onMergeImport={handleMergeImportData} />
 
       <YesNoModal
         isOpen={importConfirm.isOpen}
         question="ייבוא נתונים ימחק את כל הנתונים הקיימים. האם להמשיך?"
         onYes={confirmImport}
         onNo={() => setImportConfirm({ isOpen: false, file: null })}
+      />
+
+      <YesNoModal
+        isOpen={mergeConfirm.isOpen}
+        question="מיזוג הקובץ יוסיף/יעדכן נתונים מהקובץ בלי למחוק נתונים קיימים. האם להמשיך?"
+        onYes={confirmMergeImport}
+        onNo={() => setMergeConfirm({ isOpen: false, file: null })}
       />
 
       <Modal isOpen={alertModal.isOpen} onClose={() => setAlertModal({ isOpen: false, message: '' })} maxWidth="400px">

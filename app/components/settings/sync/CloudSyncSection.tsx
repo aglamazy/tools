@@ -7,6 +7,7 @@ import {
   hasEncryptionPasswordSetup,
   syncMerge,
   restoreFromCloud,
+  uploadBackup,
   getBackupInfo,
   isUsingHouseholdStorage,
   migrateToHouseholdStorage,
@@ -18,6 +19,7 @@ import { signOut } from '@/app/services/firebaseAuthService'
 import { getSyncPassword, setSyncPassword } from '../../CloudSyncManager'
 import AuthModal from '../../AuthModal'
 import EncryptionPasswordModal from '../../EncryptionPasswordModal'
+import YesNoModal from '../../YesNoModal'
 
 type SyncStatus = 'idle' | 'uploading' | 'downloading' | 'error'
 
@@ -34,6 +36,8 @@ export default function CloudSyncSection() {
   const [hasSessionPassword, setHasSessionPassword] = useState(false)
   const [hasEncryption, setHasEncryption] = useState(false)
   const [isHousehold, setIsHousehold] = useState(false)
+  const [showForceUploadConfirm, setShowForceUploadConfirm] = useState(false)
+  const [forceUploading, setForceUploading] = useState(false)
 
   useEffect(() => {
     const unsubscribe = subscribeToAuth((state) => {
@@ -172,6 +176,28 @@ export default function CloudSyncSection() {
     }
 
     setPendingAction(null)
+  }
+
+  const handleForceUpload = async () => {
+    const password = getSyncPassword()
+    if (!password) {
+      setMessage('נדרשת סיסמה פעילה בסשן כדי לאלץ העלאה')
+      return
+    }
+    setShowForceUploadConfirm(false)
+    setForceUploading(true)
+    setMessage(null)
+    try {
+      const result = await uploadBackup(password)
+      if (result.success) {
+        setMessage('הגיבוי בענן נדרס בהצלחה עם הנתונים המקומיים!')
+        loadBackupInfo()
+      } else {
+        setMessage(result.error || 'שגיאה באילוץ ההעלאה')
+      }
+    } finally {
+      setForceUploading(false)
+    }
   }
 
   const formatSize = (bytes: number): string => {
@@ -401,7 +427,30 @@ export default function CloudSyncSection() {
             >
               {syncStatus === 'downloading' ? 'מוריד...' : 'שחזר מהענן'}
             </button>
+
+            {hasSessionPassword && (
+              <button
+                onClick={() => setShowForceUploadConfirm(true)}
+                className="file-picker"
+                style={{
+                  background: '#fef2f2',
+                  color: '#dc2626',
+                  border: '1px solid #fecaca',
+                }}
+                disabled={syncStatus !== 'idle' || forceUploading}
+                title="דורס את הגיבוי בענן עם הנתונים המקומיים בלי להוריד/למזג קודם — לשימוש רק כשהגיבוי בענן פגום"
+              >
+                {forceUploading ? 'דורס...' : 'אילוץ העלאה (דריסה מלאה)'}
+              </button>
+            )}
           </div>
+
+          <YesNoModal
+            isOpen={showForceUploadConfirm}
+            question="פעולה זו תדרוס את הגיבוי בענן עם הנתונים המקומיים בלבד, בלי להוריד/למזג נתונים מהענן קודם. השתמש בזה רק אם הגיבוי בענן פגום. האם להמשיך?"
+            onYes={handleForceUpload}
+            onNo={() => setShowForceUploadConfirm(false)}
+          />
 
           {/* Household: no backup yet — offer migration */}
           {isHousehold && !backupInfo?.exists && (
