@@ -783,4 +783,27 @@ export function defineSchemaVersions(db: Dexie): void {
       }
     }
   })
+
+  // v35: drop the UNIQUE constraint on businesses.slug (&slug -> slug).
+  //
+  // v33 introduced `&slug` for correctness, but a unique index on a SYNCED
+  // table is a merge-abort hazard: slugs are derived from name initials
+  // per-device, so two genuinely different businesses on two devices can
+  // independently produce the same slug ("Alpha House" and "Agents Head"
+  // both -> AH). When they meet, the insert throws ConstraintError and
+  // aborts the ENTIRE merge transaction — losing every other table's
+  // changes in that run, for a cosmetic URL field. That's the same
+  // class of failure that made the 2026-07-28 incident so damaging.
+  //
+  // The merge loop also can't dedup on it: getUniqueKeyTables() supports one
+  // unique index per table and correctly picks `name` (the real identity),
+  // logging "businesses has 2 secondary unique indexes" — so `slug` was
+  // enforced but unguarded, the worst combination.
+  //
+  // Uniqueness is now an application-layer concern, where a collision is
+  // resolvable instead of fatal: businessStore.add() suffixes on create, and
+  // applyCloudBackup re-suffixes an incoming slug that would collide.
+  db.version(35).stores({
+    businesses: '++id, syncId, &name, slug, type, userId',
+  })
 }

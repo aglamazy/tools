@@ -175,11 +175,27 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
           }
         }
 
+        // businesses.slug is derived from name initials PER DEVICE, so two
+        // genuinely different businesses can independently produce the same
+        // slug ("Alpha House" / "Agents Head" -> AH). It's a cosmetic URL
+        // field, never an identity (the merge dedups on `name`), so a
+        // collision must never block the real record: re-suffix the incoming
+        // one. v35 dropped the DB-level unique constraint precisely so this
+        // is resolvable here instead of aborting the whole transaction.
+        const slugOwners = tableName === 'businesses'
+          ? new Map<string, string>(
+              localRecords
+                .filter((r) => r.slug && r.syncId)
+                .map((r) => [r.slug as string, r.syncId as string]),
+            )
+          : null
+
         // 1. Delete local records that are in the deletion ledger
         for (const local of localRecords) {
           if (local.syncId && deletedSyncIds.has(local.syncId)) {
             await table.delete(local.id)
             localBySyncId.delete(local.syncId)
+            if (slugOwners && local.slug) slugOwners.delete(local.slug)
           }
         }
 
@@ -190,6 +206,21 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
 
           // Skip if in deletion ledger
           if (deletedSyncIds.has(cloudRec.syncId)) continue
+
+          // Resolve a slug collision against a DIFFERENT business (see the
+          // slugOwners comment above). Same-syncId = same business, no clash.
+          if (slugOwners && cloudRec.slug) {
+            const owner = slugOwners.get(cloudRec.slug)
+            if (owner && owner !== cloudRec.syncId) {
+              const taken = new Set(slugOwners.keys())
+              let suffix = 2
+              while (taken.has(`${cloudRec.slug}${suffix}`)) suffix++
+              const resolved = `${cloudRec.slug}${suffix}`
+              console.warn(`[ApplyCloud] businesses: slug "${cloudRec.slug}" already belongs to ${owner} — incoming ${cloudRec.syncId} re-slugged to "${resolved}"`)
+              cloudRec.slug = resolved
+            }
+            slugOwners.set(cloudRec.slug, cloudRec.syncId)
+          }
 
           const existingLocal = localBySyncId.get(cloudRec.syncId)
 

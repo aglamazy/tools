@@ -11,6 +11,27 @@ function toSavePayload(biz: BusinessUI): Omit<Business, 'id' | 'createdAt' | 'up
   return rest
 }
 
+/**
+ * Resolve a slug that doesn't collide with any other business.
+ *
+ * This is the app-layer replacement for the `&slug` unique index dropped in
+ * schema v35 — the DB can no longer reject a duplicate, because doing so
+ * inside a cloud-merge transaction aborted the whole merge for what is only
+ * a URL convenience field.
+ *
+ * @param desired  slug to use if free (falls back to deriving from `name`)
+ * @param name     source for deriving a base slug when `desired` is empty
+ * @param excludeId  business row to ignore when checking (its own current slug)
+ */
+async function resolveUniqueSlug(desired: string | undefined, name: string, excludeId?: number): Promise<string> {
+  const all = await db.businesses.toArray()
+  const taken = new Set(
+    all.filter((b) => b.id !== excludeId).map((b) => b.slug).filter(Boolean) as string[],
+  )
+  if (desired && !taken.has(desired)) return desired
+  return generateUniqueSlug(desired || name, taken)
+}
+
 export const businessStore = {
   /**
    * Get all businesses
@@ -78,11 +99,11 @@ export const businessStore = {
   add: async (business: Omit<Business, 'id' | 'createdAt' | 'updatedAt'>): Promise<number | null> => {
     try {
       const now = new Date().toISOString()
-      let slug = business.slug
-      if (!slug) {
-        const existing = await db.businesses.toArray()
-        slug = generateUniqueSlug(business.name, new Set(existing.map((b) => b.slug).filter(Boolean) as string[]))
-      }
+      // Slug uniqueness is enforced HERE, not by the DB: v35 dropped the
+      // unique index because a ConstraintError inside a cloud-merge
+      // transaction aborts the entire merge (see schemaVersions.ts v35).
+      // Suffix on collision — an explicitly-passed slug gets checked too.
+      const slug = await resolveUniqueSlug(business.slug, business.name)
       const id = await db.businesses.add({
         ...business,
         slug,
@@ -101,8 +122,15 @@ export const businessStore = {
    */
   update: async (id: number, updates: Partial<Omit<Business, 'id' | 'createdAt'>>): Promise<boolean> => {
     try {
+      // Same app-layer uniqueness rule as add() — a manually-edited slug can
+      // no longer be rejected by the DB, so resolve it here (excluding this
+      // row, so re-saving an unchanged slug is a no-op).
+      const patch = { ...updates }
+      if (patch.slug) {
+        patch.slug = await resolveUniqueSlug(patch.slug, patch.slug, id)
+      }
       await db.businesses.update(id, {
-        ...updates,
+        ...patch,
         updatedAt: new Date().toISOString(),
       })
       return true
