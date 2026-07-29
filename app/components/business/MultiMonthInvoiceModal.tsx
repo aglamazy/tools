@@ -61,8 +61,8 @@ export default function MultiMonthInvoiceModal({ business, project, vatType, onC
     let cancelled = false
     ;(async () => {
       try {
-        const tasks = await harvestTaskStore.getByProjectId(project.id!)
-        const taskIds = new Set(tasks.map(t => t.id!))
+        const tasks = await harvestTaskStore.getByProjectId(project.syncId!)
+        const taskIds = new Set(tasks.map(t => t.syncId!))
         const rangeStart = getMonthDates(-(SCAN_MONTHS - 1)).start
         const rangeEnd = getMonthDates(0).end
         const entries = await timeEntryStore.getByDateRange(rangeStart, rangeEnd)

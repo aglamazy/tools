@@ -28,7 +28,7 @@ const fmt = (n: number) => n.toLocaleString('he-IL', { style: 'currency', curren
 export default function RentalSummaryTable({ businesses, transactions, bizCategoryMap, currentYear, currentMonth, monthlyLimit }: {
   businesses: Business[]
   transactions: Transaction[]
-  bizCategoryMap: Map<number, string[]>
+  bizCategoryMap: Map<string, string[]>
   currentYear: number
   currentMonth: number
   monthlyLimit?: number
@@ -38,7 +38,7 @@ export default function RentalSummaryTable({ businesses, transactions, bizCatego
     let total = 0
     const perBiz: Record<number, number> = {}
     for (const biz of businesses) {
-      const catNames = bizCategoryMap.get(biz.id!) || []
+      const catNames = (biz.syncId && bizCategoryMap.get(biz.syncId)) || []
       const income = transactions
         .filter(t => t.month === monthStr && t.category && catNames.includes(t.category))
         .reduce((s, t) => s + (t.amount || 0), 0)
@@ -65,7 +65,8 @@ export default function RentalSummaryTable({ businesses, transactions, bizCatego
   const getDrillDownTransactions = () => {
     if (!drillDown) return []
     const monthStr = `${String(drillDown.monthIdx + 1).padStart(2, '0')}/${currentYear}`
-    const catNames = bizCategoryMap.get(drillDown.bizId) || []
+    const bizSyncId = businesses.find(b => b.id === drillDown.bizId)?.syncId
+    const catNames = (bizSyncId && bizCategoryMap.get(bizSyncId)) || []
     return transactions
       .filter(t => t.month === monthStr && t.category && catNames.includes(t.category))
       .sort((a, b) => (a.date || '').localeCompare(b.date || ''))

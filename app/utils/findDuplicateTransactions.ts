@@ -31,7 +31,7 @@ function groupKey(t: Transaction): string {
  */
 export function findDuplicateTransactions(
   transactions: Transaction[],
-  linkedTransactionIds: Set<number>,
+  linkedTransactionSyncIds: Set<string>,
 ): DuplicateGroup[] {
   const groups = new Map<string, Transaction[]>()
   for (const t of transactions) {
@@ -46,7 +46,7 @@ export function findDuplicateTransactions(
   for (const [key, members] of groups) {
     if (members.length < 2) continue
 
-    const withDocs = members.filter((m) => m.id != null && linkedTransactionIds.has(m.id))
+    const withDocs = members.filter((m) => m.syncId != null && linkedTransactionSyncIds.has(m.syncId))
 
     let keep: Transaction
     let needsReview = false

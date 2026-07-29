@@ -2,7 +2,7 @@ import { db } from '@/app/db/financeDB'
 import type { ScoutResult, ScoutResultStatus } from '@/app/types/scoutResult'
 
 export const scoutResultStore = {
-  getByBusinessId: async (businessId: number): Promise<ScoutResult[]> => {
+  getByBusinessId: async (businessId: string): Promise<ScoutResult[]> => {
     try {
       return await db.scoutResults.where('businessId').equals(businessId).toArray()
     } catch (error) {
@@ -11,7 +11,7 @@ export const scoutResultStore = {
     }
   },
 
-  getByStatus: async (businessId: number, status: ScoutResultStatus): Promise<ScoutResult[]> => {
+  getByStatus: async (businessId: string, status: ScoutResultStatus): Promise<ScoutResult[]> => {
     try {
       return await db.scoutResults.where('[businessId+status]').equals([businessId, status]).toArray()
     } catch (error) {
@@ -20,7 +20,7 @@ export const scoutResultStore = {
     }
   },
 
-  getNew: async (businessId: number): Promise<ScoutResult[]> => {
+  getNew: async (businessId: string): Promise<ScoutResult[]> => {
     try {
       return await db.scoutResults.where('[businessId+status]').equals([businessId, 'new']).toArray()
     } catch (error) {

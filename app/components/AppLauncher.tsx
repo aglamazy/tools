@@ -170,7 +170,7 @@ export default function AppLauncher() {
               {businesses.map(biz => (
                 <Link
                   key={`biz-${biz.id}`}
-                  href={`/app/business/${biz.id}`}
+                  href={routes.business(biz)}
                   className="app-launcher-tile"
                   onClick={handleNav}
                 >

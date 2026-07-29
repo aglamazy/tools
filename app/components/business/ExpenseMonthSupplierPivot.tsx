@@ -9,7 +9,7 @@ import { pickExpenseLabel } from '@/app/utils/expenseLabel'
 import { normalizeDate } from '@/app/utils/parsers/shared'
 
 type Props = {
-  businessId: number
+  businessId: string
 }
 
 type SupplierRow = {
@@ -61,9 +61,9 @@ export default function ExpenseMonthSupplierPivot({ businessId }: Props) {
         .filter(d => d.businessId === businessId && !d.transactionId && !!d.paidByUid)
         .toArray()
 
-      const txIds = expenseTransactions.map(t => t.id).filter((id): id is number => id != null)
-      const linkedDocs = await db.expenseDocuments.where('transactionId').anyOf(txIds).toArray()
-      const firstDocByTxId = new Map<number, ExpenseDocument>()
+      const txSyncIds = expenseTransactions.map(t => t.syncId).filter((id): id is string => id != null)
+      const linkedDocs = await db.expenseDocuments.where('transactionId').anyOf(txSyncIds).toArray()
+      const firstDocByTxId = new Map<string, ExpenseDocument>()
       for (const doc of linkedDocs) {
         if (doc.transactionId && !firstDocByTxId.has(doc.transactionId)) {
           firstDocByTxId.set(doc.transactionId, doc)
@@ -93,7 +93,7 @@ export default function ExpenseMonthSupplierPivot({ businessId }: Props) {
           : Math.abs(t.amount)
         const monthNum = Number(t.month.split('/')[0])
         const y = Number(t.month.split('/')[1])
-        const supplier = supplierLabelForTransaction(t, t.id != null ? firstDocByTxId.get(t.id) : undefined)
+        const supplier = supplierLabelForTransaction(t, t.syncId != null ? firstDocByTxId.get(t.syncId) : undefined)
         addAmount(supplier, monthNum - 1, y, fullAmount)
       }
 

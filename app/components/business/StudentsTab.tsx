@@ -5,7 +5,7 @@ import { studentStore } from '@/app/stores/studentStore'
 import type { Student } from '@/app/types/student'
 
 type StudentsTabProps = {
-  businessId: number
+  businessId: string
 }
 
 type StudentForm = {

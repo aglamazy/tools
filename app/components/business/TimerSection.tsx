@@ -9,13 +9,13 @@ type TimerSectionProps = {
   projects: Project[]
   tasks: HarvestTask[]
   allTasks: HarvestTask[]
-  selectedProjectId: number | null
-  selectedTaskId: number | null
+  selectedProjectId: string | null
+  selectedTaskId: string | null
   activeTimer: ActiveTimer | null
   elapsedSeconds: number
   showAllTasks: boolean
   recentTasksLimit: number
-  onProjectChange: (id: number) => void
+  onProjectChange: (id: string) => void
   onTaskChange: (value: string) => void
   onShowAllTasks: () => void
   onAddTask: () => void
@@ -25,9 +25,9 @@ type TimerSectionProps = {
 }
 
 function Dropdown({ value, placeholder, options, disabled, onChange, showMore }: {
-  value: string | number | null
+  value: string | null
   placeholder: string
-  options: { id: number; name: string }[]
+  options: { id: string; name: string }[]
   disabled?: boolean
   onChange: (value: string) => void
   showMore?: { count: number; onShow: () => void }
@@ -150,14 +150,14 @@ export default function TimerSection({
         <Dropdown
           value={selectedProjectId}
           placeholder="פרויקט"
-          options={projects.map(p => ({ id: p.id!, name: p.name }))}
+          options={projects.map(p => ({ id: p.syncId!, name: p.name }))}
           disabled={!!activeTimer}
-          onChange={(v) => onProjectChange(Number(v))}
+          onChange={onProjectChange}
         />
         <Dropdown
           value={selectedTaskId}
           placeholder="משימה"
-          options={tasks.map(t => ({ id: t.id!, name: t.name }))}
+          options={tasks.map(t => ({ id: t.syncId!, name: t.name }))}
           disabled={!!activeTimer || !selectedProjectId}
           onChange={onTaskChange}
           showMore={!showAllTasks && allTasks.length > recentTasksLimit ? {

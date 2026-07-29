@@ -40,6 +40,31 @@ export default function BusinessForm({ business, onChange, onSave, onCancel, isN
               autoFocus
             />
           </div>
+          {!isNew && (
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>
+                מזהה לכתובת URL (Slug)
+              </label>
+              <input
+                type="text"
+                value={business.slug ?? ''}
+                onChange={(e) => onChange({ ...business, slug: e.target.value.trim() })}
+                style={{
+                  width: '100%',
+                  padding: '0.75rem',
+                  borderRadius: '0.5rem',
+                  border: '1px solid #e2e8f0',
+                  fontSize: '1rem',
+                  direction: 'ltr',
+                  textAlign: 'left',
+                }}
+                placeholder="AH"
+              />
+              <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.25rem' }}>
+                משמש בכתובת העסק (/app/business/{business.slug || '...'}) — חייב להיות ייחודי.
+              </div>
+            </div>
+          )}
           <div>
             <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>
               סוג

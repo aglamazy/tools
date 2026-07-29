@@ -24,7 +24,7 @@ import type { Category } from '@/app/types/category'
 import { getTaxProfile } from '@/app/components/TaxProfileSection'
 
 type IncomeTabProps = {
-  businessId: number
+  businessId: string
 }
 
 export type TransactionWithDoc = Transaction & {
@@ -62,11 +62,11 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
   const [linkForm, setLinkForm] = useState<{ url: string; serialNumber: string }>({ url: '', serialNumber: '' })
   // Open invoices (B2B split flow, authorized dealers only) a receipt can close.
   const [openInvoices, setOpenInvoices] = useState<OpenInvoice[]>([])
-  const [invoiceById, setInvoiceById] = useState<Map<number, YpayDocument>>(new Map())
-  // invoiceDocId → amount allocated from the receipt currently being created/
+  const [invoiceById, setInvoiceById] = useState<Map<string, YpayDocument>>(new Map())
+  // invoice syncId → amount allocated from the receipt currently being created/
   // linked. Presence in the map = selected; the value is editable so a
   // partial cover (paid more than N invoices but less than N+1) is expressible.
-  const [selectedAllocations, setSelectedAllocations] = useState<Record<number, number>>({})
+  const [selectedAllocations, setSelectedAllocations] = useState<Record<string, number>>({})
   const [ypayDocs, setYpayDocs] = useState<Array<{ serial_number: string; url: string }>>([])
   const [loadingDocs, setLoadingDocs] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -75,7 +75,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [profileVatType, setProfileVatType] = useState<'exempt' | 'authorized' | undefined>(undefined)
   const [participants, setParticipants] = useState<Participant[]>(() =>
-    typeof window !== 'undefined' ? partnerStore.getCachedByBusinessId(businessId) : []
+    typeof window !== 'undefined' ? partnerStore.getCached(businessId) : []
   )
   const [accountOwners, setAccountOwners] = useState<AccountOwners>({})
   const ownerUid = business?.userId
@@ -158,7 +158,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
 
   useEffect(() => {
     loadBusiness()
-    businessStore.getById(businessId)
+    businessStore.getBySyncId(businessId)
       .then(b => getTaxProfile(b?.userId))
       .then(p => setProfileVatType(p.vatType))
     void appSettingsStore.getAccountOwners().then(setAccountOwners)
@@ -207,7 +207,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
   }
 
   const loadBusiness = async () => {
-    const b = await businessStore.getById(businessId)
+    const b = await businessStore.getBySyncId(businessId)
     setBusiness(b || null)
     if (b) {
       await loadAvailableMonths()
@@ -304,12 +304,12 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     const open = allInvoices
       .filter(inv => !inv.paidAt)
       .map((inv): OpenInvoice => {
-        const paid = computeInvoicePaidAmount(inv.id!, allDocs)
+        const paid = computeInvoicePaidAmount(inv.syncId!, allDocs)
         return { ...inv, remainingAmount: invoiceGrossAmount(inv) - paid }
       })
       .filter(inv => inv.remainingAmount > 0.01) // paidAt not yet stamped but already fully covered by a same-batch receipt
     setOpenInvoices(open)
-    setInvoiceById(new Map(allInvoices.filter(d => d.id != null).map(d => [d.id as number, d])))
+    setInvoiceById(new Map(allInvoices.filter(d => d.syncId != null).map(d => [d.syncId as string, d])))
   }
 
   const handleStartCreate = async (transactionId: number) => {
@@ -357,7 +357,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     setEditingProjectContact(null)
   }
 
-  const handleCreateDocument = async (transaction: TransactionWithDoc, project: Project, closesAllocations?: { docId: number; amount: number }[]) => {
+  const handleCreateDocument = async (transaction: TransactionWithDoc, project: Project, closesAllocations?: { docId: string; amount: number }[]) => {
     if (!business || !transaction.id) return
 
     if (!project.contactEmail) {
@@ -405,13 +405,13 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     }
   }
 
-  const handleLinkDocument = async (transaction: TransactionWithDoc, closesAllocations?: { docId: number; amount: number }[]) => {
-    if (!transaction.id || !linkForm.serialNumber.trim()) return
+  const handleLinkDocument = async (transaction: TransactionWithDoc, closesAllocations?: { docId: string; amount: number }[]) => {
+    if (!transaction.id || !transaction.syncId || !linkForm.serialNumber.trim()) return
 
     setError(null)
     try {
       await db.ypayDocuments.add({
-        transactionId: String(transaction.id),
+        transactionId: transaction.syncId,
         url: '',
         serialNumber: linkForm.serialNumber.trim(),
         docType: profileVatType === 'authorized' ? YpayDocType.TaxInvoiceReceipt : YpayDocType.Receipt,
@@ -523,10 +523,11 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
       // receipt (partial-then-topped-up) may still be fully paid via the
       // others, so don't blindly reopen it.
       const allDocs = await db.ypayDocuments.toArray()
-      const invoices = await db.ypayDocuments.bulkGet(affectedInvoiceIds)
+      const affectedIdSet = new Set(affectedInvoiceIds)
+      const invoices = allDocs.filter((inv) => inv.syncId && affectedIdSet.has(inv.syncId))
       await Promise.all(
         invoices
-          .filter((inv): inv is YpayDocument => !!inv && !!inv.paidAt && !isInvoiceFullyPaid(inv, allDocs))
+          .filter((inv): inv is YpayDocument => !!inv.paidAt && !isInvoiceFullyPaid(inv, allDocs))
           .map((inv) => db.ypayDocuments.update(inv.id!, { paidAt: undefined }))
       )
     }

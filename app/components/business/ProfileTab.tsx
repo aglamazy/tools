@@ -7,7 +7,7 @@ import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 import { LocaleDateInput } from '@/app/components/LocaleInputs'
 
 type ProfileTabProps = {
-  businessId: number
+  businessId: string
 }
 
 type QAForm = {

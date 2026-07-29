@@ -14,8 +14,8 @@ import ExpenseMatchCell from './ExpenseMatchCell'
 type SelfEmployedTableProps = {
   businesses: Business[]
   transactions: Transaction[]
-  bizCategoryMap: Map<number, string[]>
-  expCategoryMap: Map<number, string[]>
+  bizCategoryMap: Map<string, string[]>
+  expCategoryMap: Map<string, string[]>
   categoryByName: Map<string, Category>
   currentYear: number
   currentMonth: number
@@ -43,14 +43,14 @@ export default function SelfEmployedSummaryTable({ businesses, transactions, biz
     const bizExpense: Record<number, number> = {}
     let householdExpense = 0
     for (const biz of businesses) {
-      const catNames = bizCategoryMap.get(biz.id!) || []
+      const catNames = (biz.syncId && bizCategoryMap.get(biz.syncId)) || []
       const bizTx = transactions.filter(t => t.month === monthStr && t.category && catNames.includes(t.category))
       bizIncome[biz.id!] = bizTx.reduce((s, t) => s + (t.amount || 0), 0)
 
       // Per-business expense column: only business-scoped categories
-      // (cat.businessId === biz.id). Household-deductible categories go to
+      // (cat.businessId === biz.syncId). Household-deductible categories go to
       // the household column instead.
-      const allExpCatNames = expCategoryMap.get(biz.id!) || []
+      const allExpCatNames = (biz.syncId && expCategoryMap.get(biz.syncId)) || []
       const bizScopedCatNames = allExpCatNames.filter(n => !householdCatNames.has(n))
       const expTx = transactions.filter(t => t.month === monthStr && t.category && bizScopedCatNames.includes(t.category) && t.amount < 0)
         .filter(t => !t.currentStep || t.currentStep === 1)
@@ -154,7 +154,7 @@ export default function SelfEmployedSummaryTable({ businesses, transactions, biz
   }, [])
 
   const docByTxId = useMemo(() => {
-    const m = new Map<number, ExpenseDocument>()
+    const m = new Map<string, ExpenseDocument>()
     for (const d of expenseDocs) {
       if (d.transactionId != null) m.set(d.transactionId, d)
     }
@@ -184,7 +184,8 @@ export default function SelfEmployedSummaryTable({ businesses, transactions, biz
     if (drillDown.bizId === 'household') {
       catNames = Array.from(householdCatNames)
     } else {
-      const all = (drillDown.kind === 'income' ? bizCategoryMap : expCategoryMap).get(drillDown.bizId) || []
+      const bizSyncId = businesses.find(b => b.id === drillDown.bizId)?.syncId
+      const all = (bizSyncId && (drillDown.kind === 'income' ? bizCategoryMap : expCategoryMap).get(bizSyncId)) || []
       // Per-biz expense drill: strip household-scoped cats (they live in the household column now)
       catNames = drillDown.kind === 'expense' ? all.filter(n => !householdCatNames.has(n)) : all
     }
@@ -418,7 +419,7 @@ export default function SelfEmployedSummaryTable({ businesses, transactions, biz
                                 merchant: tx.merchant,
                                 amount: tx.amount,
                               }}
-                              linkedDoc={docByTxId.get(tx.id)}
+                              linkedDoc={tx.syncId ? docByTxId.get(tx.syncId) : undefined}
                               claudeApiKey={claudeApiKey}
                               onMatched={onDocMatched}
                               onUnlink={onDocUnlinked}

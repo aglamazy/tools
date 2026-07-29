@@ -170,42 +170,70 @@ function buildIdRemap(report: DedupReport, table: string): Map<number, number> {
 }
 
 /**
+ * Build a map of removed row's syncId → kept row's syncId for a table.
+ * Child tables' FK fields hold the parent's syncId (see remapLegacyFks.ts),
+ * not its local auto-increment id, so fixing up orphaned FKs after a dedup
+ * removal needs the syncId-keyed version of buildIdRemap, not the raw id one.
+ */
+async function buildSyncIdRemap(report: DedupReport, table: string): Promise<Map<string, string>> {
+  const remap = new Map<string, string>()
+  const relevantGroups = report.groups.filter((g) => g.table === table)
+  if (relevantGroups.length === 0) return remap
+
+  const rows = await (db as any)[table].toArray()
+  const syncIdById = new Map<number, string>()
+  for (const row of rows) {
+    if (row.id != null && row.syncId) syncIdById.set(row.id, row.syncId)
+  }
+
+  for (const group of relevantGroups) {
+    const keepSyncId = syncIdById.get(group.keepId)
+    if (!keepSyncId) continue
+    for (const removedId of group.removeIds) {
+      const removedSyncId = syncIdById.get(removedId)
+      if (removedSyncId) remap.set(removedSyncId, keepSyncId)
+    }
+  }
+  return remap
+}
+
+/**
  * Remap orphaned foreign keys in child tables after parent duplicates are removed.
  * Chain: businesses → projects.businessId → harvestTasks.projectId → timeEntries.taskId
  */
 async function remapOrphanedForeignKeys(report: DedupReport): Promise<void> {
   // 1. Remap projects.businessId for removed businesses
-  const bizRemap = buildIdRemap(report, 'businesses')
+  const bizRemap = await buildSyncIdRemap(report, 'businesses')
   if (bizRemap.size > 0) {
     const projects = await db.projects.toArray()
     for (const p of projects) {
-      const newId = bizRemap.get(p.businessId)
-      if (newId !== undefined) {
-        await db.projects.update(p.id!, { businessId: newId })
+      const newSyncId = bizRemap.get(p.businessId)
+      if (newSyncId !== undefined) {
+        await db.projects.update(p.id!, { businessId: newSyncId })
       }
     }
   }
 
   // 2. Remap harvestTasks.projectId for removed projects
-  const projRemap = buildIdRemap(report, 'projects')
+  const projRemap = await buildSyncIdRemap(report, 'projects')
   if (projRemap.size > 0) {
     const tasks = await db.harvestTasks.toArray()
     for (const t of tasks) {
-      const newId = projRemap.get(t.projectId)
-      if (newId !== undefined) {
-        await db.harvestTasks.update(t.id!, { projectId: newId })
+      const newSyncId = projRemap.get(t.projectId)
+      if (newSyncId !== undefined) {
+        await db.harvestTasks.update(t.id!, { projectId: newSyncId })
       }
     }
   }
 
   // 3. Remap timeEntries.taskId for removed harvestTasks
-  const taskRemap = buildIdRemap(report, 'harvestTasks')
+  const taskRemap = await buildSyncIdRemap(report, 'harvestTasks')
   if (taskRemap.size > 0) {
     const entries = await db.timeEntries.toArray()
     for (const e of entries) {
-      const newId = taskRemap.get(e.taskId)
-      if (newId !== undefined) {
-        await db.timeEntries.update(e.id!, { taskId: newId })
+      const newSyncId = taskRemap.get(e.taskId)
+      if (newSyncId !== undefined) {
+        await db.timeEntries.update(e.id!, { taskId: newSyncId })
       }
     }
   }

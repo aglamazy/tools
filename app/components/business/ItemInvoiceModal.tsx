@@ -24,7 +24,7 @@ type ItemInvoiceModalProps = {
   onProjectAdded?: () => void
 }
 
-function blankProject(businessId: number): Project {
+function blankProject(businessId: string): Project {
   const now = new Date().toISOString()
   return {
     businessId,
@@ -180,7 +180,7 @@ export default function ItemInvoiceModal({
               </select>
               <button
                 type="button"
-                onClick={() => setDraftProject(blankProject(business.id!))}
+                onClick={() => setDraftProject(blankProject(business.syncId!))}
                 title="פרויקט חדש"
                 style={{
                   padding: '0.5rem 0.75rem', background: '#f1f5f9', color: '#334155',

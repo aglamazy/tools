@@ -10,7 +10,7 @@ import Modal from '@/app/components/Modal'
 import BusinessSharingSection from './BusinessSharingSection'
 
 type BizSettingsTabProps = {
-  businessId: number
+  businessId: string
 }
 
 
@@ -23,7 +23,7 @@ export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
   const [ypaySandboxClientSecret, setYpaySandboxClientSecret] = useState('')
   const [ypayStatus, setYpayStatus] = useState<{ type: 'idle' | 'success' | 'error'; message: string }>({ type: 'idle', message: '' })
   const [householdMembers, setHouseholdMembers] = useState<Partner[]>(() =>
-    typeof window !== 'undefined' ? partnerStore.getCachedByBusinessId(businessId) : []
+    typeof window !== 'undefined' ? partnerStore.getCached(businessId) : []
   )
   const [selectedUserId, setSelectedUserId] = useState<string>('')
   const [ownerSaved, setOwnerSaved] = useState(false)
@@ -36,7 +36,7 @@ export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
     // ends up missing the current user.
     let syncIdForBiz: string | undefined
     // Initial sync read: show cached partners immediately to avoid empty-dropdown flash.
-    void businessStore.getById(businessId).then(b => {
+    void businessStore.getBySyncId(businessId).then(b => {
       syncIdForBiz = b?.syncId
       partnerStore.recordBusiness(b?.id, b?.syncId)
       setHouseholdMembers(partnerStore.getCached(syncIdForBiz))
@@ -46,7 +46,7 @@ export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
     })
     const unsubAuth = subscribeToAuthState(async (user) => {
       if (user) {
-        const b = await businessStore.getById(businessId)
+        const b = await businessStore.getBySyncId(businessId)
         syncIdForBiz = b?.syncId
         // Trigger background refresh; subscribe handler above picks up the result.
         await partnerStore.refresh(syncIdForBiz)
@@ -65,7 +65,7 @@ export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
   }, [businessId])
 
   const loadBusiness = async () => {
-    const b = await businessStore.getById(businessId)
+    const b = await businessStore.getBySyncId(businessId)
     if (b) {
       setBusiness(b)
       setYpayClientId(b.ypayClientId || '')
@@ -81,7 +81,8 @@ export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
   const saveOwner = async () => {
     const n = Number(ownerSharePercent)
     const validPercent = Number.isFinite(n) && n >= 0 && n <= 100 ? n : undefined
-    await businessStore.update(businessId, {
+    if (!business?.id) return
+    await businessStore.update(business.id, {
       userId: selectedUserId || undefined,
       ...(validPercent !== undefined ? { ownerSharePercent: validPercent } : {}),
     })
@@ -92,7 +93,8 @@ export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
   }
 
   const saveYpayCredentials = async () => {
-    await businessStore.update(businessId, {
+    if (!business?.id) return
+    await businessStore.update(business.id, {
       ypayClientId: ypayClientId.trim(),
       ypayClientSecret: ypayClientSecret.trim(),
       ypayUseSandbox,
@@ -112,7 +114,8 @@ export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
     setYpayStatus({ type: 'idle', message: 'בודק...' })
     const result = await ypayService.testConnection({ clientId, clientSecret })
     if (result.success) {
-      await businessStore.update(businessId, {
+      if (!business?.id) return
+      await businessStore.update(business.id, {
         ypayClientId: ypayClientId.trim(),
         ypayClientSecret: ypayClientSecret.trim(),
         ypayUseSandbox,

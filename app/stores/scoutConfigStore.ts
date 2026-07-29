@@ -2,7 +2,7 @@ import { db } from '@/app/db/financeDB'
 import type { ScoutConfig } from '@/app/types/scoutConfig'
 
 export const scoutConfigStore = {
-  getByBusinessId: async (businessId: number): Promise<ScoutConfig | undefined> => {
+  getByBusinessId: async (businessId: string): Promise<ScoutConfig | undefined> => {
     try {
       return await db.scoutConfigs.where('businessId').equals(businessId).first()
     } catch (error) {
@@ -11,7 +11,7 @@ export const scoutConfigStore = {
     }
   },
 
-  save: async (businessId: number, searchPrompt: string, conversationHistory: ScoutConfig['conversationHistory']): Promise<number | null> => {
+  save: async (businessId: string, searchPrompt: string, conversationHistory: ScoutConfig['conversationHistory']): Promise<number | null> => {
     try {
       const existing = await db.scoutConfigs.where('businessId').equals(businessId).first()
       const now = new Date().toISOString()
@@ -37,7 +37,7 @@ export const scoutConfigStore = {
     }
   },
 
-  delete: async (businessId: number): Promise<boolean> => {
+  delete: async (businessId: string): Promise<boolean> => {
     try {
       await db.scoutConfigs.where('businessId').equals(businessId).delete()
       return true

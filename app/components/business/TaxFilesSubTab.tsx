@@ -13,7 +13,7 @@ import YesNoModal from '@/app/components/YesNoModal'
 
 type HouseholdMember = { uid: string; label: string }
 
-export default function FilesSubTab({ loadHouseholdMembers, businessId }: { loadHouseholdMembers: () => Promise<HouseholdMember[]>; businessId?: number }) {
+export default function FilesSubTab({ loadHouseholdMembers, businessId }: { loadHouseholdMembers: () => Promise<HouseholdMember[]>; businessId: string }) {
   const [docs, setDocs] = useState<TaxDocument[]>([])
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
@@ -26,7 +26,7 @@ export default function FilesSubTab({ loadHouseholdMembers, businessId }: { load
 
   const loadDocs = useCallback(async () => {
     let all = await db.taxDocuments.toArray()
-    if (businessId != null) all = all.filter(d => d.businessId === businessId)
+    all = all.filter(d => d.businessId === businessId)
     all.sort((a, b) => (b.uploadedAt || '').localeCompare(a.uploadedAt || ''))
     setDocs(all)
     setLoading(false)
@@ -76,7 +76,7 @@ export default function FilesSubTab({ loadHouseholdMembers, businessId }: { load
       // Save to IndexedDB
       const now = new Date().toISOString()
       const id = await db.taxDocuments.add({
-        businessId: businessId ?? 0,
+        businessId,
         userId: getUser()?.uid,
         fileName: file.name,
         driveFileId,

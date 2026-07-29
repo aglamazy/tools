@@ -6,7 +6,7 @@ import { hasCalendarAccess, requestCalendarAccess, fetchCalendarEvents, type Cal
 import type { Student } from '@/app/types/student'
 
 type AccountingTabProps = {
-  businessId: number
+  businessId: string
 }
 
 type MatchedEvent = CalendarEvent & {

@@ -1,4 +1,6 @@
 import type Dexie from 'dexie'
+import { generateUniqueSlug } from '@/app/utils/businessSlug'
+import { remapLegacyFks, FK_FIELDS_TO_MIGRATE, type OrphanOverride } from '@/app/services/migrations/remapLegacyFks'
 
 export function defineSchemaVersions(db: Dexie): void {
   db.version(1).stores({
@@ -690,5 +692,95 @@ export function defineSchemaVersions(db: Dexie): void {
     // classification-per-transaction invariant as a proper unique index
     // instead, which getUniqueKeyTables() picks up automatically for dedup.
     subjectClassifications: '++id, syncId, &transactionId, categoryId, monthYear, [categoryId+monthYear]',
+  })
+
+  // Short, unique, human-readable business identifier for URLs
+  // (/app/business/AH instead of /app/business/11) — the numeric id is a
+  // mutable Dexie auto-increment and is exactly as fragile for bookmarks/
+  // links as it was for the FK fields fixed in v34; a slug never changes
+  // once assigned.
+  db.version(33).stores({
+    businesses: '++id, syncId, &name, &slug, type, userId',
+  }).upgrade(async (trans) => {
+    const table = trans.table('businesses')
+    const all = await table.toArray()
+    const used = new Set<string>(all.map((b) => b.slug).filter(Boolean))
+    for (const biz of all) {
+      if (biz.slug) continue
+      try {
+        const slug = generateUniqueSlug(biz.name, used)
+        used.add(slug)
+        await table.update(biz.id, { slug })
+      } catch (err) {
+        // Never let one bad row abort the whole versionchange transaction —
+        // that would pin the DB at the old version until a new build ships.
+        console.warn(`[Migration v33] Failed to generate slug for business ${biz.id}:`, err)
+      }
+    }
+  })
+
+  // v34: convert every FK field that stores a local Dexie auto-increment int
+  // into one holding the referenced row's syncId instead — see
+  // remapLegacyFks.ts for the full "why" (root-caused 2026-07-28: a business
+  // got recreated under 3 different local ids during a sync-bug incident,
+  // and everything that referenced it by that mutable int silently orphaned
+  // or misattributed). An indexed field works the same in Dexie whether it
+  // holds a number or a string, so no .stores() index-shape change is
+  // needed here — this version is a pure data transform.
+  db.version(34).upgrade(async (trans) => {
+    const tableNames = new Set<string>(['ypayDocuments', 'transactions'])
+    for (const spec of FK_FIELDS_TO_MIGRATE) {
+      tableNames.add(spec.childTable)
+      tableNames.add(spec.parentTable)
+    }
+
+    const stores: Record<string, any[]> = {}
+    for (const name of tableNames) {
+      stores[name] = await trans.table(name).toArray()
+    }
+
+    // No bundled one-time overrides: validated against Agla's real cloud
+    // export (2026-07-28) via findUnresolvedFks — every FK field in
+    // FK_FIELDS_TO_MIGRATE resolves cleanly against the real `businesses`
+    // table with zero genuine orphans. An earlier version of this migration
+    // guessed AH had cycled through dead ids 5/9/10 and bundled a hardcoded
+    // override for them — that guess was wrong (id 5 was AH's own live id in
+    // the real data, not a dead incarnation) and came from stale forensics
+    // on a locally-mangled dev copy, not the real data. Lesson: use
+    // findUnresolvedFks against a real export to find genuine orphans, never
+    // hand-guess. If a real device surfaces a genuine unresolved FK, it logs
+    // a warning below and clears to undefined rather than silently
+    // misattributing to the wrong business.
+    const orphanOverrides: OrphanOverride[] = []
+
+    const { stores: remapped, warnings } = remapLegacyFks(stores, orphanOverrides)
+    if (warnings.length > 0) {
+      console.warn(`[Migration v34] ${warnings.length} warning(s):\n${warnings.join('\n')}`)
+    }
+
+    // Group all migrated fields per table so each row gets one update() call.
+    const fieldsByTable = new Map<string, Set<string>>()
+    for (const spec of FK_FIELDS_TO_MIGRATE) {
+      if (!fieldsByTable.has(spec.childTable)) fieldsByTable.set(spec.childTable, new Set())
+      fieldsByTable.get(spec.childTable)!.add(spec.field)
+    }
+    if (!fieldsByTable.has('ypayDocuments')) fieldsByTable.set('ypayDocuments', new Set())
+    fieldsByTable.get('ypayDocuments')!.add('transactionId')
+    fieldsByTable.get('ypayDocuments')!.add('closesAllocations')
+
+    for (const [tableName, fields] of fieldsByTable) {
+      const table = trans.table(tableName)
+      for (const row of remapped[tableName] || []) {
+        const updates: Record<string, any> = {}
+        for (const f of fields) updates[f] = row[f]
+        try {
+          await table.update(row.id, updates)
+        } catch (err) {
+          // Same rule as v33: never let one bad row abort the whole
+          // versionchange transaction.
+          console.warn(`[Migration v34] Failed to update ${tableName} row ${row.id}:`, err)
+        }
+      }
+    }
   })
 }

@@ -1,7 +1,7 @@
 export type Student = {
   id?: number
   syncId?: string
-  businessId: number       // FK to Business (teacher)
+  businessId: string       // FK to Business.syncId (teacher)
   name: string             // e.g. "משה לוי"
   email?: string
   lessonRate: number       // price per lesson

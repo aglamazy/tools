@@ -678,10 +678,10 @@ export const transactionStore = {
       month ? db.transactions.where('month').equals(month).toArray() : db.transactions.toArray(),
       db.expenseDocuments.toArray(),
     ])
-    const linkedTransactionIds = new Set(
-      docs.filter((d) => d.transactionId != null).map((d) => d.transactionId as number)
+    const linkedTransactionSyncIds = new Set(
+      docs.filter((d) => d.transactionId != null).map((d) => d.transactionId as string)
     )
-    return findDuplicateTransactions(transactions, linkedTransactionIds)
+    return findDuplicateTransactions(transactions, linkedTransactionSyncIds)
   },
 
   /**

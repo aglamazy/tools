@@ -29,15 +29,15 @@ export type PartnerPaidMigrationMove = {
   docId: number
   vendor: string | undefined
   category: string | undefined
-  fromBusinessId: number | undefined
-  toBusinessId: number
+  fromBusinessId: string | undefined
+  toBusinessId: string
 }
 
 export type PartnerPaidMigrationSkip = {
   docId: number
   vendor: string | undefined
   category: string | undefined
-  currentBusinessId: number | undefined
+  currentBusinessId: string | undefined
   reason: string
 }
 
@@ -52,8 +52,8 @@ export type PartnerPaidMigrationReport = {
 export type VendorRule = {
   /** RegExp source or literal string (matched against ExpenseDocument.vendor) */
   vendorPattern: string | RegExp
-  /** Target business id to move matching docs to */
-  toBusinessId: number
+  /** Target business syncId to move matching docs to */
+  toBusinessId: string
 }
 
 type CategoryLookup = {
@@ -65,7 +65,7 @@ export async function migratePartnerPaidBusinessId(
   opts: { dryRun?: boolean; vendorRules?: VendorRule[] } = {},
 ): Promise<PartnerPaidMigrationReport> {
   const dryRun = opts.dryRun !== false  // default true — must explicitly opt out
-  const vendorRules: Array<{ regex: RegExp; toBusinessId: number }> = (opts.vendorRules || []).map(
+  const vendorRules: Array<{ regex: RegExp; toBusinessId: string }> = (opts.vendorRules || []).map(
     (r) => ({
       regex: r.vendorPattern instanceof RegExp ? r.vendorPattern : new RegExp(r.vendorPattern, 'i'),
       toBusinessId: r.toBusinessId,
@@ -152,7 +152,7 @@ export async function migratePartnerPaidBusinessId(
     }
     const businessScoped = candidates.filter((c) => c.category.businessId != null)
     const uniqueBusinessIds = [...new Set(businessScoped.map((c) => c.category.businessId))].filter(
-      (id): id is number => id != null,
+      (id): id is string => id != null,
     )
     if (uniqueBusinessIds.length !== 1) {
       skipped.push({

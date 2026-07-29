@@ -180,11 +180,12 @@ export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose
           {flatItems.map((entry, i) => {
             if (entry.type === 'business') {
               const business = entry.business
+              const href = routes.business(business)
               return (
                 <li key={`business-${business.id}`}>
                   <Link
-                    href={`/app/business/${business.id}`}
-                    className={`mod-menu-item ${pathname === `/app/business/${business.id}` ? 'active' : ''}`}
+                    href={href}
+                    className={`mod-menu-item ${pathname === href ? 'active' : ''}`}
                     onClick={onClose}
                   >
                     <span className="mod-menu-icon">{BUSINESS_TYPE_CONFIG[business.type].icon}</span>

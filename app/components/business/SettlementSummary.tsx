@@ -15,7 +15,7 @@ import type { Category } from '@/app/types/category'
 import DocumentViewModal from '@/app/components/DocumentViewModal'
 
 type SettlementSummaryProps = {
-  businessId: number
+  businessId: string
 }
 
 type DrillDownKind = 'paid' | 'received' | 'settlementPaid' | 'settlementReceived'
@@ -50,7 +50,7 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
   // visit to this business returns [] and is filled by the subscribe/refresh
   // flow below.
   const [participants, setParticipants] = useState<Participant[]>(() =>
-    typeof window !== 'undefined' ? partnerStore.getCachedByBusinessId(businessId) : []
+    typeof window !== 'undefined' ? partnerStore.getCached(businessId) : []
   )
   const [shares, setShares] = useState<BusinessAccessGrant[]>([])
   // Full profile (not just the current vatType) — the owner's VAT status can
@@ -79,7 +79,7 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
   useEffect(() => {
     let cancelled = false
     const load = async () => {
-      const b = await businessStore.getById(businessId)
+      const b = await businessStore.getBySyncId(businessId)
       if (cancelled) return
       setBusiness(b || null)
       if (!b) { setLoading(false); return }

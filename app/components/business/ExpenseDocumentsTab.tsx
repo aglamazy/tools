@@ -25,7 +25,7 @@ type GmailSearchResult = {
 }
 
 type Props = {
-  businessId: number
+  businessId: string
 }
 
 export default function ExpenseDocumentsTab({ businessId }: Props) {
@@ -185,7 +185,7 @@ export default function ExpenseDocumentsTab({ businessId }: Props) {
       // Check for mismatch with linked transaction
       const doc = await db.expenseDocuments.get(docId)
       if (doc?.transactionId) {
-        const tx = await db.transactions.get(doc.transactionId)
+        const tx = await db.transactions.where('syncId').equals(doc.transactionId).first()
         if (tx && data.amount) {
           const txAmount = Math.abs(tx.amount)
           const docAmount = data.amount
@@ -227,7 +227,7 @@ export default function ExpenseDocumentsTab({ businessId }: Props) {
   }
 
   // --- Link to transaction ---
-  const handleLinkTransaction = async (docId: number, transactionId: number) => {
+  const handleLinkTransaction = async (docId: number, transactionId: string) => {
     await db.expenseDocuments.update(docId, {
       transactionId,
       updatedAt: new Date().toISOString(),
@@ -760,7 +760,7 @@ export default function ExpenseDocumentsTab({ businessId }: Props) {
                           <select
                             onChange={e => {
                               if (e.target.value && doc.id) {
-                                handleLinkTransaction(doc.id, Number(e.target.value))
+                                handleLinkTransaction(doc.id, e.target.value)
                               }
                             }}
                             defaultValue=""
@@ -773,8 +773,8 @@ export default function ExpenseDocumentsTab({ businessId }: Props) {
                             }}
                           >
                             <option value="">בחר עסקה...</option>
-                            {transactions.map(tx => (
-                              <option key={tx.id} value={tx.id}>
+                            {transactions.filter(tx => tx.syncId).map(tx => (
+                              <option key={tx.id} value={tx.syncId}>
                                 {tx.description} ({Math.abs(tx.amount).toLocaleString('he-IL')}₪) {tx.date}
                               </option>
                             ))}

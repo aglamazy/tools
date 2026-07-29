@@ -6,6 +6,7 @@ import { getCurrentUser, subscribeToAuthState, refreshIdToken } from '@/app/serv
 import { acceptShareInvitation } from '@/app/services/businessShareService'
 import { saveSharedPassword } from '@/app/services/sharedBusinessSyncService'
 import { db } from '@/app/db/financeDB'
+import { businessStore } from '@/app/stores/businessStore'
 import { BusinessType } from '@/app/types/business'
 import AuthStatus from '@/app/components/AuthStatus'
 import { routes } from '@/app/config'
@@ -92,20 +93,20 @@ function ShareInviteContent() {
         // Create the business record in local DB immediately
         if (businessSyncId && businessName) {
           const exists = await db.businesses.where('syncId').equals(businessSyncId).first()
-          if (!exists) {
-            const newId = await db.businesses.add({
-              name: businessName,
-              syncId: businessSyncId,
-              type: BusinessType.Business,
-              sharedWithMe: true,
-              pinnedToSidebar: true,
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            })
-            router.push(`/app/business/${newId}`)
+          if (exists) {
+            router.push(routes.business(exists))
             return
-          } else {
-            router.push(`/app/business/${exists.id}`)
+          }
+          const newId = await businessStore.add({
+            name: businessName,
+            syncId: businessSyncId,
+            type: BusinessType.Business,
+            sharedWithMe: true,
+            pinnedToSidebar: true,
+          })
+          const created = newId != null ? await db.businesses.get(newId) : undefined
+          if (created) {
+            router.push(routes.business(created))
             return
           }
         }

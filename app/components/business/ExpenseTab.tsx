@@ -24,7 +24,7 @@ import { useToast } from '@/app/components/ToastContainer'
 import { normalizeDate, parseDateMs } from '@/app/utils/parsers/shared'
 
 type ExpenseTabProps = {
-  businessId: number
+  businessId: string
 }
 
 type ExtractedData = {
@@ -99,7 +99,7 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
   }
 
   const loadBusiness = async () => {
-    const b = await businessStore.getById(businessId)
+    const b = await businessStore.getBySyncId(businessId)
     setBusiness(b || null)
     if (b) {
       await loadAvailableMonths()
@@ -178,16 +178,25 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
 
     setTransactions(expenseTransactions)
 
-    // Load existing matched docs
-    const txIds = expenseTransactions.map(t => t.id).filter((id): id is number => id != null)
-    const docs = await db.expenseDocuments.where('transactionId').anyOf(txIds).toArray()
+    // Load existing matched docs. ExpenseDocument.transactionId holds the
+    // transaction's syncId (see remapLegacyFks.ts) — matchedDocs/matchStatus
+    // stay keyed by the transaction's local numeric id throughout this
+    // component (pure UI state, never written to Dexie), so resolve back via
+    // a syncId->id map built from the transactions already loaded above.
+    const syncIdToTxId = new Map<string, number>()
+    for (const t of expenseTransactions) {
+      if (t.id != null && t.syncId) syncIdToTxId.set(t.syncId, t.id)
+    }
+    const txSyncIds = [...syncIdToTxId.keys()]
+    const docs = await db.expenseDocuments.where('transactionId').anyOf(txSyncIds).toArray()
     const docMap: Record<number, ExpenseDocument[]> = {}
     const statusMap: Record<number, MatchStatus> = {}
     for (const doc of docs) {
-      if (doc.transactionId) {
-        if (!docMap[doc.transactionId]) docMap[doc.transactionId] = []
-        docMap[doc.transactionId].push(doc)
-        statusMap[doc.transactionId] = 'matched'
+      const txId = doc.transactionId ? syncIdToTxId.get(doc.transactionId) : undefined
+      if (txId != null) {
+        if (!docMap[txId]) docMap[txId] = []
+        docMap[txId].push(doc)
+        statusMap[txId] = 'matched'
       }
     }
     setMatchedDocs(docMap)
@@ -208,7 +217,7 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
 
     try {
       const result = await matchReceiptForTransaction(
-        { id: t.id, date: t.date, description: t.description, merchant: t.merchant, amount: t.amount },
+        { id: t.id, syncId: t.syncId, date: t.date, description: t.description, merchant: t.merchant, amount: t.amount },
         claudeApiKey,
       )
       if (result.status === 'matched') {
@@ -226,7 +235,7 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
   }
 
   const handleUploadReceipt = async (t: Transaction, files: FileList) => {
-    if (!t.id || files.length === 0) return
+    if (!t.id || !t.syncId || files.length === 0) return
     setMatchStatus(s => ({ ...s, [t.id!]: 'searching' }))
 
     try {
@@ -238,7 +247,7 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
         const finalExtracted = await extractFromFile(file, { date: t.date, description: desc, amount: t.amount }, claudeApiKey)
 
         const doc: ExpenseDocument = {
-          transactionId: t.id,
+          transactionId: t.syncId,
           fileName: file.name,
           vendor: finalExtracted.vendor || desc,
           amount: finalExtracted.amount,
@@ -285,7 +294,7 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
   // bank txs that carry paidByUid. (#44)
   const [partnerPaidDocs, setPartnerPaidDocs] = useState<ExpenseDocument[]>([])
   const [participants, setParticipants] = useState<Participant[]>(() =>
-    typeof window !== 'undefined' ? partnerStore.getCachedByBusinessId(businessId) : []
+    typeof window !== 'undefined' ? partnerStore.getCached(businessId) : []
   )
   const [accountOwners, setAccountOwners] = useState<AccountOwners>({})
   const ownerUid = business?.userId
@@ -400,17 +409,17 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
 
   // Load partner-paid expense docs (no bank tx, paidByUid set) for this business.
   const loadPartnerPaidDocs = async () => {
-    if (!business?.id) return
+    if (!business?.syncId) return
     const docs = await db.expenseDocuments
       .filter(
-        (d) => d.businessId === business.id && !d.transactionId && !!d.paidByUid,
+        (d) => d.businessId === business.syncId && !d.transactionId && !!d.paidByUid,
       )
       .toArray()
     setPartnerPaidDocs(docs)
   }
   useEffect(() => {
     void loadPartnerPaidDocs()
-  }, [business?.id])
+  }, [business?.syncId])
 
   useEffect(() => {
     void appSettingsStore.getAccountOwners().then(setAccountOwners)
@@ -471,9 +480,11 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
       const dateFolder = { year, month: monthNum }
       const uploaded = await uploadExpenseDocument(cashFile, dateFolder)
 
+      const newTx = await db.transactions.get(txId as number)
+
       // Save expense document
       await db.expenseDocuments.add({
-        transactionId: txId as number,
+        transactionId: newTx?.syncId,
         fileName: cashFile.name,
         vendor: extracted.vendor,
         amount: extracted.amount,

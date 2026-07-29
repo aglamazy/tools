@@ -173,7 +173,7 @@ export const subjectStore = {
     (await subjectStore.getAll()).filter((c) => !c.businessId),
 
   /** Categories scoped to a specific business. */
-  getForBusiness: async (businessId: number): Promise<Category[]> =>
+  getForBusiness: async (businessId: string): Promise<Category[]> =>
     (await subjectStore.getAll()).filter((c) => c.businessId === businessId),
 
   /** Wipe — call on logout so the next user can't read stale categories. */

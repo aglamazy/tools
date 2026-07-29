@@ -70,7 +70,7 @@ export function useBusinessTaxStatus(businessId?: number): TaxStatusInfo | null 
       const categories = await subjectStore.getAll()
       const catNames = new Set<string>()
       for (const cat of categories) {
-        if (cat.businessId === businessId && cat.type === 'income') {
+        if (cat.businessId === business.syncId && cat.type === 'income') {
           catNames.add(cat.name)
         }
       }
@@ -172,7 +172,7 @@ export function useExemptTaxStatus(): TaxStatusInfo | null {
 
       // Sum income only from non-tax-free (exempt) businesses
       const allBusinesses = await db.businesses.toArray()
-      const exemptBizIds = new Set(allBusinesses.filter(b => !b.isTaxFree).map(b => b.id))
+      const exemptBizIds = new Set(allBusinesses.filter(b => !b.isTaxFree).map(b => b.syncId).filter(Boolean))
       const categories = await subjectStore.getAll()
       const incomeCategories = categories.filter(c => c.type === 'income' && c.businessId && exemptBizIds.has(c.businessId))
       const catNames = new Set(incomeCategories.map(c => c.name))

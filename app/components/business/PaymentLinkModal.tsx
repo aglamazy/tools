@@ -39,7 +39,7 @@ type Props = {
 
 const emptyLine = (): LineItem => ({ description: '', quantity: 1, price: 0 })
 
-function blankProject(businessId: number): Project {
+function blankProject(businessId: string): Project {
   const now = new Date().toISOString()
   return { businessId, name: '', color: '#3b82f6', archived: false, createdAt: now, updatedAt: now }
 }
@@ -185,7 +185,7 @@ export default function PaymentLinkModal({ business, projects, vatType, initialI
                 </select>
                 <button
                   type="button"
-                  onClick={() => setDraftProject(blankProject(business.id!))}
+                  onClick={() => setDraftProject(blankProject(business.syncId!))}
                   title="לקוח חדש"
                   style={{ padding: '0.5rem 0.75rem', background: '#f1f5f9', color: '#334155', border: '1px solid #cbd5e1', borderRadius: '0.4rem', cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
                 >+ חדש</button>

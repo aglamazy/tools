@@ -16,9 +16,9 @@ export const harvestTaskStore = {
   },
 
   /**
-   * Get tasks by project id
+   * Get tasks by project syncId
    */
-  getByProjectId: async (projectId: number): Promise<HarvestTask[]> => {
+  getByProjectId: async (projectId: string): Promise<HarvestTask[]> => {
     try {
       return await db.harvestTasks.where('projectId').equals(projectId).toArray()
     } catch (error) {
@@ -28,9 +28,9 @@ export const harvestTaskStore = {
   },
 
   /**
-   * Get active (non-archived) tasks by project id
+   * Get active (non-archived) tasks by project syncId
    */
-  getActiveByProjectId: async (projectId: number): Promise<HarvestTask[]> => {
+  getActiveByProjectId: async (projectId: string): Promise<HarvestTask[]> => {
     try {
       return await db.harvestTasks
         .where('projectId')
@@ -51,6 +51,19 @@ export const harvestTaskStore = {
       return await db.harvestTasks.get(id)
     } catch (error) {
       console.error('Error getting task by id:', error)
+      return undefined
+    }
+  },
+
+  /**
+   * Get task by syncId — needed wherever a task is referenced by FK (e.g.
+   * TimeEntry.taskId) rather than by local primary key.
+   */
+  getBySyncId: async (syncId: string): Promise<HarvestTask | undefined> => {
+    try {
+      return await db.harvestTasks.where('syncId').equals(syncId).first()
+    } catch (error) {
+      console.error('Error getting task by syncId:', error)
       return undefined
     }
   },
@@ -111,8 +124,11 @@ export const harvestTaskStore = {
    */
   delete: async (id: number): Promise<boolean> => {
     try {
-      // Delete all time entries for this task
-      await db.timeEntries.where('taskId').equals(id).delete()
+      const task = await db.harvestTasks.get(id)
+      if (task?.syncId) {
+        // timeEntries.taskId holds the task's syncId, not its local id
+        await db.timeEntries.where('taskId').equals(task.syncId).delete()
+      }
 
       // Delete the task
       await db.harvestTasks.delete(id)
