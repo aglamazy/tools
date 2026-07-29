@@ -191,6 +191,7 @@ export interface Project {
   contactEmail?: string
   contactBusinessID?: string  // ח.פ
   contactPhone?: string
+  externalBillingId?: string
   archived: boolean
   createdAt: string
   updatedAt: string
