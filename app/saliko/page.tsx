@@ -16,6 +16,9 @@ export const metadata: Metadata = {
       'x-default': SALIKO_URL,
     },
   },
+  verification: {
+    google: 'QJXi3tYJCeZPqgIs7MFOadMBUbOWWyYFFZBa4QaLENc',
+  },
 }
 
 // BreadcrumbList lets Google render a breadcrumb trail in results and
