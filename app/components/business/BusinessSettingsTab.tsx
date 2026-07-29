@@ -12,7 +12,7 @@ import FormModal, { FormField, inputStyle } from '../FormModal'
 import ProjectEditModal from './ProjectEditModal'
 
 type BusinessSettingsTabProps = {
-  businessId: number
+  businessId: string
 }
 
 // Distinct color palette for projects
@@ -83,12 +83,14 @@ export default function BusinessSettingsTab({ businessId }: BusinessSettingsTabP
   }
 
   const loadTasks = async (projectId: number) => {
-    const t = await harvestTaskStore.getByProjectId(projectId)
+    const project = projects.find(p => p.id === projectId)
+    if (!project?.syncId) return
+    const t = await harvestTaskStore.getByProjectId(project.syncId)
     setTasks((prev) => ({ ...prev, [projectId]: t.sort((a, b) => a.name.localeCompare(b.name, 'he')) }))
   }
 
   const loadTeamMembers = async () => {
-    const business = await businessStore.getById(businessId)
+    const business = await businessStore.getBySyncId(businessId)
     if (!business?.syncId) return
     const user = getUser()
     const members: { email: string }[] = []
@@ -179,8 +181,9 @@ export default function BusinessSettingsTab({ businessId }: BusinessSettingsTabP
 
   const handleAddTask = (projectId: number) => {
     const project = projects.find((p) => p.id === projectId)
+    if (!project?.syncId) return
     setEditingTask({
-      projectId,
+      projectId: project.syncId,
       name: '',
       hourlyRate: project?.defaultHourlyRate,
       archived: false,
@@ -215,12 +218,14 @@ export default function BusinessSettingsTab({ businessId }: BusinessSettingsTabP
     }
 
     setEditingTask(null)
-    await loadTasks(editingTask.projectId)
+    const editedProjectLocalId = projects.find(p => p.syncId === editingTask.projectId)?.id
+    if (editedProjectLocalId != null) await loadTasks(editedProjectLocalId)
   }
 
   const handleArchiveTask = async (task: HarvestTask) => {
     await harvestTaskStore.archive(task.id!)
-    await loadTasks(task.projectId)
+    const taskProjectLocalId = projects.find(p => p.syncId === task.projectId)?.id
+    if (taskProjectLocalId != null) await loadTasks(taskProjectLocalId)
   }
 
   return (

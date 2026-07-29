@@ -66,8 +66,8 @@ function AnnualSummarySubTab() {
   const [docs, setDocs] = useState<TaxDocument[]>([])
   const [businesses, setBusinesses] = useState<Business[]>([])
   const [transactions, setTransactions] = useState<Transaction[]>([])
-  const [bizCategoryMap, setBizCategoryMap] = useState<Map<number, string[]>>(new Map())
-  const [expCategoryMap, setExpCategoryMap] = useState<Map<number, string[]>>(new Map())
+  const [bizCategoryMap, setBizCategoryMap] = useState<Map<string, string[]>>(new Map())
+  const [expCategoryMap, setExpCategoryMap] = useState<Map<string, string[]>>(new Map())
   const [categoryByName, setCategoryByName] = useState<Map<string, Category>>(new Map())
   const [members, setMembers] = useState<HouseholdMember[]>([])
   const [householdDebug, setHouseholdDebug] = useState<HouseholdDebug | null>(null)
@@ -114,8 +114,8 @@ function AnnualSummarySubTab() {
 
       // Build business → category names map from subjectStore (income + expense)
       const categories = await subjectStore.getAll()
-      const catMap = new Map<number, string[]>()
-      const expCatMap = new Map<number, string[]>()
+      const catMap = new Map<string, string[]>()
+      const expCatMap = new Map<string, string[]>()
       for (const cat of categories) {
         if (cat.businessId && cat.type === 'income') {
           const existing = catMap.get(cat.businessId) || []
@@ -139,10 +139,10 @@ function AnnualSummarySubTab() {
         for (const [memberUid, percent] of Object.entries(cat.deductibleByMember)) {
           if (!percent || percent <= 0) continue
           for (const b of biz) {
-            if (b.id == null || b.userId !== memberUid) continue
-            const existing = expCatMap.get(b.id) || []
+            if (!b.syncId || b.userId !== memberUid) continue
+            const existing = expCatMap.get(b.syncId) || []
             if (!existing.includes(cat.name)) existing.push(cat.name)
-            expCatMap.set(b.id, existing)
+            expCatMap.set(b.syncId, existing)
           }
         }
       }
@@ -191,9 +191,9 @@ function AnnualSummarySubTab() {
   // Exclude businesses shared with me — those belong to the owner's tax situation
   const ownBusinesses = businesses.filter(b => !b.sharedWithMe)
   const relevantBusinesses = selectedUser === 'all'
-    ? ownBusinesses.filter(b => b.id && bizCategoryMap.has(b.id))
-    : ownBusinesses.filter(b => b.id && (
-        (bizCategoryMap.has(b.id) && (b.userId === selectedUser || userBizIdsFromDocs.has(b.id)))
+    ? ownBusinesses.filter(b => b.syncId && bizCategoryMap.has(b.syncId))
+    : ownBusinesses.filter(b => b.syncId && (
+        (bizCategoryMap.has(b.syncId) && (b.userId === selectedUser || userBizIdsFromDocs.has(b.syncId)))
         || b.userId === selectedUser
       ))
 
@@ -226,7 +226,7 @@ function AnnualSummarySubTab() {
 
     const exemptCatNames = new Set<string>()
     for (const biz of exemptBizzes) {
-      const catNames = bizCategoryMap.get(biz.id!) || []
+      const catNames = bizCategoryMap.get(biz.syncId!) || []
       catNames.forEach(n => exemptCatNames.add(n))
     }
 
@@ -255,7 +255,7 @@ function AnnualSummarySubTab() {
 
   const handleUploadReceipt = async (month: string, file: File) => {
     const seBiz = relevantBusinesses.filter(b => !b.isTaxFree)
-    const businessId = seBiz[0]?.id
+    const businessId = seBiz[0]?.syncId
     if (!businessId) {
       console.error('[AdvancePayment] upload aborted: no self-employed business found for', selectedUser)
       return
@@ -453,8 +453,8 @@ type SummarySectionsProps = {
   nonRentalBusinesses: Business[]
   rentalBusinesses: Business[]
   transactions: Transaction[]
-  bizCategoryMap: Map<number, string[]>
-  expCategoryMap: Map<number, string[]>
+  bizCategoryMap: Map<string, string[]>
+  expCategoryMap: Map<string, string[]>
   categoryByName: Map<string, Category>
   currentYear: number
   currentMonth: number

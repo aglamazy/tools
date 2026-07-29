@@ -38,8 +38,8 @@ function computeMonthlyBTL(monthlyIncome: number, rates: BTLRates) {
 }
 
 export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, rates, taxProfile, personUid }: {
-  businesses: Business[]; transactions: Transaction[]; bizCategoryMap: Map<number, string[]>
-  expCategoryMap: Map<number, string[]>; currentYear: number; currentMonth: number; rates: BTLRates; taxProfile?: TaxProfile; personUid?: string
+  businesses: Business[]; transactions: Transaction[]; bizCategoryMap: Map<string, string[]>
+  expCategoryMap: Map<string, string[]>; currentYear: number; currentMonth: number; rates: BTLRates; taxProfile?: TaxProfile; personUid?: string
 }) {
   const seBiz = businesses.filter(b => !b.isTaxFree)
   if (seBiz.length === 0) return null
@@ -47,8 +47,8 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
   const seCatNames = new Set<string>()
   const seExpCatNames = new Set<string>()
   for (const biz of seBiz) {
-    (bizCategoryMap.get(biz.id!) || []).forEach(n => seCatNames.add(n))
-    ;(expCategoryMap.get(biz.id!) || []).forEach(n => seExpCatNames.add(n))
+    (biz.syncId && bizCategoryMap.get(biz.syncId) || []).forEach(n => seCatNames.add(n))
+    ;(biz.syncId && expCategoryMap.get(biz.syncId) || []).forEach(n => seExpCatNames.add(n))
   }
 
   // A BTL payment is any transaction whose category starts with "ביטוח לאומי".
@@ -279,8 +279,8 @@ function computeIncomeTax(income: number, brackets: IncomeTaxStep[]): number {
 }
 
 export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, btlRates, brackets, salaryDocs, advancePayments, onUploadReceipt, taxProfile }: {
-  businesses: Business[]; transactions: Transaction[]; bizCategoryMap: Map<number, string[]>
-  expCategoryMap: Map<number, string[]>; currentYear: number; currentMonth: number; btlRates: BTLRates | null; brackets: IncomeTaxStep[]
+  businesses: Business[]; transactions: Transaction[]; bizCategoryMap: Map<string, string[]>
+  expCategoryMap: Map<string, string[]>; currentYear: number; currentMonth: number; btlRates: BTLRates | null; brackets: IncomeTaxStep[]
   salaryDocs: TaxDocument[]
   advancePayments?: AdvancePayment[]
   onUploadReceipt?: (month: string, file: File) => Promise<void>
@@ -294,8 +294,8 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
   const seCatNames = new Set<string>()
   const seExpCatNames = new Set<string>()
   for (const biz of seBiz) {
-    (bizCategoryMap.get(biz.id!) || []).forEach(n => seCatNames.add(n))
-    ;(expCategoryMap.get(biz.id!) || []).forEach(n => seExpCatNames.add(n))
+    (biz.syncId && bizCategoryMap.get(biz.syncId) || []).forEach(n => seCatNames.add(n))
+    ;(biz.syncId && expCategoryMap.get(biz.syncId) || []).forEach(n => seExpCatNames.add(n))
   }
 
   const BTL_DEDUCTION_RATE = 0.52 // 52% of BTL paid is deductible

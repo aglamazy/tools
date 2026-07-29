@@ -3,6 +3,7 @@
 import { db, Business } from '@/app/db/financeDB'
 import { appSettingsStore } from './appSettingsStore'
 import type { BusinessUI } from '@/app/types/business'
+import { generateUniqueSlug } from '@/app/utils/businessSlug'
 
 /** Extract saveable fields from BusinessUI (strips id, createdAt, updatedAt) */
 function toSavePayload(biz: BusinessUI): Omit<Business, 'id' | 'createdAt' | 'updatedAt'> {
@@ -48,13 +49,43 @@ export const businessStore = {
   },
 
   /**
+   * Get business by syncId
+   */
+  getBySyncId: async (syncId: string): Promise<Business | undefined> => {
+    try {
+      return await db.businesses.where('syncId').equals(syncId).first()
+    } catch (error) {
+      console.error('Error getting business by syncId:', error)
+      return undefined
+    }
+  },
+
+  /**
+   * Get business by slug
+   */
+  getBySlug: async (slug: string): Promise<Business | undefined> => {
+    try {
+      return await db.businesses.where('slug').equals(slug).first()
+    } catch (error) {
+      console.error('Error getting business by slug:', error)
+      return undefined
+    }
+  },
+
+  /**
    * Add a new business
    */
   add: async (business: Omit<Business, 'id' | 'createdAt' | 'updatedAt'>): Promise<number | null> => {
     try {
       const now = new Date().toISOString()
+      let slug = business.slug
+      if (!slug) {
+        const existing = await db.businesses.toArray()
+        slug = generateUniqueSlug(business.name, new Set(existing.map((b) => b.slug).filter(Boolean) as string[]))
+      }
       const id = await db.businesses.add({
         ...business,
+        slug,
         createdAt: now,
         updatedAt: now,
       })

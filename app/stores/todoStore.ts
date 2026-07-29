@@ -658,7 +658,7 @@ async function checkRecurringBusinessTasks(): Promise<AutoTask[]> {
 
   const allBizTasks = await db.businessTasks.toArray()
   const businesses = await db.businesses.toArray()
-  const bizMap = new Map(businesses.map(b => [b.id, b.name]))
+  const bizMap = new Map(businesses.map(b => [b.syncId, b]))
 
   for (const bt of allBizTasks) {
     if (bt.archived) continue
@@ -674,7 +674,8 @@ async function checkRecurringBusinessTasks(): Promise<AutoTask[]> {
     // Only show if we're within the reminder window
     if (now < reminderDate) continue
 
-    const bizName = bizMap.get(bt.businessId) || ''
+    const biz = bt.businessId ? bizMap.get(bt.businessId) : undefined
+    const bizName = biz?.name || ''
     const priority: Priority = bt.priority || 'medium'
     const quadrant = computeAutoTaskQuadrant(dueDate)
 
@@ -686,7 +687,7 @@ async function checkRecurringBusinessTasks(): Promise<AutoTask[]> {
       priority,
       quadrant,
       deadline: dueDate.toISOString(),
-      link: `${routes.business(bt.businessId)}?tab=tasks`,
+      link: `${routes.business({ id: biz?.id, slug: biz?.slug })}?tab=tasks`,
       createdAt: bt.createdAt,
       month: currentMonth,
     })

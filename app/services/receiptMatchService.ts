@@ -136,7 +136,7 @@ function normalizeExpenseDocFields(extracted: any): Pick<ExpenseDocument, 'exter
 }
 
 export async function matchReceiptForTransaction(
-  tx: { id: number; date: string; description: string; merchant?: string; amount: number },
+  tx: { id: number; syncId?: string; date: string; description: string; merchant?: string; amount: number },
   claudeApiKey: string,
 ): Promise<MatchResult> {
   const desc = (tx.merchant || tx.description || '').trim()
@@ -313,7 +313,7 @@ async function extractFromPdfBase64(
 
 async function tryCandidate(
   msgId: string,
-  tx: { id: number; date: string; description: string; merchant?: string; amount: number },
+  tx: { id: number; syncId?: string; date: string; description: string; merchant?: string; amount: number },
   desc: string,
   claudeApiKey: string,
   log: (...args: unknown[]) => void,
@@ -419,7 +419,7 @@ async function tryCandidate(
       await addEmailSenderToSupplier(urlMatchSupplier.id!, bodyResult.from)
     }
     return {
-      transactionId: tx.id,
+      transactionId: tx.syncId!,
       fileName: pageExtracted.documentTitle || pageExtracted.vendor || extracted.vendor || 'invoice',
       vendor: pageExtracted.vendor || extracted.vendor,
       amount: pageExtracted.amount,
@@ -528,7 +528,7 @@ async function tryCandidate(
     }
 
     return {
-      transactionId: tx.id,
+      transactionId: tx.syncId!,
       fileName: 'drive-upload',
       vendor: finalExtracted.vendor,
       amount: finalExtracted.amount,

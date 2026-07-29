@@ -119,7 +119,7 @@ async function exportBusinessData(businessSyncId: string): Promise<BackupData | 
     return null
   }
 
-  const businessId = business.id!
+  const businessId = business.syncId!
 
   // Collect child records by businessId
   const [projects, taxDocuments, advancePayments, businessTasks] = await Promise.all([
@@ -129,14 +129,14 @@ async function exportBusinessData(businessSyncId: string): Promise<BackupData | 
     db.businessTasks.where('businessId').equals(businessId).toArray(),
   ])
 
-  // Collect harvestTasks via projectIds
-  const projectIds = projects.map(p => p.id!).filter(Boolean)
+  // Collect harvestTasks via projectIds (syncId-based FK)
+  const projectIds = projects.map(p => p.syncId!).filter(Boolean)
   const harvestTasks = projectIds.length > 0
     ? await db.harvestTasks.where('projectId').anyOf(projectIds).toArray()
     : []
 
-  // Collect timeEntries via harvestTask IDs
-  const taskIds = harvestTasks.map(t => t.id!).filter(Boolean)
+  // Collect timeEntries via harvestTask syncIds
+  const taskIds = harvestTasks.map(t => t.syncId!).filter(Boolean)
   const timeEntries = taskIds.length > 0
     ? await db.timeEntries.where('taskId').anyOf(taskIds).toArray()
     : []
@@ -174,10 +174,10 @@ async function exportBusinessData(businessSyncId: string): Promise<BackupData | 
     : []
 
   // Collect documents linked to those transactions. ypayDocuments.transactionId
-  // is stored as String(t.id); expenseDocuments.transactionId is a number.
-  const transactionIds = transactions.map(t => t.id!).filter(Boolean)
-  const transactionIdStrSet = new Set(transactionIds.map(String))
-  const transactionIdNumSet = new Set(transactionIds)
+  // and expenseDocuments.transactionId are both syncId-based now — except
+  // ypayDocuments.transactionId may also hold a synthetic (non-transaction)
+  // dedup key, which simply won't match any syncId here and is filtered out.
+  const transactionSyncIdSet = new Set(transactions.map(t => t.syncId).filter(Boolean))
 
   const [allYpayDocs, allExpenseDocs] = await Promise.all([
     db.ypayDocuments.toArray(),
@@ -189,7 +189,7 @@ async function exportBusinessData(businessSyncId: string): Promise<BackupData | 
   // sharee needs both shapes.
   const projectNameSet = new Set(projects.map(p => p.name).filter(Boolean))
   const ypayDocuments = allYpayDocs.filter(d =>
-    transactionIdStrSet.has(d.transactionId) ||
+    (d.transactionId && transactionSyncIdSet.has(d.transactionId)) ||
     (d.projectName && projectNameSet.has(d.projectName))
   )
   // Include two flavors of expenseDocument:
@@ -199,7 +199,7 @@ async function exportBusinessData(businessSyncId: string): Promise<BackupData | 
   //       as "partner-paid" rows; sharee needs them to compute the
   //       "~1000 at Nadar's side" figure and the Settlement balance.
   const expenseDocuments = allExpenseDocs.filter(d => {
-    if (d.transactionId !== undefined && transactionIdNumSet.has(d.transactionId)) return true
+    if (d.transactionId && transactionSyncIdSet.has(d.transactionId)) return true
     if (!d.transactionId && d.paidByUid && d.businessId === businessId) return true
     return false
   })
@@ -238,7 +238,7 @@ async function exportBusinessData(businessSyncId: string): Promise<BackupData | 
   }
 
   return {
-    version: '1.0',
+    version: '2.0', // see backupService.ts's exportAllStores for what this marks
     timestamp: new Date().toISOString(),
     stores,
   }
@@ -294,50 +294,37 @@ async function applySharedBackup(
   // Use the existing merge logic — it handles syncId matching, dedup, FK resolution
   await applyCloudBackup(cloud)
 
-  // Sharee-side: remap businessId on partner-paid expenseDocuments. The
-  // FK_RELATIONS table at applyMergedBackupService.ts:41 declares only
-  // `transactionId` for expenseDocuments (because that's the primary FK for
-  // bank-receipt matching), but partner-paid docs (`!transactionId`) carry the
-  // owner's local businessId instead. ExpenseTab.tsx:279 filters them by
-  // `d.businessId === business.id`, so without remap the sharee sees 0
-  // partner-paid rows even though the docs are in their DB.
-  if (!isOwner) {
-    const ownerBizId = cloud.stores.businesses?.[0]?.id
-    const localBiz = await db.businesses.where('syncId').equals(businessSyncId).first()
-    const localBizId = localBiz?.id
-    if (ownerBizId != null && localBizId != null && ownerBizId !== localBizId) {
-      // businessId is not a Dexie index on expenseDocuments, so `.where`
-      // throws; scan in-memory then patch by primary key.
-      const all = await db.expenseDocuments.toArray()
-      const toFix = all.filter(d => d.businessId === ownerBizId)
-      for (const d of toFix) {
-        if (d.id != null) {
-          await db.expenseDocuments.update(d.id, { businessId: localBizId })
-        }
-      }
-    }
-  }
+  // (Pre-2026-07-28 this block also re-patched expenseDocuments.businessId
+  // for the sharee here, working around a stale claim that FK_RELATIONS only
+  // covered `transactionId` for that table. It already covered `businessId`
+  // too by the time this was written, making the block a no-op duplicate of
+  // what applyCloudBackup() above just did — removed as part of the FK
+  // int->syncId migration audit, since post-migration it would compare a
+  // syncId string against a raw local int and silently do nothing at all.)
 
   // Sharee-side: merge the owner's business-scoped categories into the local
   // subjectStore (Dexie). Owner-side: skip — owner already authored them.
   //
-  // Categories carry the OWNER's local businessId (e.g. 5); the sharee's local
-  // AH business has its own auto-incremented id (e.g. 1). We remap by looking
-  // up the sharee's local business via the businessSyncId after the IndexedDB
-  // merge has landed it — same FK strategy applyMergedBackupService uses for
-  // its remap relations (#54).
+  // exportBusinessData() carries these out-of-band as `sharedSubjectCategories`
+  // rather than in the generic `subjects` array, because the standard
+  // shared-business export is scoped to a single business and doesn't
+  // include a `subjects` array at all — this is the only path that gets
+  // subject/category data into the sharee's local subjectStore for a shared
+  // business. Categories carry the OWNER's local businessId; the sharee's
+  // local business row has its own syncId-stable identity, resolved here by
+  // businessSyncId after the IndexedDB merge above has landed it.
   if (!isOwner) {
     const incomingCats: any[] = (cloud.stores as any).sharedSubjectCategories || []
     if (incomingCats.length > 0) {
       const localBiz = await db.businesses.where('syncId').equals(businessSyncId).first()
-      const localBizId = localBiz?.id
+      const localBizSyncId = localBiz?.syncId
       const raw = (await subjectStore.getRaw()) || { categories: [], classifications: [] }
       const existing: any[] = Array.isArray(raw.categories) ? raw.categories : []
       const byId = new Map<string, any>()
       for (const c of existing) if (c?.id) byId.set(String(c.id), c)
       for (const c of incomingCats) {
         if (!c?.id) continue
-        byId.set(String(c.id), localBizId != null ? { ...c, businessId: localBizId } : c)
+        byId.set(String(c.id), localBizSyncId ? { ...c, businessId: localBizSyncId } : c)
       }
       await subjectStore.saveAll(Array.from(byId.values()))
     }

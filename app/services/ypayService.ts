@@ -103,11 +103,11 @@ export function invoiceGrossAmount(invoice: YpayDocument): number {
 // (a single invoice can be paid off by more than one receipt over time — a
 // partial payment now, the remainder later). This is computed live rather
 // than denormalized onto the invoice, so there's no stale-total bug to chase.
-export function computeInvoicePaidAmount(invoiceDocId: number, allDocs: YpayDocument[]): number {
+export function computeInvoicePaidAmount(invoiceSyncId: string, allDocs: YpayDocument[]): number {
   let total = 0
   for (const d of allDocs) {
     for (const alloc of d.closesAllocations || []) {
-      if (alloc.docId === invoiceDocId) total += alloc.amount
+      if (alloc.docId === invoiceSyncId) total += alloc.amount
     }
   }
   return total
@@ -116,8 +116,8 @@ export function computeInvoicePaidAmount(invoiceDocId: number, allDocs: YpayDocu
 // Epsilon-tolerant "is this invoice fully paid off" check — floating point
 // gross-up arithmetic won't land on an exact cent otherwise.
 export function isInvoiceFullyPaid(invoice: YpayDocument, allDocs: YpayDocument[]): boolean {
-  if (invoice.id == null) return false
-  const paid = computeInvoicePaidAmount(invoice.id, allDocs)
+  if (!invoice.syncId) return false
+  const paid = computeInvoicePaidAmount(invoice.syncId, allDocs)
   return paid >= invoiceGrossAmount(invoice) - 0.01
 }
 
@@ -128,10 +128,11 @@ export function isInvoiceFullyPaid(invoice: YpayDocument, allDocs: YpayDocument[
 // invoices are now fully covered across ALL their receipts. A partially
 // covered invoice is left untouched — still open, with the remainder
 // discoverable via computeInvoicePaidAmount.
-export async function closeFullyPaidInvoices(closesAllocations: { docId: number; amount: number }[], paidAt: string): Promise<void> {
+export async function closeFullyPaidInvoices(closesAllocations: { docId: string; amount: number }[], paidAt: string): Promise<void> {
   if (closesAllocations.length === 0) return
   const allDocs = await db.ypayDocuments.toArray()
-  const invoices = await db.ypayDocuments.bulkGet(closesAllocations.map((a) => a.docId))
+  const invoiceSyncIds = new Set(closesAllocations.map((a) => a.docId))
+  const invoices = allDocs.filter((d) => d.syncId && invoiceSyncIds.has(d.syncId))
   await Promise.all(
     invoices
       .filter((inv): inv is YpayDocument => !!inv && !inv.paidAt && isInvoiceFullyPaid(inv, allDocs))
@@ -149,7 +150,7 @@ export const ypayService = {
     return response.json()
   },
 
-  createDocument: async (transaction: Transaction, business: Business, contact: YpayContact, vatType?: 'exempt' | 'authorized', closesAllocations?: { docId: number; amount: number }[]): Promise<{ url: string; serialNumber: string }> => {
+  createDocument: async (transaction: Transaction, business: Business, contact: YpayContact, vatType?: 'exempt' | 'authorized', closesAllocations?: { docId: string; amount: number }[]): Promise<{ url: string; serialNumber: string }> => {
     const credentials = getCredentials(business)
 
     const effectiveVatType = vatType || business.vatType
@@ -189,9 +190,10 @@ export const ypayService = {
 
     let details: string | undefined
     if (closesAllocations && closesAllocations.length > 0) {
-      const invoiceDocs = await db.ypayDocuments.bulkGet(closesAllocations.map((a) => a.docId))
+      const invoiceSyncIds = new Set(closesAllocations.map((a) => a.docId))
+      const invoiceDocs = (await db.ypayDocuments.toArray()).filter((d) => d.syncId && invoiceSyncIds.has(d.syncId))
       const refs = closesAllocations.map((a) => {
-        const inv = invoiceDocs.find((d) => d?.id === a.docId)
+        const inv = invoiceDocs.find((d) => d.syncId === a.docId)
         const isPartial = inv ? a.amount < invoiceGrossAmount(inv) - 0.01 : false
         return `#${inv?.serialNumber ?? a.docId} (₪${a.amount.toFixed(2)}${isPartial ? ', כיסוי חלקי' : ''})`
       })

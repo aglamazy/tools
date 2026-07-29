@@ -39,7 +39,7 @@ import {
 } from '@/app/lib/dateUtils'
 
 type TimingTabProps = {
-  businessId: number
+  businessId: string
 }
 
 export default function TimingTab({ businessId }: TimingTabProps) {
@@ -56,8 +56,12 @@ export default function TimingTab({ businessId }: TimingTabProps) {
   const [business, setBusiness] = useState<Business | null>(null)
   const [projects, setProjects] = useState<Project[]>([])
   const [tasks, setTasks] = useState<HarvestTask[]>([])
-  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
-  const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null)
+  // Selection state tracks the project/task's syncId — matches the FK shape
+  // of HarvestTask.projectId / TimeEntry.taskId (see remapLegacyFks.ts).
+  // Local numeric ids (still used for PK-based store calls like getById) are
+  // resolved on demand by looking them up in `projects`/`tasks`/`allTasks`.
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [activeTimer, setActiveTimer] = useState<ActiveTimer | null>(null)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [weekEntries, setWeekEntries] = useState<WeekEntry[]>([])
@@ -169,7 +173,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
   // Load business
   useEffect(() => {
     const load = async () => {
-      const b = await businessStore.getById(businessId)
+      const b = await businessStore.getBySyncId(businessId)
       setBusiness(b || null)
       const profile = await getTaxProfile(b?.userId)
       setProfileVatType(profile.vatType)
@@ -183,7 +187,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
       const p = await projectStore.getActiveByBusinessId(businessId)
       setProjects(p)
       if (p.length > 0 && !selectedProjectId) {
-        setSelectedProjectId(p[0].id!)
+        setSelectedProjectId(p[0].syncId!)
       }
     }
     void load()
@@ -203,22 +207,22 @@ export default function TimingTab({ businessId }: TimingTabProps) {
       // Get recent time entries to determine task usage order
       const recentEntries = await timeEntryStore.getRecent(50) // Get last 50 entries
 
-      // Build a map of taskId -> most recent usage timestamp
-      const taskUsage = new Map<number, string>()
+      // Build a map of task syncId -> most recent usage timestamp
+      // (TimeEntry.taskId already holds the task's syncId directly)
+      const taskUsage = new Map<string, string>()
       for (const entry of recentEntries) {
-        const task = fetchedTasks.find(t => t.id === entry.taskId)
-        if (task && !taskUsage.has(entry.taskId)) {
+        if (!taskUsage.has(entry.taskId)) {
           taskUsage.set(entry.taskId, entry.date + (entry.startTime || ''))
         }
       }
 
       // Sort tasks: recently used first, then rest by creation date
       const recentlyUsedTasks = fetchedTasks
-        .filter(t => taskUsage.has(t.id!))
-        .sort((a, b) => (taskUsage.get(b.id!) || '').localeCompare(taskUsage.get(a.id!) || ''))
+        .filter(t => t.syncId && taskUsage.has(t.syncId))
+        .sort((a, b) => (taskUsage.get(b.syncId!) || '').localeCompare(taskUsage.get(a.syncId!) || ''))
 
       const otherTasks = fetchedTasks
-        .filter(t => !taskUsage.has(t.id!))
+        .filter(t => !t.syncId || !taskUsage.has(t.syncId))
         .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
 
       const sortedTasks = [...recentlyUsedTasks, ...otherTasks]
@@ -227,7 +231,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
       setShowAllTasks(false)
 
       if (sortedTasks.length > 0 && !selectedTaskId) {
-        setSelectedTaskId(sortedTasks[0].id!)
+        setSelectedTaskId(sortedTasks[0].syncId!)
       } else if (sortedTasks.length === 0) {
         setSelectedTaskId(null)
       }
@@ -235,13 +239,19 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     void load()
   }, [selectedProjectId])
 
-  // Load active timer from store
+  // Load active timer from store. ActiveTimer holds numeric local ids (it's
+  // a transient appSettings blob, not a synced FK-bearing table — see
+  // timerStore.ts); resolve to syncIds to match selection state's shape.
   useEffect(() => {
-    timerStore.get().then((timer) => {
+    timerStore.get().then(async (timer) => {
       if (timer) {
         setActiveTimer(timer)
-        setSelectedProjectId(timer.projectId)
-        setSelectedTaskId(timer.taskId)
+        const [project, task] = await Promise.all([
+          projectStore.getById(timer.projectId),
+          harvestTaskStore.getById(timer.taskId),
+        ])
+        if (project?.syncId) setSelectedProjectId(project.syncId)
+        if (task?.syncId) setSelectedTaskId(task.syncId)
       }
     })
   }, [])
@@ -309,9 +319,13 @@ export default function TimingTab({ businessId }: TimingTabProps) {
       await handleStop()
     }
 
+    const projectLocalId = projects.find(p => p.syncId === selectedProjectId)?.id
+    const taskLocalId = allTasks.find(t => t.syncId === selectedTaskId)?.id
+    if (projectLocalId == null || taskLocalId == null) return
+
     const timer: ActiveTimer = {
-      projectId: selectedProjectId!,
-      taskId: selectedTaskId,
+      projectId: projectLocalId,
+      taskId: taskLocalId,
       startedAt: new Date().toISOString(),
     }
     setActiveTimer(timer)
@@ -324,16 +338,18 @@ export default function TimingTab({ businessId }: TimingTabProps) {
       await handleStop()
     }
 
-    // Find the project for this task
-    const task = await harvestTaskStore.getById(entry.taskId)
-    if (!task) return
+    // Find the project for this task (entry.taskId is the task's syncId)
+    const task = await harvestTaskStore.getBySyncId(entry.taskId)
+    if (!task?.id) return
+    const project = await projectStore.getBySyncId(task.projectId)
+    if (!project?.id) return
 
     setSelectedProjectId(task.projectId)
     setSelectedTaskId(entry.taskId)
 
     const timer: ActiveTimer = {
-      projectId: task.projectId,
-      taskId: entry.taskId,
+      projectId: project.id,
+      taskId: task.id,
       startedAt: new Date().toISOString(),
     }
     setActiveTimer(timer)
@@ -342,9 +358,9 @@ export default function TimingTab({ businessId }: TimingTabProps) {
 
   const loadWeekEntries = async () => {
     const allProjects = await projectStore.getByBusinessId(businessId)
-    const projectIds = allProjects.map(p => p.id!)
-    const allTasks = await Promise.all(projectIds.map(pid => harvestTaskStore.getByProjectId(pid)))
-    const businessTaskIds = new Set(allTasks.flat().map(t => t.id!))
+    const projectSyncIds = allProjects.map(p => p.syncId!).filter(Boolean)
+    const allTasks = await Promise.all(projectSyncIds.map(pid => harvestTaskStore.getByProjectId(pid)))
+    const businessTaskIds = new Set(allTasks.flat().map(t => t.syncId!).filter(Boolean))
 
     let entries: TimeEntry[]
 
@@ -401,8 +417,8 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     const enriched: WeekEntry[] = []
     for (const entry of entries) {
       if (!businessTaskIds.has(entry.taskId)) continue
-      const task = allTasks.flat().find(t => t.id === entry.taskId)
-      const project = allProjects.find(p => p.id === task?.projectId)
+      const task = allTasks.flat().find(t => t.syncId === entry.taskId)
+      const project = allProjects.find(p => p.syncId === task?.projectId)
       enriched.push({
         ...entry,
         projectName: project?.name || '',
@@ -435,17 +451,17 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     const startTime = `${startDate.getHours().toString().padStart(2, '0')}:${startDate.getMinutes().toString().padStart(2, '0')}`
     const endTime = `${endDate.getHours().toString().padStart(2, '0')}:${endDate.getMinutes().toString().padStart(2, '0')}`
 
+    const task = await harvestTaskStore.getById(stoppedTimer.taskId)
+    if (!task?.syncId) return
+
     // If timer ran more than 12h, it was likely left running by mistake — open form for review
     if (hours > 12) {
-      const task = await harvestTaskStore.getById(stoppedTimer.taskId)
-      if (task) {
-        const projectTasks = await harvestTaskStore.getActiveByProjectId(task.projectId)
-        setFormTasks(projectTasks)
-      }
+      const projectTasks = await harvestTaskStore.getActiveByProjectId(task.projectId)
+      setFormTasks(projectTasks)
       setEditingEntry(null)
       setFormData({
-        projectId: task?.projectId ?? null,
-        taskId: stoppedTimer.taskId,
+        projectId: task.projectId ?? null,
+        taskId: task.syncId,
         date: today,
         startTime,
         endTime,
@@ -456,7 +472,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     }
 
     await timeEntryStore.add({
-      taskId: stoppedTimer.taskId,
+      taskId: task.syncId,
       date: today,
       startTime,
       endTime,
@@ -493,7 +509,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     }
   }
 
-  const handleFormProjectChange = async (projectId: number) => {
+  const handleFormProjectChange = async (projectId: string) => {
     const t = await harvestTaskStore.getActiveByProjectId(projectId)
     setFormTasks(t)
   }
@@ -541,8 +557,8 @@ export default function TimingTab({ businessId }: TimingTabProps) {
 
   const handleEditEntry = async (entry: WeekEntry) => {
     setEditingEntry(entry)
-    // Get the task to find its projectId
-    const task = await harvestTaskStore.getById(entry.taskId)
+    // Get the task to find its projectId (entry.taskId is the task's syncId)
+    const task = await harvestTaskStore.getBySyncId(entry.taskId)
     if (!task) return
 
     // Load tasks for this project
@@ -575,7 +591,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
   const handleAddTask = () => {
     if (!selectedProjectId) return
 
-    const project = projects.find((p) => p.id === selectedProjectId)
+    const project = projects.find((p) => p.syncId === selectedProjectId)
     setEditingTask({
       projectId: selectedProjectId,
       name: '',
@@ -598,7 +614,8 @@ export default function TimingTab({ businessId }: TimingTabProps) {
       setAllTasks(updatedTasks)
       setTasks(updatedTasks)
       setShowAllTasks(true)
-      setSelectedTaskId(taskId)
+      const newTask = updatedTasks.find(t => t.id === taskId)
+      if (newTask?.syncId) setSelectedTaskId(newTask.syncId)
       setEditingTask(null)
     }
   }
@@ -630,7 +647,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
     let defaultTaskId = selectedTaskId
     if (weekEntries.length > 0) {
       const lastEntry = weekEntries[0] // sorted by date desc
-      const task = await harvestTaskStore.getById(lastEntry.taskId)
+      const task = await harvestTaskStore.getBySyncId(lastEntry.taskId)
       if (task) {
         defaultProjectId = task.projectId
         defaultTaskId = lastEntry.taskId
@@ -787,7 +804,7 @@ export default function TimingTab({ businessId }: TimingTabProps) {
         showAllTasks={showAllTasks}
         recentTasksLimit={RECENT_TASKS_LIMIT}
         onProjectChange={setSelectedProjectId}
-        onTaskChange={(value) => setSelectedTaskId(Number(value))}
+        onTaskChange={(value) => setSelectedTaskId(value)}
         onShowAllTasks={() => { setTasks(allTasks); setShowAllTasks(true) }}
         onAddTask={handleAddTask}
         onStart={handleStart}

@@ -21,9 +21,9 @@ type TaxesDebugPanelProps = {
   selectedUser: string
   ownBusinesses: Business[]
   relevantBusinesses: Business[]
-  bizCategoryMap: Map<number, string[]>
-  expCategoryMap: Map<number, string[]>
-  userBizIdsFromDocs: Set<number>
+  bizCategoryMap: Map<string, string[]>
+  expCategoryMap: Map<string, string[]>
+  userBizIdsFromDocs: Set<string>
   transactions: Transaction[]
   taxProfile: TaxProfile
 }
@@ -47,7 +47,7 @@ export default function TaxesDebugPanel(props: TaxesDebugPanelProps) {
     txByCategory[t.category] = (txByCategory[t.category] || 0) + 1
   }
 
-  const mapToObj = (m: Map<number, string[]>): Record<string, string[]> => {
+  const mapToObj = (m: Map<string, string[]>): Record<string, string[]> => {
     const o: Record<string, string[]> = {}
     m.forEach((v, k) => { o[String(k)] = v })
     return o

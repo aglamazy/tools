@@ -22,8 +22,8 @@ type Props = {
   employeeBizzes: Business[]
   rentalBusinesses: Business[]
   transactions: Transaction[]
-  bizCategoryMap: Map<number, string[]>
-  expCategoryMap: Map<number, string[]>
+  bizCategoryMap: Map<string, string[]>
+  expCategoryMap: Map<string, string[]>
   currentYear: number
   currentMonth: number
 }
@@ -31,10 +31,10 @@ type Props = {
 export default function HouseholdIncomeSummary({ members, docs, selfEmployedBizzes, employeeBizzes, rentalBusinesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth }: Props) {
   const showRental = rentalBusinesses.length > 0
 
-  // Build businessId→userId map so docs without userId can be attributed by their business's owner
-  const bizOwnerMap = new Map<number, string>()
+  // Build businessSyncId→userId map so docs without userId can be attributed by their business's owner
+  const bizOwnerMap = new Map<string, string>()
   for (const biz of [...selfEmployedBizzes, ...employeeBizzes, ...rentalBusinesses]) {
-    if (biz.id != null && biz.userId) bizOwnerMap.set(biz.id, biz.userId)
+    if (biz.syncId && biz.userId) bizOwnerMap.set(biz.syncId, biz.userId)
   }
 
   const belongsToMember = (d: TaxDocument, uid: string) =>
@@ -48,7 +48,7 @@ export default function HouseholdIncomeSummary({ members, docs, selfEmployedBizz
       const memberDocs = docs.filter(d => d.month === monthStr && belongsToMember(d, member.uid))
       let employeeNet = memberDocs.reduce((s, d) => s + (d.netIncome || 0), 0)
       for (const biz of employeeBizzes.filter(b => b.userId === member.uid)) {
-        const catNames = bizCategoryMap.get(biz.id!) || []
+        const catNames = bizCategoryMap.get(biz.syncId!) || []
         employeeNet += transactions
           .filter(t => t.month === monthStr && t.category && catNames.includes(t.category))
           .reduce((s, t) => s + (t.amount || 0), 0)
@@ -57,8 +57,8 @@ export default function HouseholdIncomeSummary({ members, docs, selfEmployedBizz
       // עצמאי: from transactions
       let selfNet = 0
       for (const biz of selfEmployedBizzes.filter(b => b.userId === member.uid)) {
-        const catNames = bizCategoryMap.get(biz.id!) || []
-        const expCatNames = expCategoryMap.get(biz.id!) || []
+        const catNames = bizCategoryMap.get(biz.syncId!) || []
+        const expCatNames = expCategoryMap.get(biz.syncId!) || []
         const income = transactions
           .filter(t => t.month === monthStr && t.category && catNames.includes(t.category))
           .reduce((s, t) => s + (t.amount || 0), 0)
@@ -72,7 +72,7 @@ export default function HouseholdIncomeSummary({ members, docs, selfEmployedBizz
     })
 
     const rental = rentalBusinesses.reduce((sum, biz) => {
-      const catNames = bizCategoryMap.get(biz.id!) || []
+      const catNames = bizCategoryMap.get(biz.syncId!) || []
       return sum + transactions
         .filter(t => t.month === monthStr && t.category && catNames.includes(t.category))
         .reduce((s, t) => s + (t.amount || 0), 0)

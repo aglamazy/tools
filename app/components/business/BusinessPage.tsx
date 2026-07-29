@@ -120,6 +120,22 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
     )
   }
 
+  if (!business.syncId) {
+    // Every business gets a syncId assigned at creation (Dexie hook in
+    // financeDB.ts) — a missing one here means a genuinely broken record,
+    // not a normal "not found" case.
+    return (
+      <div className="card">
+        <p>עסק לא תקין — חסר מזהה סנכרון</p>
+      </div>
+    )
+  }
+  // Child tabs' `businessId` prop identifies the business by its stable
+  // syncId (matches every FK field that references businesses post-2026-07-28
+  // migration), not the mutable local auto-increment id used for the page's
+  // own top-level lookup above.
+  const businessSyncId = business.syncId
+
   const isSharedWithMe = !!business.sharedWithMe
   const filterTabs = (tabs: TabItem[]) =>
     isSharedWithMe ? tabs.filter(t => !OWNER_ONLY_TABS.has(t.id)) : tabs
@@ -139,9 +155,9 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
         <SettingsTabs tabs={filterTabs(EMPLOYEE_TABS)} defaultTab="payslips">
           {(activeTab) => (
             <>
-              {activeTab === 'payslips' && <FilesSubTab loadHouseholdMembers={loadHouseholdMembers} businessId={businessId} />}
-              {activeTab === 'tasks' && <BusinessTasksTab businessId={businessId} />}
-              {activeTab === 'settings' && <BizSettingsTab businessId={businessId} />}
+              {activeTab === 'payslips' && <FilesSubTab loadHouseholdMembers={loadHouseholdMembers} businessId={businessSyncId} />}
+              {activeTab === 'tasks' && <BusinessTasksTab businessId={businessSyncId} />}
+              {activeTab === 'settings' && <BizSettingsTab businessId={businessSyncId} />}
             </>
           )}
         </SettingsTabs>
@@ -149,11 +165,11 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
         <SettingsTabs tabs={filterTabs(TEACHER_TABS)} defaultTab="students">
           {(activeTab) => (
             <>
-              {activeTab === 'students' && <StudentsTab businessId={businessId} />}
-              {activeTab === 'accounting' && <AccountingTab businessId={businessId} />}
-              {activeTab === 'tasks' && <BusinessTasksTab businessId={businessId} />}
-              {activeTab === 'projects' && <BusinessSettingsTab businessId={businessId} />}
-              {activeTab === 'settings' && <BizSettingsTab businessId={businessId} />}
+              {activeTab === 'students' && <StudentsTab businessId={businessSyncId} />}
+              {activeTab === 'accounting' && <AccountingTab businessId={businessSyncId} />}
+              {activeTab === 'tasks' && <BusinessTasksTab businessId={businessSyncId} />}
+              {activeTab === 'projects' && <BusinessSettingsTab businessId={businessSyncId} />}
+              {activeTab === 'settings' && <BizSettingsTab businessId={businessSyncId} />}
             </>
           )}
         </SettingsTabs>
@@ -161,13 +177,13 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
         <SettingsTabs tabs={filterTabs(ARTIST_TABS)} defaultTab="profile">
           {(activeTab) => (
             <>
-              {activeTab === 'profile' && <ProfileTab businessId={businessId} />}
-              {activeTab === 'auditions' && <AuditionsTab businessId={businessId} />}
-              {activeTab === 'income' && <IncomeTab businessId={businessId} />}
-              {activeTab === 'expenses' && <ExpenseTab businessId={businessId} />}
-              {activeTab === 'tasks' && <BusinessTasksTab businessId={businessId} />}
-              {activeTab === 'projects' && <BusinessSettingsTab businessId={businessId} />}
-              {activeTab === 'settings' && <BizSettingsTab businessId={businessId} />}
+              {activeTab === 'profile' && <ProfileTab businessId={businessSyncId} />}
+              {activeTab === 'auditions' && <AuditionsTab businessId={businessSyncId} />}
+              {activeTab === 'income' && <IncomeTab businessId={businessSyncId} />}
+              {activeTab === 'expenses' && <ExpenseTab businessId={businessSyncId} />}
+              {activeTab === 'tasks' && <BusinessTasksTab businessId={businessSyncId} />}
+              {activeTab === 'projects' && <BusinessSettingsTab businessId={businessSyncId} />}
+              {activeTab === 'settings' && <BizSettingsTab businessId={businessSyncId} />}
             </>
           )}
         </SettingsTabs>
@@ -175,7 +191,7 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
         <SettingsTabs tabs={APARTMENT_TABS} defaultTab="income">
           {(activeTab) => (
             <>
-              {activeTab === 'income' && <IncomeTab businessId={businessId} />}
+              {activeTab === 'income' && <IncomeTab businessId={businessSyncId} />}
             </>
           )}
         </SettingsTabs>
@@ -183,15 +199,15 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
         <SettingsTabs tabs={filterTabs(isTaxFree ? APARTMENT_TABS : TABS)} defaultTab="income">
           {(activeTab) => (
             <>
-              {activeTab === 'income' && <IncomeTab businessId={businessId} />}
-              {activeTab === 'expenses' && <ExpenseTab businessId={businessId} />}
-              {activeTab === 'settlement' && <SettlementSummary businessId={businessId} />}
-              {activeTab === 'timing' && <TimingTab businessId={businessId} />}
-              {activeTab === 'invoices' && <InvoicesTab businessId={businessId} />}
-              {activeTab === 'open-docs' && <OpenDocumentsTab businessId={businessId} />}
-              {activeTab === 'tasks' && <BusinessTasksTab businessId={businessId} />}
-              {activeTab === 'projects' && <BusinessSettingsTab businessId={businessId} />}
-              {activeTab === 'settings' && <BizSettingsTab businessId={businessId} />}
+              {activeTab === 'income' && <IncomeTab businessId={businessSyncId} />}
+              {activeTab === 'expenses' && <ExpenseTab businessId={businessSyncId} />}
+              {activeTab === 'settlement' && <SettlementSummary businessId={businessSyncId} />}
+              {activeTab === 'timing' && <TimingTab businessId={businessSyncId} />}
+              {activeTab === 'invoices' && <InvoicesTab businessId={businessSyncId} />}
+              {activeTab === 'open-docs' && <OpenDocumentsTab businessId={businessSyncId} />}
+              {activeTab === 'tasks' && <BusinessTasksTab businessId={businessSyncId} />}
+              {activeTab === 'projects' && <BusinessSettingsTab businessId={businessSyncId} />}
+              {activeTab === 'settings' && <BizSettingsTab businessId={businessSyncId} />}
             </>
           )}
         </SettingsTabs>

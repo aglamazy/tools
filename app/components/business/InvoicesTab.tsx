@@ -10,7 +10,7 @@ import Modal from '@/app/components/Modal'
 import ItemInvoiceModal from './ItemInvoiceModal'
 
 type InvoicesTabProps = {
-  businessId: number
+  businessId: string
 }
 
 function formatDateForDisplay(iso: string): string {
@@ -44,6 +44,7 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
   const [showModal, setShowModal] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [profileVatType, setProfileVatType] = useState<'exempt' | 'authorized' | undefined>(undefined)
+  const [projectFilter, setProjectFilter] = useState<string>('all')
 
   const hasYpay = business?.ypayUseSandbox
     ? !!(business?.ypaySandboxClientId && business?.ypaySandboxClientSecret)
@@ -53,7 +54,7 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
   const load = useCallback(async () => {
     setLoading(true)
     const [b, all, active] = await Promise.all([
-      businessStore.getById(businessId),
+      businessStore.getBySyncId(businessId),
       projectStore.getByBusinessId(businessId),
       projectStore.getActiveByBusinessId(businessId),
     ])
@@ -69,7 +70,7 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
     const allDocs = await db.ypayDocuments.toArray()
     const invoices = allDocs.filter(d => billingDocTypes.has(d.docType) && !!d.projectName && projectNames.has(d.projectName))
     const withBalance: InvoiceWithBalance[] = invoices.map((inv) => {
-      const paidSoFar = inv.id != null ? computeInvoicePaidAmount(inv.id, allDocs) : 0
+      const paidSoFar = inv.syncId != null ? computeInvoicePaidAmount(inv.syncId, allDocs) : 0
       return { ...inv, paidSoFar, remainingAmount: invoiceGrossAmount(inv) - paidSoFar }
     })
     withBalance.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
@@ -85,9 +86,16 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
     return <div className="card"><p>טוען...</p></div>
   }
 
+  // Filter options derived from the docs actually loaded (not activeProjects)
+  // so a customer/project with invoices but no longer active still shows up
+  // — a filter that can silently produce zero results is worse than one that
+  // includes an inactive project.
+  const projectOptions = [...new Set(docs.map(d => d.projectName).filter((n): n is string => !!n))].sort((a, b) => a.localeCompare(b, 'he'))
+  const visibleDocs = projectFilter === 'all' ? docs : docs.filter(d => d.projectName === projectFilter)
+
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <h2 style={{ margin: 0, fontSize: '1.1rem' }}>חשבוניות עסקה</h2>
           {business?.ypayUseSandbox && (
@@ -97,6 +105,18 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
             }}>
               Sandbox
             </span>
+          )}
+          {projectOptions.length > 1 && (
+            <select
+              value={projectFilter}
+              onChange={(e) => setProjectFilter(e.target.value)}
+              style={{ padding: '0.4rem 0.75rem', borderRadius: '0.375rem', border: '1px solid #e2e8f0', fontSize: '0.9rem', direction: 'rtl' }}
+            >
+              <option value="all">לקוח: הכל</option>
+              {projectOptions.map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
           )}
         </div>
         <button
@@ -124,6 +144,10 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
         <div className="card">
           <p style={{ color: '#64748b', margin: 0 }}>עדיין לא נוצרו חשבוניות עסקה לעסק הזה.</p>
         </div>
+      ) : visibleDocs.length === 0 ? (
+        <div className="card">
+          <p style={{ color: '#64748b', margin: 0 }}>אין חשבוניות ללקוח שנבחר.</p>
+        </div>
       ) : (
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
@@ -139,7 +163,7 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
               </tr>
             </thead>
             <tbody>
-              {docs.map(doc => {
+              {visibleDocs.map(doc => {
                 const isItemBased = doc.transactionId.startsWith('invoice-items:')
                 const isPartiallyPaid = !doc.paidAt && doc.paidSoFar > 0.01
                 return (

@@ -4,7 +4,7 @@ import React from 'react'
 import FormModal, { FormField, inputStyle } from '../FormModal'
 
 export type EditingTask = {
-  projectId: number
+  projectId: string
   name: string
   hourlyRate?: number
 }

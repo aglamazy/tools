@@ -10,7 +10,7 @@ import { normalizeDate } from '@/app/utils/parsers/shared'
 interface PartnerPaidImportModalProps {
   open: boolean
   onClose: () => void
-  businessId: number
+  businessId: string
   participants: Participant[]
   categories: Category[]
   selfUid: string | undefined

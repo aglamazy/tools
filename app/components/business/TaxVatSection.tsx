@@ -33,7 +33,7 @@ type TaxVatSectionProps = {
   vatReportPeriod: 1 | 2 // 1 = monthly, 2 = bi-monthly
   businesses: Business[] // user's relevant businesses
   transactions: Transaction[] // all year transactions (already filtered to bizCategories)
-  expCategoryMap: Map<number, string[]>
+  expCategoryMap: Map<string, string[]>
   categoryByName: Map<string, Category>
 }
 
@@ -126,6 +126,7 @@ type IncomeRow = {
 type ExpenseRow = {
   key: string
   transactionId: number
+  transactionSyncId: string
   txDescription: string
   txMerchant?: string
   txAmount: number // raw transaction amount (negative for expense)
@@ -239,10 +240,10 @@ export default function TaxVatSection({
   }
 
   const userProjectNames = useMemo(() => {
-    const businessIds = new Set(businesses.map(b => b.id).filter((x): x is number => x != null))
+    const businessSyncIds = new Set(businesses.map(b => b.syncId).filter((x): x is string => x != null))
     const names = new Set<string>()
     for (const p of projects) {
-      if (businessIds.has(p.businessId)) names.add(p.name)
+      if (businessSyncIds.has(p.businessId)) names.add(p.name)
     }
     return names
   }, [businesses, projects])
@@ -313,7 +314,7 @@ export default function TaxVatSection({
     const deductibleCatNames = new Set<string>()
     for (const names of expCategoryMap.values()) names.forEach(n => deductibleCatNames.add(n))
 
-    const docByTxId = new Map<number, ExpenseDocument>()
+    const docByTxId = new Map<string, ExpenseDocument>()
     for (const ed of expenseDocs) {
       if (ed.transactionId != null) docByTxId.set(ed.transactionId, ed)
     }
@@ -335,10 +336,10 @@ export default function TaxVatSection({
         : cat?.deductibleByMember?.[personUid] ?? (cat?.isDeductible ? 100 : 0)
       if (sharePercent <= 0) continue
       const eligibleAmount = Math.abs(t.amount || 0) * (sharePercent / 100)
-      const linkedDoc = t.id != null ? docByTxId.get(t.id) : undefined
+      const linkedDoc = t.syncId ? docByTxId.get(t.syncId) : undefined
       if (isPeriodClosed) {
         // Closed period: only show docs tagged with this payment.
-        if (linkedDoc?.vatPaymentId !== selectedPayment!.id) continue
+        if (linkedDoc?.vatPaymentId !== selectedPayment!.syncId) continue
       } else {
         // Open period: untagged docs whose date falls inside the period
         // and on/after the dealer-conversion cutoff.
@@ -356,6 +357,7 @@ export default function TaxVatSection({
       rows.push({
         key: `tx:${t.id}`,
         transactionId: t.id!,
+        transactionSyncId: t.syncId!,
         txDescription: t.description || '',
         txMerchant: t.merchant,
         txAmount: t.amount || 0,
@@ -477,15 +479,18 @@ export default function TaxVatSection({
       periodStartDate.setHours(0, 0, 0, 0)
       periodEndDate.setHours(23, 59, 59, 999)
       const inPeriod = (d: Date) => d >= periodStartDate && d <= periodEndDate
+      const paymentRow = await db.vatPayments.get(paymentId as number)
+      if (!paymentRow?.syncId) throw new Error('VAT payment row missing syncId after insert')
+      const paymentSyncId = paymentRow.syncId
       await Promise.all([
         ...incomeRows
           .filter(r => inPeriod(r.date))
-          .map(r => db.ypayDocuments.update(r.id, { vatPaymentId: paymentId as number })),
+          .map(r => db.ypayDocuments.update(r.id, { vatPaymentId: paymentSyncId })),
         ...expenseRows
           .filter(r => inPeriod(r.date))
-          .map(r => expenseDocs.find(d => d.transactionId === r.transactionId))
+          .map(r => expenseDocs.find(d => d.transactionId === r.transactionSyncId))
           .filter((d): d is ExpenseDocument => !!d && d.id != null)
-          .map(d => db.expenseDocuments.update(d.id!, { vatPaymentId: paymentId as number })),
+          .map(d => db.expenseDocuments.update(d.id!, { vatPaymentId: paymentSyncId })),
       ])
 
       // Reload everything so the section reflects the closed period.
@@ -670,7 +675,7 @@ export default function TaxVatSection({
             </thead>
             <tbody>
               {visibleExpenseRows.map(r => {
-                const linked = expenseDocs.find(d => d.transactionId === r.transactionId)
+                const linked = expenseDocs.find(d => d.transactionId === r.transactionSyncId)
                 return (
                   <tr key={r.key} style={trStyle}>
                     <td style={tdStyle}>

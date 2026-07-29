@@ -6,18 +6,18 @@ import { YpayDocType } from '@/app/services/ypayService'
 import type { TransactionWithDoc, OpenInvoice } from './IncomeTab'
 
 type LinkForm = { url: string; serialNumber: string }
-type Allocation = { docId: number; amount: number }
+type Allocation = { docId: string; amount: number }
 
-function toAllocationArray(allocations: Record<number, number>): Allocation[] {
+function toAllocationArray(allocations: Record<string, number>): Allocation[] {
   return Object.entries(allocations)
-    .map(([docId, amount]) => ({ docId: Number(docId), amount }))
+    .map(([docId, amount]) => ({ docId, amount }))
     .filter((a) => a.amount > 0)
 }
 
 type IncomeReceiptCellProps = {
   transaction: TransactionWithDoc
   business: Business | null
-  invoiceById: Map<number, YpayDocument>
+  invoiceById: Map<string, YpayDocument>
   sendingDoc: number | null
   onSendReceipt: (t: TransactionWithDoc) => void
   onDeleteReceipt: (t: TransactionWithDoc) => void
@@ -43,8 +43,8 @@ type IncomeReceiptCellProps = {
   onCreateDocument: (t: TransactionWithDoc, project: Project, allocations: Allocation[]) => void
 
   openInvoices: OpenInvoice[]
-  selectedAllocations: Record<number, number>
-  onSelectedAllocationsChange: (allocations: Record<number, number>) => void
+  selectedAllocations: Record<string, number>
+  onSelectedAllocationsChange: (allocations: Record<string, number>) => void
 }
 
 // Per-invoice amount picker for closing one or more open invoices with a
@@ -57,8 +57,8 @@ function InvoiceAllocationList({
   invoices, allocations, onChange, receiptAmount,
 }: {
   invoices: OpenInvoice[]
-  allocations: Record<number, number>
-  onChange: (allocations: Record<number, number>) => void
+  allocations: Record<string, number>
+  onChange: (allocations: Record<string, number>) => void
   receiptAmount: number
 }) {
   if (invoices.length === 0) return null
@@ -69,10 +69,10 @@ function InvoiceAllocationList({
   const unallocated = receiptAmount - selectedTotal
 
   const toggle = (inv: OpenInvoice) => {
-    if (inv.id == null) return
-    if (inv.id in allocations) {
+    if (inv.syncId == null) return
+    if (inv.syncId in allocations) {
       const next = { ...allocations }
-      delete next[inv.id]
+      delete next[inv.syncId]
       onChange(next)
     } else {
       // Auto-fill with whatever's actually left of the receipt, not the
@@ -81,7 +81,7 @@ function InvoiceAllocationList({
       // remainder on the third), instead of the user having to do the
       // subtraction by hand.
       const amount = Math.max(0, Math.min(inv.remainingAmount, unallocated))
-      onChange({ ...allocations, [inv.id]: Math.round(amount * 100) / 100 })
+      onChange({ ...allocations, [inv.syncId]: Math.round(amount * 100) / 100 })
     }
   }
 
@@ -94,12 +94,12 @@ function InvoiceAllocationList({
         </span>
       </div>
       {invoices.map((inv) => {
-        if (inv.id == null) return null
-        const checked = inv.id in allocations
-        const amount = allocations[inv.id]
+        if (inv.syncId == null) return null
+        const checked = inv.syncId in allocations
+        const amount = allocations[inv.syncId]
         const isPartial = checked && amount < inv.remainingAmount - 0.01
         return (
-          <div key={inv.id} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.75rem' }}>
+          <div key={inv.syncId} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.75rem' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer', flex: 1 }}>
               <input type="checkbox" checked={checked} onChange={() => toggle(inv)} />
               #{inv.serialNumber} · {inv.projectName}
@@ -112,7 +112,7 @@ function InvoiceAllocationList({
                   max={inv.remainingAmount}
                   step="0.01"
                   value={amount}
-                  onChange={(e) => onChange({ ...allocations, [inv.id!]: Number(e.target.value) })}
+                  onChange={(e) => onChange({ ...allocations, [inv.syncId!]: Number(e.target.value) })}
                   style={{ width: '75px', padding: '0.15rem 0.3rem', fontSize: '0.7rem', border: '1px solid #e2e8f0', borderRadius: '0.2rem', direction: 'ltr' }}
                 />
                 <span

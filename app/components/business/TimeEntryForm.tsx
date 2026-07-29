@@ -24,8 +24,8 @@ function formatDuration(hours: number): string {
 }
 
 export type TimeEntryFormData = {
-  projectId: number | null
-  taskId: number | null
+  projectId: string | null
+  taskId: string | null
   date: string
   startTime: string
   endTime: string
@@ -42,7 +42,7 @@ type TimeEntryFormProps = {
   onChange: (data: TimeEntryFormData) => void
   projects: Project[]
   tasks: HarvestTask[]
-  onProjectChange?: (projectId: number) => void
+  onProjectChange?: (projectId: string) => void
   showProjectTask?: boolean // false for edit mode (read-only display)
   projectName?: string
   taskName?: string
@@ -81,15 +81,15 @@ export default function TimeEntryForm({
             <select
               value={data.projectId || ''}
               onChange={(e) => {
-                const id = Number(e.target.value)
+                const id = e.target.value || null
                 onChange({ ...data, projectId: id, taskId: null })
-                onProjectChange?.(id)
+                if (id) onProjectChange?.(id)
               }}
               style={inputStyle}
             >
               <option value="">בחר פרויקט</option>
               {projects.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
+                <option key={p.id} value={p.syncId}>{p.name}</option>
               ))}
             </select>
           </FormField>
@@ -97,13 +97,13 @@ export default function TimeEntryForm({
           <FormField label="משימה">
             <select
               value={data.taskId || ''}
-              onChange={(e) => onChange({ ...data, taskId: Number(e.target.value) })}
+              onChange={(e) => onChange({ ...data, taskId: e.target.value || null })}
               disabled={!data.projectId}
               style={inputStyle}
             >
               <option value="">בחר משימה</option>
               {tasks.map((t) => (
-                <option key={t.id} value={t.id}>{t.name}</option>
+                <option key={t.id} value={t.syncId}>{t.name}</option>
               ))}
             </select>
           </FormField>

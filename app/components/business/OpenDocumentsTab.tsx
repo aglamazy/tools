@@ -12,7 +12,7 @@ import FormModal, { FormField, inputStyle } from '../FormModal'
 import Modal from '@/app/components/Modal'
 
 type OpenDocumentsTabProps = {
-  businessId: number
+  businessId: string
 }
 
 type ManualInvoiceForm = {
@@ -69,7 +69,7 @@ export default function OpenDocumentsTab({ businessId }: OpenDocumentsTabProps) 
     const allDocs = await db.ypayDocuments.toArray()
     const invoices = allDocs.filter(d => billingDocTypes.has(d.docType) && d.projectName && projectNames.has(d.projectName))
     const withBalance: InvoiceWithBalance[] = invoices.map((inv) => {
-      const paidSoFar = inv.id != null ? computeInvoicePaidAmount(inv.id, allDocs) : 0
+      const paidSoFar = inv.syncId != null ? computeInvoicePaidAmount(inv.syncId, allDocs) : 0
       return { ...inv, paidSoFar, remainingAmount: invoiceGrossAmount(inv) - paidSoFar }
     })
     withBalance.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
@@ -79,7 +79,7 @@ export default function OpenDocumentsTab({ businessId }: OpenDocumentsTabProps) 
 
   useEffect(() => {
     void (async () => {
-      const business = await businessStore.getById(businessId)
+      const business = await businessStore.getBySyncId(businessId)
       const profile = await getTaxProfile(business?.userId)
       setVatType(profile.vatType)
       const bizProjects = await projectStore.getByBusinessId(businessId)

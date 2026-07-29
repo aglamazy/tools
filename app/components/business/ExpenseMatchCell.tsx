@@ -11,6 +11,7 @@ type MatchStatus = 'idle' | 'searching' | 'uploading' | 'matched' | 'no-match' |
 
 export type ExpenseMatchTxInput = {
   id: number
+  syncId?: string
   date: string // DD/MM/YYYY
   description: string
   merchant?: string
@@ -145,7 +146,7 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
       console.log('[ExpenseMatch] manual upload extract →', extracted)
 
       const doc: ExpenseDocument = {
-        transactionId: transaction.id,
+        transactionId: transaction.syncId,
         fileName: file.name,
         vendor: extracted?.vendor,
         amount: extracted?.amount,

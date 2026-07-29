@@ -19,6 +19,7 @@ import { db } from '@/app/db/financeDB'
 import { initializeAppSettings } from '@/app/services/appSettingsService'
 import { SYNCED_DB_TABLES } from './syncedTables'
 import { convertLegacySubjectStoreBlob } from './migrations/legacySubjectStoreConversion'
+import { remapLegacyFks } from './migrations/remapLegacyFks'
 
 // Keys we must never ship to cloud backup. Refresh tokens are device-scoped
 // (and security-sensitive); if they get synced and then merged back over a
@@ -90,7 +91,11 @@ export async function exportAllStores(): Promise<BackupData> {
     // SYNCED_DB_TABLES loop above — nothing bespoke to export anymore.
 
     return {
-      version: '1.0',
+      // 2.0 (2026-07-28): FK fields hold syncId (UUID) instead of local
+      // auto-increment ints — see remapLegacyFks.ts / schemaVersions.ts v34.
+      // Marker only, nothing branches on it (hard cutover, no dual-shape
+      // support) — kept because it's a cheap, honest record of the shape.
+      version: '2.0',
       timestamp: new Date().toISOString(),
       stores,
     }
@@ -115,7 +120,17 @@ export async function isLocalDataEmpty(): Promise<boolean> {
  */
 export async function importAllStores(backup: BackupData): Promise<void> {
   try {
-    const { stores } = backup
+    // Normalize any FK fields still holding a local int (a backup file taken
+    // before the 2026-07-28 syncId migration) to the new syncId-based shape
+    // before writing anything — this is the only remaining full-replace entry
+    // point that bypasses the generic merge, so it's the one place that must
+    // stay self-healing for an old file (e.g. one sitting in Downloads from
+    // before the cutover). Idempotent — a no-op for an already-migrated
+    // file — so it's always safe to run rather than gated on detecting age.
+    const { stores, warnings: fkRemapWarnings } = remapLegacyFks((backup.stores as any) || {})
+    if (fkRemapWarnings.length > 0) {
+      console.warn(`[BackupRestore] FK remap on import: ${fkRemapWarnings.length} warning(s):\n${fkRemapWarnings.join('\n')}`)
+    }
 
     // Log counts for all synced tables
     const counts: Record<string, number> = {}
@@ -169,9 +184,31 @@ export async function importAllStores(backup: BackupData): Promise<void> {
     // data.length === 0` guard skipped this legacy conversion entirely) — this
     // only fires for a genuinely old backup.
     if ((!counts.subjects || counts.subjects === 0) && stores.subjectStore) {
-      const { subjects, subjectClassifications } = convertLegacySubjectStoreBlob(stores.subjectStore)
-      if (subjects.length > 0) await db.subjects.bulkAdd(subjects)
-      if (subjectClassifications.length > 0) await db.subjectClassifications.bulkAdd(subjectClassifications)
+      const converted = convertLegacySubjectStoreBlob(stores.subjectStore)
+      // This blob predates the syncId migration too (it's older than the
+      // subjects table itself) — its businessId/transactionId FKs are still
+      // local ints, so run them through the same normalization pass, reusing
+      // the already-remapped businesses/transactions from `stores` above as
+      // the lookup source.
+      const { stores: normalized } = remapLegacyFks({
+        subjects: converted.subjects,
+        subjectClassifications: converted.subjectClassifications,
+        businesses: (stores as any).businesses || [],
+        transactions: (stores as any).transactions || [],
+      })
+      // Clear-then-add, not bulkAdd onto whatever's there: the boot-time
+      // conversion (migrateLegacyLocalStorageStores) may have already
+      // populated these tables from the device's own localStorage blob with
+      // the SAME string primary keys — bulkAdd would abort the whole restore
+      // on ConstraintError. Full-replace is this function's semantics anyway.
+      if (normalized.subjects.length > 0) {
+        await db.subjects.clear()
+        await db.subjects.bulkAdd(normalized.subjects)
+      }
+      if (normalized.subjectClassifications.length > 0) {
+        await db.subjectClassifications.clear()
+        await db.subjectClassifications.bulkAdd(normalized.subjectClassifications)
+      }
     }
     if (stores.timerStore) {
       const existingTimer = await db.appSettings.where('key').equals('activeTimer').first()

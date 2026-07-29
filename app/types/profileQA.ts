@@ -7,7 +7,7 @@ export type ProfileGroupType = 'study' | 'course' | 'job'
 export type ProfileQA = {
   id?: number
   syncId?: string
-  businessId: number
+  businessId: string
   question: string
   answerType: ProfileQAAnswerType
   isArray: boolean

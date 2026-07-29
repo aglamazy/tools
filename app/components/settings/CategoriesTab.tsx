@@ -15,7 +15,7 @@ import CategoriesToolbarActions from './CategoriesToolbarActions'
 
 type Scope =
   | { kind: 'household' }
-  | { kind: 'business'; id: number }
+  | { kind: 'business'; id: string }
 
 const DEFAULT_CATEGORIES: Category[] = []
 
@@ -46,12 +46,12 @@ export default function CategoriesTab() {
   useEffect(() => {
     const businessId = editingCategory?.businessId
     if (businessId === undefined) { setSettlementPartnerOptions([]); return }
-    setSettlementPartnerOptions(partnerStore.getCachedByBusinessId(businessId))
-    const business = businesses.find(b => b.id === businessId)
+    setSettlementPartnerOptions(partnerStore.getCached(businessId))
+    const business = businesses.find(b => b.syncId === businessId)
     if (!business?.syncId) return
-    partnerStore.recordBusiness(businessId, business.syncId)
+    partnerStore.recordBusiness(business.id, business.syncId)
     const unsub = partnerStore.subscribe(() => {
-      setSettlementPartnerOptions(partnerStore.getCachedByBusinessId(businessId))
+      setSettlementPartnerOptions(partnerStore.getCached(businessId))
     })
     void partnerStore.refresh(business.syncId)
     return unsub
@@ -493,7 +493,7 @@ export default function CategoriesTab() {
 
         const subTabs: { id: string; label: string; scope: Scope }[] = [
           { id: 'household', label: '🏠 משק בית', scope: { kind: 'household' } },
-          ...businesses.map(b => ({ id: `b-${b.id}`, label: `🏢 ${b.name}`, scope: { kind: 'business' as const, id: b.id! } })),
+          ...businesses.map(b => ({ id: `b-${b.syncId}`, label: `🏢 ${b.name}`, scope: { kind: 'business' as const, id: b.syncId! } })),
         ]
         const activeId =
           scope.kind === 'household' ? 'household'
@@ -810,7 +810,7 @@ export default function CategoriesTab() {
                 )}
                 {editingCategory.businessId && (
                   <div style={{ fontSize: '0.8rem', color: '#64748b', padding: '0.5rem 0.75rem', background: '#f8fafc', borderRadius: '0.375rem', border: '1px solid #e2e8f0' }}>
-                    שיוך: עסק — <strong>{businesses.find(b => b.id === editingCategory.businessId)?.name || editingCategory.businessId}</strong>
+                    שיוך: עסק — <strong>{businesses.find(b => b.syncId === editingCategory.businessId)?.name || editingCategory.businessId}</strong>
                   </div>
                 )}
                 <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>

@@ -11,6 +11,7 @@ export type VatType = 'exempt' | 'authorized'
 
 export type Business = {
   id?: number
+  slug?: string
   name: string
   type: BusinessType
   vatType?: VatType

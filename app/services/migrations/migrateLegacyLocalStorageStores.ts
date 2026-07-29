@@ -12,6 +12,7 @@
 // safety net (nothing to lose by not deleting).
 import { db } from '@/app/db/financeDB'
 import { convertLegacySubjectStoreBlob } from './legacySubjectStoreConversion'
+import { remapLegacyFks } from './remapLegacyFks'
 
 const FLAG_KEY = 'migration.legacyLocalStorageStores.v1'
 const SUBJECT_STORAGE_KEY = 'finance-categories'
@@ -31,13 +32,30 @@ export async function migrateLegacyLocalStorageStores(): Promise<{
   if (rawSubjects) {
     const blob = JSON.parse(rawSubjects)
     const { subjects, subjectClassifications } = convertLegacySubjectStoreBlob(blob)
-    if (subjects.length > 0) {
-      await db.subjects.bulkPut(subjects)
-      subjectsCount = subjects.length
+    // The localStorage blob predates the FK int->syncId migration (2026-07-28)
+    // and is intentionally left in place forever as a safety net — meaning
+    // this function can run again on any freshly (re)created local IndexedDB
+    // (a device wipe, a cloud restore, etc.), long after the v34 schema
+    // upgrade already ran once and will never run again. Without this
+    // normalization pass, businessId/transactionId here would stay stale
+    // local ints forever, invisible to the FK migration. Idempotent — a
+    // no-op once these fields are already syncId strings.
+    const { stores: normalized, warnings } = remapLegacyFks({
+      subjects,
+      subjectClassifications,
+      businesses: await db.businesses.toArray(),
+      transactions: await db.transactions.toArray(),
+    })
+    if (warnings.length > 0) {
+      console.warn(`[migrateLegacyLocalStorageStores] FK remap: ${warnings.length} warning(s):\n${warnings.join('\n')}`)
     }
-    if (subjectClassifications.length > 0) {
-      await db.subjectClassifications.bulkPut(subjectClassifications)
-      classificationsCount = subjectClassifications.length
+    if (normalized.subjects.length > 0) {
+      await db.subjects.bulkPut(normalized.subjects)
+      subjectsCount = normalized.subjects.length
+    }
+    if (normalized.subjectClassifications.length > 0) {
+      await db.subjectClassifications.bulkPut(normalized.subjectClassifications)
+      classificationsCount = normalized.subjectClassifications.length
     }
   }
 

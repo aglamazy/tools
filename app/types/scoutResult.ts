@@ -3,7 +3,7 @@ export type ScoutResultStatus = 'new' | 'useful' | 'not_useful' | 'apply' | 'not
 export type ScoutResult = {
   id?: number
   syncId?: string
-  businessId: number
+  businessId: string
   title: string
   url?: string
   source?: string

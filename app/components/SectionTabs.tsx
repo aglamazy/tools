@@ -53,7 +53,7 @@ export default function SectionTabs() {
       businessTabs.push({
         id: `biz-${biz.id}`,
         label: biz.name,
-        href: `/app/business/${biz.id}`,
+        href: routes.business(biz),
         icon: BUSINESS_TYPE_CONFIG[biz.type]?.icon,
       })
     }

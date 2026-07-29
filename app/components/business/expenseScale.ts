@@ -19,7 +19,7 @@ export function effectiveExpenseAmount(
   if (!tx.category) return 0
   const cat = categoryByName.get(tx.category)
   if (!cat) return 0
-  if (cat.businessId === business.id) return cat.excludeFromBusinessTotals ? 0 : raw
+  if (cat.businessId === business.syncId) return cat.excludeFromBusinessTotals ? 0 : raw
   if (cat.businessId) return 0 // belongs to a different business
   if (!cat.isDeductible || !cat.deductibleByMember) return 0
   if (!business.userId) return 0

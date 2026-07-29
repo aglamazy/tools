@@ -1,7 +1,7 @@
 import { db, ProfileQA } from '@/app/db/financeDB'
 
 export const profileQAStore = {
-  getByBusinessId: async (businessId: number): Promise<ProfileQA[]> => {
+  getByBusinessId: async (businessId: string): Promise<ProfileQA[]> => {
     try {
       return await db.profileQAs.where('businessId').equals(businessId).toArray()
     } catch (error) {
@@ -10,7 +10,7 @@ export const profileQAStore = {
     }
   },
 
-  getByTag: async (businessId: number, tag: string): Promise<ProfileQA[]> => {
+  getByTag: async (businessId: string, tag: string): Promise<ProfileQA[]> => {
     try {
       const all = await db.profileQAs.where('businessId').equals(businessId).toArray()
       return all.filter(qa => qa.tags?.includes(tag))

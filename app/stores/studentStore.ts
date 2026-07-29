@@ -10,7 +10,7 @@ export const studentStore = {
     }
   },
 
-  getByBusinessId: async (businessId: number): Promise<Student[]> => {
+  getByBusinessId: async (businessId: string): Promise<Student[]> => {
     try {
       return await db.students.where('businessId').equals(businessId).toArray()
     } catch (error) {
@@ -19,7 +19,7 @@ export const studentStore = {
     }
   },
 
-  getActiveByBusinessId: async (businessId: number): Promise<Student[]> => {
+  getActiveByBusinessId: async (businessId: string): Promise<Student[]> => {
     try {
       return await db.students
         .where('businessId')
@@ -93,7 +93,7 @@ export const studentStore = {
     }
   },
 
-  findByName: async (businessId: number, name: string): Promise<Student | undefined> => {
+  findByName: async (businessId: string, name: string): Promise<Student | undefined> => {
     try {
       const students = await db.students
         .where('businessId')

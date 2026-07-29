@@ -31,6 +31,7 @@ export default function BusinessesTab() {
           if (typeof b.id !== 'number') return null
           return {
             id: b.id as number,
+            slug: b.slug,
             name: b.name,
             type: b.type,
             vatType: b.vatType,

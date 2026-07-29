@@ -75,6 +75,11 @@ export interface Category {
   icon?: string
   color?: string
   updatedAt?: string
+  // Was read/written across the app (TaxExemptBadge, SettlementSummary, etc.)
+  // without being declared here — undeclared fields are invisible to a
+  // compiler-driven refactor sweep, so this must be declared before the
+  // FK-migration type-flip step can find its call sites.
+  businessId?: string
 }
 
 export interface BusinessCategory {
@@ -135,6 +140,7 @@ export interface AppSettings {
 export interface Business {
   id?: number
   syncId?: string
+  slug?: string // short, human-readable, unique URL identifier (e.g. "AH") — derived from name, editable
   name: string
   type: BusinessType
   vatType?: 'exempt' | 'authorized'
@@ -164,7 +170,7 @@ export interface Business {
 export interface Supplier {
   id?: number
   syncId?: string
-  businessId?: number // supplier is usually scoped to one business; omit for household-shared vendors
+  businessId?: string // supplier is usually scoped to one business; omit for household-shared vendors
   name: string // canonical display name, e.g. "Vercel"
   bankCardAliases: string[] // raw transaction.description/merchant strings seen, e.g. "VERCEL INC."
   emailSenders: string[] // sender addresses for deterministic invoice search, e.g. "invoice+statements@vercel.com"
@@ -178,7 +184,7 @@ export interface Supplier {
 export interface Project {
   id?: number
   syncId?: string
-  businessId: number
+  businessId: string
   name: string
   color?: string
   defaultHourlyRate?: number
@@ -193,7 +199,7 @@ export interface Project {
 export interface HarvestTask {
   id?: number
   syncId?: string
-  projectId: number
+  projectId: string
   name: string
   hourlyRate?: number
   assignedTo?: string // email of assigned team member
@@ -205,7 +211,7 @@ export interface HarvestTask {
 export interface TimeEntry {
   id?: number
   syncId?: string
-  taskId: number
+  taskId: string
   date: string // YYYY-MM-DD
   startTime: string // HH:MM
   endTime: string // HH:MM
@@ -225,8 +231,8 @@ export interface YpayDocument {
   projectName?: string // For business invoices
   monthName?: string // For business invoices
   paidAt?: string // ISO timestamp when payment was received
-  vatPaymentId?: number // FK → VatPayment.id once reported to the tax authority
-  closesAllocations?: { docId: number; amount: number }[] // For a receipt: how much of it (gross ₪) goes toward each open invoice (B2B split flow). A receipt can fully cover several invoices and partially cover one more — an invoice is only "closed" (paidAt stamped) once its allocations across ALL receipts sum to its full gross amount; see computeInvoicePaidAmount in ypayService.ts.
+  vatPaymentId?: string // FK → VatPayment.syncId once reported to the tax authority
+  closesAllocations?: { docId: string; amount: number }[] // For a receipt: how much of it (gross ₪) goes toward each open invoice (B2B split flow). A receipt can fully cover several invoices and partially cover one more — an invoice is only "closed" (paidAt stamped) once its allocations across ALL receipts sum to its full gross amount; see computeInvoicePaidAmount in ypayService.ts. docId is the closed invoice's own syncId (self-referential FK into this same table).
   createdAt: string // ISO timestamp
   updatedAt?: string
 }
@@ -234,7 +240,7 @@ export interface YpayDocument {
 export interface TaxDocument {
   id?: number
   syncId?: string
-  businessId: number
+  businessId: string
   fileName: string
   driveFileId?: string // Google Drive file ID
   driveWebViewLink?: string // Google Drive view URL
@@ -258,7 +264,7 @@ export type RecurrenceType = 'monthly' | 'weekly' | 'yearly' | 'once'
 export interface BusinessTask {
   id?: number
   syncId?: string
-  businessId: number
+  businessId: string
   title: string
   description?: string
   recurrence: RecurrenceType
@@ -278,7 +284,7 @@ export interface BusinessTask {
 export interface ExpenseDocument {
   id?: number
   syncId?: string
-  transactionId?: number // Link to a transaction row
+  transactionId?: string // Link to a transaction row (transaction's syncId)
   fileName: string
   driveFileId?: string // Google Drive file ID
   driveWebViewLink?: string // Google Drive view URL
@@ -294,7 +300,7 @@ export interface ExpenseDocument {
   mismatchDetails?: string // Description of mismatches found
   sourceType?: 'upload' | 'gmail' // How the document was attached
   gmailMessageId?: string // Gmail message ID if attached from Gmail
-  vatPaymentId?: number // FK → VatPayment.id once included in a filed VAT report
+  vatPaymentId?: string // FK → VatPayment.syncId once included in a filed VAT report
   // Partner-paid invoice fields (#44). When transactionId is undefined and
   // paidByUid is set, this row represents an expense paid by a partner
   // out-of-band (no bank/credit statement to match against). Splid summary
@@ -303,7 +309,7 @@ export interface ExpenseDocument {
   externalTxRef?: string       // Vendor's own ID (Meta "Transaction ID", etc.) — best dedup key when available
   referenceNumber?: string     // Payment processor reference (Mastercard ref, etc.)
   docType?: 'invoice' | 'receipt' | 'receipt-invoice' | 'unknown'
-  businessId?: number          // For scoping the partner-paid query per business
+  businessId?: string          // For scoping the partner-paid query per business
   uploadedAt: string
   updatedAt?: string
 }
@@ -311,7 +317,7 @@ export interface ExpenseDocument {
 export interface AdvancePayment {
   id?: number
   syncId?: string
-  businessId: number
+  businessId: string
   month: string // MM/YYYY - the payment period month
   type: 'incomeTax' | 'btl'
   paidAt?: string // ISO timestamp — null = waiting
@@ -372,7 +378,7 @@ export interface Subject {
   isExternal?: boolean
   isDeductible?: boolean
   deductibleByMember?: Record<string, number>
-  businessId?: number
+  businessId?: string
   excludeFromBusinessTotals?: boolean
   settlementPartnerUid?: string
   parentId?: string
@@ -383,14 +389,14 @@ export interface Subject {
 // Dexie-backed replacement for subjectStore's `classifications` array.
 // `id` (auto-increment) is the primary key — required by the generic
 // cross-device merge machinery, which assumes every synced table's PK is
-// named `id`. `transactionId` is a unique secondary index instead: it's a
-// device-local FK into `transactions` (remapped per device via
-// FK_RELATIONS in applyMergedBackupService.ts), so it can't double as the
-// primary key, but &transactionId still DB-enforces the live app's own
-// invariant of at most one classification per transaction.
+// named `id`. `transactionId` is a unique secondary index instead: it holds
+// the referenced transaction's syncId (stable across devices/reinsertion —
+// see remapLegacyFks.ts), so it can't double as the primary key, but
+// &transactionId still DB-enforces the live app's own invariant of at most
+// one classification per transaction.
 export interface SubjectClassification {
   id?: number
-  transactionId: number
+  transactionId: string
   syncId?: string
   categoryId: string
   monthYear: string

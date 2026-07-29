@@ -2,12 +2,23 @@
 
 import { useParams } from 'next/navigation'
 import AccountingTab from '@/app/components/business/AccountingTab'
+import { useResolvedBusiness } from '@/app/hooks/useResolvedBusinessId'
 
 export default function AccountingRoute() {
   const params = useParams()
-  const id = Number(params.id)
+  const business = useResolvedBusiness(String(params.id))
 
-  if (isNaN(id)) {
+  if (business === undefined) {
+    return (
+      <div className="tool-page" dir="rtl">
+        <div className="card">
+          <p>טוען...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (business === null || !business.syncId) {
     return (
       <div className="tool-page" dir="rtl">
         <div className="card">
@@ -20,7 +31,7 @@ export default function AccountingRoute() {
   return (
     <div className="tool-page" dir="rtl">
       <div className="card">
-        <AccountingTab businessId={id} />
+        <AccountingTab businessId={business.syncId} />
       </div>
     </div>
   )

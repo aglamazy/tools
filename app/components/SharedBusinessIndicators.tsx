@@ -13,6 +13,7 @@ import {
   SHARED_SYNC_STATUS_EVENT,
   type SharedSyncStatusDetail,
 } from '@/app/services/sharedBusinessSyncService'
+import { deriveSlugBase } from '@/app/utils/businessSlug'
 
 type IndicatorStatus = 'no-password' | 'idle' | 'syncing' | 'ok' | 'error'
 
@@ -41,11 +42,7 @@ const STATUS_TITLE: Record<IndicatorStatus, string> = {
 }
 
 function shortFromSyncId(syncId: string, localName: string | null): string {
-  if (localName) {
-    const parts = localName.split(/\s+/).filter(Boolean)
-    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase()
-    return localName.slice(0, 2).toUpperCase()
-  }
+  if (localName) return deriveSlugBase(localName)
   // Fallback: first two hex chars of the syncId
   return syncId.slice(0, 2).toUpperCase()
 }

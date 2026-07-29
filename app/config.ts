@@ -34,7 +34,12 @@ export const routes = {
   extension: '/extension',
   contact: '/contact',
   invite: '/invite',
-  business: (id: number | string) => `/app/business/${id}`,
+  // Prefer the human-readable slug when available — the numeric id is a
+  // mutable Dexie auto-increment (same fragility class the FK migration
+  // fixed for foreign keys), so any link/bookmark built from it can go stale
+  // if the business row is ever deleted+reinserted. Falls back to id for
+  // businesses that haven't been assigned a slug yet.
+  business: (biz: { id?: number | string; slug?: string | null }) => `/app/business/${biz.slug || biz.id}`,
 } as const
 
 export const config = {

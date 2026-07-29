@@ -89,7 +89,7 @@ function formatNextDue(task: BusinessTask): { text: string; color: string } {
 
 type EditingTask = Omit<BusinessTask, 'id' | 'syncId' | 'createdAt' | 'updatedAt'> & { id?: number }
 
-export default function BusinessTasksTab({ businessId }: { businessId: number }) {
+export default function BusinessTasksTab({ businessId }: { businessId: string }) {
   const [tasks, setTasks] = useState<BusinessTask[]>([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<EditingTask | null>(null)

@@ -2,12 +2,23 @@
 
 import { useParams } from 'next/navigation'
 import BusinessPage from '@/app/components/business/BusinessPage'
+import { useResolvedBusinessId } from '@/app/hooks/useResolvedBusinessId'
 
 export default function BusinessRoute() {
   const params = useParams()
-  const id = Number(params.id)
+  const businessId = useResolvedBusinessId(String(params.id))
 
-  if (isNaN(id)) {
+  if (businessId === undefined) {
+    return (
+      <div className="tool-page" dir="rtl">
+        <div className="card">
+          <p>טוען...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (businessId === null) {
     return (
       <div className="tool-page" dir="rtl">
         <div className="card">
@@ -19,7 +30,7 @@ export default function BusinessRoute() {
 
   return (
     <div className="tool-page" dir="rtl">
-      <BusinessPage businessId={id} />
+      <BusinessPage businessId={businessId} />
     </div>
   )
 }

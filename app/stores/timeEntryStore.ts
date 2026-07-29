@@ -16,9 +16,9 @@ export const timeEntryStore = {
   },
 
   /**
-   * Get time entries by task id
+   * Get time entries by task syncId
    */
-  getByTaskId: async (taskId: number): Promise<TimeEntry[]> => {
+  getByTaskId: async (taskId: string): Promise<TimeEntry[]> => {
     try {
       return await db.timeEntries.where('taskId').equals(taskId).toArray()
     } catch (error) {
@@ -126,9 +126,9 @@ export const timeEntryStore = {
   },
 
   /**
-   * Get total hours by task id
+   * Get total hours by task syncId
    */
-  getTotalHoursByTaskId: async (taskId: number): Promise<number> => {
+  getTotalHoursByTaskId: async (taskId: string): Promise<number> => {
     try {
       const entries = await db.timeEntries.where('taskId').equals(taskId).toArray()
       return entries.reduce((sum, e) => sum + e.hours, 0)
@@ -141,7 +141,7 @@ export const timeEntryStore = {
   /**
    * Get total hours by date range for specific task ids
    */
-  getTotalHoursByDateRange: async (startDate: string, endDate: string, taskIds?: number[]): Promise<number> => {
+  getTotalHoursByDateRange: async (startDate: string, endDate: string, taskIds?: string[]): Promise<number> => {
     try {
       let entries = await db.timeEntries
         .where('date')

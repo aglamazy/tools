@@ -16,9 +16,9 @@ export const projectStore = {
   },
 
   /**
-   * Get projects by business id
+   * Get projects by business syncId
    */
-  getByBusinessId: async (businessId: number): Promise<Project[]> => {
+  getByBusinessId: async (businessId: string): Promise<Project[]> => {
     try {
       return await db.projects.where('businessId').equals(businessId).toArray()
     } catch (error) {
@@ -28,9 +28,9 @@ export const projectStore = {
   },
 
   /**
-   * Get active (non-archived) projects by business id
+   * Get active (non-archived) projects by business syncId
    */
-  getActiveByBusinessId: async (businessId: number): Promise<Project[]> => {
+  getActiveByBusinessId: async (businessId: string): Promise<Project[]> => {
     try {
       return await db.projects
         .where('businessId')
@@ -51,6 +51,19 @@ export const projectStore = {
       return await db.projects.get(id)
     } catch (error) {
       console.error('Error getting project by id:', error)
+      return undefined
+    }
+  },
+
+  /**
+   * Get project by syncId — needed wherever a project is referenced by FK
+   * (e.g. HarvestTask.projectId) rather than by local primary key.
+   */
+  getBySyncId: async (syncId: string): Promise<Project | undefined> => {
+    try {
+      return await db.projects.where('syncId').equals(syncId).first()
+    } catch (error) {
+      console.error('Error getting project by syncId:', error)
       return undefined
     }
   },
@@ -111,17 +124,22 @@ export const projectStore = {
    */
   delete: async (id: number): Promise<boolean> => {
     try {
-      // Get all tasks for this project
-      const tasks = await db.harvestTasks.where('projectId').equals(id).toArray()
-      const taskIds = tasks.map(t => t.id!).filter(Boolean)
+      const project = await db.projects.get(id)
+      if (project?.syncId) {
+        // Get all tasks for this project (harvestTasks.projectId holds the
+        // project's syncId, not its local id — see remapLegacyFks.ts)
+        const tasks = await db.harvestTasks.where('projectId').equals(project.syncId).toArray()
+        const taskSyncIds = tasks.map(t => t.syncId).filter((s): s is string => Boolean(s))
 
-      // Delete all time entries for these tasks
-      if (taskIds.length > 0) {
-        await db.timeEntries.where('taskId').anyOf(taskIds).delete()
+        // Delete all time entries for these tasks (timeEntries.taskId holds
+        // the task's syncId)
+        if (taskSyncIds.length > 0) {
+          await db.timeEntries.where('taskId').anyOf(taskSyncIds).delete()
+        }
+
+        // Delete all tasks
+        await db.harvestTasks.where('projectId').equals(project.syncId).delete()
       }
-
-      // Delete all tasks
-      await db.harvestTasks.where('projectId').equals(id).delete()
 
       // Delete the project
       await db.projects.delete(id)

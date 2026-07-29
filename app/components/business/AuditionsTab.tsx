@@ -13,7 +13,7 @@ function isValidUrl(s?: string): boolean {
 }
 
 type AuditionsTabProps = {
-  businessId: number
+  businessId: string
 }
 
 type Message = { role: 'user' | 'assistant'; content: string }
