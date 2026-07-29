@@ -158,6 +158,7 @@ export default function BusinessSettingsTab({ businessId }: BusinessSettingsTabP
         contactEmail: project.contactEmail,
         contactBusinessID: project.contactBusinessID,
         contactPhone: project.contactPhone,
+        ...(project.externalBillingId ? { externalBillingId: project.externalBillingId } : {}),
       })
     } else {
       await projectStore.update(project.id!, {
@@ -167,6 +168,7 @@ export default function BusinessSettingsTab({ businessId }: BusinessSettingsTabP
         contactEmail: project.contactEmail,
         contactBusinessID: project.contactBusinessID,
         contactPhone: project.contactPhone,
+        ...(project.externalBillingId ? { externalBillingId: project.externalBillingId } : {}),
       })
     }
 

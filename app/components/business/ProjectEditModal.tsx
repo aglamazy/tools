@@ -95,6 +95,16 @@ export default function ProjectEditModal({ project, isNew, onClose, onSave }: Pr
           style={{ ...inputStyle, direction: 'ltr' }}
         />
       </FormField>
+
+      <FormField label="מזהה חיוב חיצוני">
+        <input
+          type="text"
+          value={editing.externalBillingId || ''}
+          onChange={(e) => setEditing({ ...editing, externalBillingId: e.target.value })}
+          placeholder=""
+          style={{ ...inputStyle, direction: 'ltr' }}
+        />
+      </FormField>
     </FormModal>
   )
 }
