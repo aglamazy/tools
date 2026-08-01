@@ -76,17 +76,17 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
           התחברות
         </h2>
 
-        {/* Tab switcher */}
-        <div style={{ display: 'flex', gap: '0.25rem', background: '#f1f5f9', borderRadius: '0.5rem', padding: '0.25rem', marginBottom: '1.25rem' }}>
-          {isLocalAuthEnabled && (
+        {/* Tab switcher — only needed when there's more than one sign-in method to pick between */}
+        {isLocalAuthEnabled && (
+          <div style={{ display: 'flex', gap: '0.25rem', background: '#f1f5f9', borderRadius: '0.5rem', padding: '0.25rem', marginBottom: '1.25rem' }}>
             <button type="button" style={tabStyle(tab === 'local')} onClick={() => { setTab('local'); setError(null) }}>
               משתמש
             </button>
-          )}
-          <button type="button" style={tabStyle(tab === 'google')} onClick={() => { setTab('google'); setError(null) }}>
-            Google
-          </button>
-        </div>
+            <button type="button" style={tabStyle(tab === 'google')} onClick={() => { setTab('google'); setError(null) }}>
+              Google
+            </button>
+          </div>
+        )}
 
         {error && (
           <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '0.5rem', color: '#dc2626', fontSize: '0.9rem', textAlign: 'center' }}>
