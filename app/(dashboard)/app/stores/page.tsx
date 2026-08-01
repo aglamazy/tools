@@ -210,7 +210,7 @@ export default function StoresPage() {
 
   if (loading) {
     return (
-      <main className="app" dir="rtl">
+      <main className="app stores-page" dir="rtl">
         <div className="card"><p>טוען...</p></div>
       </main>
     )
@@ -218,7 +218,7 @@ export default function StoresPage() {
 
   if (loadError) {
     return (
-      <main className="app" dir="rtl">
+      <main className="app stores-page" dir="rtl">
         <div className="card">
           <p style={{ color: '#b91c1c' }}>שגיאה בטעינה: {loadError}</p>
         </div>
@@ -228,7 +228,7 @@ export default function StoresPage() {
 
   if (unauthed || !stores || stores.length === 0) {
     return (
-      <main className="app" dir="rtl">
+      <main className="app stores-page" dir="rtl">
         <div className="card">
           <h1>חנויות</h1>
           <p style={{ color: '#6b7280' }}>אין חנויות מוגדרות.</p>
@@ -280,7 +280,7 @@ export default function StoresPage() {
   const pendingRemoveEntries = Object.values(pendingRemoves)
 
   return (
-    <main className="app" dir="rtl">
+    <main className="app stores-page" dir="rtl">
       <div className="card">
         <header>
           <h1>חנויות</h1>
@@ -288,15 +288,7 @@ export default function StoresPage() {
         </header>
 
         {/* Store tabs */}
-        <div
-          role="tablist"
-          style={{
-            display: 'flex',
-            gap: '0.25rem',
-            marginTop: '1rem',
-            borderBottom: '1px solid #e5e7eb',
-          }}
-        >
+        <div role="tablist" className="stores-tablist">
           {stores.map((s) => {
             const selected = s.id === activeId
             return (
@@ -305,17 +297,7 @@ export default function StoresPage() {
                 role="tab"
                 aria-selected={selected}
                 onClick={() => setActiveId(s.id)}
-                style={{
-                  padding: '0.55rem 1rem',
-                  border: 'none',
-                  borderBottom: `3px solid ${selected ? '#2563eb' : 'transparent'}`,
-                  background: 'transparent',
-                  color: selected ? '#1e3a8a' : '#4b5563',
-                  fontWeight: selected ? 600 : 500,
-                  fontSize: '0.95rem',
-                  cursor: 'pointer',
-                  marginBottom: '-1px',
-                }}
+                className="stores-tab"
               >
                 {s.label}
               </button>
@@ -333,16 +315,9 @@ export default function StoresPage() {
               : null
           return (
             <>
-          <div
-            style={{
-              marginTop: '1rem',
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-              gap: '1rem',
-            }}
-          >
+          <div className="stores-panel-grid">
             {/* Time table */}
-            <section style={panelStyle}>
+            <section className="stores-panel">
               <h2 style={panelHeaderStyle}>לוח זמנים</h2>
               <TimeTablePanel
                 schedule={active.data.schedule}
@@ -354,7 +329,7 @@ export default function StoresPage() {
             </section>
 
             {/* Standing list (drop target) */}
-            <section style={panelStyle}>
+            <section className="stores-panel">
               <h2 style={panelHeaderStyle}>
                 רשימה קבועה
                 <span style={badgeStyle('#2563eb')}>{Object.keys(standingItems).length}</span>
@@ -372,7 +347,7 @@ export default function StoresPage() {
             </section>
 
             {/* Current week (drop target) */}
-            <section style={panelStyle}>
+            <section className="stores-panel">
               <h2 style={panelHeaderStyle}>
                 רשימה לשבוע
                 <span style={badgeStyle('#d97706')}>{Object.keys(pendingAdds).length}</span>
@@ -427,7 +402,7 @@ export default function StoresPage() {
             </section>
 
             {/* Product history (drag source) */}
-            <section style={panelStyle}>
+            <section className="stores-panel">
               <h2 style={panelHeaderStyle}>
                 היסטוריית מוצרים
                 <span style={badgeStyle('#6b7280')}>{active.history.length}</span>
@@ -470,17 +445,6 @@ export default function StoresPage() {
       </div>
     </main>
   )
-}
-
-const panelStyle: React.CSSProperties = {
-  border: '1px solid #e5e7eb',
-  borderRadius: '0.625rem',
-  padding: '0.875rem',
-  background: '#fff',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '0.5rem',
-  minHeight: '260px',
 }
 
 const panelHeaderStyle: React.CSSProperties = {
