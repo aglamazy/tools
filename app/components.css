@@ -545,6 +545,50 @@ tbody tr:last-child td {
   font-weight: 600;
 }
 
+/* ─── Stores page (store tabs + panel grid) ─── */
+.stores-tablist {
+  display: flex;
+  gap: 0.25rem;
+  margin-top: 1rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.stores-tab {
+  padding: 0.55rem 1rem;
+  border: none;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: #4b5563;
+  font-weight: 500;
+  font-size: 0.95rem;
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+
+.stores-tab[aria-selected='true'] {
+  border-bottom-color: #2563eb;
+  color: #1e3a8a;
+  font-weight: 600;
+}
+
+.stores-panel-grid {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1rem;
+}
+
+.stores-panel {
+  border: 1px solid #e5e7eb;
+  border-radius: 0.625rem;
+  padding: 0.875rem;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 260px;
+}
+
 @media (max-width: 768px) {
   .card {
     padding: 1.25rem;
@@ -596,5 +640,33 @@ tbody tr:last-child td {
 
   th, td {
     padding: 0.6rem 0.35rem;
+  }
+
+  /* Stores page: scrollable tab bar, single-column panels, room for the floating chat bubble */
+  main.stores-page {
+    padding-bottom: 8.5rem;
+  }
+
+  .stores-tablist {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+
+  .stores-tab {
+    flex-shrink: 0;
+    white-space: nowrap;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.85rem;
+  }
+
+  .stores-panel-grid {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+
+  .stores-panel {
+    min-height: 0;
   }
 }
