@@ -6,6 +6,12 @@ export const branding = {
   tagline: VARIANT_CONFIG.tagline,
 } as const
 
+export const siteUrl = process.env.NEXT_PUBLIC_SITE_URL
+
+if (!siteUrl) {
+  throw new Error('Missing NEXT_PUBLIC_SITE_URL environment variable')
+}
+
 export const routes = {
   home: '/',
   dashboard: '/app',

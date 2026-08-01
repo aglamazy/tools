@@ -37,6 +37,7 @@ import {
   getWeekDates,
   getMonthDates,
 } from '@/app/lib/dateUtils'
+import { branding, siteUrl } from '@/app/config'
 
 type TimingTabProps = {
   businessId: string
@@ -775,8 +776,8 @@ export default function TimingTab({ businessId }: TimingTabProps) {
           <p style="color: #475569; font-size: 0.9rem; margin: 0;">מצורפים: דוח שעות מפורט${invoicePdfAttached ? ` + ${invoiceDocLabel}` : ''}.</p>
         </div>
         <div style="text-align: center; padding: 1rem 0 0.5rem;">
-          <a href="https://aglamazo.com" style="color: #94a3b8; text-decoration: none; font-size: 0.8rem;">
-            <strong style="color: #64748b;">Aglamazo</strong> — הראש השקט של העסק שלך
+          <a href="${siteUrl}" style="color: #94a3b8; text-decoration: none; font-size: 0.8rem;">
+            <strong style="color: #64748b;">${branding.name}</strong> — הראש השקט של העסק שלך
           </a>
         </div>
       </div>

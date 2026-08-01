@@ -12,6 +12,7 @@ import { getIdToken } from '@/app/services/firebaseAuthService'
 import { partnerStore, type Partner as Participant } from '@/app/stores/partnerStore'
 import { appSettingsStore, type AccountOwners } from '@/app/stores/appSettingsStore'
 import { getTransactionAttributedUid } from '@/app/utils/transactionAttribution'
+import { branding, siteUrl } from '@/app/config'
 import ProjectEditModal from './ProjectEditModal'
 import IncomeReceiptCell from './IncomeReceiptCell'
 import IncomeFilters from './IncomeFilters'
@@ -487,8 +488,8 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
             <p style="color: #475569; font-size: 0.9rem; margin: 0;">מצורף: ${docTypeLabel}${attachments.length > 0 ? '' : ` — <a href="${transaction.ypayDoc.url}" style="color: #059669;">צפה במסמך</a>`}.</p>
           </div>
           <div style="text-align: center; padding: 1rem 0 0.5rem;">
-            <a href="https://aglamazo.com" style="color: #94a3b8; text-decoration: none; font-size: 0.8rem;">
-              <strong style="color: #64748b;">Aglamazo</strong> — הראש השקט של העסק שלך
+            <a href="${siteUrl}" style="color: #94a3b8; text-decoration: none; font-size: 0.8rem;">
+              <strong style="color: #64748b;">${branding.name}</strong> — הראש השקט של העסק שלך
             </a>
           </div>
         </div>

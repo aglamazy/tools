@@ -40,6 +40,7 @@ import {
 import type { Business } from '@/app/db/financeDB'
 import { refreshIdToken, subscribeToAuthState } from '@/app/services/firebaseAuthService'
 import { sendEmail, hasGmailAccess } from '@/app/services/gmailService'
+import { branding } from '@/app/config'
 
 type Props = {
   business: Business
@@ -375,7 +376,7 @@ export default function BusinessSharingSection({ business, ownerLabel, ownerShar
       : `קישור התחברות מחדש — ${businessName}`
     const heading = kind === 'first' ? 'הוזמנת לשיתוף עסק' : 'קישור התחברות מחדש'
     const body = kind === 'first'
-      ? `הוזמנת לשתף את העסק <strong>${businessName}</strong> באפליקציית Aglamazo.`
+      ? `הוזמנת לשתף את העסק <strong>${businessName}</strong> באפליקציית ${branding.name}.`
       : `נוצר קישור התחברות חדש לעסק <strong>${businessName}</strong>.`
     const cta = kind === 'first' ? 'קבל הזמנה' : 'התחבר מחדש'
     await sendEmail(
