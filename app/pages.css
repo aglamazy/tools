@@ -393,7 +393,7 @@
 /* ─── App Chat Page (mobile full-screen) ─── */
 .app-chat-page {
   display: flex;
-  height: calc(100vh - 56px - 64px); /* header + bottom nav */
+  height: calc(100vh - 56px); /* header */
   overflow: hidden;
 }
 
@@ -408,6 +408,13 @@
 /* Desktop: hide the page (floating widget handles it) */
 @media (min-width: 769px) {
   .app-chat-page {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  /* Full-page chat is the mobile home here, so don't render the marketing footer. */
+  body:has(.app-chat-page) .site-footer {
     display: none;
   }
 }
