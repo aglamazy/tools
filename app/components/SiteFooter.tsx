@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { branding, routes } from '@/app/config'
-import { VARIANT } from '@/app/config/variants'
+import { VARIANT, VARIANT_CONFIG } from '@/app/config/variants'
 
 export default function SiteFooter() {
   const year = new Date().getFullYear()
@@ -53,7 +53,7 @@ export default function SiteFooter() {
         <div className="site-footer-section">
           <h4>צור קשר</h4>
           {!isSaliko && <Link href={routes.contact}>שלח הודעה</Link>}
-          <a href="mailto:support@aglamaz.com">support@aglamaz.com</a>
+          <a href={`mailto:${VARIANT_CONFIG.contactEmail}`}>{VARIANT_CONFIG.contactEmail}</a>
         </div>
       </div>
 
