@@ -9,10 +9,11 @@
  *    deployment, transparently rewrite public marketing URLs (`/`, `/about`,
  *    etc.) to their `app/saliko/*` counterparts so Saliko keeps its own
  *    route subtree without per-page variant flags. Rewrites `/app` to
- *    `/app/stores` so Saliko users hitting the dashboard root land on
- *    their actual home (Aglamazo's `/app` shows finance, irrelevant here).
- *    On Aglamazo, the env check below short-circuits and the proxy is a
- *    no-op for non-API paths.
+ *    `/app/stores` (desktop) or `/app/chat` (mobile — full-page chat is the
+ *    primary mobile experience, task #19) so Saliko users hitting the
+ *    dashboard root land on their actual home (Aglamazo's `/app` shows
+ *    finance, irrelevant here). On Aglamazo, the env check below
+ *    short-circuits and the proxy is a no-op for non-API paths.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -185,6 +186,15 @@ function isSalikoSharedPath(pathname: string): boolean {
   return SALIKO_SHARED_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'))
 }
 
+// Same mobile heuristic as the rest of the app's `window.innerWidth <= 768`
+// checks (ChatWidget.tsx), just server-side via User-Agent since this rewrite
+// runs before any client JS.
+const MOBILE_UA_RE = /Android|iPhone|iPad|iPod|Mobile/i
+
+function isMobileRequest(request: NextRequest): boolean {
+  return MOBILE_UA_RE.test(request.headers.get('user-agent') || '')
+}
+
 function salikoRewrite(request: NextRequest): NextResponse {
   if (process.env.NEXT_PUBLIC_PRODUCT !== 'saliko') {
     return NextResponse.next()
@@ -198,12 +208,14 @@ function salikoRewrite(request: NextRequest): NextResponse {
   }
 
   // /app is the authenticated dashboard root. Aglamazo renders a finance
-  // home there; Saliko has no equivalent and lands users straight on stores.
+  // home there; Saliko has no equivalent. Desktop lands on stores (the main
+  // tool); mobile lands on full-page chat (task #19 — chat is the primary
+  // mobile experience, everything else moves behind the header hamburger).
   // Rewrite (not redirect) so the URL bar still reads /app — feels like one
   // surface to the user.
   if (pathname === '/app') {
     const url = request.nextUrl.clone()
-    url.pathname = '/app/stores'
+    url.pathname = isMobileRequest(request) ? '/app/chat' : '/app/stores'
     return NextResponse.rewrite(url)
   }
 

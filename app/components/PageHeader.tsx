@@ -6,6 +6,7 @@ import NotificationCenter from './NotificationCenter'
 import AuthStatus from './AuthStatus'
 import PageSearch from './PageSearch'
 import AppLauncher from './AppLauncher'
+import HamburgerMenu from './HamburgerMenu'
 import { branding, routes } from '@/app/config'
 import { VARIANT } from '@/app/config/variants'
 import { useToast } from './ToastContainer'
@@ -38,6 +39,11 @@ export default function PageHeader() {
                   the wider search input sits inside it, away from the edge. */}
               {VARIANT !== 'saliko' && <AppLauncher />}
               {VARIANT !== 'saliko' && <PageSearch />}
+              {/* Saliko mobile: chat is the full-page landing view (task #19),
+                  so stores/settings/admin need a way back in — this is the
+                  only place that surfaces them there. Desktop is unaffected
+                  (still lands on /app/stores); CSS hides this above 768px. */}
+              {VARIANT === 'saliko' && <HamburgerMenu />}
             </div>
             <Link href={routes.dashboard} className="page-header-title" style={{ textDecoration: 'none' }}>
               <h1>{branding.name}</h1>
