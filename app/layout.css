@@ -268,6 +268,86 @@
   }
 }
 
+/* ─── Saliko #19 — mobile provisional drawer nav ───
+   IA deferred by the product owner ("defined later"). The full-page-chat
+   swap itself (app/(dashboard)/layout.tsx) reuses the existing
+   .app-chat-page wrapper (see app/pages.css) — only the drawer is new.
+   Gated in JS on VARIANT==='saliko' + a matchMedia(768px) check; the
+   @media block below is defense-in-depth, matching that same convention. */
+.saliko-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  z-index: 1003;
+  display: flex;
+  justify-content: flex-end; /* drawer panel anchored to the RTL start edge */
+}
+
+.saliko-drawer {
+  width: 78%;
+  max-width: 300px;
+  height: 100%;
+  background: #fff;
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+}
+
+.saliko-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.1rem;
+  border-bottom: 1px solid #e2e8f0;
+  font-weight: 600;
+  color: #1e293b;
+  flex-shrink: 0;
+}
+
+.saliko-drawer-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #64748b;
+  font-size: 1.1rem;
+  padding: 0.2rem 0.4rem;
+  border-radius: 0.25rem;
+  line-height: 1;
+}
+
+.saliko-drawer-close:hover {
+  background: #e2e8f0;
+}
+
+.saliko-drawer-list {
+  display: flex;
+  flex-direction: column;
+  padding: 0.5rem;
+  gap: 0.15rem;
+  overflow-y: auto;
+}
+
+.saliko-drawer-link {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.75rem 0.6rem;
+  border-radius: 0.5rem;
+  color: #1e293b;
+  text-decoration: none;
+  font-size: 0.95rem;
+}
+
+.saliko-drawer-link:hover {
+  background: #f1f5f9;
+}
+
+@media (min-width: 769px) {
+  .saliko-drawer-overlay {
+    display: none;
+  }
+}
+
 .tool-page {
   padding: 2rem 1.5rem;
   max-width: 1200px;
