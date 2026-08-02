@@ -52,6 +52,7 @@ Build/ship-breakers a memoryless worker WILL hit unless told. Check each against
 - **Never catch-and-swallow into a naked 500 or a silent default** — fix the cause; if you must catch, log/surface it (a swallowed throw was the Saliko `/api/chat` 500).
 - **Inline `if/else` needs a separator** — `if (c) a; else b` or braces; `if (c) a else b` on one line is an SWC parse error (broke the build 2026-07-03).
 - **DoD = merged AND runs on localhost:3100** (`tsc --noEmit` clean, the real UI action works). "Pushed to origin" is a separate deploy step — don't call it shipped when it's only committed. Keep console.logs until verified.
+- **This directory is shared by multiple Vercel projects** (aglamazo, saliko, ...) distinguished by project-level env vars — `.vercel/project.json` only points at ONE at a time, so a bare `vercel deploy`/`vercel ls` silently targets whatever it's currently linked to, which may not be the one you mean (bit us 2026-08-02: a saliko-targeted deploy landed on aglamazo instead). Use `scripts/vercel-deploy-scoped.sh <project-name> [vercel deploy args...]` — it links, deploys, and restores the original link afterward even on failure.
 
 ## Telegram Bot (AglamazoBot)
 - Webhook: `app/api/telegram/webhook/route.ts`
