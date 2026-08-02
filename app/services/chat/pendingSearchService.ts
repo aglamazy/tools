@@ -129,7 +129,7 @@ export async function selectProduct(uid: string, searchKey: string, resultIndex:
     await addStorePendingItems(uid, selStoreId, [item], { validTo: pendingSearch.validTo })
   }
 
-  await saveProductMapping(uid, pendingSearch.query, selected.catalogId, selected.name)
+  await saveProductMapping(uid, pendingSearch.query, selected.catalogId, selected.name, selStoreId)
   await deletePendingSearch(uid, searchKey)
 
   // NOTE: even when there's an open order, we do NOT push to the live order

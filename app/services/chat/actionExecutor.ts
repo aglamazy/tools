@@ -338,8 +338,8 @@ async function executeOne(
 
       // re_search: clear old mapping first
       if (action.action === 're_search') {
-        await deleteMapping(uid, query)
         const reStoreId = await resolveActionStore(uid, action, sessionStore)
+        await deleteMapping(uid, query, reStoreId)
         if (target === 'standing') await removeFromStoreStanding(uid, reStoreId, [query])
         else await removeStorePendingItems(uid, reStoreId, [query])
       }
@@ -350,7 +350,7 @@ async function executeOne(
 
       // Cache-first: reuse a previous product mapping without searching
       if (action.action !== 're_search') {
-        const cached = await lookupMapping(uid, query)
+        const cached = await lookupMapping(uid, query, storeId)
         if (cached) {
           const item = { name: cached.shufersalName, qty, catalogId: cached.catalogId }
           if (target === 'standing') await addToStoreStanding(uid, storeId, [item])
@@ -376,7 +376,7 @@ async function executeOne(
           const item = { name: selected.name, qty, catalogId: selected.catalogId, unit, sellingUnitId: selected.sellingUnitId }
           if (target === 'standing') await addToStoreStanding(uid, storeId, [item])
           else await addStorePendingItems(uid, storeId, [item], { validTo })
-          await saveProductMapping(uid, query, selected.catalogId, selected.name)
+          await saveProductMapping(uid, query, selected.catalogId, selected.name, storeId)
           const targetLabel = target === 'standing' ? 'קבועה' : 'הזמנה'
           return `✅ ${selected.name} (x${qty}) נוסף לרשימה ${targetLabel} ב${store.label}`
         }
