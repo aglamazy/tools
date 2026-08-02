@@ -1,69 +1,87 @@
 /**
- * Product resolver — matches Hebrew product names to Shufersal catalog IDs.
+ * Product resolver — matches Hebrew product names to store catalog IDs.
  *
- * Uses a persistent mapping (Firestore) + Shufersal search as fallback.
+ * Uses a persistent mapping (Firestore) + store search as fallback.
  * Once resolved, the catalogId is stored on the item and reused.
+ *
+ * Mappings are scoped per store: a catalogId resolved for one store (e.g.
+ * Shufersal) means nothing in another store's catalog (e.g. a Rexail-network
+ * store like Makor HaShefa) and must never be reused across stores.
  */
 
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import { search, type SearchResult } from './shufersalClient'
 import type { GroceryItem } from './groceryStore'
 
-interface ProductMapping {
-  [hebrewName: string]: {
-    catalogId: string
-    shufersalName: string  // full name from Shufersal
-    resolvedAt: string
-  }
+interface ProductMappingEntry {
+  catalogId: string
+  shufersalName: string  // full name from the resolving store's search
+  resolvedAt: string
 }
 
-/** Load product mappings from Firestore. */
-async function loadMappings(uid: string): Promise<ProductMapping> {
+interface StoreMappings {
+  [hebrewName: string]: ProductMappingEntry
+}
+
+/** Top-level Firestore doc shape: mappings nested per store. */
+interface ProductMappingsDoc {
+  [storeId: string]: StoreMappings
+}
+
+/** Load product mappings (all stores) from Firestore. */
+async function loadMappings(uid: string): Promise<ProductMappingsDoc> {
   const doc = await getAdminFirestore().collection('groceries').doc(uid)
     .collection('private').doc('productMappings').get()
-  return doc.exists ? (doc.data() as ProductMapping) : {}
+  return doc.exists ? (doc.data() as ProductMappingsDoc) : {}
 }
 
-/** Save product mappings to Firestore. */
-async function saveMappings(uid: string, mappings: ProductMapping): Promise<void> {
+/** Save product mappings (all stores) to Firestore. */
+async function saveMappings(uid: string, mappings: ProductMappingsDoc): Promise<void> {
   await getAdminFirestore().collection('groceries').doc(uid)
     .collection('private').doc('productMappings').set(mappings)
 }
 
-/** Look up a saved mapping (no search). Returns null if not found. */
-export async function lookupMapping(uid: string, name: string) {
+/** Look up a saved mapping for a specific store (no search). Returns null if not found. */
+export async function lookupMapping(uid: string, name: string, storeId: string) {
   const mappings = await loadMappings(uid)
-  return findMapping(name, mappings)
+  return findMapping(name, mappings[storeId] || {})
 }
 
-/** Delete a saved mapping so user can re-pick. */
-export async function deleteMapping(uid: string, name: string): Promise<boolean> {
+/** Delete a saved mapping for a specific store so user can re-pick. */
+export async function deleteMapping(uid: string, name: string, storeId: string): Promise<boolean> {
   const mappings = await loadMappings(uid)
+  const storeMappings = mappings[storeId] || {}
   const lower = name.toLowerCase()
   let deleted = false
-  for (const key of Object.keys(mappings)) {
+  for (const key of Object.keys(storeMappings)) {
     if (key === lower || key.includes(lower) || lower.includes(key)) {
-      delete mappings[key]
+      delete storeMappings[key]
       deleted = true
     }
   }
-  if (deleted) await saveMappings(uid, mappings)
+  if (deleted) {
+    mappings[storeId] = storeMappings
+    await saveMappings(uid, mappings)
+  }
   return deleted
 }
 
-/** Save a single product mapping (called when user picks from search results). */
+/** Save a single product mapping for a specific store (called when user picks from search results). */
 export async function saveProductMapping(
   uid: string,
   hebrewName: string,
   catalogId: string,
   shufersalName: string,
+  storeId: string,
 ): Promise<void> {
   const mappings = await loadMappings(uid)
-  mappings[hebrewName.toLowerCase()] = {
+  const storeMappings = mappings[storeId] || {}
+  storeMappings[hebrewName.toLowerCase()] = {
     catalogId,
     shufersalName,
     resolvedAt: new Date().toISOString(),
   }
+  mappings[storeId] = storeMappings
   await saveMappings(uid, mappings)
 }
 
@@ -76,6 +94,7 @@ export async function resolveProducts(
   items: GroceryItem[],
 ): Promise<{ resolved: GroceryItem[]; unresolved: string[] }> {
   const mappings = await loadMappings(uid)
+  const storeMappings = mappings.shufersal || {}
   const unresolved: string[] = []
   const resolved: GroceryItem[] = []
 
@@ -87,7 +106,7 @@ export async function resolveProducts(
     }
 
     // Check saved mappings (case-insensitive partial match)
-    const mapping = findMapping(item.name, mappings)
+    const mapping = findMapping(item.name, storeMappings)
     if (mapping) {
       resolved.push({ ...item, catalogId: mapping.catalogId })
       continue
@@ -99,7 +118,7 @@ export async function resolveProducts(
       const best = pickBestMatch(item.name, results)
       if (best) {
         // Save mapping for future use
-        mappings[item.name.toLowerCase()] = {
+        storeMappings[item.name.toLowerCase()] = {
           catalogId: best.catalogId,
           shufersalName: best.name,
           resolvedAt: new Date().toISOString(),
@@ -118,13 +137,14 @@ export async function resolveProducts(
   }
 
   // Save updated mappings
+  mappings.shufersal = storeMappings
   await saveMappings(uid, mappings)
 
   return { resolved, unresolved }
 }
 
 /** Find a mapping by match on the item name. */
-function findMapping(name: string, mappings: ProductMapping) {
+function findMapping(name: string, mappings: StoreMappings) {
   const lower = name.toLowerCase()
   // Exact match first
   if (mappings[lower]) return mappings[lower]
