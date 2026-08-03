@@ -1,10 +1,13 @@
 /**
- * Seed Saliko's `tcVersions` collection with a Saliko-specific draft T&C.
+ * Seed Saliko's `tcVersions` collection with the current Terms of Use,
+ * pulled from the single source of truth at
+ * `app/saliko/terms/termsContent.ts`.
  *
- * The placeholder text below is a starting point — covers data scope,
- * credential encryption, automation responsibility, cancellation, and
- * privacy. Yaakov / a lawyer should review before public launch and
- * push a `version: 2026-XX-YY` newer than the one here to force re-accept.
+ * DO NOT RUN THIS until the text in termsContent.ts has been reviewed and
+ * approved (Agla / lawyer) — this writes directly to production Firestore
+ * and is what real users see on next visit. See Saliko #16.
+ *
+ * Re-run whenever you edit termsContent.ts and bump SALIKO_TC_VERSION.
  *
  * Usage: npx tsx scripts/seed-saliko-tc.ts
  */
@@ -13,51 +16,9 @@ loadEnv()
 ;(process.env as { NODE_ENV?: string }).NODE_ENV = process.env.NODE_ENV || 'development'
 
 import * as fs from 'fs'
+import { SALIKO_TC_HTML, SALIKO_TC_VERSION } from '../app/saliko/terms/termsContent'
 
-const VERSION = '2026-05-06-saliko'
-
-const SALIKO_TC_HE = `
-<h2>תנאי שימוש - Saliko (טיוטה לבדיקות פנימיות)</h2>
-<p>גרסה: ${VERSION}. טקסט זה ייסקר ויוחלף לפני השקה ציבורית.</p>
-
-<h3>1. מה Saliko עושה</h3>
-<p>Saliko הוא סוכן אוטומטי שמבצע בשמך פעולות באתרי מכר מקוון של רשתות שיווק
-(שופרסל, מקור השפע ואחרים שייתווספו בעתיד) על בסיס רשימה קבועה והעדפות שלך.
-פעולות מבוצעות בקצב שבועי, לפי לוח זמנים שאתה מגדיר.</p>
-
-<h3>2. פרטי התחברות לחנויות</h3>
-<p>כדי להתחבר בשמך לאתר החנות, Saliko מקבל ממך פרטי התחברות (אימייל וסיסמה
-או מספר טלפון, לפי החנות). הפרטים נשמרים מוצפנים. Saliko לעולם לא חושף
-את הפרטים שלך לצדדים שלישיים פרט לחנות עצמה לצורך ביצוע ההזמנה.</p>
-
-<h3>3. אחריות על הזמנות</h3>
-<p>Saliko פותח הזמנה אוטומטית בהתאם לרשימה ולהעדפות שהגדרת. אתה אחראי
-לבדוק את ההזמנה לפני שהיא ננעלת ולעדכן אותה אם צריך. Saliko אינו אחראי
-על תוכן ההזמנה, על מחירים, על זמינות מוצרים או על איכות המשלוח —
-אלה באחריות החנות.</p>
-
-<h3>4. ביטול הזמנה</h3>
-<p>אפשר לבטל הזמנה דרך ממשק Saliko עד שעה לפני נעילת ההזמנה אצל החנות.
-אחרי הנעילה הביטול הוא באחריותך מול שירות הלקוחות של החנות.</p>
-
-<h3>5. פרטיות</h3>
-<p>Saliko אוסף ושומר: פרטי התחברות מוצפנים, היסטוריית הזמנות,
-רשימת מוצרים מועדפים, ושיחות עם הסוכן בצ׳אט. אנחנו לא מוכרים מידע
-לצדדים שלישיים. ניתן למחוק את כל המידע בכל רגע דרך ההגדרות.</p>
-
-<h3>6. מנוי וחיוב</h3>
-<p>השימוש בגרסה הנוכחית של Saliko חינם. Saliko עשוי להציע בעתיד
-מנוי בתשלום לתכונות מתקדמות. מעבר לתכונות בתשלום יחייב הסכמה מפורשת
-ולא יחיל את עצמו על משתמשים קיימים ללא אישורם.</p>
-
-<h3>7. שינויי תנאים</h3>
-<p>במקרה של שינוי בתנאי השימוש, Saliko ידרוש אישור מחודש לפני הפעלה
-מחדש של הסוכן.</p>
-
-<h3>8. יצירת קשר</h3>
-<p>שאלות, תקלות, או בקשות מחיקת מידע: שלח הודעה דרך ממשק הצ׳אט או
-דרך עמוד "צור קשר".</p>
-`.trim()
+const COLLECTION = 'tcVersions'
 
 async function main() {
   const admin = await import('firebase-admin')
@@ -66,20 +27,19 @@ async function main() {
   const app = admin.initializeApp({ credential: admin.credential.cert(salikoSa) })
   const db = app.firestore()
 
-  // Wipe stale Aglamazo-derived doc(s) — fresh Saliko T&C should win.
-  const existing = await db.collection('tcVersions').get()
-  for (const d of existing.docs) {
-    console.log(`Removing stale tcVersions/${d.id}`)
-    await d.ref.delete()
+  const existing = await db.collection(COLLECTION).doc(SALIKO_TC_VERSION).get()
+  if (existing.exists) {
+    console.log(`${COLLECTION}/${SALIKO_TC_VERSION} already exists — updating text in place.`)
   }
 
-  await db.collection('tcVersions').doc(VERSION).set({
-    version: VERSION,
-    text: SALIKO_TC_HE,
+  await db.collection(COLLECTION).doc(SALIKO_TC_VERSION).set({
+    version: SALIKO_TC_VERSION,
+    text: SALIKO_TC_HTML,
     seededAt: new Date().toISOString(),
   })
-  console.log(`✓ Wrote saliko-prod/tcVersions/${VERSION} (${SALIKO_TC_HE.length} chars)`)
-  console.log(`Update app/config.ts#tcVersion to "${VERSION}" if you want existing test users to re-accept.`)
+
+  console.log(`✓ Wrote saliko-prod/${COLLECTION}/${SALIKO_TC_VERSION} (${SALIKO_TC_HTML.length} chars)`)
+  console.log('Existing users will be prompted to re-accept on next visit since this version is newer than their stored tcAcceptedAt.')
 
   process.exit(0)
 }
