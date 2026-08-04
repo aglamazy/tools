@@ -1,13 +1,28 @@
 /**
  * Gemini Service
- * Uses Gemini 2.0 Flash via API key to extract reusable Gmail filter criteria.
+ * Uses Gemini 2.0 Flash via agents-ai's metered client to extract reusable Gmail filter criteria.
  */
 
+import { createGeminiClient } from 'agents-ai'
 import { type GmailFilterCriteria } from './gmailService'
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY
 
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent`
+function getClient() {
+  return createGeminiClient({ apiKey: GEMINI_API_KEY, model: 'gemini-2.0-flash' })
+}
+
+// agents-ai's client returns English error strings; this UI is Hebrew-only,
+// so map its known error shapes back to the same Hebrew messages the direct
+// fetch() calls used to produce (rate limit / bad key / HTTP status).
+function localizeGeminiError(error: string): string {
+  if (/rate limit/i.test(error)) return 'Gemini: חריגה ממכסה. נסה שוב בעוד דקה'
+  if (/HTTP 400/i.test(error)) return 'מפתח Gemini API לא תקין'
+  if (/HTTP 403/i.test(error)) return 'Gemini API לא מופעל בפרויקט. הפעל אותו ב-Google Cloud Console'
+  if (/empty response/i.test(error)) return 'Gemini לא החזיר תשובה'
+  if (/network error/i.test(error)) return 'שגיאת רשת בקריאה ל-Gemini'
+  return 'שגיאה בקריאה ל-Gemini'
+}
 
 const SYSTEM_PROMPT = `You extract Gmail filter criteria from an email's sender and subject line.
 Given a sender address and subject, return JSON with the reusable parts for a Gmail filter:
@@ -58,33 +73,19 @@ export async function extractEventDates(
   const input = JSON.stringify(messages)
 
   try {
-    const response = await fetch(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{
-          role: 'user',
-          parts: [{
-            text: `${EVENT_EXTRACTION_PROMPT}\n\nCurrent date: ${today}\n\nEmails:\n${input}`,
-          }],
-        }],
-        generationConfig: {
-          temperature: 0,
-          maxOutputTokens: 1024,
-        },
-      }),
+    const response = await getClient().chat({
+      system: EVENT_EXTRACTION_PROMPT,
+      messages: [{ role: 'user', content: `Current date: ${today}\n\nEmails:\n${input}` }],
+      temperature: 0,
+      maxTokens: 1024,
     })
 
-    if (!response.ok) {
-      const errorBody = await response.text()
-      console.error('[Gemini] Event extraction error:', response.status, errorBody)
-      if (response.status === 429) return { results: [], error: 'Gemini: חריגה ממכסה. נסה שוב בעוד דקה' }
-      if (response.status === 400) return { results: [], error: 'מפתח Gemini API לא תקין' }
-      return { results: [], error: 'שגיאה בקריאה ל-Gemini' }
+    if (response.error) {
+      console.error('[Gemini] Event extraction error:', response.error)
+      return { results: [], error: localizeGeminiError(response.error) }
     }
 
-    const data = await response.json()
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim()
+    const text = response.text?.trim()
     if (!text) return { results: [], error: 'Gemini לא החזיר תשובה' }
 
     const jsonStr = text.replace(/^```json?\s*\n?/, '').replace(/\n?```\s*$/, '')
@@ -109,47 +110,19 @@ export async function generateArchiveQuery(
   }
 
   try {
-    const response = await fetch(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                text: `${SYSTEM_PROMPT}\n\nInput: from="${from}" subject="${subject}"\nOutput:`,
-              },
-            ],
-          },
-        ],
-        generationConfig: {
-          temperature: 0,
-          maxOutputTokens: 200,
-        },
-      }),
+    const response = await getClient().chat({
+      system: SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: `Input: from="${from}" subject="${subject}"\nOutput:` }],
+      temperature: 0,
+      maxTokens: 200,
     })
 
-    if (!response.ok) {
-      const errorBody = await response.text()
-      console.error('[Gemini] Error:', response.status, errorBody)
-
-      if (response.status === 429) {
-        return { error: 'Gemini: חריגה ממכסה. נסה שוב בעוד דקה' }
-      }
-      if (response.status === 400) {
-        return { error: 'מפתח Gemini API לא תקין' }
-      }
-      if (response.status === 403) {
-        return { error: 'Gemini API לא מופעל בפרויקט. הפעל אותו ב-Google Cloud Console' }
-      }
-      return { error: 'שגיאה בקריאה ל-Gemini' }
+    if (response.error) {
+      console.error('[Gemini] Error:', response.error)
+      return { error: localizeGeminiError(response.error) }
     }
 
-    const data = await response.json()
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim()
+    const text = response.text?.trim()
 
     if (!text) {
       return { error: 'Gemini לא החזיר תשובה' }
