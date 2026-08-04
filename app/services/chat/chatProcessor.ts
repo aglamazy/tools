@@ -330,6 +330,16 @@ function isEmptyResponse(r: { text: string; functionCalls?: unknown[]; error?: s
 }
 
 /**
+ * NOT the live chat path (checked 2026-08-04, aglamazo#305). chatBrain.ts —
+ * the actual Telegram/widget webhook handler — uses agents-ai's OWN
+ * processChat() + createAglamazoLLMClient (app/services/chat/client.ts)
+ * instead of this function. This one is kept alive only by
+ * scripts/repro-empty-response.ts, a manual repro tool for a historical
+ * "Gemini returned empty" incident — and since chatBrain.ts no longer calls
+ * this code path, that script itself may no longer reproduce what current
+ * production actually does. Don't delete without either updating the repro
+ * script to exercise chatBrain.ts's real path, or archiving both together.
+ *
  * Call Gemini for one turn. Takes an LLMMessage[] that can include tool-call
  * and tool-result messages so the model sees the full agentic trace.
  * Strips any legacy ```action``` blocks from old persisted assistant text.
