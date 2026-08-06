@@ -20,7 +20,7 @@
     "@opentelemetry/api": "^1.9.0",
     "@tinymce/tinymce-react": "^6.3.0",
     "@vercel/analytics": "^1.5.0",
-    "agents-ai": "github:aglamazy/agents-ai#v26.8.1",
+    "agents-ai": "github:aglamazy/agents-ai#v26.8.3",
     "agents-backoffice": "github:aglamazy/agents-backoffice#v26.6.3",
     "agents-observe": "github:aglamazy/agents-observe#v26.6.0",
     "agents-quota": "github:aglamazy/agents-quota#v26.7.7",
