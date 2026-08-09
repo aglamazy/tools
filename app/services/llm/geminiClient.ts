@@ -1,4 +1,4 @@
-import { createGeminiClient } from 'agents-ai'
+import { createGeminiClient } from 'agents-ai/core'
 import type { LLMClient, LLMChatOptions, LLMResult, LLMChatWithToolsOptions, LLMResultWithTools } from './types'
 
 /**

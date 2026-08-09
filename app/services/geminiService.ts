@@ -3,7 +3,7 @@
  * Uses Gemini 2.0 Flash via agents-ai's metered client to extract reusable Gmail filter criteria.
  */
 
-import { createGeminiClient } from 'agents-ai'
+import { createGeminiClient } from 'agents-ai/core'
 import { type GmailFilterCriteria } from './gmailService'
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY

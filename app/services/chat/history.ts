@@ -1,4 +1,4 @@
-import type { HistoryStore, StoredMessage } from "agents-ai";
+import type { HistoryStore, StoredMessage } from "agents-ai/core";
 import { getAdminFirestore } from "@/app/lib/firebaseAdmin";
 
 export interface SessionState {
