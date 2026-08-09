@@ -42,3 +42,7 @@ task-logs/
 
 # Per-machine BUDDY_QUEUE identity written by mr-cl on session start
 /.queue
+
+# leaked-secret guard (2026-08-09): never track per-flavor env files
+.env.*
+!.env.example
