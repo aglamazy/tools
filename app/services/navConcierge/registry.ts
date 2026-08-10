@@ -220,7 +220,16 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
   {
     id: 'business-settlement',
     label: 'התחשבנות שותפים',
-    synonyms: ['התחשבנות', 'settlement', 'שותפים'],
+    // 'קיזוז שותפים' as its own exact 2-token synonym (not just the separate
+    // tokens 'התחשבנות'/'שותפים') is load-bearing: without it, the 2-word
+    // query "קיזוז שותפים" ties 0.5-vs-0.5 against category-offset-flag's
+    // bare 'קיזוז' synonym (each token contributes independently under the
+    // overlap/max(queryLen,textLen) formula) and comes back ambiguous
+    // instead of a clean win here (#311, regression surfaced by #283's test
+    // plan row 5b). An exact 2-token match scores 2/max(2,2)=1.0, clearly
+    // ahead of the 1-token partial match's 0.5 — restores the confident
+    // resolve documented (but not actually reachable) since 07-15.
+    synonyms: ['התחשבנות', 'settlement', 'שותפים', 'קיזוז שותפים'],
     path: '/app/business/{businessId}?tab=settlement',
     requiresBusinessId: true,
     tabOwnerFile: 'app/components/business/BusinessPage.tsx',

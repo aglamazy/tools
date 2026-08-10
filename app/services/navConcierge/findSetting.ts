@@ -52,14 +52,24 @@ function scoreEntry(queryTokens: string[], entry: NavRegistryEntry): number {
       }
     }
     if (overlap === 0) continue
-    // Recall against the CANDIDATE, not the query: a short, precise synonym
-    // fully covered by the query should score high even if the query also
-    // contains a few extra content words that don't match anything (e.g.
-    // matching a business name, or just natural phrasing). Extra query
-    // tokens with genuinely no match anywhere already get filtered out by
-    // the not_found path below — they don't inflate this candidate's score,
-    // but they don't kill it either.
-    const score = overlap / textTokens.size
+    // Recall against the CANDIDATE (how much of the synonym/label the query
+    // covers) blended with precision against the QUERY (how much of the
+    // query this candidate covers) via geometric mean — pure recall alone
+    // let a short single-token synonym (e.g. "קיזוז") score a perfect 1.0
+    // against a 2-word query ("קיזוז שותפים") even though it ignores the
+    // second word entirely, tying against another entry's own short synonym
+    // and forcing an unwarranted ambiguous outcome instead of a confident
+    // match on the entry whose synonym actually covers the WHOLE query
+    // (#311, regression surfaced by #283's test plan row 5b). Geometric mean
+    // keeps a synonym that fully covers a single-word query at 1.0 (row 5a
+    // unaffected — sqrt(1*1)=1) while a synonym that only covers HALF of a
+    // two-word query now scores sqrt(1*0.5)≈0.71 instead of 1.0, letting an
+    // exact full-phrase match (sqrt(1*1)=1) win outright. Verified against
+    // every find_setting row in docs/nav-concierge-test-plan.md with the
+    // SAME thresholds below — none needed retuning.
+    const recall = overlap / textTokens.size
+    const precision = overlap / queryTokens.length
+    const score = Math.sqrt(recall * precision)
     if (score > best) best = score
   }
   return best
