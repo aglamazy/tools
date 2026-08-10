@@ -671,7 +671,14 @@ export default function AppChat() {
       })
       const data = await res.json()
       if (data.success) {
-        setPendingSelections([])
+        // Clear server-side pending state AND start a fresh conversation —
+        // same createChat+setActiveChatId pattern as ChatWidget's "new chat"
+        // (chatHistoryStore.subscribeActive picks this up and syncs messages/
+        // activeChatId locally). Previously this only cleared pendingSelections,
+        // leaving the visible chat history untouched despite the button's
+        // "start over" label (#313).
+        const fresh = await chatHistoryStore.createChat(uid)
+        chatHistoryStore.setActiveChatId(uid, fresh.id)
       } else {
         showToast('error', data.error || 'שגיאה באיפוס')
       }
