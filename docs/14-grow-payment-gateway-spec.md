@@ -63,13 +63,50 @@ so it's "Grow plus a documents layer," not a 5th vendor.
   notify — two webhook URLs, not one), `successUrl`, `cField1-9` (custom
   passthrough fields — useful for carrying our own `chargeIdentifier`
   equivalent without relying on Grow's own IDs).
-- **Recurring / standing billing:** "הוראת קבע" (`grow.business/auto-pay`),
-  full control via app or API (amount, date, pause/stop/close), backed by
-  PCI-Level-1 tokenization branded "Growin." Exact token-creation/charge API
-  field shape was **not directly read** in this pass (the survey covered the
-  payment-link API in detail; the recurring/token API needs its own doc fetch
-  at build time — same "verify before coding against it as gospel" discipline
-  AH's Cardcom spec (PR#40) correctly insisted on for its own token API).
+- **Recurring / standing billing — TWO distinct mechanisms, verified against
+  developers.grow.business directly (2026-08-10, Librarian):**
+  - **"Billing"** — Grow manages the full schedule (amount, charge day, count),
+    editing/canceling via "Edit Direct Debit," webhooks fire per charge/failure.
+  - **"Tokens"** — you save a card as a token, then trigger each charge
+    yourself on your own schedule. Grow's own guidance, quoted directly: *use
+    Tokens if you already have a system in place for billing management,
+    including monthly charges and refunds; use Billing if you lack one.*
+  - **DECISION: Tokens.** Aglamazo already owns the ledger/period/schedule
+    logic (`upsertBillingStatus`, the whole YPAY-era system) — Billing would
+    duplicate that inside Grow for no benefit, and would fight our own
+    `paid_through`/period model instead of feeding it.
+  - **Verified field shape — `createTransactionWithToken` (the actual
+    charge-with-token endpoint), server-to-server only, client/browser calls
+    explicitly blocked by Grow:** required — `cardToken`, `userId`, `sum`
+    (double), `description`, `paymentType` (`1` = direct debit for this
+    endpoint), `paymentNum` (2-12, installment count — NOT months of
+    recurrence), `pageField[fullName]`, `pageField[phone]` (IL mobile format).
+    Optional — `pageField[email]`, `cField1`-`cField9` (custom passthrough,
+    good fit for our own charge-identifier equivalent), `transactionGroupIdentifier`.
+  - **How the token is actually obtained:** NOT a separate tokenize-only call
+    by default — the token arrives as `transactionToken` on the webhook
+    callback from the FIRST regular (non-token) payment-link charge (a
+    "token-only, no immediate charge" option also exists per Grow's docs, not
+    yet detailed here). **Field-name correction to this doc's earlier draft:**
+    the value is `transactionToken` on that first callback, but becomes
+    `cardToken` when sent BACK on the later `createTransactionWithToken`
+    charge request — same value, two different field names at two different
+    steps. Easy to get wrong; keep this note next to whichever code reads it.
+  - **`ApproveTransaction` (the webhook-ack call) is explicitly NOT required
+    for token transactions or save-token-only scenarios** per Grow's own
+    docs — only for the regular non-token payment-link flow. One less moving
+    part for the recurring/token path specifically.
+  - **Operational:** working with tokens requires explicit permission from
+    Grow — not self-service, same enablement pattern as webhooks below. One
+    combined ask to Grow support, tracked via bob#12.
+  - **STILL OPEN, genuinely unverifiable from the docs — same "don't assume,
+    ask" discipline as Cardcom's token-lifetime question in AH's spec:** no
+    documented token lifetime/expiry policy, and no mention of a periodic
+    2FA/re-auth requirement anywhere in Grow's reference docs. Searched
+    explicitly, found nothing either way. **Must ask Grow support directly**
+    before designing a register-once-bill-forever flow around it — do not
+    assume indefinite validity. Owner: whoever makes the next Grow support
+    contact (bob#12).
 - **Webhooks:** must be enabled by contacting Grow support — no self-service
   toggle. Ten distinct event types (one-time, recurring 2nd+ charge, failed
   recurring, payment-link-specific, invoice creation, POS, etc.) — we need at
@@ -81,10 +118,21 @@ so it's "Grow plus a documents layer," not a 5th vendor.
   `UPAY_WEBHOOK_SECRET` today) rather than trusting `webhookKey` alone — same
   reasoning as the `verified: !!expected && k === expected` check in
   `app/api/upay/payment-callback/route.ts`.
-- **Payload fields (one-time):** `webhookKey`, `transactionCode`,
-  `transactionType`, `paymentSum`, `fullName`, `payerPhone`, `payerEmail`,
-  `cardSuffix`, `cardBrand`, `paymentDate`, `asmachta`. Recurring adds
-  `paymentsNum`, `allPaymentNum`, `periodicalPaymentSum`, `directDebitId`.
+- **Payload fields (one-time, VERIFIED 2026-08-10 against
+  `recurring-payment-callback` — corrects this doc's earlier guessed field
+  names):** `err`, `status`, and a `data` object carrying `status` (Hebrew
+  text), `statusCode`, `transactionTypeId`, `paymentType`, `sum`,
+  `paymentsNum`, `allPaymentsNum`, `paymentDate`, `description`, `fullName`,
+  `payerPhone`, `payerEmail`, `transactionId` (not `transactionCode` as
+  earlier guessed), `transactionToken` (the saved card token — see above),
+  `directDebitId`, `recurringDebitId` (two separate recurring identifiers,
+  not previously documented), `asmachta`, `cardSuffix`, `cardType`,
+  `cardTypeCode`, `cardBrand`, `cardBrandCode`, `cardExp`, `firstPaymentSum`,
+  `periodicalPaymentSum`, `payerBankAccountDetails`, `processId`,
+  `processToken`, and `customFields` (our own `cField1`-`cField9` echoed
+  back). `sum` replaces the earlier-guessed `paymentSum`. A test tool exists:
+  `GET sandboxapi.grow.link/api/light/server/1.0/updateMyUrl/?url=<ourUrl>`
+  simulates the callback against our own endpoint for integration testing.
 
 ## VAT / doc-type handling — our own gotcha list applies
 
@@ -167,8 +215,11 @@ survey didn't cover sub-merchant/multi-tenant account structure).
    be added to `SYNCED_DB_TABLES`.**
 4. Recurring-token flow (setup + monthly charge) — genuinely new, no existing
    Aglamazo analog (YPAY integration today is single-charge links only, no
-   recurring token yet) — needs its own build-time API-shape verification per
-   the open-risk note above before estimating.
+   recurring token yet). Field shape now VERIFIED (see "Recurring / standing
+   billing" above) — `createTransactionWithToken` request/response and the
+   token-capture path are specced. Only remaining unknown is the token
+   lifetime/2FA question, which doesn't block writing the code, only
+   validating the "bill forever" assumption before relying on it in prod.
 5. `/app/pay/success` + `/app/pay/failure` pages — likely reusable as-is from
    the existing YPAY ones, just gateway-agnostic already if built that way.
 
@@ -177,8 +228,12 @@ survey didn't cover sub-merchant/multi-tenant account structure).
 1. Survey verdict (Grow) — confirmed, or does the Paddle tax-compliance
    question change anything? (Recommend: no — Grow is strictly simpler and
    fully native, no reason to take on Paddle's open compliance risk.)
-2. Recurring-token build-time verification (Grow token lifetime, 2FA/re-auth)
-   — who owns confirming this with Grow support before stage-b starts?
+2. Recurring-token build-time verification — NARROWED (2026-08-10, Librarian):
+   the API field shape itself is now verified directly against Grow's docs
+   (see above), so this is no longer a blanket unknown. What's still genuinely
+   open is narrower: token lifetime/expiry and any 2FA/re-auth requirement —
+   nothing in Grow's docs states either way. Routed to Bob (bob#12) as one
+   combined ask alongside enabling tokens + webhooks for the account.
 3. `PaymentStatus` field-completeness gap (amount_ils/currency/period_start
    missing from what we actually populate today) — close now as part of this
    work, or separate follow-up?
@@ -189,6 +244,15 @@ survey didn't cover sub-merchant/multi-tenant account structure).
 
 Payment-link path (mirrors YPAY, ~half-day per that doc's own estimate):
 route + service fn (1-2h), webhook + table + store (2h), success/failure pages
-(reuse, ~0), sandbox verify (1h). **Recurring/token path is a separate,
-larger estimate** — genuinely new surface for this codebase, blocked on the
-build-time API verification above; don't estimate blind.
+(reuse, ~0), sandbox verify (1h).
+
+**Recurring/token path** (2026-08-10 update: field shape now verified, no
+longer blocked on an unknown API surface): `createTransactionWithToken`
+client call + capturing `transactionToken` off the first-charge webhook +
+storing it per business (2-3h), monthly-charge cron/trigger against
+Aglamazo's own period logic (2-3h), error handling for a dead/expired token
+per Grow's own guidance (cease charging, delete, prompt for a new card) (1h).
+Still gated on the token-lifetime/2FA answer from Grow support (bob#12)
+before relying on "register once, bill forever" in prod — code can be
+written and sandbox-tested before that answer lands, just don't ship live
+recurring billing on an unconfirmed lifetime assumption.
