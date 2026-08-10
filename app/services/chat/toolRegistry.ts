@@ -1,4 +1,4 @@
-import { createToolRegistry, type LLMTool, type ToolDeclaration, type ToolDispatcher } from "agents-ai";
+import { createToolRegistry, type LLMTool, type ToolDeclaration, type ToolDispatcher } from "agents-ai/core";
 import { ACTION_DECLARATIONS } from "@/app/services/chat/actionDeclarations";
 import { executeActions, type AnonStoreCreds, type AttendedCheckoutContext } from "@/app/services/chat/actionExecutor";
 import type { PendingProductSelection } from "@/app/services/chat/pendingSearchService";

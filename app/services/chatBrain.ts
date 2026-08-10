@@ -7,7 +7,7 @@
  * translate their inbound shape into ChatBrainInput.
  */
 
-import { processChat, type HistoryStore, type StoredMessage } from 'agents-ai'
+import { processChat, type HistoryStore, type StoredMessage } from 'agents-ai/core'
 
 // --- onEmptyTurn synthesis: Hebrew fallback when tools ran but the LLM didn't narrate. ---
 // Picker case: enumerate options as a numbered list (no UI to click — text only).

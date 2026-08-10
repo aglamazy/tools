@@ -1,6 +1,6 @@
 {
   "name": "finance",
-  "version": "26.7.43",
+  "version": "26.8.0",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3100",
@@ -20,8 +20,9 @@
     "@opentelemetry/api": "^1.9.0",
     "@tinymce/tinymce-react": "^6.3.0",
     "@vercel/analytics": "^1.5.0",
-    "agents-ai": "github:aglamazy/agents-ai#v26.6.9",
+    "agents-ai": "github:aglamazy/agents-ai#v26.8.3",
     "agents-backoffice": "github:aglamazy/agents-backoffice#v26.6.3",
+    "agents-quota": "github:aglamazy/agents-quota#v26.7.7",
     "axios": "^1.14.0",
     "cheerio": "^1.2.0",
     "date-fns": "^4.1.0",

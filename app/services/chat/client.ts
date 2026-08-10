@@ -1,4 +1,4 @@
-import { createGeminiClient, type LLMClient } from "agents-ai";
+import { createGeminiClient, type LLMClient } from "agents-ai/core";
 
 const DEFAULT_MODEL = "gemini-flash-latest";
 
