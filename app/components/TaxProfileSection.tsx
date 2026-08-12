@@ -105,6 +105,29 @@ export async function getTaxProfile(uid?: string): Promise<TaxProfile> {
   return (legacy?.value as TaxProfile) || {}
 }
 
+function sharedVatProfileKey(syncId: string): string {
+  return `sharedVatProfile:${syncId}`
+}
+
+/**
+ * VAT profile for a shared business, resolved the same way regardless of
+ * which device (owner's or a sharee's) is asking. `getTaxProfile(ownerUid)`
+ * is personal tax data deliberately excluded from shared-business sync, so on
+ * a sharee's device it comes back empty; falls back to the scoped
+ * `sharedVatProfile:{syncId}` subset written by sharedBusinessSyncService for
+ * exactly this case (#302, found 2026-07-29 — sharee device silently treated
+ * every amount as GROSS instead of VAT-cleaned, producing a different balance
+ * than the owner saw for identical data).
+ */
+export async function resolveBusinessVatProfile(ownerUid: string | undefined, syncId?: string): Promise<TaxProfile> {
+  const profile = await getTaxProfile(ownerUid)
+  if (!profile.vatType && !profile.vatConversion && syncId) {
+    const shared = await db.appSettings.where('key').equals(sharedVatProfileKey(syncId)).first()
+    if (shared?.value) return shared.value as TaxProfile
+  }
+  return profile
+}
+
 /**
  * Save tax profile to appSettings under the per-uid key.
  */
