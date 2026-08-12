@@ -48,12 +48,34 @@ so it's "Grow plus a documents layer," not a 5th vendor.
 5. Horizontals keep pulling `GET /api/billing/status` (unchanged) — Grow is
    invisible to them, exactly as intended by the PULL model.
 
-## Grow API specifics (verified against developers.grow.business, 2026-08-07)
+## Grow API specifics (verified against developers.grow.business, 2026-08-07; auth model + sandbox re-verified 2026-08-11)
 
-- **Auth:** `x-api-key` header, mandatory on every request. Per-business key,
-  same custody pattern as `getCredentials(business)` for YPAY today (Vercel
-  sensitive env or per-business Firestore field — decide at build time which,
-  matching whichever pattern `ypayService.ts` already uses per business).
+- **Auth — two distinct models, we need the multi-tenant one:** Grow's docs
+  describe "Direct Business Payments" (a single business, `userId` +
+  `pageCode` only) vs "Multiple Business Payments" (a platform acting for
+  several businesses, adds a platform-level `apiKey` on top of each
+  business's own `userId` + `pageCode`). Aglamazo is the latter — ONE
+  Aglamazo-level `apiKey`, then per-business `userId`/`pageCode`, same
+  custody pattern as `getCredentials(business)` for YPAY today (Vercel
+  sensitive env for the platform key, per-business Firestore field for
+  `userId`/`pageCode` — decide at build time which store, matching whichever
+  pattern `ypayService.ts` already uses per business). Docs don't specify the
+  exact header/param placement for these three values — confirm against a
+  real sandbox call before writing the client, don't guess the wire format.
+- **Sandbox environment exists and is genuinely separate from production**
+  (`sandbox.meshulam.co.il/api/light/server/1.0/...` — note the legacy
+  Meshulam domain, not `grow.business`; production presumably swaps this
+  host, confirm at build time). Each environment has its own `userId`,
+  `pageCode`, and `apiKey` — sandbox creds are NOT the same values as
+  production. Real test card numbers documented: `4580458045804580` (single-
+  payment + failed-transaction scenarios), `4580000000000000`,
+  `4580111111111121`; mock bank transfer details (bank `41`, branch `410`,
+  account `411111111`). Bit/Google Pay/Apple Pay have NO sandbox — those
+  process live even in testing. PayBox is production-only. How sandbox
+  credentials themselves are obtained isn't documented — likely comes with
+  account signup (confirm when creating the account per bob#12) or needs
+  asking Grow directly; don't assume production creds also work against the
+  sandbox host.
 - **Payment link creation:** `multipart/form-data`, NOT JSON — different from
   YPAY's JSON body. Required fields include `userId`, `pageCode`,
   `paymentLinkType`, `products[data][0][{name,price,vatType}]`,
@@ -77,12 +99,29 @@ so it's "Grow plus a documents layer," not a 5th vendor.
     `paid_through`/period model instead of feeding it.
   - **Verified field shape — `createTransactionWithToken` (the actual
     charge-with-token endpoint), server-to-server only, client/browser calls
-    explicitly blocked by Grow:** required — `cardToken`, `userId`, `sum`
-    (double), `description`, `paymentType` (`1` = direct debit for this
-    endpoint), `paymentNum` (2-12, installment count — NOT months of
-    recurrence), `pageField[fullName]`, `pageField[phone]` (IL mobile format).
+    explicitly blocked by Grow — re-verified 2026-08-11 directly against the
+    raw embedded OpenAPI spec on the reference page (not just the rendered
+    text) after finding two required fields missing from the earlier pass:**
+    required — `cardToken`, `userId`, `sum` (double), `description`,
+    `paymentType` (`1` = direct debit for this endpoint), `paymentNum` (2-12,
+    installment count — NOT months of recurrence), `pageField[fullName]`,
+    `pageField[phone]` (IL mobile format), **`transactionUniqueIdentifier`**
+    (integer — **this is the idempotency key**: Grow checks whether this
+    business has ever sent this value before and rejects the request
+    outright if so, "regardless of the status of the first request with this
+    ID" — MUST generate and persist one per attempted charge before calling,
+    and reuse the SAME value on a retry of the same logical charge, or a
+    network-blip retry becomes a genuine double-charge), **`isRecurringDebitPayment`**
+    (integer, `1` = "creating a premium direct debit" — required on every
+    call to this endpoint, which means the endpoint itself sits behind
+    Grow's "premium" tier; reinforces, doesn't just repeat, the "tokens need
+    explicit permission from Grow" finding below — the permission gate is on
+    THIS specific field/endpoint, not a vague blanket "tokens" toggle).
     Optional — `pageField[email]`, `cField1`-`cField9` (custom passthrough,
-    good fit for our own charge-identifier equivalent), `transactionGroupIdentifier`.
+    good fit for our own charge-identifier equivalent), `transactionGroupIdentifier`
+    (rejects if a PRIOR successful payment already used this value — a
+    duplicate-prevention field, distinct from `transactionUniqueIdentifier`'s
+    per-attempt idempotency).
   - **How the token is actually obtained:** NOT a separate tokenize-only call
     by default — the token arrives as `transactionToken` on the webhook
     callback from the FIRST regular (non-token) payment-link charge (a
@@ -107,10 +146,23 @@ so it's "Grow plus a documents layer," not a 5th vendor.
     before designing a register-once-bill-forever flow around it — do not
     assume indefinite validity. Owner: whoever makes the next Grow support
     contact (bob#12).
-- **Webhooks:** must be enabled by contacting Grow support — no self-service
-  toggle. Ten distinct event types (one-time, recurring 2nd+ charge, failed
-  recurring, payment-link-specific, invoice creation, POS, etc.) — we need at
-  minimum: one-time success, recurring charge, failed recurring charge.
+- **Webhooks — genuine discrepancy between docs and the live dashboard, found
+  2026-08-11 (Agla was in the account):** the published docs page
+  (developers.grow.business/docs/webhooks) states "Contact our support team
+  to enable Webhooks for your account" with no self-service option
+  mentioned. But the live dashboard's "ניהול ווהוקים" (Webhook Management)
+  screen shows a working "יצירת ווהוק חדש" (Create New Webhook) button with
+  no support-contact caveat in its own copy. **Not resolved either way yet**
+  — possible the docs are stale, or the button creates a webhook ENTRY that
+  Grow's backend won't actually fire events to until support flips a
+  server-side switch (a "looks self-service, isn't functionally" trap).
+  Don't create one from the dashboard yet regardless — Aglamazo has no live
+  endpoint to receive it (stage-b, not built). Verify by creating one once
+  the endpoint exists and confirming an event actually arrives, rather than
+  trusting either source blind. Ten distinct event types (one-time, recurring
+  2nd+ charge, failed recurring, payment-link-specific, invoice creation,
+  POS, etc.) — we need at minimum: one-time success, recurring charge, failed
+  recurring charge.
   **No signature/secret validation mechanism in Grow's own docs** — payload
   carries a `webhookKey` field but there's no documented HMAC/signing scheme.
   Mitigate exactly like the existing Upay callback: validate a **shared secret
