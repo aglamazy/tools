@@ -3,6 +3,7 @@
 // This is the "report-through-server" design: the ingest token never leaks to
 // the browser. NOT wrapped with withServiceCall (it is the observer itself).
 import { type NextRequest, NextResponse } from 'next/server'
+import { after } from 'next/server'
 import { reportFault } from 'agents-observe'
 
 export async function POST(request: NextRequest) {
@@ -13,13 +14,23 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false }, { status: 400 })
   }
 
-  // Fire-and-forget — never let this block the client
-  reportFault({
-    status: 500,
-    route: body.route ?? '(client)',
-    error_class: body.errorClass,
-    message: body.message,
-  }).catch(() => undefined)
+  // Dispatched via after(), not a bare void fire-and-forget: on Vercel Node
+  // serverless the function can suspend the instant this handler returns,
+  // before an in-flight forward-to-cockpit fetch completes -- after() keeps
+  // the instance alive until the report genuinely lands, without delaying
+  // this response (#P0-observe-waituntil hop 2, 2026-08-15 wet-test round 3;
+  // see agents-observe's README "Server-side report proxy" section).
+  after(
+    reportFault(
+      {
+        status: 500,
+        route: body.route ?? '(client)',
+        error_class: body.errorClass,
+        message: body.message,
+      },
+      { await: true },
+    ).catch(() => undefined),
+  )
 
   return NextResponse.json({ ok: true })
 }
