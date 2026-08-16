@@ -9,15 +9,17 @@ export type DuplicateGroup = {
   reviewReason?: string
 }
 
-// Same grouping rule as saveBankTransactions's dedup key: the bank's own
-// reference/אסמכתא number when present (deterministic — identical regardless
-// of which import path produced the row), else a canonicalized description
+// Same grouping rule as saveBankTransactions's dedup key: date + the bank's
+// own reference/אסמכתא number + amount when a reference is present
+// (deterministic — identical regardless of which import path produced the
+// row; date+amount scoping because the bank recycles reference serials across
+// unrelated transactions), else a canonicalized description
 // (bidi/whitespace-order-insensitive) as a fallback for rows that predate the
 // reference-capture fix, or came from a bank export without that column.
 function groupKey(t: Transaction): string {
   const scope = t.type === 'credit' ? (t.cardNumber || '') : (t.accountNumber || '')
   if (t.reference) {
-    return `ref|${t.type}|${scope}|${t.reference}`
+    return `ref|${t.type}|${scope}|${t.date}|${t.reference}|${t.amount}`
   }
   const desc = t.type === 'credit' ? (t.merchant || t.description) : t.description
   return `heur|${t.type}|${scope}|${t.date}|${canonicalizeForDedup(desc || '')}|${t.amount}`

@@ -258,14 +258,20 @@ export const transactionStore = {
         .and((t) => t.accountNumber === accountNumber)
         .toArray()
 
-      // Primary dedup key: the bank's own reference/אסמכתא number, when present.
-      // It's assigned by the bank itself, so it's identical regardless of which
-      // import path (deterministic FIBI parser, XLS-LLM, or PDF-LLM) extracted
-      // this row — unlike free-text description, which LLM extraction or bidi
-      // (mixed Hebrew/Latin) reflow can render differently on each re-import.
-      const existingRefs = new Set(
-        existingTransactions.filter((t) => t.reference).map((t) => t.reference)
-      )
+      // Primary dedup key: date + the bank's own reference/אסמכתא number +
+      // amount. The reference is assigned by the bank itself, so it's identical
+      // regardless of which import path (deterministic FIBI parser, XLS-LLM, or
+      // PDF-LLM) extracted this row — but it is NOT unique on its own: the bank
+      // recycles reference serials across transactions, and a bare-ref key
+      // silently ate a new 27/07 row whose ref matched an unrelated old one.
+      // Scoping by date+amount means only a true re-import of the same row matches.
+      const refKey = (date: string, reference: string, amount: number) =>
+        `${date}|${reference}|${amount}`
+      const existingRefKeys = new Set<string>()
+      for (const t of existingTransactions) {
+        if (!t.reference) continue
+        existingRefKeys.add(refKey(t.date, t.reference, t.amount))
+      }
       // Fallback for rows without a reference (older imports, non-FIBI banks,
       // same-day/pending transactions the bank hasn't assigned one to yet):
       // canonicalized description (sorted chars, punctuation/case stripped) so
@@ -276,7 +282,7 @@ export const transactionStore = {
 
       // Filter out duplicates
       const newTransactions = transactions.filter((t) => {
-        if (t.reference && existingRefs.has(t.reference)) return false
+        if (t.reference && existingRefKeys.has(refKey(t.date, t.reference, t.amount))) return false
         const key = `${t.date}|${canonicalizeForDedup(t.description)}|${t.amount}`
         return !existingHeuristicKeys.has(key)
       })
