@@ -105,6 +105,15 @@ async function getHandler(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  // dasi#6 test:deploy probe (docs/test-deploy-cron-auth-standard.md): proves
+  // the CURRENTLY-CONFIGURED CRON_SECRET is actually accepted by this deployed
+  // function, without placing a real order. Short-circuits immediately after
+  // auth and BEFORE any Firestore read, checkout call, or notification —
+  // nothing below this line may run on the dryRun path.
+  if (request.nextUrl.searchParams.get('dryRun') === 'true') {
+    return NextResponse.json({ ok: true, dryRun: true })
+  }
+
   const hcUrl = process.env.HEALTHCHECK_GROCERY_CRON_URL
 
   // Variant gate: when grocery automation is moved to a sibling deployment

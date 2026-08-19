@@ -33,6 +33,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  // dasi#6 test:deploy probe (docs/test-deploy-cron-auth-standard.md): proves
+  // the CURRENTLY-CONFIGURED CRON_SECRET is accepted, without replaying or
+  // delivering any queued message. Short-circuits BEFORE listPendingEntries()
+  // so an in-flight retry queue can never be touched by a probe.
+  if (request.nextUrl.searchParams.get('dryRun') === 'true') {
+    return NextResponse.json({ ok: true, dryRun: true })
+  }
+
   const entries = await listPendingEntries()
   const now = new Date()
   const results: { id: string; outcome: string }[] = []
