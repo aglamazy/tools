@@ -1,5 +1,30 @@
+import { execSync } from 'node:child_process'
+
+// Fleet versioning standard (dasi#3 / aglamazo#315): APP_VERSION is CalVer
+// derived at BUILD time — never hand-maintained, so there is nothing to
+// forget. APP_COMMIT identifies the exact code. Exposed via /api/health so
+// deploy-gate can assert freshness against the running app (state, not a
+// build-log line). package.json's version is NOT the freshness signal.
+const buildNow = new Date()
+const APP_VERSION = `${buildNow.getFullYear() % 100}.${buildNow.getMonth() + 1}.${buildNow.getDate()}-${String(buildNow.getHours()).padStart(2, '0')}${String(buildNow.getMinutes()).padStart(2, '0')}`
+const APP_COMMIT = (() => {
+  if (process.env.VERCEL_GIT_COMMIT_SHA) return process.env.VERCEL_GIT_COMMIT_SHA.slice(0, 7)
+  try {
+    return execSync('git rev-parse --short HEAD').toString().trim()
+  } catch (err) {
+    // No fallback value by policy — a build that can't identify its commit
+    // would make the freshness gate lie.
+    throw new Error('APP_COMMIT derivation failed: no VERCEL_GIT_COMMIT_SHA and git rev-parse failed: ' + err)
+  }
+})()
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  env: {
+    APP_VERSION,
+    APP_COMMIT,
+  },
+
   // ~/develop/Aglamaz (the parent dir, Aglamaz-Libs' own repo root) has
   // acquired its own package.json/package-lock.json — Turbopack's
   // multi-lockfile auto-detection was climbing up and picking THAT as the
