@@ -1,11 +1,11 @@
 {
   "name": "finance",
-  "version": "26.8.24",
+  "version": "26.8.25",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3100",
     "dev:saliko": "set -a && . ./.env.saliko && set +a && NEXT_DIST_DIR=.next-saliko next dev -p 3101",
-    "prebuild": "node scripts/generate-route-lastmod.mjs",
+    "prebuild": "node scripts/generate-route-lastmod.mjs && bash scripts/generate-app-version.sh app/lib/app-version.ts",
     "build": "next build",
     "postbuild": "node scripts/submit-indexnow.mjs || true",
     "start": "next start -p 3100",
