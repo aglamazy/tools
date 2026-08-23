@@ -63,6 +63,8 @@ const APARTMENT_TABS: TabItem[] = [
 
 const TEACHER_TABS: TabItem[] = [
   { id: 'students', label: 'תלמידים', icon: '👨‍🎓' },
+  { id: 'income', label: 'הכנסות', icon: '💰' },
+  { id: 'expenses', label: 'הוצאות', icon: '💸' },
   { id: 'accounting', label: 'חשבונאות חודשית', icon: '📊' },
   { id: 'tasks', label: 'משימות', icon: '✅' },
   { id: 'projects', label: 'פרויקטים', icon: '📂' },
@@ -166,6 +168,8 @@ export default function BusinessPage({ businessId }: BusinessPageProps) {
           {(activeTab) => (
             <>
               {activeTab === 'students' && <StudentsTab businessId={businessSyncId} />}
+              {activeTab === 'income' && <IncomeTab businessId={businessSyncId} />}
+              {activeTab === 'expenses' && <ExpenseTab businessId={businessSyncId} />}
               {activeTab === 'accounting' && <AccountingTab businessId={businessSyncId} />}
               {activeTab === 'tasks' && <BusinessTasksTab businessId={businessSyncId} />}
               {activeTab === 'projects' && <BusinessSettingsTab businessId={businessSyncId} />}
