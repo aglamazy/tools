@@ -41,6 +41,7 @@
 - Use Store classes for data access, not direct localStorage/IndexedDB
 - **No localStorage-backed stores.** All persistent app state goes in a Dexie synced table (registered in `SYNCED_DB_TABLES`) so it gets the generic syncId-merge + deletion-ledger for free. localStorage stores sit outside that path and sync by whole-blob overwrite — a thinner-but-newer remote wiped every business-scoped subject on 2026-07-11. `subjectStore`/`timerStore` were the last two exceptions; both are now Dexie-backed (`subjects`/`subjectClassifications` tables, and appSettings key `activeTimer`) — no exceptions remain, don't add one.
 - Extension changes: bump version in `extension/manifest.json`
+- **Never use `git stash`.** If a branch switch needs the working tree clean, commit the work first (a WIP commit is fine — amend or squash later) rather than stashing it. This repo already has 5+ pre-existing stashes nobody tracks the contents of; don't add to that pile. If you're unsure whether to commit, ask rather than stash.
 
 ## Landmines (worker-facing — `task-prepare` copies this into every baked spec)
 Build/ship-breakers a memoryless worker WILL hit unless told. Check each against your change:
