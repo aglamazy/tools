@@ -13,6 +13,7 @@ import { getTransactionAttributedUid } from '@/app/utils/transactionAttribution'
 import { parseDateMs } from '@/app/utils/parsers/shared'
 import type { Category } from '@/app/types/category'
 import DocumentViewModal from '@/app/components/DocumentViewModal'
+import { exportSettlementToExcel } from './settlementExport'
 
 type SettlementSummaryProps = {
   businessId: string
@@ -365,11 +366,83 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
     return !isIncome && !settlementCat // 'paid'
   })
 
+  // Export the settlement as a shareable XLSX (for sending to a partner) —
+  // mirrors exactly what's on screen: same rows, same VAT-cleaned amounts,
+  // same labels. Uses the FULL displayRows (not the drill-down-filtered view).
+  const handleExport = () => {
+    exportSettlementToExcel({
+      businessName: business.name || 'עסק',
+      rows: rows.map(r => ({
+        label: r.label,
+        isOwner: r.uid === ownerUid,
+        sharePercent: r.sharePercent,
+        vatType: r.vatType,
+        paid: r.paid,
+        received: r.received,
+        settlementPaid: r.settlementPaid,
+        settlementReceived: r.settlementReceived,
+        fairShare: r.fairShare,
+        balance: r.balance,
+      })),
+      netBusiness: rows.reduce((s, r) => s + (r.received - r.paid), 0),
+      settlementText: settlementLine
+        ? (settlementLine.amount > 0
+            ? `${settlementLine.text} סך ${fmt(settlementLine.amount)}`
+            : settlementLine.text)
+        : null,
+      txRows: displayRows.map(row => {
+        if (row.kind === 'doc') {
+          const d = row.doc
+          const vatType = vatTypeForTx(d.paidByUid, d.date || '')
+          return {
+            date: d.date || '—',
+            typeLabel: 'חשבונית שותף',
+            description: d.vendor || d.fileName || '',
+            category: d.category || '',
+            amount: netOfVat(Math.abs(d.amount ?? 0), vatType),
+            attribution: d.paidByUid
+              ? participants.find(p => p.uid === d.paidByUid)?.label ?? '—'
+              : '—',
+          }
+        }
+        const t = row.tx
+        const isIncome = incomeCatNames.has(t.category ?? '')
+        const isSettlementOnly = !isIncome && settlementOnlyCatNames.has(t.category ?? '')
+        const resolvedUid = getTransactionAttributedUid(t, accountOwners, ownerUid)
+        return {
+          date: t.date,
+          typeLabel: isSettlementOnly ? 'קיזוז' : isIncome ? 'הכנסה' : 'הוצאה',
+          description: t.description || '',
+          category: t.category ?? '',
+          amount: isSettlementOnly
+            ? Math.abs(t.amount)
+            : netOfVat(Math.abs(t.amount), vatTypeForTx(resolvedUid, t.date)),
+          attribution: resolvedUid
+            ? participants.find(p => p.uid === resolvedUid)?.label ?? '—'
+            : '—',
+        }
+      }),
+    })
+  }
+
   return (
     <div style={{ padding: '1rem 0' }}>
-      <h3 style={{ fontSize: '1rem', fontWeight: 600, color: '#0f172a', marginBottom: '0.5rem' }}>
-        סיכום תנועות
-      </h3>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+        <h3 style={{ fontSize: '1rem', fontWeight: 600, color: '#0f172a', margin: 0 }}>
+          סיכום תנועות
+        </h3>
+        <button
+          onClick={handleExport}
+          title="ייצוא ההתחשבנות לקובץ אקסל לשליחה לשותף"
+          style={{
+            padding: '0.35rem 0.75rem', fontSize: '0.8rem', fontWeight: 500,
+            border: '1px solid #e2e8f0', borderRadius: '0.375rem',
+            background: '#fff', color: '#0f172a', cursor: 'pointer',
+          }}
+        >
+          ⬇️ ייצוא לאקסל
+        </button>
+      </div>
       <div style={{ marginBottom: '1rem', fontSize: '0.85rem', color: '#475569' }}>
         חישוב נטו (ללא מע״מ) עבור שותפים מסוג עוסק מורשה. עוסק פטור — סכום ברוטו.
       </div>

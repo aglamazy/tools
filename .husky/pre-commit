@@ -19,6 +19,12 @@
 #                             driver (.githooks/merge-higher-version.cjs +
 #                             .gitattributes + git config) are also owned by Ant
 #                             and propagated by ant_husky_sync.py.
+#   6. shared-checkout warn — (ant_executor#1794) flags a commit made from a
+#                             checkout another live session also holds. Never
+#                             blocks (see the sub-script's own docstring) —
+#                             a false positive here would stop real work, and
+#                             the failure it warns about is silent data loss,
+#                             not corruption a block would prevent anyway.
 
 set -e
 
@@ -122,6 +128,16 @@ if [ -f package.json ] && [ -f scripts/bump-version.cjs ] && command -v node >/d
     exit 1
   }
   git add package.json package-lock.json 2>/dev/null || true
+fi
+
+# 6. Shared-checkout warning (ant_executor#1794). Same script Buddy's own
+#    combined pre-commit dispatcher chains, located the same way (via
+#    $HOME/develop/AgentsHead/Octopus so it resolves on every host) — no-ops
+#    silently if that repo isn't checked out on this host, since a missing
+#    warning-only script means "no warning available", not "block".
+_shared_checkout_guard="$HOME/develop/AgentsHead/Octopus/hooks/git-pre-commit-shared-checkout.sh"
+if [ -f "$_shared_checkout_guard" ]; then
+  bash "$_shared_checkout_guard" || true
 fi
 
 exit 0
