@@ -1,6 +1,6 @@
 {
   "name": "finance",
-  "version": "26.8.27",
+  "version": "26.8.28",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3100",

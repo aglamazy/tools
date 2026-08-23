@@ -470,117 +470,122 @@ function BudgetPageContent() {
           {smartAgentOpen && selectedMonth && (
             <SmartClassifierAgent month={selectedMonth} onClose={() => setSmartAgentOpen(false)} onApplied={async () => { setTransactions(await transactionStore.getBudgetTransactions(selectedMonth)) }} />
           )}
-
-          {/* Summary Cards - Compact */}
-          {selectedMonth && !loading && (
-            <section className="summary-grid" style={{ marginTop: '1rem', gap: '0.75rem' }}>
-              <div
-                className="summary-card income"
-                onClick={() => setTypeFilter(typeFilter === 'income' ? 'all' : 'income')}
-                style={{
-                  padding: '0.75rem',
-                  cursor: 'pointer',
-                  outline: typeFilter === 'income' ? '2px solid #10b981' : 'none',
-                  opacity: typeFilter !== 'all' && typeFilter !== 'income' ? 0.5 : 1,
-                }}
-              >
-                <div className="summary-label" style={{ fontSize: '0.8rem' }}>הכנסות</div>
-                <div className="summary-amount" style={{ fontSize: '1.25rem' }}>
-                  {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(
-                    dailyTransactions.filter((t) => t.amount > 0).reduce((sum, t) => sum + t.amount, 0)
-                  )}
-                </div>
-                <div className="summary-count" style={{ fontSize: '0.75rem' }}>
-                  {dailyTransactions.filter((t) => t.amount > 0).length} עסקאות
-                </div>
-              </div>
-              <div
-                className="summary-card expenses"
-                onClick={() => setTypeFilter(typeFilter === 'expense' ? 'all' : 'expense')}
-                style={{
-                  padding: '0.75rem',
-                  cursor: 'pointer',
-                  outline: typeFilter === 'expense' ? '2px solid #ef4444' : 'none',
-                  opacity: typeFilter !== 'all' && typeFilter !== 'expense' ? 0.5 : 1,
-                }}
-              >
-                <div className="summary-label" style={{ fontSize: '0.8rem' }}>הוצאות</div>
-                <div className="summary-amount" style={{ fontSize: '1.25rem' }}>
-                  {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(
-                    Math.abs(dailyTransactions.filter((t) => t.amount < 0).reduce((sum, t) => sum + t.amount, 0))
-                  )}
-                </div>
-                <div className="summary-count" style={{ fontSize: '0.75rem' }}>
-                  {dailyTransactions.filter((t) => t.amount < 0).length} עסקאות
-                </div>
-              </div>
-              <div className="summary-card net" style={{ padding: '0.75rem' }}>
-                <div className="summary-label" style={{ fontSize: '0.8rem' }}>מאזן</div>
-                <div
-                  className={
-                    'summary-amount ' +
-                    (dailyTransactions.reduce((sum, t) => sum + t.amount, 0) > 0 ? 'positive' : 'negative')
-                  }
-                  style={{ fontSize: '1.25rem' }}
-                >
-                  {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(
-                    dailyTransactions.reduce((sum, t) => sum + t.amount, 0)
-                  )}
-                </div>
-              </div>
-              {capitalTransactions.length > 0 && (
-                <div
-                  className="summary-card"
-                  onClick={() => setTypeFilter(typeFilter === 'capital' ? 'all' : 'capital')}
-                  style={{
-                    padding: '0.75rem',
-                    background: '#7c3aed',
-                    color: 'white',
-                    cursor: 'pointer',
-                    outline: typeFilter === 'capital' ? '2px solid #7c3aed' : 'none',
-                    outlineOffset: '2px',
-                    opacity: typeFilter !== 'all' && typeFilter !== 'capital' ? 0.5 : 1,
-                  }}
-                >
-                  <div className="summary-label" style={{ fontSize: '0.8rem' }}>הון</div>
-                  <div className="summary-amount" style={{ fontSize: '1.25rem' }}>
-                    {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(
-                      -(capitalTransactions.reduce((sum, t) => sum + t.amount, 0))
-                    )}
-                  </div>
-                  <div className="summary-count" style={{ fontSize: '0.75rem' }}>
-                    {capitalTransactions.length} עסקאות
-                  </div>
-                </div>
-              )}
-              {externalTransactions.length > 0 && (
-                <div
-                  className="summary-card"
-                  onClick={() => setTypeFilter(typeFilter === 'external' ? 'all' : 'external')}
-                  style={{
-                    padding: '0.75rem',
-                    background: '#d97706',
-                    color: 'white',
-                    cursor: 'pointer',
-                    outline: typeFilter === 'external' ? '2px solid #d97706' : 'none',
-                    outlineOffset: '2px',
-                    opacity: typeFilter !== 'all' && typeFilter !== 'external' ? 0.5 : 1,
-                  }}
-                >
-                  <div className="summary-label" style={{ fontSize: '0.8rem' }}>חיצוני</div>
-                  <div className="summary-amount" style={{ fontSize: '1.25rem' }}>
-                    {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(
-                      externalTransactions.reduce((sum, t) => sum + t.amount, 0)
-                    )}
-                  </div>
-                  <div className="summary-count" style={{ fontSize: '0.75rem' }}>
-                    {externalTransactions.length} עסקאות
-                  </div>
-                </div>
-              )}
-            </section>
-          )}
         </div>
+
+        {/* Summary Cards - Compact. Deliberately OUTSIDE the sticky header above
+            (#316 / Compass 2026-08-23): these stats are supplementary, not filter
+            controls — keeping them sticky permanently reserved a large chunk of
+            the viewport on normal laptop screens, leaving too few transaction
+            rows visible even after scrolling. Only the title/month-selector/
+            filter-buttons need to stay pinned while scrolling a long table. */}
+        {selectedMonth && !loading && (
+          <section className="summary-grid" style={{ marginTop: '1rem', gap: '0.75rem' }}>
+            <div
+              className="summary-card income"
+              onClick={() => setTypeFilter(typeFilter === 'income' ? 'all' : 'income')}
+              style={{
+                padding: '0.75rem',
+                cursor: 'pointer',
+                outline: typeFilter === 'income' ? '2px solid #10b981' : 'none',
+                opacity: typeFilter !== 'all' && typeFilter !== 'income' ? 0.5 : 1,
+              }}
+            >
+              <div className="summary-label" style={{ fontSize: '0.8rem' }}>הכנסות</div>
+              <div className="summary-amount" style={{ fontSize: '1.25rem' }}>
+                {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(
+                  dailyTransactions.filter((t) => t.amount > 0).reduce((sum, t) => sum + t.amount, 0)
+                )}
+              </div>
+              <div className="summary-count" style={{ fontSize: '0.75rem' }}>
+                {dailyTransactions.filter((t) => t.amount > 0).length} עסקאות
+              </div>
+            </div>
+            <div
+              className="summary-card expenses"
+              onClick={() => setTypeFilter(typeFilter === 'expense' ? 'all' : 'expense')}
+              style={{
+                padding: '0.75rem',
+                cursor: 'pointer',
+                outline: typeFilter === 'expense' ? '2px solid #ef4444' : 'none',
+                opacity: typeFilter !== 'all' && typeFilter !== 'expense' ? 0.5 : 1,
+              }}
+            >
+              <div className="summary-label" style={{ fontSize: '0.8rem' }}>הוצאות</div>
+              <div className="summary-amount" style={{ fontSize: '1.25rem' }}>
+                {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(
+                  Math.abs(dailyTransactions.filter((t) => t.amount < 0).reduce((sum, t) => sum + t.amount, 0))
+                )}
+              </div>
+              <div className="summary-count" style={{ fontSize: '0.75rem' }}>
+                {dailyTransactions.filter((t) => t.amount < 0).length} עסקאות
+              </div>
+            </div>
+            <div className="summary-card net" style={{ padding: '0.75rem' }}>
+              <div className="summary-label" style={{ fontSize: '0.8rem' }}>מאזן</div>
+              <div
+                className={
+                  'summary-amount ' +
+                  (dailyTransactions.reduce((sum, t) => sum + t.amount, 0) > 0 ? 'positive' : 'negative')
+                }
+                style={{ fontSize: '1.25rem' }}
+              >
+                {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(
+                  dailyTransactions.reduce((sum, t) => sum + t.amount, 0)
+                )}
+              </div>
+            </div>
+            {capitalTransactions.length > 0 && (
+              <div
+                className="summary-card"
+                onClick={() => setTypeFilter(typeFilter === 'capital' ? 'all' : 'capital')}
+                style={{
+                  padding: '0.75rem',
+                  background: '#7c3aed',
+                  color: 'white',
+                  cursor: 'pointer',
+                  outline: typeFilter === 'capital' ? '2px solid #7c3aed' : 'none',
+                  outlineOffset: '2px',
+                  opacity: typeFilter !== 'all' && typeFilter !== 'capital' ? 0.5 : 1,
+                }}
+              >
+                <div className="summary-label" style={{ fontSize: '0.8rem' }}>הון</div>
+                <div className="summary-amount" style={{ fontSize: '1.25rem' }}>
+                  {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(
+                    -(capitalTransactions.reduce((sum, t) => sum + t.amount, 0))
+                  )}
+                </div>
+                <div className="summary-count" style={{ fontSize: '0.75rem' }}>
+                  {capitalTransactions.length} עסקאות
+                </div>
+              </div>
+            )}
+            {externalTransactions.length > 0 && (
+              <div
+                className="summary-card"
+                onClick={() => setTypeFilter(typeFilter === 'external' ? 'all' : 'external')}
+                style={{
+                  padding: '0.75rem',
+                  background: '#d97706',
+                  color: 'white',
+                  cursor: 'pointer',
+                  outline: typeFilter === 'external' ? '2px solid #d97706' : 'none',
+                  outlineOffset: '2px',
+                  opacity: typeFilter !== 'all' && typeFilter !== 'external' ? 0.5 : 1,
+                }}
+              >
+                <div className="summary-label" style={{ fontSize: '0.8rem' }}>חיצוני</div>
+                <div className="summary-amount" style={{ fontSize: '1.25rem' }}>
+                  {new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(
+                    externalTransactions.reduce((sum, t) => sum + t.amount, 0)
+                  )}
+                </div>
+                <div className="summary-count" style={{ fontSize: '0.75rem' }}>
+                  {externalTransactions.length} עסקאות
+                </div>
+              </div>
+            )}
+          </section>
+        )}
 
         {availableMonths.length === 0 && (
           <div className="banner" style={{ marginTop: '1rem' }}>

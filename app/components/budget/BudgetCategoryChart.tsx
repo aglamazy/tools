@@ -20,8 +20,6 @@ export default function BudgetCategoryChart({
   categoryData, drillDownCategory, onBackFromDrillDown, selectedCategories,
   isCollapsed, onToggleCollapsed, onPieClick, onCategoryClick,
 }: BudgetCategoryChartProps) {
-  if (categoryData.length === 0) return null
-
   return (
     <section style={{ marginTop: '2rem' }}>
       <h2
@@ -45,7 +43,12 @@ export default function BudgetCategoryChart({
         </span>
         פילוח הוצאות לפי נושא
       </h2>
-      {!isCollapsed && (
+      {!isCollapsed && categoryData.length === 0 && (
+        <p style={{ color: '#64748b', fontSize: '0.9rem', padding: '1rem 0' }}>
+          אין הוצאות להצגה בתקופה זו.
+        </p>
+      )}
+      {!isCollapsed && categoryData.length > 0 && (
       <div style={{ display: 'flex', gap: '2rem', alignItems: 'center' }}>
         <div style={{ flex: '0 0 450px', height: '350px', position: 'relative' }}>
           {/* Category name badge and back button when in drill-down mode */}
