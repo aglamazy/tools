@@ -523,6 +523,59 @@ export const transactionStore = {
   },
 
   /**
+   * Every bank + credit budget transaction across every month — same shape
+   * and mapping as getBudgetTransactions, just without the month filter.
+   * Powers the budget page's all-time "Search" tab (#322), where scope is
+   * cross-month by design rather than the monthly-analysis tab's single
+   * selected month. Newest first, matching getTransactionsByBusiness.
+   */
+  getAllBudgetTransactions: async () => {
+    try {
+      const bankTransactions = (await db.transactions
+        .where('type')
+        .equals('bank')
+        .toArray()).filter((t) => !t.isCreditCardCharge)
+
+      const creditTransactions = await db.transactions
+        .where('type')
+        .equals('credit')
+        .toArray()
+
+      const allTransactions = [
+        ...bankTransactions.map((t) => ({
+          id: String(t.id),
+          date: t.date,
+          business: t.description,
+          category: t.category || '',
+          amount: t.amount,
+          isFixed: t.isFixed,
+          paymentMethod: t.accountNumber || 'Bank',
+          installmentInfo: '',
+          totalAmount: t.amount,
+        })),
+        ...creditTransactions.map((t) => ({
+          id: String(t.id),
+          date: t.date,
+          business: t.merchant || t.description,
+          category: t.category || '',
+          amount: t.amount,
+          isFixed: t.isFixed,
+          paymentMethod: `💳 ${t.cardNumber}`,
+          installmentInfo: t.totalSteps && t.totalSteps > 1 ? `${t.currentStep}/${t.totalSteps}` : '',
+          totalAmount: t.totalAmount || t.amount,
+        })),
+      ]
+
+      allTransactions.sort((a, b) => parseDateMs(b.date) - parseDateMs(a.date))
+
+      return allTransactions
+    } catch (error) {
+      console.error('Error getting all budget transactions:', error)
+      return []
+    }
+  },
+
+  /**
    * All transactions (across every month) whose derived "business" label
    * exactly matches the given supplier name — powers the budget page's
    * supplier drill-down (click a supplier → see its full history and set

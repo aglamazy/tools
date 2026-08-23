@@ -18,6 +18,8 @@ import SmartClassifierAgent from '@/app/components/budget/SmartClassifierAgent'
 import BudgetCategoryChart from '@/app/components/budget/BudgetCategoryChart'
 import SupplierHistoryModal from '@/app/components/budget/SupplierHistoryModal'
 import { useTransactionSort, type SortKey } from '@/app/components/budget/useTransactionSort'
+import { matchesTransactionSearch } from '@/app/components/budget/transactionSearch'
+import TransactionSearchTab from '@/app/components/budget/TransactionSearchTab'
 
 const SORTABLE_COLS: [SortKey, string][] = [
   ['date', 'תאריך'],
@@ -38,6 +40,7 @@ export default function BudgetPage() {
 function BudgetPageContent() {
   const { showToast } = useToast()
   const searchParams = useSearchParams()
+  const [pageMode, setPageMode] = useState<'budget' | 'search'>('budget')
   const [selectedMonth, setSelectedMonth] = useState<string>('')
   const [availableMonths, setAvailableMonths] = useState<string[]>([])
   const [transactions, setTransactions] = useState<BudgetTransaction[]>([])
@@ -299,20 +302,6 @@ function BudgetPageContent() {
     }
   }
 
-  // Free-text search across every visible column (date/business/category/
-  // payment method/amount) — a plain substring match, no field prefixes.
-  const matchesSearch = (t: BudgetTransaction, query: string): boolean => {
-    const q = query.trim().toLowerCase()
-    if (!q) return true
-    return (
-      (t.date || '').includes(q) ||
-      (t.business || '').toLowerCase().includes(q) ||
-      (t.category || '').toLowerCase().includes(q) ||
-      (t.paymentMethod || '').toLowerCase().includes(q) ||
-      String(t.amount).includes(q)
-    )
-  }
-
   // Filter transactions based on hideClassified toggle and selected categories
   const displayedTransactions = transactions.filter((t) => {
     // Skip credit card charges (they appear in the breakdown, not in main list)
@@ -322,7 +311,7 @@ function BudgetPageContent() {
 
     // Search narrows every other filter branch below — checked first so it
     // applies universally regardless of which branch ends up matching.
-    if (!matchesSearch(t, searchQuery)) {
+    if (!matchesTransactionSearch(t, searchQuery)) {
       return false
     }
 
@@ -362,6 +351,38 @@ function BudgetPageContent() {
   return (
     <main className="app" dir="rtl">
       <div className="card">
+        {/* Mode switcher: monthly budget analysis vs. all-time transaction search (#323) */}
+        <div style={{ display: 'flex', gap: '0.375rem', marginBottom: '1.25rem', borderBottom: '1px solid #e5e7eb' }}>
+          <button
+            onClick={() => setPageMode('budget')}
+            style={{
+              padding: '0.6rem 1rem', border: 'none', background: 'none', cursor: 'pointer',
+              fontSize: '0.9rem', fontWeight: 600,
+              color: pageMode === 'budget' ? '#4f46e5' : '#6b7280',
+              borderBottom: pageMode === 'budget' ? '2px solid #4f46e5' : '2px solid transparent',
+              marginBottom: '-1px',
+            }}
+          >
+            📊 תקציב חודשי <span style={{ fontWeight: 400, fontSize: '0.75rem', color: '#9ca3af' }}>— ניתוח לפי חודש</span>
+          </button>
+          <button
+            onClick={() => setPageMode('search')}
+            style={{
+              padding: '0.6rem 1rem', border: 'none', background: 'none', cursor: 'pointer',
+              fontSize: '0.9rem', fontWeight: 600,
+              color: pageMode === 'search' ? '#4f46e5' : '#6b7280',
+              borderBottom: pageMode === 'search' ? '2px solid #4f46e5' : '2px solid transparent',
+              marginBottom: '-1px',
+            }}
+          >
+            🔍 חיפוש עסקאות <span style={{ fontWeight: 400, fontSize: '0.75rem', color: '#9ca3af' }}>— כל התנועות, כל הזמנים</span>
+          </button>
+        </div>
+
+        {pageMode === 'search' && <TransactionSearchTab />}
+
+        {pageMode === 'budget' && (
+        <>
         {/* Sticky Header Section */}
         <div
           style={{
@@ -791,6 +812,8 @@ function BudgetPageContent() {
               </div>
             </section>
           </>
+        )}
+        </>
         )}
       </div>
       {supplierModal && (
