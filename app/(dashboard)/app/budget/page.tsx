@@ -45,6 +45,10 @@ function BudgetPageContent() {
   const [loading, setLoading] = useState(true)
   const [autoClassifiedIds, setAutoClassifiedIds] = useState<Set<string>>(new Set())
   const [hideClassified, setHideClassified] = useState(false)
+  // Free-text search across date/business/category/payment-method/amount —
+  // independent of the other filters below, applied first so it narrows
+  // whichever branch (type/category/hideClassified) ends up matching.
+  const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set())
   const [drillDownCategory, setDrillDownCategory] = useState<string | null>(null)
   const [isPieChartCollapsed, setIsPieChartCollapsed] = useState(false)
@@ -295,10 +299,30 @@ function BudgetPageContent() {
     }
   }
 
+  // Free-text search across every visible column (date/business/category/
+  // payment method/amount) — a plain substring match, no field prefixes.
+  const matchesSearch = (t: BudgetTransaction, query: string): boolean => {
+    const q = query.trim().toLowerCase()
+    if (!q) return true
+    return (
+      (t.date || '').includes(q) ||
+      (t.business || '').toLowerCase().includes(q) ||
+      (t.category || '').toLowerCase().includes(q) ||
+      (t.paymentMethod || '').toLowerCase().includes(q) ||
+      String(t.amount).includes(q)
+    )
+  }
+
   // Filter transactions based on hideClassified toggle and selected categories
   const displayedTransactions = transactions.filter((t) => {
     // Skip credit card charges (they appear in the breakdown, not in main list)
     if (t.isCreditCardCharge) {
+      return false
+    }
+
+    // Search narrows every other filter branch below — checked first so it
+    // applies universally regardless of which branch ends up matching.
+    if (!matchesSearch(t, searchQuery)) {
       return false
     }
 
@@ -358,6 +382,32 @@ function BudgetPageContent() {
           {/* Month Selector with Buttons */}
           {availableMonths.length > 0 && (
             <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="חיפוש עסקאות... (תיאור, נושא, תאריך, סכום)"
+                  style={{
+                    padding: '0.5rem 0.75rem', paddingRight: '2rem',
+                    borderRadius: '0.375rem', border: `1px solid ${searchQuery ? '#a78bfa' : '#d1d5db'}`,
+                    fontSize: '0.875rem', width: '240px',
+                    background: searchQuery ? '#ede9fe' : 'white',
+                  }}
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    title="נקה חיפוש"
+                    style={{
+                      position: 'absolute', left: '0.4rem', top: '50%', transform: 'translateY(-50%)',
+                      background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '0.9rem', padding: 0,
+                    }}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <label htmlFor="month-select" style={{ fontWeight: 500, fontSize: '0.875rem' }}>
                   בחר חודש:
