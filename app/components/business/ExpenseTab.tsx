@@ -22,6 +22,7 @@ import DuplicateTransactionsModal from '@/app/components/DuplicateTransactionsMo
 import type { ExpenseTableRow, MatchStatus } from '@/app/components/business/expenseTabTypes'
 import { useToast } from '@/app/components/ToastContainer'
 import { normalizeDate, parseDateMs } from '@/app/utils/parsers/shared'
+import { effectiveExpenseAmount, resolveBusinessExpenseCategories } from '@/app/components/business/expenseScale'
 
 type ExpenseTabProps = {
   businessId: string
@@ -102,15 +103,13 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
     const b = await businessStore.getBySyncId(businessId)
     setBusiness(b || null)
     if (b) {
-      await loadAvailableMonths()
+      await loadAvailableMonths(b)
     }
     setLoading(false)
   }
 
-  const loadAvailableMonths = async () => {
-    const categories = (await subjectStore.getAll()).filter(
-      (c: Category) => c.type === 'expense' && c.businessId === businessId && !c.excludeFromBusinessTotals
-    )
+  const loadAvailableMonths = async (b: Business) => {
+    const categories = resolveBusinessExpenseCategories(await subjectStore.getAll(), b)
     if (categories.length === 0) {
       setAvailableMonths([])
       return
@@ -138,10 +137,10 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
 const parseSortableDate = (date?: string) => parseDateMs(date)
 
   const loadTransactions = async () => {
-    const categories = (await subjectStore.getAll()).filter(
-      (c: Category) => c.type === 'expense' && c.businessId === businessId && !c.excludeFromBusinessTotals
-    )
+    if (!business) return
+    const categories = resolveBusinessExpenseCategories(await subjectStore.getAll(), business)
     const categoryNames = categories.map(c => c.name)
+    const categoryByName = new Map(categories.map(c => [c.name, c]))
 
     let filteredTransactions: Transaction[]
 
@@ -164,12 +163,16 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
       .filter(t => !t.currentStep || t.currentStep === 1)
       .map(t => {
         // Use full purchase amount for installments
-        if (t.totalSteps && t.totalSteps > 1) {
-          const fullAmount = t.totalAmount || (t.totalSteps * Math.abs(t.amount))
-          return { ...t, amount: -fullAmount }
-        }
-        return t
+        const fullAmount = t.totalSteps && t.totalSteps > 1
+          ? (t.totalAmount || (t.totalSteps * Math.abs(t.amount)))
+          : Math.abs(t.amount)
+        // Household-deductible categories (e.g. a shared electricity bill)
+        // scale down to this business owner's percentage; directly-assigned
+        // categories pass through at the full amount.
+        const effective = effectiveExpenseAmount({ ...t, amount: -fullAmount }, business, categoryByName)
+        return { ...t, amount: -effective }
       })
+      .filter(t => t.amount < 0)
 
     // Sort by date
     expenseTransactions.sort((a, b) => {
@@ -511,7 +514,7 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
       setCashCategory('')
       setCashFile(null)
       setShowCashForm(false)
-      await loadAvailableMonths()
+      if (business) await loadAvailableMonths(business)
       setFilterMode('month')
       setSelectedMonth(month)
     } catch (err) {
@@ -584,7 +587,7 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
     }
     if (t.syncId) await appSettingsStore.recordDeletion('transactions', t.syncId)
     await db.transactions.delete(t.id)
-    await loadAvailableMonths()
+    if (business) await loadAvailableMonths(business)
     await loadTransactions()
   }
 
@@ -628,9 +631,7 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
     return <p>עסק לא נמצא</p>
   }
 
-  const categories = allCategories.filter(
-    (c: Category) => c.type === 'expense' && c.businessId === businessId
-  )
+  const categories = resolveBusinessExpenseCategories(allCategories, business)
 
   if (categories.length === 0) {
     return (
@@ -690,7 +691,7 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
       )}
 
       {viewMode === 'pivot' ? (
-        <ExpenseMonthSupplierPivot businessId={businessId} />
+        <ExpenseMonthSupplierPivot businessId={businessId} business={business} />
       ) : (
         <>
           <ExpenseFiltersBar

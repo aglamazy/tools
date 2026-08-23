@@ -27,3 +27,23 @@ export function effectiveExpenseAmount(
   if (pct <= 0) return 0
   return raw * (pct / 100)
 }
+
+/**
+ * Every expense category that contributes to a business's own expense
+ * views: directly assigned (cat.businessId === business.syncId) OR a
+ * household-scope deductible category folded in via the business owner's
+ * deductibleByMember share (same rule effectiveExpenseAmount uses to scale
+ * the amount). Centralized here so every consumer (ExpenseTab, the supplier
+ * pivot, Taxes) resolves the same category set — a business-only view of
+ * this list previously missed the household-deductible half entirely
+ * (aglamazo: Agla's electricity/water example, 2026-08-23).
+ */
+export function resolveBusinessExpenseCategories(categories: Category[], business: Business): Category[] {
+  return categories.filter((c) => {
+    if (c.type !== 'expense') return false
+    if (c.businessId === business.syncId) return !c.excludeFromBusinessTotals
+    if (c.businessId) return false
+    if (!business.userId) return false
+    return !!c.isDeductible && (c.deductibleByMember?.[business.userId] ?? 0) > 0
+  })
+}

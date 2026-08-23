@@ -1,15 +1,16 @@
 'use client'
 
 import React, { useEffect, useMemo, useState } from 'react'
-import { db, type Transaction, type ExpenseDocument } from '@/app/db/financeDB'
+import { db, type Business, type Transaction, type ExpenseDocument } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { MONTH_NAMES_HE } from '@/app/lib/dateUtils'
-import type { Category } from '@/app/types/category'
 import { pickExpenseLabel } from '@/app/utils/expenseLabel'
 import { normalizeDate } from '@/app/utils/parsers/shared'
+import { effectiveExpenseAmount, resolveBusinessExpenseCategories } from './expenseScale'
 
 type Props = {
   businessId: string
+  business: Business
 }
 
 type SupplierRow = {
@@ -36,7 +37,7 @@ function getCanonicalDateParts(date?: string): { year: number; month: number } |
   return { year: yearNum, month: monthNum }
 }
 
-export default function ExpenseMonthSupplierPivot({ businessId }: Props) {
+export default function ExpenseMonthSupplierPivot({ businessId, business }: Props) {
   const currentYear = new Date().getFullYear()
   const [year, setYear] = useState(currentYear)
   const [availableYears, setAvailableYears] = useState<number[]>([currentYear])
@@ -47,10 +48,10 @@ export default function ExpenseMonthSupplierPivot({ businessId }: Props) {
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      const categories = (await subjectStore.getAll()).filter(
-        (c: Category) => c.type === 'expense' && c.businessId === businessId && !c.excludeFromBusinessTotals
-      )
+      const allCategories = await subjectStore.getAll()
+      const categories = resolveBusinessExpenseCategories(allCategories, business)
       const categoryNames = categories.map(c => c.name)
+      const categoryByName = new Map(categories.map(c => [c.name, c]))
 
       const allTransactions = await db.transactions.toArray()
       const expenseTransactions = allTransactions
@@ -88,13 +89,20 @@ export default function ExpenseMonthSupplierPivot({ businessId }: Props) {
       }
 
       for (const t of expenseTransactions) {
+        // Installment purchases use the full purchase amount, same as
+        // everywhere else this pivot's month-column figures come from.
+        // Then effectiveExpenseAmount scales household-deductible categories
+        // (e.g. a shared electricity bill) down to this business owner's
+        // percentage — direct business categories pass through at full amount.
         const fullAmount = t.totalSteps && t.totalSteps > 1
           ? (t.totalAmount || t.totalSteps * Math.abs(t.amount))
           : Math.abs(t.amount)
+        const amount = effectiveExpenseAmount({ ...t, amount: -fullAmount }, business, categoryByName)
+        if (amount <= 0) continue
         const monthNum = Number(t.month.split('/')[0])
         const y = Number(t.month.split('/')[1])
         const supplier = supplierLabelForTransaction(t, t.syncId != null ? firstDocByTxId.get(t.syncId) : undefined)
-        addAmount(supplier, monthNum - 1, y, fullAmount)
+        addAmount(supplier, monthNum - 1, y, amount)
       }
 
       for (const d of allPartnerDocs) {
@@ -119,7 +127,7 @@ export default function ExpenseMonthSupplierPivot({ businessId }: Props) {
       setLoading(false)
     })()
     return () => { cancelled = true }
-  }, [businessId, year, currentYear])
+  }, [businessId, business, year, currentYear])
 
   const grandTotal = useMemo(() => monthTotals.reduce((s, v) => s + v, 0), [monthTotals])
 

@@ -98,8 +98,16 @@ function AnnualSummarySubTab() {
   const [rentalMonthlyLimit, setRentalMonthlyLimit] = useState<number | null>(null)
   const [advancePayments, setAdvancePayments] = useState<AdvancePayment[]>([])
   const [taxProfile, setTaxProfile] = useState<TaxProfile>({})
-  const currentYear = new Date().getFullYear()
-  const currentMonth = new Date().getMonth() // 0-based
+  // The year being viewed — selectable (year-selector UI below), defaults to
+  // the real current year. currentMonth is "how many months of this year
+  // have data": up to today for the live year, all 12 for any other year —
+  // the page previously hardcoded both to new Date(), so a past year (e.g.
+  // Agla's 2025 electricity deduction) had no way to ever be viewed here.
+  const realNow = new Date()
+  const realCurrentYear = realNow.getFullYear()
+  const [selectedYear, setSelectedYear] = useState(realCurrentYear)
+  const currentYear = selectedYear
+  const currentMonth = selectedYear === realCurrentYear ? realNow.getMonth() : 11
 
   useEffect(() => {
     if (!authReady) return
@@ -333,6 +341,19 @@ function AnnualSummarySubTab() {
 
   return (
     <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+        <label style={{ fontWeight: 600, fontSize: '0.9rem' }}>שנה:</label>
+        <select
+          value={selectedYear}
+          onChange={(e) => setSelectedYear(Number(e.target.value))}
+          style={{ padding: '0.4rem 0.75rem', borderRadius: '0.375rem', border: '1px solid #e2e8f0', fontSize: '0.9rem', direction: 'rtl' }}
+        >
+          {Array.from({ length: 5 }, (_, i) => realCurrentYear - i).map((y) => (
+            <option key={y} value={y}>{y}</option>
+          ))}
+        </select>
+      </div>
+
       {debugMode && (
         <TaxesDebugPanel
           currentUser={getUser()}
