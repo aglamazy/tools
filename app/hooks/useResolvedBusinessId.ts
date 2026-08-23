@@ -15,12 +15,23 @@ export function useResolvedBusiness(raw: string): Business | null | undefined {
     let cancelled = false
     setBusiness(undefined)
     const resolve = async () => {
-      const bySlug = await businessStore.getBySlug(raw)
+      // Next's useParams() does NOT decode a non-ASCII dynamic segment here —
+      // raw arrives as the still-percent-encoded literal (e.g. "%D7%AA%D7%A9"
+      // for "תש"), so a slug lookup with the raw value never matches a
+      // Hebrew (or any non-ASCII) slug. decodeURIComponent is idempotent on
+      // an already-decoded slug (our slugs never contain a literal "%").
+      let decoded = raw
+      try {
+        decoded = decodeURIComponent(raw)
+      } catch {
+        // Malformed percent-encoding — fall back to the raw value.
+      }
+      const bySlug = await businessStore.getBySlug(decoded)
       if (bySlug) {
         if (!cancelled) setBusiness(bySlug)
         return
       }
-      const numeric = Number(raw)
+      const numeric = Number(decoded)
       if (!isNaN(numeric)) {
         const byId = await businessStore.getById(numeric)
         if (!cancelled) setBusiness(byId ?? null)
