@@ -65,3 +65,26 @@ queries and it seemed fine."
 
 **Net: 6 pass, 2 real bugs found (5b regression, case 6 fallback-to-general-knowledge), 1 separate bug found (reset button non-functional), 1 test-plan premise flaw (row 7), 1 inconclusive due to sticky-context contamination (row 8).**
 **Not ready for the prod-merge conversation as-is** — the 5b regression and case 6 fallback are both real, user-facing correctness issues a released feature shouldn't ship with.
+
+## RESULTS (run 2026-09-06, aglamazo#336 — gate before agents-ai registration/AH-admin pilot)
+
+Compass/Dasi's 2026-09-04 kickoff (`reports/2026-09-04-app-nav-concierge-kickoff.md`,
+Compass repo) named two open items before fix-then-adopt could proceed: the 08-11
+fix (#311) was never re-run after a later fix (#312) touched the same code area, and
+a newly-found VAT-status direct-navigation tab race was unfixed.
+
+| Check | Method | Result |
+|---|---|---|
+| Row 5b — "קיזוז שותפים" confidently resolves to `business-settlement`, not ambiguous | Direct call to `findSetting()` (pure function, deterministic — more reliable than an LLM round-trip for this specific question) | ✅ `match business-settlement` |
+| Row 5a — bare "קיזוז" still resolves to `category-offset-flag`, unaffected | Same, direct call | ✅ `match category-offset-flag` — #311's fix (the geometric-mean scoring change) holds; #312 touched only SYSTEM_PROMPT trigger phrasing (`13ddbb3`, verified via `git show --stat`), never `findSetting.ts`/`registry.ts` — the two fixes were always in non-overlapping code, confirmed rather than assumed |
+| Row 6 — "מה זה הכל מטרה" still returns not_found at the tool layer | Same, direct call | ✅ `not_found` |
+| Row 1 — VAT-status: matcher resolves correctly | Same, direct call | ✅ `match vat-status-member` — confirms the matcher itself was never the problem |
+| **Row 1 — VAT-status: household tab actually SELECTED after a direct navigation while already on `/app/settings`** | Live browser (chrome-devtools MCP, local dev root/ABC123 login per this doc's own setup instructions, no real account/data touched): opened Settings (default `categories` tab), opened chat, asked the exact row-1 query, confirmed via screenshot that the tab bar highlighted "🏠 משק בית" and household content rendered, without a page reload | ❌→✅ **FAIL, now FIXED.** Root cause: `SettingsTabsContent` (`app/components/settings/SettingsTabs.tsx`) computed `activeTab` via `useState(initialTab)`, which only reads `searchParams` on mount. A same-route `router.push` (the chat's `navigateTo`) updates the URL but not this already-mounted component's state. Fixed by adding a `useEffect` that syncs `activeTab` when `searchParams` changes post-mount; manual tab clicks use `window.history.replaceState` (bypasses Next's router, `useSearchParams` never observes it), so they're unaffected. |
+
+**Not re-run in full:** rows 2-4, 7-10 (unrelated to either of the two open items;
+already-passing MCP-only checks, code-review-only checks, or premise-flawed as
+originally noted — no code path touching them changed).
+
+**Net: both open items closed.** #311 confirmed intact and unaffected by #312. The
+VAT-status tab race — the epic's own anchor case — is fixed and verified live. Ready
+to hand back to Compass/Dasi for the schema + `agents-ai` registration step.

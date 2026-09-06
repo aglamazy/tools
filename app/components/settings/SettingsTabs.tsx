@@ -1,6 +1,6 @@
 'use client'
 
-import React, { Suspense, useState, useCallback } from 'react'
+import React, { Suspense, useState, useCallback, useEffect } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 
 export type TabItem = {
@@ -33,6 +33,18 @@ function SettingsTabsContent({ tabs, defaultTab, children }: SettingsTabsProps) 
   const initialTab = tabs.some((t) => t.id === tabFromQuery) ? tabFromQuery! : fallbackTab
 
   const [activeTab, setActiveTab] = useState(initialTab)
+
+  // useState's initializer only runs on mount — if a real Next.js navigation
+  // (router.push, e.g. the chat's navigateTo) changes ?tab= while this page is
+  // already mounted, activeTab would otherwise stay stuck on whatever it was
+  // before. Manual tab clicks use window.history.replaceState below, which
+  // Next's useSearchParams doesn't observe, so this effect never fights them.
+  useEffect(() => {
+    const tabFromQuery = searchParams.get('tab')
+    if (tabFromQuery && tabFromQuery !== activeTab && tabs.some((t) => t.id === tabFromQuery)) {
+      setActiveTab(tabFromQuery)
+    }
+  }, [searchParams, activeTab, tabs])
 
   const handleTabChange = useCallback((tabId: string) => {
     setActiveTab(tabId)
