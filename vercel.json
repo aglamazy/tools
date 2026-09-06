@@ -2,6 +2,7 @@
   "installCommand": "bash scripts/vercel-install.sh",
   "git": {
     "deploymentEnabled": {
+      "*": false,
       "main": true
     }
   },
