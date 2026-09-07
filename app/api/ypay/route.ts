@@ -79,6 +79,17 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: false, message: docData.message || 'שגיאה ביצירת מסמך' })
       }
 
+      // The responseCode check above is skipped entirely when YPAY returns a
+      // falsy responseCode (0/missing) — which happens for at least one real
+      // rejection class (e.g. the account's YPAY plan doesn't include this
+      // document type): HTTP 200, no responseCode, but also no real document.
+      // Without this, that case silently reported success with an empty url,
+      // and the caller had nothing to click and no error to show (Agla hit
+      // this and thought the app was broken, 2026-09-07).
+      if (!docData.url) {
+        return NextResponse.json({ success: false, message: docData.message || 'המסמך לא נוצר (ייתכן שהתוכנית שלך ב-YPAY לא כוללת סוג מסמך זה)' })
+      }
+
       return NextResponse.json({
         success: true,
         url: docData.url,

@@ -226,7 +226,13 @@ export const ypayService = {
     }
 
     await db.ypayDocuments.add({
-      transactionId: String(transaction.id),
+      // syncId, not the local Dexie id — a local id only survives an
+      // incremental sync merge, not a full local-DB rebuild/restore (which
+      // reassigns fresh auto-increment ids). That's exactly what silently
+      // orphaned a batch of older receipts from their transactions in April
+      // 2026 (see IncomeTab.tsx's docMap lookup, fixed 2026-09-07) — writing
+      // syncId here means it can't recur even through a future full restore.
+      transactionId: transaction.syncId || String(transaction.id),
       url: data.url,
       serialNumber: data.serialNumber,
       docType,

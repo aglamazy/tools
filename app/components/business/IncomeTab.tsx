@@ -281,7 +281,14 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
 
     const withDocs: TransactionWithDoc[] = incomeTransactions.map(t => ({
       ...t,
-      ypayDoc: docMap.get(String(t.id)),
+      // Receipts created after the FK-migration store their transactionId as
+      // the transaction's syncId (stable across a local DB rebuild/restore),
+      // not its Dexie auto-increment id — but this lookup was never updated
+      // to match, so no receipt has shown as linked since then regardless of
+      // how correct its stored transactionId is. String(t.id) is kept as a
+      // fallback for the handful of pre-migration receipts that still store
+      // the old numeric id (2026-09-07).
+      ypayDoc: (t.syncId && docMap.get(t.syncId)) || docMap.get(String(t.id)),
     }))
 
     // Sort by date
@@ -411,14 +418,33 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
 
     setError(null)
     try {
-      await db.ypayDocuments.add({
-        transactionId: transaction.syncId,
-        url: '',
-        serialNumber: linkForm.serialNumber.trim(),
-        docType: profileVatType === 'authorized' ? YpayDocType.TaxInvoiceReceipt : YpayDocType.Receipt,
-        closesAllocations,
-        createdAt: new Date().toISOString(),
-      })
+      const wanted = linkForm.serialNumber.trim()
+      // A document with this serial may already exist as a REAL record (e.g.
+      // a חשבונית מס קבלה the ypay-upay integration auto-created, which never
+      // shows up in the open-invoices list since it's already its own
+      // receipt). Find and re-point that record instead of blindly creating
+      // a second, blank-url placeholder under the same serial (2026-09-07 —
+      // that duplicate-creation was the actual bug, not a missing feature).
+      const existing = await db.ypayDocuments
+        .filter((d) => String(d.serialNumber).trim() === wanted)
+        .first()
+
+      if (existing) {
+        await db.ypayDocuments.update(existing.id!, {
+          transactionId: transaction.syncId,
+          closesAllocations,
+          updatedAt: new Date().toISOString(),
+        })
+      } else {
+        await db.ypayDocuments.add({
+          transactionId: transaction.syncId,
+          url: '',
+          serialNumber: wanted,
+          docType: profileVatType === 'authorized' ? YpayDocType.TaxInvoiceReceipt : YpayDocType.Receipt,
+          closesAllocations,
+          createdAt: new Date().toISOString(),
+        })
+      }
       if (closesAllocations && closesAllocations.length > 0) {
         await closeFullyPaidInvoices(closesAllocations, new Date(formatDateForYpay(transaction.date)).toISOString())
       }
