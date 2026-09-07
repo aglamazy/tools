@@ -158,9 +158,12 @@ async function fetchExtraction(file: File, onProgress?: (p: PdfReadProgress) => 
 
 /**
  * Read a PDF financial statement and return SheetRow[] in the same shape as readExcelFile.
- * Large PDFs are split into page-range chunks (#251) and extracted sequentially, each
- * validated server-side (#252) before being merged — no zero-amount rows ever reach the caller.
- * Result is cached per (name, size, lastModified) so preview + import share one extraction.
+ * Large PDFs are split into page-range chunks (#251): page 1 (the only one with
+ * column headers) is extracted alone first, then the rest run in PARALLEL using
+ * page 1's column-mapping as a few-shot example (see fetchExtraction). Each
+ * chunk is validated server-side (#252) before being merged — no zero-amount
+ * rows ever reach the caller. Result is cached per (name, size, lastModified)
+ * so preview + import share one extraction.
  */
 export async function readPdfFile(file: File, onProgress?: (p: PdfReadProgress) => void): Promise<SheetRow[]> {
   const key = cacheKey(file)
