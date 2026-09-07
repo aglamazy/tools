@@ -277,7 +277,7 @@ async function executeOne(
 
   switch (action.action) {
     case 'find_setting':
-      return handleFindSetting(action.query)
+      return await handleFindSetting(action.query)
 
     case 'product_details': {
       const productName = typeof action.name === 'string' ? action.name.trim() : ''

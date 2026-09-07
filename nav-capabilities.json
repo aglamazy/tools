@@ -1,0 +1,403 @@
+[
+  {
+    "id": "vat-status-member",
+    "label": "סטטוס מע\"מ (עוסק פטור / עוסק מורשה) לפי חבר משפחה",
+    "synonyms": [
+      "מע\"מ",
+      "עוסק פטור",
+      "עוסק מורשה",
+      "VAT",
+      "סטטוס מס",
+      "TaxProfileSection"
+    ],
+    "path": "/app/settings?tab=household&member={member}",
+    "description": "פרופיל המע\"מ (TaxProfileSection) נפתח כמודל מתוך טאב משק הבית, לפי בחירת חבר משפחה.",
+    "tabOwnerFile": "app/components/Settings.tsx",
+    "requiresParams": [
+      "member"
+    ]
+  },
+  {
+    "id": "ypay-credentials",
+    "label": "פרטי התחברות YPAY (סליקה / הפקת חשבוניות)",
+    "synonyms": [
+      "ypay",
+      "סליקה",
+      "חשבונית",
+      "הגדרות תשלומים",
+      "ypayClientId"
+    ],
+    "path": "/app/business/{businessId}?tab=settings",
+    "description": "טאב \"הגדרות\" של עמוד עסק (BizSettingsTab) — כולל ypayClientId/ypayClientSecret וזוג הפרטים המקביל למצב sandbox (ypayUseSandbox).",
+    "tabOwnerFile": "app/components/business/BusinessPage.tsx",
+    "requiresParams": [
+      "businessId"
+    ]
+  },
+  {
+    "id": "category-offset-flag",
+    "label": "קיזוז שותפים בלבד (הוצאה אישית שלא נכללת בסיכומי העסק)",
+    "synonyms": [
+      "קיזוז",
+      "excludeFromBusinessTotals",
+      "הוצאה אישית",
+      "התחשבנות שותפים"
+    ],
+    "path": "/app/settings?tab=categories",
+    "description": "טאב \"תקציב ונושאים\". הדגל excludeFromBusinessTotals מוגדר בטופס עריכה של קטגוריית הוצאה ספציפית — אין עדיין קישור לקטגוריה נתונה, רק לטאב.",
+    "addressable": false,
+    "gap": "CategoriesTab.tsx אינו קורא שום searchParam; פתיחת טופס עריכה לקטגוריה ספציפית דורשת לחיצה ידנית. להוסיף בעתיד ?category=<id> שפותח את editingCategory ישירות.",
+    "tabOwnerFile": "app/components/Settings.tsx"
+  },
+  {
+    "id": "settings-categories",
+    "label": "תקציב ונושאים",
+    "synonyms": [
+      "קטגוריות",
+      "נושאים",
+      "תקציב"
+    ],
+    "path": "/app/settings?tab=categories",
+    "description": "גם הטאב שנפתח כברירת מחדל ב-/app/settings ללא פרמטר.",
+    "tabOwnerFile": "app/components/Settings.tsx"
+  },
+  {
+    "id": "settings-businesses",
+    "label": "ניהול עסקים",
+    "synonyms": [
+      "עסקים",
+      "רשימת עסקים"
+    ],
+    "path": "/app/settings?tab=businesses",
+    "description": "רשימת העסקים והוספת עסק חדש (BusinessesTab). לא לבלבל עם /app/business/{id} עבור עסק ספציפי.",
+    "tabOwnerFile": "app/components/Settings.tsx"
+  },
+  {
+    "id": "settings-household",
+    "label": "משק בית",
+    "synonyms": [
+      "בני משפחה",
+      "household",
+      "שיתוף משק בית"
+    ],
+    "path": "/app/settings?tab=household",
+    "description": "ניהול חברי משק הבית, הזמנות, ושיוך חשבונות בנק משותפים; גם שער הכניסה לפרופיל המע\"מ לכל חבר.",
+    "tabOwnerFile": "app/components/Settings.tsx"
+  },
+  {
+    "id": "settings-sync",
+    "label": "סנכרון ענן וגיבוי",
+    "synonyms": [
+      "sync",
+      "סנכרון",
+      "גיבוי",
+      "CloudSync"
+    ],
+    "path": "/app/settings?tab=sync",
+    "description": "CloudSyncSection + DedupSection + LocalBackup.",
+    "tabOwnerFile": "app/components/Settings.tsx"
+  },
+  {
+    "id": "settings-telegram",
+    "label": "חיבור חשבון לבוט טלגרם",
+    "synonyms": [
+      "טלגרם",
+      "telegram",
+      "קישור טלגרם"
+    ],
+    "path": "/app/settings?tab=telegram",
+    "description": "קישור חשבון המשתמש לבוט AglamazoBot. שונה מ\"בוטים\" (bots) שהוא ניהול בוטים אישיים.",
+    "tabOwnerFile": "app/components/Settings.tsx"
+  },
+  {
+    "id": "settings-bots",
+    "label": "בוטים אישיים",
+    "synonyms": [
+      "bots",
+      "הבוטים שלי"
+    ],
+    "path": "/app/settings?tab=bots",
+    "description": "MyBotsSection — יצירה וניהול בוטים אישיים, כולל webhook.",
+    "tabOwnerFile": "app/components/Settings.tsx"
+  },
+  {
+    "id": "settings-api-keys",
+    "label": "מפתחות API",
+    "synonyms": [
+      "api key",
+      "מפתח קלוד",
+      "Claude API",
+      "Anthropic key"
+    ],
+    "path": "/app/settings?tab=apikeys",
+    "description": "כרגע כולל רק מפתח Claude/Anthropic אישי.",
+    "tabOwnerFile": "app/components/Settings.tsx"
+  },
+  {
+    "id": "settings-external-services",
+    "label": "חיבורים חיצוניים (סיסמאות לגרידה)",
+    "synonyms": [
+      "vault",
+      "ביטוח לאומי",
+      "אוצר החייל",
+      "שופרסל",
+      "credentials"
+    ],
+    "path": "/app/settings?tab=vault",
+    "description": "ExternalServicesTab — פרטי התחברות לגרידה (BTL/אוצר החייל/שופרסל בלבד). לתשומת לב: Google Drive/Gmail/Calendar אינם כאן — אלה מחוברים אד-הוק מתוך כל זרימה שצריכה אותם, אין להם מסך הגדרות ייעודי.",
+    "tabOwnerFile": "app/components/Settings.tsx"
+  },
+  {
+    "id": "settings-advanced",
+    "label": "הגדרות מתקדמות",
+    "synonyms": [
+      "advanced",
+      "מתקדם",
+      "גיבוי מקומי",
+      "סטטיסטיקת DB"
+    ],
+    "path": "/app/settings?tab=advanced",
+    "description": "AdvancedTab — תיקיית גיבוי מקומי, עמוד נחיתה ברירת מחדל, סטטיסטיקות DB.",
+    "tabOwnerFile": "app/components/Settings.tsx"
+  },
+  {
+    "id": "business-income",
+    "label": "הכנסות עסק",
+    "synonyms": [
+      "הכנסות",
+      "income"
+    ],
+    "path": "/app/business/{businessId}?tab=income",
+    "tabOwnerFile": "app/components/business/BusinessPage.tsx",
+    "requiresParams": [
+      "businessId"
+    ]
+  },
+  {
+    "id": "business-expenses",
+    "label": "הוצאות עסק",
+    "synonyms": [
+      "הוצאות",
+      "expenses"
+    ],
+    "path": "/app/business/{businessId}?tab=expenses",
+    "tabOwnerFile": "app/components/business/BusinessPage.tsx",
+    "requiresParams": [
+      "businessId"
+    ]
+  },
+  {
+    "id": "business-settlement",
+    "label": "התחשבנות שותפים",
+    "synonyms": [
+      "התחשבנות",
+      "settlement",
+      "שותפים",
+      "קיזוז שותפים"
+    ],
+    "path": "/app/business/{businessId}?tab=settlement",
+    "tabOwnerFile": "app/components/business/BusinessPage.tsx",
+    "requiresParams": [
+      "businessId"
+    ]
+  },
+  {
+    "id": "business-timing",
+    "label": "תיעוד זמן / שעות עבודה",
+    "synonyms": [
+      "שעות",
+      "timing",
+      "טיימר",
+      "תיעוד שעות"
+    ],
+    "path": "/app/business/{businessId}?tab=timing",
+    "description": "תומך גם ב-view (daily/weekly/monthly/recent), date (YYYY-MM-DD, ל-daily), wo (week offset, ל-weekly) ו-mo (month offset, ל-monthly) — ראו TimingTab.tsx. ערך ברירת מחדל מוסר מה-URL (למשל view=weekly לא מופיע).",
+    "tabOwnerFile": "app/components/business/BusinessPage.tsx",
+    "requiresParams": [
+      "businessId"
+    ]
+  },
+  {
+    "id": "business-invoices",
+    "label": "חשבוניות עסק",
+    "synonyms": [
+      "חשבוניות",
+      "invoices"
+    ],
+    "path": "/app/business/{businessId}?tab=invoices",
+    "tabOwnerFile": "app/components/business/BusinessPage.tsx",
+    "requiresParams": [
+      "businessId"
+    ]
+  },
+  {
+    "id": "business-open-docs",
+    "label": "מסמכים פתוחים",
+    "synonyms": [
+      "מסמכים",
+      "open docs"
+    ],
+    "path": "/app/business/{businessId}?tab=open-docs",
+    "tabOwnerFile": "app/components/business/BusinessPage.tsx",
+    "requiresParams": [
+      "businessId"
+    ]
+  },
+  {
+    "id": "business-tasks",
+    "label": "משימות עסק",
+    "synonyms": [
+      "משימות",
+      "tasks"
+    ],
+    "path": "/app/business/{businessId}?tab=tasks",
+    "tabOwnerFile": "app/components/business/BusinessPage.tsx",
+    "requiresParams": [
+      "businessId"
+    ]
+  },
+  {
+    "id": "business-projects",
+    "label": "פרויקטים",
+    "synonyms": [
+      "פרויקטים",
+      "projects"
+    ],
+    "path": "/app/business/{businessId}?tab=projects",
+    "tabOwnerFile": "app/components/business/BusinessPage.tsx",
+    "requiresParams": [
+      "businessId"
+    ]
+  },
+  {
+    "id": "business-settings",
+    "label": "הגדרות עסק",
+    "synonyms": [
+      "הגדרות",
+      "settings",
+      "עריכת פרטי עסק"
+    ],
+    "path": "/app/business/{businessId}?tab=settings",
+    "description": "BizSettingsTab — שם/סוג העסק, YPAY (ראו ypay-credentials), ומוסתר לגמרי לעסקים ששותפו איתך (sharedWithMe).",
+    "tabOwnerFile": "app/components/business/BusinessPage.tsx",
+    "requiresParams": [
+      "businessId"
+    ]
+  },
+  {
+    "id": "business-accounting-teacher",
+    "label": "חשבונאות חודשית (עסק מסוג מורה)",
+    "synonyms": [
+      "חשבונאות",
+      "accounting"
+    ],
+    "path": "/app/business/{businessId}?tab=accounting",
+    "description": "זמין רק לעסקים מסוג Teacher (TEACHER_TABS). קיים גם נתיב כפול, לא-דרך-טאב, שמציג את אותו AccountingTab: /app/business/{businessId}/accounting — עדיף להשתמש בטאב.",
+    "tabOwnerFile": "app/components/business/BusinessPage.tsx",
+    "requiresParams": [
+      "businessId"
+    ]
+  },
+  {
+    "id": "taxes-annual-summary",
+    "label": "מסים — סיכום שנתי",
+    "synonyms": [
+      "מסים",
+      "taxes",
+      "דוח שנתי",
+      "ביטוח לאומי",
+      "מקדמות מס הכנסה"
+    ],
+    "path": "/app/taxes",
+    "description": "עמוד עצמאי (לא טאב עסק, למרות ש-TaxesTab.tsx יושב תחת components/business). תומך ב-?user=<uid> (ברירת מחדל \"all\") ו-?debug=1."
+  },
+  {
+    "id": "business-categories-mapping",
+    "label": "שיוך קטגוריות לעסקים",
+    "synonyms": [
+      "שיוך קטגוריות",
+      "business categories"
+    ],
+    "path": "/app/business-categories",
+    "description": "טבלת ניהול BusinessCategory — שיוך שם קטגוריה גולמי מהבנק לקטגוריה/עסק. אין פרמטרים."
+  },
+  {
+    "id": "budget",
+    "label": "תקציב",
+    "synonyms": [
+      "budget",
+      "סיווג עסקאות"
+    ],
+    "path": "/app/budget",
+    "description": "תקציב חודשי וסיווג עסקאות לנושאים."
+  },
+  {
+    "id": "capital",
+    "label": "הון",
+    "synonyms": [
+      "capital",
+      "חסכונות",
+      "פנסיה"
+    ],
+    "path": "/app/capital",
+    "description": "מעקב אחר חסכונות/פנסיה/השקעות."
+  },
+  {
+    "id": "cash-flow",
+    "label": "תזרים מזומנים",
+    "synonyms": [
+      "cash flow",
+      "תזרים"
+    ],
+    "path": "/app/cash-flow"
+  },
+  {
+    "id": "credit-cards",
+    "label": "כרטיסי אשראי",
+    "synonyms": [
+      "credit cards"
+    ],
+    "path": "/app/credit-cards"
+  },
+  {
+    "id": "future-payments",
+    "label": "תשלומים עתידיים",
+    "synonyms": [
+      "future payments"
+    ],
+    "path": "/app/future-payments",
+    "description": "תשלומים עתידיים/הוראות קבע."
+  },
+  {
+    "id": "import-wizard",
+    "label": "ייבוא קבצים",
+    "synonyms": [
+      "import",
+      "ייבוא PDF",
+      "ייבוא בנק"
+    ],
+    "path": "/app/import",
+    "description": "ייבוא דפי חשבון/כרטיס אשראי (כולל PDF)."
+  },
+  {
+    "id": "grocery-stores",
+    "label": "חנויות/קניות",
+    "synonyms": [
+      "grocery",
+      "שופרסל",
+      "קניות"
+    ],
+    "path": "/app/stores",
+    "description": "הגדרות רשימת קניות אוטומטית וחנויות."
+  },
+  {
+    "id": "todo",
+    "label": "משימות (מטריצת אייזנהאואר)",
+    "synonyms": [
+      "todo",
+      "tasks",
+      "מטריצת אייזנהאואר"
+    ],
+    "path": "/app/todo"
+  }
+]

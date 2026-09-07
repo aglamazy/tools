@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
+import { useSearchParams } from 'next/navigation'
 import Modal from '../Modal'
 import YesNoModal from '../YesNoModal'
 import {
@@ -21,6 +22,7 @@ import TaxProfileSection from '@/app/components/TaxProfileSection'
 type HouseholdWithEmails = Household & { memberEmails?: Record<string, string> }
 
 export default function HouseholdTab() {
+  const searchParams = useSearchParams()
   const [loading, setLoading] = useState(true)
   const [household, setHousehold] = useState<HouseholdWithEmails | null>(null)
   const [role, setRole] = useState<HouseholdRole | null>(null)
@@ -49,6 +51,19 @@ export default function HouseholdTab() {
       loadAccountAssignments()
     }
   }, [household])
+
+  // Deep-link support (aglamazo#337, nav-concierge): ?member=<uid> opens that
+  // member's tax-profile modal directly, once the household (and its
+  // memberEmails map, needed for the modal's label) has loaded. Silently
+  // no-ops for an unknown/missing uid rather than guessing.
+  useEffect(() => {
+    const memberId = searchParams.get('member')
+    if (!memberId || !household) return
+    if (!(household.members || []).includes(memberId)) return
+    const label = household.memberEmails?.[memberId]
+    if (!label) return
+    setMemberSettings((prev) => (prev?.uid === memberId ? prev : { uid: memberId, label }))
+  }, [searchParams, household])
 
   const loadHouseholdInfo = async () => {
     setLoading(true)

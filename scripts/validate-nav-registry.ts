@@ -1,13 +1,24 @@
 /**
- * Validates app/services/navConcierge/registry.ts against the real route
- * tree and tab definitions, so a screen rename/move fails this check
- * instead of silently going stale.
+ * Validates nav-capabilities.json (#337 — migrated from
+ * app/services/navConcierge/registry.ts per the shared nav-concierge schema,
+ * docs/nav-concierge-shared-schema.md in the Buddy repo) against the real
+ * route tree and tab definitions, so a screen rename/move fails this check
+ * instead of silently going stale. Referential correctness stays
+ * per-product by design — the shared lib only validates shape.
  *
  * Usage: npx tsx scripts/validate-nav-registry.ts
  */
 import * as fs from 'fs'
 import * as path from 'path'
-import { NAV_REGISTRY, type NavRegistryEntry } from '../app/services/navConcierge/registry'
+import type { NavCapabilityEntry } from 'agents-ai/nav-concierge'
+import navCapabilities from '../nav-capabilities.json'
+
+// tabOwnerFile is Aglamazo's own product-specific validation aid, not part
+// of the shared schema (additionalProperties: true deliberately allows it —
+// see docs/nav-concierge-shared-schema.md). Only this validator reads it.
+type AglamazoNavEntry = NavCapabilityEntry & { tabOwnerFile?: string }
+
+const NAV_REGISTRY = navCapabilities as AglamazoNavEntry[]
 
 const ROOT = path.resolve(__dirname, '..')
 const APP_DIR = path.join(ROOT, 'app')
@@ -52,17 +63,25 @@ function checkTabExists(tabOwnerFile: string, tabId: string): boolean {
   return pattern.test(content)
 }
 
-function validateEntry(entry: NavRegistryEntry, routes: string[][]): string[] {
+function validateEntry(entry: AglamazoNavEntry, routes: string[][]): string[] {
   const errors: string[] = []
   const [pathname, query = ''] = entry.path.split('?')
   const entrySegments = pathname.split('/').filter(Boolean)
 
-  const hasBusinessIdSegment = entrySegments.includes('{businessId}')
-  if (entry.requiresBusinessId && !hasBusinessIdSegment) {
-    errors.push(`requiresBusinessId is true but path has no {businessId} segment: ${entry.path}`)
+  // {paramName} placeholders can live in the pathname (e.g. {businessId})
+  // or the query string (e.g. member={member}) — check the full path, not
+  // just the pathname segments.
+  const placeholders = new Set(Array.from(entry.path.matchAll(/\{(\w+)\}/g), (m) => m[1]))
+  const declaredParams = new Set(entry.requiresParams ?? [])
+  for (const name of placeholders) {
+    if (!declaredParams.has(name)) {
+      errors.push(`path has a {${name}} placeholder but requiresParams doesn't list "${name}": ${entry.path}`)
+    }
   }
-  if (!entry.requiresBusinessId && hasBusinessIdSegment) {
-    errors.push(`path has a {businessId} segment but requiresBusinessId is not set: ${entry.path}`)
+  for (const name of declaredParams) {
+    if (!placeholders.has(name)) {
+      errors.push(`requiresParams lists "${name}" but path has no {${name}} placeholder: ${entry.path}`)
+    }
   }
 
   const matched = routes.some((routeSegments) => routeMatches(routeSegments, entrySegments))
