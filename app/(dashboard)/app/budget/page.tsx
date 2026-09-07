@@ -327,18 +327,23 @@ function BudgetPageContent() {
       if (ownerUid !== cardOwnerFilter) return false
     }
 
-    // Apply type filter (income/expense/capital/external)
-    if (typeFilter === 'capital') return capitalNames.has(t.category || '')
-    if (typeFilter === 'external') return externalNames.has(t.category || '')
-    if (typeFilter === 'income') return t.amount > 0 && !nonDailyNames.has(t.category || '')
-    if (typeFilter === 'expense') return t.amount < 0 && !nonDailyNames.has(t.category || '')
+    // Apply type filter (income/expense/capital/external) as a gate, not an
+    // early return — previously each of these `return`ed directly, which
+    // meant activating a type filter silently disabled hideClassified (and
+    // selectedCategories) entirely instead of composing with it: toggling
+    // "רק לא מסווגים" while "הוצאות" was selected showed every expense row,
+    // classified ones included (aglamazo#338, Agla+Sheli live 2026-09-07).
+    if (typeFilter === 'capital' && !capitalNames.has(t.category || '')) return false
+    if (typeFilter === 'external' && !externalNames.has(t.category || '')) return false
+    if (typeFilter === 'income' && !(t.amount > 0 && !nonDailyNames.has(t.category || ''))) return false
+    if (typeFilter === 'expense' && !(t.amount < 0 && !nonDailyNames.has(t.category || ''))) return false
 
-    // First apply category filter if any are selected
+    // Category selection and hideClassified are mutually exclusive of each
+    // other (the toggle button disables itself once a category is selected —
+    // see the UI below), but both must still compose with typeFilter above.
     if (selectedCategories.size > 0) {
-      return t.category && selectedCategories.has(t.category)
+      return !!t.category && selectedCategories.has(t.category)
     }
-
-    // Otherwise apply hideClassified filter
     if (hideClassified) {
       return !t.category || t.category.trim() === ''
     }

@@ -65,6 +65,7 @@ export interface ImportedFile {
   transactionCount: number
   importedAt: string
   updatedAt?: string
+  chargingDate?: string // DD/MM/YYYY — credit-card statement's own billing/clearance date, used to judge cycle completeness (see importWizardAnalyzer.isFresh)
 }
 
 export interface Category {

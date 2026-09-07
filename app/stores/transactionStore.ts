@@ -123,6 +123,7 @@ export const transactionStore = {
             processingMonth: inferredMonth,
             accountNumber: t.accountNumber,
             cardNumber: t.cardNumber,
+            chargingDate: t.chargingDate,
             transactionCount: 1,
             importedAt: t.importedAt || new Date().toISOString(),
           })

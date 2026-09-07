@@ -29,6 +29,23 @@ function daysBetween(a: string, b: string): number {
   return Math.round((parseAnyDate(b).getTime() - parseAnyDate(a).getTime()) / 86400000)
 }
 
+function formatISO(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+// Append a final "last known activity -> today" entry when the most recent
+// data is stale — a source that's simply never been imported for the last
+// few months (Agla, 2026-09-07: "it should go till today") is just as much
+// a gap as a hole between two imports, even though nothing comes after it
+// to bound the hole on the far side.
+function appendTrailingGap(gaps: GapRange[], lastDate: string, today: Date): GapRange[] {
+  const todayStr = formatISO(today)
+  if (daysBetween(lastDate, todayStr) > GAP_DAY_THRESHOLD) {
+    return [...gaps, { startDate: lastDate, endDate: todayStr }]
+  }
+  return gaps
+}
+
 type FileSpan = { minDate: string; maxDate: string }
 
 // Some filenames encode the requested statement range, e.g.
@@ -104,12 +121,32 @@ function findTimelineGaps(spans: FileSpan[]): GapRange[] {
   return gaps
 }
 
-export function findBankGaps(transactions: Transaction[], accountNumber: string): GapRange[] {
+/**
+ * Bank gap detection. Deliberately does NOT try to catch a hole between (or
+ * inside) imported files anymore — verified against Agla's real 316-211362
+ * data (2026-09-07) that the balance-chain approach doesn't hold even on
+ * genuinely continuous data: several real same-day rows are loan
+ * disbursement/repayment pairs that net to zero, and the one row a given day
+ * happens to carry a balance on isn't reliably that day's true closing
+ * balance — so prev.balance + curr.netAmount ≈ curr.balance broke on data
+ * Agla confirmed has no real gap ("I imported continuous periods"). Rather
+ * than ship a mechanism proven to false-positive on correct data, this only
+ * reports the one thing verified safe: a trailing gap from the last known
+ * transaction to today (the same simple, date-only signal that IS confirmed
+ * correct for credit cards below).
+ */
+export function findBankGaps(transactions: Transaction[], accountNumber: string, today: Date = new Date()): GapRange[] {
   const rows = transactions.filter((t) => t.type === 'bank' && t.accountNumber === accountNumber)
-  return findTimelineGaps(computeFileSpans(rows))
+  if (rows.length === 0) return []
+  const lastDate = rows.reduce((latest, t) => (compareTxDates(t.date, latest) > 0 ? t.date : latest), rows[0].date)
+  return appendTrailingGap([], lastDate, today)
 }
 
-export function findCreditGaps(transactions: Transaction[], cardNumber: string): GapRange[] {
+export function findCreditGaps(transactions: Transaction[], cardNumber: string, today: Date = new Date()): GapRange[] {
   const rows = transactions.filter((t) => t.type === 'credit' && t.cardNumber === cardNumber)
-  return findTimelineGaps(computeFileSpans(rows))
+  const spans = computeFileSpans(rows)
+  const gaps = findTimelineGaps(spans)
+  if (spans.length === 0) return gaps
+  const lastDate = spans.reduce((latest, s) => (compareTxDates(s.maxDate, latest) > 0 ? s.maxDate : latest), spans[0].maxDate)
+  return appendTrailingGap(gaps, lastDate, today)
 }

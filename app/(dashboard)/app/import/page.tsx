@@ -126,6 +126,17 @@ function ImportPageContent() {
     }
   }, [selectedMonth])
 
+  // Self-heal: if selectedMonth no longer matches any actual file's month
+  // (e.g. a preview-time month guess disagreed with what really got saved,
+  // or the matching files were deleted), the table would otherwise silently
+  // show "no files" for a month the dropdown still displays as selected.
+  // Reset to "כל החודשים" instead of leaving the user staring at a stale filter.
+  useEffect(() => {
+    if (!selectedMonth || files.length === 0) return
+    const stillExists = files.some((f) => f.processingMonth === selectedMonth)
+    if (!stillExists) setSelectedMonth('')
+  }, [files, selectedMonth])
+
   // Refresh the imported-files view when a background import finishes
   // (importing went from a filename → null) — new data appears without a full
   // page reload, preserving the non-blocking flow.
@@ -278,11 +289,20 @@ const handleDeleteFile = (file: ImportedFile) => {
         // so existing categorized rows are preserved and only genuinely new
         // rows from the (more complete) file get inserted.
 
-        // Import new transactions
+        // Import new transactions. The preview's metadata.processingMonth is only
+        // a guess (deterministic-parser preview, no LLM) — credit-card imports run
+        // their own independent LLM extraction that can land on a different month
+        // (e.g. an ambiguous billing-cycle boundary), so use what actually got
+        // SAVED, not the pre-import guess, when pointing the filter at it below
+        // (was aglamazo#338-adjacent bug: filter selected a month nothing was
+        // ever saved under, silently showing an empty/stale list).
+        let savedProcessingMonth: string | undefined
         if (metadata.fileType === 'credit-card' && metadata.cardNumber) {
-          await fileImportService.importCreditCardFile(file, metadata.cardNumber, null, fileId)
+          const result = await fileImportService.importCreditCardFile(file, metadata.cardNumber, null, fileId)
+          savedProcessingMonth = result.processingMonth
         } else if (metadata.fileType === 'bank' && metadata.processingMonth) {
-          await fileImportService.importBankFile(file, metadata.processingMonth, fileId)
+          const result = await fileImportService.importBankFile(file, metadata.processingMonth, fileId)
+          savedProcessingMonth = result.processingMonth
         }
 
         // Reload from DB to include generated IDs
@@ -292,8 +312,8 @@ const handleDeleteFile = (file: ImportedFile) => {
         }
         setShowFileBrowser(false)
 
-        if (metadata.processingMonth) {
-          setSelectedMonth(metadata.processingMonth)
+        if (savedProcessingMonth) {
+          setSelectedMonth(savedProcessingMonth)
         }
 
         showToast('success', `הקובץ "${file.name}" יובא בהצלחה!`)

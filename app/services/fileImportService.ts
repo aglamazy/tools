@@ -50,7 +50,7 @@ export const fileImportService = {
         }))
 
         await transactionStore.saveCreditCardData(cardNum, payments, effectiveBillingDate, processingMonth, effectiveFileId)
-        return payments.length
+        return { count: payments.length, processingMonth }
       }
     }
 
@@ -87,7 +87,7 @@ export const fileImportService = {
 
     await transactionStore.saveCreditCardData(cardNumberToUse, statement.payments, chargingDateStr || '', processingMonth, effectiveFileId)
 
-    return statement.payments.length
+    return { count: statement.payments.length, processingMonth }
   },
 
   // Import bank file
@@ -122,7 +122,7 @@ export const fileImportService = {
         }))
 
         await transactionStore.saveBankTransactions(effectiveProcessingMonth, transactions, accountNumber, effectiveFileId)
-        return transactions.length
+        return { count: transactions.length, processingMonth: effectiveProcessingMonth }
       }
     }
 
@@ -146,6 +146,6 @@ export const fileImportService = {
 
     await transactionStore.saveBankTransactions(effectiveProcessingMonth, transactions, accountNumber, effectiveFileId)
 
-    return transactions.length
+    return { count: transactions.length, processingMonth: effectiveProcessingMonth }
   },
 }

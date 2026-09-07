@@ -174,7 +174,14 @@ export default function ImportWizard({ isOpen, onClose, dirHandle, onFileSelect 
                     </strong>
                     {gaps.map((g, i) => (
                       <div key={i} style={{ fontSize: '0.8rem', color: '#9a3412', marginTop: '0.2rem' }}>
-                        {g.startDate} – {g.endDate}
+                        {/* startDate is always chronologically before endDate (see
+                            findTimelineGaps in importGapAnalyzer.ts) — but two LTR
+                            date runs joined by a neutral dash, sitting directly in
+                            RTL flow, get visually reordered by the browser's bidi
+                            algorithm unless isolated as one LTR unit. */}
+                        <span dir="ltr" style={{ unicodeBidi: 'isolate' }}>
+                          {g.startDate} – {g.endDate}
+                        </span>
                       </div>
                     ))}
                   </div>

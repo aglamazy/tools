@@ -35,14 +35,36 @@ function getLastThreeMonths(now: Date): string[] {
   return months
 }
 
+// DD/MM/YYYY -> Date, or null if unparseable.
+function parseChargingDate(d: string): Date | null {
+  const m = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (!m) return null
+  return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]))
+}
+
 function isFresh(importedFile: ImportedFile, now: Date = new Date()): boolean {
   if (!importedFile.importedAt) return false
+  const importedAt = new Date(importedFile.importedAt)
+
+  // Credit cards clear on their own statement-specific billing date, not the
+  // calendar month end — a card whose cycle closes on the 10th is genuinely
+  // complete once imported after the 10th, even mid-month. Fall back to
+  // month-end when the charging date wasn't captured (older data, or a
+  // deterministic-parser path that didn't record it).
+  if (importedFile.fileType === 'credit-card' && importedFile.chargingDate) {
+    // Unlike a bank month, a statement's chargingDate is a fact the file
+    // itself declares — it's never "in the future" relative to when the
+    // file was generated, so (unlike the bank branch below) there's no
+    // "hasn't happened yet -> assume fresh" case to special-case here.
+    const chargingDate = parseChargingDate(importedFile.chargingDate)
+    if (chargingDate) return importedAt > chargingDate
+  }
+
   const monthEnd = getMonthEnd(importedFile.processingMonth)
   if (!monthEnd) return false
   // Current/future month — always fresh (month hasn't ended yet)
   if (monthEnd >= now) return true
   // Past month — fresh only if imported after the month ended
-  const importedAt = new Date(importedFile.importedAt)
   return importedAt > monthEnd
 }
 
@@ -144,10 +166,13 @@ function buildEntry(
       return { month, fileType, accountNumber, cardNumber, status: 'fresh', importedFile: imported, folderFile: folder }
     }
     // Stale
+    const reason = fileType === 'credit-card' && imported.chargingDate
+      ? 'יובא לפני תאריך הסליקה, ייתכן שהחודש חלקי'
+      : 'יובא לפני סוף החודש'
     if (folder) {
-      return { month, fileType, accountNumber, cardNumber, status: 'stale', importedFile: imported, folderFile: folder, staleReason: 'יובא לפני סוף החודש, קובץ חדש קיים' }
+      return { month, fileType, accountNumber, cardNumber, status: 'stale', importedFile: imported, folderFile: folder, staleReason: `${reason}, קובץ חדש קיים` }
     }
-    return { month, fileType, accountNumber, cardNumber, status: 'stale', importedFile: imported, staleReason: 'יובא לפני סוף החודש' }
+    return { month, fileType, accountNumber, cardNumber, status: 'stale', importedFile: imported, staleReason: reason }
   }
   if (folder) {
     return { month, fileType, accountNumber, cardNumber, status: 'ready', folderFile: folder }

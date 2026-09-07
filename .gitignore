@@ -50,3 +50,4 @@ task-logs/
 # Build-generated at prebuild time (fleet-versioning-standard, dasi#3 / saliko#28)
 # — never hand-edit or commit; app/lib/app-version.example.ts is the checked-in fallback shape.
 /app/lib/app-version.ts
+.env*
