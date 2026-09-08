@@ -415,6 +415,12 @@ async function handleExtractPdf(pdfBase64: string, transaction: TransactionInfo,
     geminiModel: 'gemini-2.5-pro',
     geminiMaxTokens: 1024,
     geminiTemperature: 0,
+    // A syntactically-valid but empty `{}` used to count as success — no
+    // schema enforcement here, so a provider that "complies" with no real
+    // fields silently produced a document with every field undefined, with
+    // nothing to fall back to Anthropic for (aglamazo#343 follow-up, Sheli
+    // 2026-09-08: a real invoice, real text layer, Gemini returned {}).
+    validate: (data) => (!data?.vendor && !data?.amount) ? 'Extraction returned no usable fields' : null,
   })
 
   if (!result.ok) {
@@ -456,6 +462,7 @@ async function handleExtractImage(imageBase64: string, mediaType: string, transa
     geminiModel: 'gemini-2.5-flash',
     geminiMaxTokens: 1024,
     geminiTemperature: 0,
+    validate: (data) => (!data?.vendor && !data?.amount) ? 'Extraction returned no usable fields' : null,
   })
 
   if (!result.ok) {

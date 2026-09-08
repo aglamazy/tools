@@ -45,6 +45,15 @@ async function handler(req: NextRequest) {
       geminiMaxTokens: 1024,
       anthropicModel: 'claude-sonnet-5',
       anthropicMaxTokens: 1024,
+      // A syntactically-valid but empty `{}` used to count as success — the
+      // ladder has no schema enforcement here, so a provider that "complies"
+      // with no real fields silently produced a document with every field
+      // undefined, with nothing to fall back to Anthropic for (aglamazo#343
+      // follow-up, Sheli 2026-09-08: doc 49, real invoice, real text layer,
+      // Gemini returned {}). Require at least one real field before treating
+      // an attempt as a success — an empty result now falls back the same
+      // way a thrown error would.
+      validate: (data) => (!data?.vendor && !data?.amount) ? 'Extraction returned no usable fields' : null,
     })
 
     if (!result.ok) {
