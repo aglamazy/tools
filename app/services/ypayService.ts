@@ -439,6 +439,7 @@ export const ypayService = {
     date: string
     contact?: YpayContact
     vatType?: 'exempt' | 'authorized'
+    partnerSplitOverride?: { uid: string; sharePercent: number }[]
   }): Promise<{ url: string; serialNumber: string }> => {
     const credentials = getCredentials(business)
     const docType = getBillingDocType(business, params.vatType)
@@ -475,6 +476,7 @@ export const ypayService = {
       docType,
       amount,
       projectName: params.projectName,
+      ...(params.partnerSplitOverride ? { partnerSplitOverride: params.partnerSplitOverride } : {}),
       createdAt: new Date().toISOString(),
     })
 

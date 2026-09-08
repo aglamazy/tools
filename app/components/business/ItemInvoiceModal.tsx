@@ -3,7 +3,10 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { ypayService } from '@/app/services/ypayService'
 import { projectStore } from '@/app/stores/projectStore'
+import { partnerStore, type Participant } from '@/app/stores/partnerStore'
+import { resolvePartnerUids, resolveDefaultPartnerShares } from '@/app/utils/partnerSplit'
 import type { Business, Project } from '@/app/db/financeDB'
+import type { BusinessAccessGrant } from '@/app/services/businessShareService'
 import { VAT_RATE_AUTHORIZED_DEALER, billingDocLabel } from '@/app/lib/vat'
 import ProjectEditModal from './ProjectEditModal'
 
@@ -66,6 +69,74 @@ export default function ItemInvoiceModal({
   const [creating, setCreating] = useState(false)
   const [draftProject, setDraftProject] = useState<Project | null>(null)
 
+  // Per-invoice partner-split override (aglamazo#338, spec 3.1) — one row per
+  // business partner, percentages always summing to 100 by construction (see
+  // handleSplitChange), edited at invoice creation because the split is a
+  // commitment made when the invoice is raised, often weeks before any
+  // receipt exists to close it. A single owner-percent field was tried first
+  // and reworked after Agla caught it didn't match the spec (per-partner,
+  // not just the owner) — 2026-09-08.
+  const [participants, setParticipants] = useState<Participant[]>(() => partnerStore.getCached(business.syncId))
+  const [shares, setShares] = useState<BusinessAccessGrant[]>(() => partnerStore.getCachedShares(business.syncId))
+  useEffect(() => {
+    partnerStore.recordBusiness(business.id, business.syncId)
+    setParticipants(partnerStore.getCached(business.syncId))
+    setShares(partnerStore.getCachedShares(business.syncId))
+    const unsub = partnerStore.subscribe(() => {
+      setParticipants(partnerStore.getCached(business.syncId))
+      setShares(partnerStore.getCachedShares(business.syncId))
+    })
+    void partnerStore.refresh(business.syncId)
+    return unsub
+  }, [business.id, business.syncId])
+
+  const partnerRows = useMemo(() => {
+    if (!business.userId) return []
+    const partnerUids = resolvePartnerUids(business.userId, shares, participants)
+    return resolveDefaultPartnerShares(business.userId, business.ownerSharePercent, participants, partnerUids)
+  }, [business.userId, business.ownerSharePercent, shares, participants])
+
+  // uid -> current percent, seeded from the business default whenever the
+  // partner set changes (e.g. modal just opened) — untouched fields stay at
+  // the default, so "nothing edited" naturally means "no override" at submit.
+  const [splitPercents, setSplitPercents] = useState<Record<string, number>>({})
+  useEffect(() => {
+    setSplitPercents(Object.fromEntries(partnerRows.map(r => [r.uid, r.sharePercent])))
+  }, [partnerRows])
+
+  // Redistribute proportionally to each partner's BUSINESS DEFAULT weight,
+  // never the current field value — anchoring on the live value made repeat
+  // edits destructive (e.g. 100 zeroes two partners' weights, so the next
+  // edit's "proportional" split silently falls back to an even split among
+  // them) and not idempotent (100 then 70 differed from typing 70 directly).
+  // Sheli caught this live 2026-09-08.
+  const handleSplitChange = (uid: string, rawValue: string) => {
+    const newValue = Math.max(0, Math.min(100, Number(rawValue) || 0))
+    setSplitPercents(prev => {
+      const others = partnerRows.filter(r => r.uid !== uid)
+      if (others.length === 0) return { ...prev, [uid]: newValue }
+      const remaining = Math.round((100 - newValue) * 100) / 100
+      const othersDefaultSum = others.reduce((s, r) => s + r.sharePercent, 0)
+      const next: Record<string, number> = { ...prev, [uid]: newValue }
+      let allocated = 0
+      others.forEach((r, i) => {
+        const isLast = i === others.length - 1
+        const raw = othersDefaultSum > 0
+          ? (r.sharePercent / othersDefaultSum) * remaining
+          : remaining / others.length
+        const share = isLast ? Math.round((remaining - allocated) * 100) / 100 : Math.round(raw * 100) / 100
+        next[r.uid] = share
+        allocated += share
+      })
+      return next
+    })
+  }
+
+  // Only an actual edit away from the business default should be submitted
+  // as an override — an untouched form means "use the default", not a
+  // redundant explicit copy of it.
+  const isSplitOverridden = partnerRows.some(r => Math.abs((splitPercents[r.uid] ?? r.sharePercent) - r.sharePercent) > 0.01)
+
   useEffect(() => {
     if (projectId == null && projects.length > 0) {
       setProjectId(projects[0].id ?? null)
@@ -108,6 +179,11 @@ export default function ItemInvoiceModal({
       if (l.price < 0) return `שורה ${i + 1}: מחיר לא יכול להיות שלילי`
     }
     if (subtotal <= 0) return 'סכום חשבונית חייב להיות גדול מ-0'
+    // Every partner has its own field now (spec 3.1) and handleSplitChange
+    // keeps the total at exactly 100 on every edit — there's no remainder to
+    // validate and no "what if everyone else is 0%" case, both of which only
+    // existed because the first version had a single owner-only field
+    // (reworked 2026-09-08, Agla caught the spec mismatch).
     return null
   }, [project, date, lines, subtotal])
 
@@ -121,6 +197,9 @@ export default function ItemInvoiceModal({
     if (!project || validationError) return
     setCreating(true)
     try {
+      const partnerSplitOverride = isSplitOverridden
+        ? partnerRows.map(r => ({ uid: r.uid, sharePercent: splitPercents[r.uid] ?? r.sharePercent }))
+        : undefined
       const result = await ypayService.createItemBasedInvoice(business, {
         projectName: project.name,
         items: lines.map(l => ({
@@ -136,6 +215,7 @@ export default function ItemInvoiceModal({
           businessID: project.contactBusinessID,
           phone: project.contactPhone,
         },
+        partnerSplitOverride,
       })
       window.open(result.url, '_blank')
       onCreated()
@@ -211,6 +291,31 @@ export default function ItemInvoiceModal({
             <span>{project.contactEmail || 'ללא אימייל'}</span>
             {project.contactBusinessID && <span> · ח.פ {project.contactBusinessID}</span>}
             {project.contactPhone && <span> · {project.contactPhone}</span>}
+          </div>
+        )}
+
+        {partnerRows.length > 1 && (
+          <div style={{ marginBottom: '1rem', padding: '0.6rem 0.75rem', background: '#f8fafc', borderRadius: '0.375rem' }}>
+            <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.4rem' }}>
+              חלוקה בין שותפים{isSplitOverridden ? ' (שונה מברירת המחדל)' : ''}:
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+              {partnerRows.map(r => (
+                <div key={r.uid} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ fontSize: '0.85rem', flex: 1 }}>{r.label}</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step="1"
+                    value={splitPercents[r.uid] ?? r.sharePercent}
+                    onChange={e => handleSplitChange(r.uid, e.target.value)}
+                    style={{ width: '70px', padding: '0.3rem 0.5rem', borderRadius: '0.375rem', border: '1px solid #cbd5e1', direction: 'ltr' }}
+                  />
+                  <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>%</span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -323,6 +428,16 @@ export default function ItemInvoiceModal({
 
         {validationError && (
           <div style={{ color: '#b91c1c', fontSize: '0.85rem', marginBottom: '0.75rem' }}>{validationError}</div>
+        )}
+
+        {isSplitOverridden && (
+          // Always-visible next to the action, not a confirm dialog (banned in this
+          // app) — a value that silently reverted (e.g. an editor left mid-session
+          // during a dev recompile) still shows here, right where the eye is at
+          // the moment of clicking צור. Sheli, 2026-09-08.
+          <div style={{ fontSize: '0.8rem', color: '#1e40af', marginBottom: '0.5rem' }}>
+            יווצר לפי חלוקה: {partnerRows.map(r => `${r.label} ${splitPercents[r.uid] ?? r.sharePercent}%`).join(' · ')}
+          </div>
         )}
 
         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-start' }}>

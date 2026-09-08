@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback } from 'react'
 import { db, type Business, type Project, type YpayDocument } from '@/app/db/financeDB'
 import { businessStore } from '@/app/stores/businessStore'
 import { projectStore } from '@/app/stores/projectStore'
+import { partnerStore } from '@/app/stores/partnerStore'
 import { YpayDocType, computeInvoicePaidAmount, invoiceGrossAmount } from '@/app/services/ypayService'
 import { getTaxProfile } from '@/app/components/TaxProfileSection'
 import Modal from '@/app/components/Modal'
@@ -92,6 +93,10 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
   // includes an inactive project.
   const projectOptions = [...new Set(docs.map(d => d.projectName).filter((n): n is string => !!n))].sort((a, b) => a.localeCompare(b, 'he'))
   const visibleDocs = projectFilter === 'all' ? docs : docs.filter(d => d.projectName === projectFilter)
+  // For the split-override tooltip (aglamazo#339) — uid -> display label.
+  const partnerLabelByUid = new Map(
+    (business ? partnerStore.getCached(business.syncId) : []).map(p => [p.uid, p.label]),
+  )
 
   return (
     <div>
@@ -166,9 +171,30 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
               {visibleDocs.map(doc => {
                 const isItemBased = doc.transactionId.startsWith('invoice-items:')
                 const isPartiallyPaid = !doc.paidAt && doc.paidSoFar > 0.01
+                // Settlement transparency (aglamazo#339) — flag any invoice
+                // that carries its own per-partner split, so a non-standard
+                // deal is visible at a glance rather than only discoverable
+                // by opening the invoice or diffing settlement numbers.
+                // ItemInvoiceModal only sets this when it differs from the
+                // business default, so presence alone is the signal.
+                const splitRows = doc.partnerSplitOverride
                 return (
                   <tr key={doc.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                    <td style={{ padding: '0.75rem', fontWeight: 600 }}>#{doc.serialNumber}</td>
+                    <td style={{ padding: '0.75rem', fontWeight: 600 }}>
+                      #{doc.serialNumber}
+                      {splitRows && splitRows.length > 0 && (
+                        <span
+                          title={`חלוקה מותאמת אישית:\n${splitRows.map(r => `${partnerLabelByUid.get(r.uid) ?? r.uid}: ${r.sharePercent}%`).join('\n')}`}
+                          style={{
+                            display: 'inline-block', marginRight: '0.4rem', padding: '0.1rem 0.4rem',
+                            fontSize: '0.7rem', fontWeight: 600, borderRadius: '0.25rem', cursor: 'help',
+                            background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe',
+                          }}
+                        >
+                          חלוקה מותאמת
+                        </span>
+                      )}
+                    </td>
                     <td style={{ padding: '0.75rem' }}>{doc.projectName || '—'}</td>
                     <td style={{ padding: '0.75rem' }}>{inferDocDate(doc)}</td>
                     <td style={{ padding: '0.75rem', color: '#64748b', fontSize: '0.85rem' }}>

@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useEffect, useMemo, useState } from 'react'
-import { db, type Transaction, type Business, type ExpenseDocument } from '@/app/db/financeDB'
+import { db, type Transaction, type Business, type ExpenseDocument, type YpayDocument } from '@/app/db/financeDB'
 import { businessStore } from '@/app/stores/businessStore'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { partnerStore, type Partner as Participant } from '@/app/stores/partnerStore'
@@ -10,6 +10,7 @@ import { appSettingsStore, type AccountOwners } from '@/app/stores/appSettingsSt
 import { resolveBusinessVatProfile, vatTypeForDate, type TaxProfile } from '@/app/components/TaxProfileSection'
 import { VAT_RATE_AUTHORIZED_DEALER, type VatType } from '@/app/lib/vat'
 import { getTransactionAttributedUid } from '@/app/utils/transactionAttribution'
+import { resolvePartnerUids, resolveDefaultPartnerShares } from '@/app/utils/partnerSplit'
 import { parseDateMs } from '@/app/utils/parsers/shared'
 import type { Category } from '@/app/types/category'
 import DocumentViewModal from '@/app/components/DocumentViewModal'
@@ -46,6 +47,10 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
   // imported via the Expenses-tab modal. Counted as expenses in the splid
   // math here so settlement reflects Nadar's out-of-band invoice payments.
   const [partnerPaidDocs, setPartnerPaidDocs] = useState<ExpenseDocument[]>([])
+  // All ypayDocuments (not scoped to this business) — needed so an income
+  // transaction can be checked against its linked invoice's per-invoice
+  // split override (aglamazo#338). Small table fleet-wide, cheap to load whole.
+  const [ypayDocuments, setYpayDocuments] = useState<YpayDocument[]>([])
   // Synchronously pre-populate from localStorage (#L) so the "2+ partners"
   // empty state doesn't flash while the Business loads from Dexie. First
   // visit to this business returns [] and is filled by the subscribe/refresh
@@ -113,6 +118,10 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
         .toArray()
       if (cancelled) return
       setPartnerPaidDocs(docs)
+
+      const ypayDocs = await db.ypayDocuments.toArray()
+      if (cancelled) return
+      setYpayDocuments(ypayDocs)
       setLoading(false)
     }
     void load()
@@ -173,20 +182,9 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
     const ownerUid: string = business.userId
     // Partners of THIS business = owner + active sharees only. Household-only
     // members (e.g., a spouse who isn't a sharee here) aren't partners — their
-    // attributed txs collapse to the owner side.
-    const shareeUids = shares
-      .map(s => s.uid)
-      .filter((u): u is string => typeof u === 'string')
-    // Also count participants who carry a sharePercent — that's how sibling
-    // partners (e.g. Nadar from y25131's perspective) reach the partner set
-    // even though their grant isn't in the sharee's grantsToMe view. The
-    // partnerStore enriches partners with email-resolved uids; without this
-    // line they'd be visible in `participants` but excluded from the
-    // settlement table.
-    const partnerSharedUids = participants
-      .filter(p => p.uid && p.sharePercent !== undefined)
-      .map(p => p.uid)
-    const partnerUids = new Set<string>([ownerUid, ...shareeUids, ...partnerSharedUids])
+    // attributed txs collapse to the owner side. Shared with ItemInvoiceModal
+    // (aglamazo#338's per-invoice split editor) so both agree on who counts.
+    const partnerUids = resolvePartnerUids(ownerUid, shares, participants)
     const toPartnerUid = (uid: string | undefined): string => {
       if (uid && partnerUids.has(uid)) return uid
       return ownerUid
@@ -201,12 +199,47 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
     const partnerParticipants = participants.filter(p => partnerUids.has(p.uid))
     if (partnerParticipants.length === 0) return []
 
-    // Effective share %: owner uses business.ownerSharePercent (or remainder),
-    // sharees use their sharePercent.
-    const shareeShareSum = partnerParticipants
-      .filter(p => p.uid !== ownerUid)
-      .reduce((s, p) => s + (p.sharePercent ?? 0), 0)
-    const ownerShare = business.ownerSharePercent ?? Math.max(0, 100 - shareeShareSum)
+    const defaultShareRows = resolveDefaultPartnerShares(ownerUid, business.ownerSharePercent, participants, partnerUids)
+    const defaultShareByUid = new Map<string, number>(defaultShareRows.map(r => [r.uid, r.sharePercent]))
+
+    // A per-invoice split override (aglamazo#338) lives on the INVOICE, not
+    // the receipt that eventually closes it — one invoice can be settled by
+    // several receipts over time, so the receipt is the wrong place to ask
+    // "what split applies here" (spec 3.1). So for an income transaction:
+    // find the receipt created for it (matched by transactionId), then the
+    // invoice(s) that receipt's closesAllocations point at, then THAT
+    // invoice's own override — weighted by each allocation's share of the
+    // receipt if it closes more than one at once.
+    const receiptByTxSyncId = new Map<string, YpayDocument>()
+    for (const d of ypayDocuments) {
+      if (d.transactionId) receiptByTxSyncId.set(d.transactionId, d)
+    }
+    // Per-invoice override rows already sum to 100 across every partner by
+    // construction (ItemInvoiceModal.tsx's editor enforces it) — no owner/
+    // remainder computation needed here, just read the array as a map.
+    const invoiceOverrideBySyncId = new Map<string, Map<string, number>>()
+    for (const d of ypayDocuments) {
+      if (d.syncId && d.partnerSplitOverride) {
+        invoiceOverrideBySyncId.set(d.syncId, new Map(d.partnerSplitOverride.map(r => [r.uid, r.sharePercent])))
+      }
+    }
+    const splitFractionsForTx = (
+      txSyncId: string | undefined,
+    ): { shareMap: Map<string, number>; fraction: number }[] => {
+      const receipt = txSyncId ? receiptByTxSyncId.get(txSyncId) : undefined
+      const allocations = receipt?.closesAllocations
+      const totalAlloc = allocations?.reduce((s, a) => s + a.amount, 0) ?? 0
+      if (!allocations || allocations.length === 0 || totalAlloc <= 0) {
+        return [{ shareMap: defaultShareByUid, fraction: 1 }]
+      }
+      return allocations.map(a => {
+        const override = invoiceOverrideBySyncId.get(a.docId)
+        return {
+          shareMap: override ?? defaultShareByUid,
+          fraction: a.amount / totalAlloc,
+        }
+      })
+    }
 
     // VAT-clean: owner's status can change mid-year (vatConversion on file) —
     // a transaction predating the conversion must use the OLD status, not
@@ -219,59 +252,94 @@ export default function SettlementSummary({ businessId }: SettlementSummaryProps
     const currentVatTypeOf = (uid: string): VatType | undefined =>
       uid === ownerUid ? ownerTaxProfile.vatType : 'exempt'
 
+    // Per-partner accumulators, built in ONE pass over transactions instead
+    // of once per partner — needed because fair share is no longer a single
+    // multiplication over the total pool (totalNet * sharePercent): a
+    // per-invoice override means different income items can split at
+    // different ratios, so each item now contributes to every partner's
+    // fairShare individually, at whatever ratio applies to that item.
+    // Mathematically this reduces to the old totalNet*sharePercent formula
+    // exactly when no overrides exist — settlement-category transfers are
+    // symmetric (one partner's settlementPaid = another's settlementReceived
+    // for the same amount) so they cancel to zero across partners either way.
+    const paidByUid = new Map<string, number>()
+    const receivedByUid = new Map<string, number>()
+    const settlementPaidByUid = new Map<string, number>()
+    const settlementReceivedByUid = new Map<string, number>()
+    const netActualByUid = new Map<string, number>()
+    const fairShareByUid = new Map<string, number>()
+    for (const p of partnerParticipants) {
+      paidByUid.set(p.uid, 0)
+      receivedByUid.set(p.uid, 0)
+      settlementPaidByUid.set(p.uid, 0)
+      settlementReceivedByUid.set(p.uid, 0)
+      netActualByUid.set(p.uid, 0)
+      fairShareByUid.set(p.uid, 0)
+    }
+    const addFairShare = (shareMap: Map<string, number>, signedNet: number) => {
+      for (const [uid, pct] of shareMap) {
+        fairShareByUid.set(uid, (fairShareByUid.get(uid) ?? 0) + signedNet * (pct / 100))
+      }
+    }
+
+    for (const t of transactions) {
+      const attributedUid = getTransactionAttributedUid(t, accountOwners, ownerUid)
+      const partnerUid = toPartnerUid(attributedUid)
+      const gross = Math.abs(t.amount)
+      const isIncome = incomeCatNames.has(t.category ?? '')
+      const settlementCat = !isIncome ? settlementCategoryByName.get(t.category ?? '') : undefined
+      // Settlement transfers aren't a taxable event — use the raw amount,
+      // not VAT-cleaned, so both sides of the transfer show the same number
+      // regardless of either partner's own VAT status.
+      const txVatType = vatTypeAt(partnerUid, t.date)
+
+      if (isIncome) {
+        const net = netOfVat(gross, txVatType)
+        receivedByUid.set(partnerUid, (receivedByUid.get(partnerUid) ?? 0) + net)
+        netActualByUid.set(partnerUid, (netActualByUid.get(partnerUid) ?? 0) + net)
+        for (const { shareMap, fraction } of splitFractionsForTx(t.syncId)) {
+          addFairShare(shareMap, net * fraction)
+        }
+      } else if (settlementCat) {
+        settlementPaidByUid.set(partnerUid, (settlementPaidByUid.get(partnerUid) ?? 0) + gross)
+        netActualByUid.set(partnerUid, (netActualByUid.get(partnerUid) ?? 0) - gross)
+        if (settlementCat.settlementPartnerUid) {
+          const recvUid = toPartnerUid(settlementCat.settlementPartnerUid)
+          settlementReceivedByUid.set(recvUid, (settlementReceivedByUid.get(recvUid) ?? 0) + gross)
+          netActualByUid.set(recvUid, (netActualByUid.get(recvUid) ?? 0) + gross)
+        }
+        // Settlement transfers don't touch fairShare — they cancel across
+        // partners either way (see comment above the accumulators).
+      } else {
+        const net = netOfVat(gross, txVatType)
+        paidByUid.set(partnerUid, (paidByUid.get(partnerUid) ?? 0) + net)
+        netActualByUid.set(partnerUid, (netActualByUid.get(partnerUid) ?? 0) - net)
+        // No per-invoice override on the expense side today — always default split.
+        addFairShare(defaultShareByUid, -net)
+      }
+    }
+
+    // Partner-paid invoices (no bank tx) always count as expense, attributed
+    // by paidByUid directly. VAT-cleaned with the date-aware vatType.
+    for (const d of partnerPaidDocs) {
+      const partnerUid = toPartnerUid(d.paidByUid)
+      const net = netOfVat(Math.abs(d.amount ?? 0), vatTypeAt(partnerUid, d.date || ''))
+      paidByUid.set(partnerUid, (paidByUid.get(partnerUid) ?? 0) + net)
+      netActualByUid.set(partnerUid, (netActualByUid.get(partnerUid) ?? 0) - net)
+      addFairShare(defaultShareByUid, -net)
+    }
+
     return partnerParticipants.map(p => {
-      const isOwner = p.uid === ownerUid
-      const sharePercent = isOwner ? ownerShare : (p.sharePercent ?? 0)
-      const vatType = currentVatTypeOf(p.uid)
-
-      // Attribution: paidByUid → card/bank owner → owner-fallback. Then collapse
-      // any non-partner uid (e.g., household-only member) to the owner.
-      // Settlement/transfer categories are tracked separately from regular
-      // business paid/received (own columns in the table) — the payer's
-      // settlementPaid and the recipient's settlementReceived are symmetric
-      // (same amount on both sides), so they don't skew the fair-share pool.
-      let paid = 0
-      let received = 0
-      let settlementPaid = 0
-      let settlementReceived = 0
-      for (const t of transactions) {
-        const attributedUid = getTransactionAttributedUid(t, accountOwners, ownerUid)
-        const partnerUid = toPartnerUid(attributedUid)
-        const gross = Math.abs(t.amount)
-        const isIncome = incomeCatNames.has(t.category ?? '')
-        const settlementCat = !isIncome ? settlementCategoryByName.get(t.category ?? '') : undefined
-        const txVatType = vatTypeAt(p.uid, t.date)
-        // Settlement transfers aren't a taxable event — use the raw amount,
-        // not VAT-cleaned, so both sides of the transfer show the same
-        // number regardless of either partner's own VAT status.
-        if (partnerUid === p.uid) {
-          if (isIncome) received += netOfVat(gross, txVatType)
-          else if (settlementCat) settlementPaid += gross
-          else paid += netOfVat(gross, txVatType)
-        }
-        if (settlementCat?.settlementPartnerUid && toPartnerUid(settlementCat.settlementPartnerUid) === p.uid) {
-          settlementReceived += gross
-        }
+      const netActual = netActualByUid.get(p.uid) ?? 0
+      const fairShare = fairShareByUid.get(p.uid) ?? 0
+      return {
+        uid: p.uid, label: p.label, sharePercent: defaultShareByUid.get(p.uid) ?? 0,
+        paid: paidByUid.get(p.uid) ?? 0, received: receivedByUid.get(p.uid) ?? 0,
+        settlementPaid: settlementPaidByUid.get(p.uid) ?? 0, settlementReceived: settlementReceivedByUid.get(p.uid) ?? 0,
+        netActual, fairShare, balance: netActual - fairShare, vatType: currentVatTypeOf(p.uid),
       }
-
-      // Partner-paid invoices (no bank tx) always count as expense, attributed
-      // by paidByUid directly. VAT-cleaned with the date-aware vatType.
-      for (const d of partnerPaidDocs) {
-        const partnerUid = toPartnerUid(d.paidByUid)
-        if (partnerUid !== p.uid) continue
-        const gross = Math.abs(d.amount ?? 0)
-        paid += netOfVat(gross, vatTypeAt(p.uid, d.date || ''))
-      }
-
-      return { uid: p.uid, label: p.label, sharePercent, paid, received, settlementPaid, settlementReceived,
-               netActual: (received + settlementReceived) - (paid + settlementPaid), fairShare: 0, balance: 0, vatType }
-    }).map((r, _, arr) => {
-      // Fair share is computed against the sum of partners' VAT-cleaned net flows.
-      const totalNet = arr.reduce((s, x) => s + x.netActual, 0)
-      const fairShare = totalNet * (r.sharePercent / 100)
-      return { ...r, fairShare, balance: r.netActual - fairShare }
     })
-  }, [business, participants, partnerResolution, transactions, partnerPaidDocs, ownerTaxProfile, incomeCatNames, accountOwners, settlementCategoryByName])
+  }, [business, participants, partnerResolution, transactions, partnerPaidDocs, ypayDocuments, ownerTaxProfile, incomeCatNames, accountOwners, settlementCategoryByName])
 
   const settlementLine = useMemo(() => {
     if (rows.length < 2) return null

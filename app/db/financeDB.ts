@@ -235,6 +235,7 @@ export interface YpayDocument {
   paidAt?: string // ISO timestamp when payment was received
   vatPaymentId?: string // FK → VatPayment.syncId once reported to the tax authority
   closesAllocations?: { docId: string; amount: number }[] // For a receipt: how much of it (gross ₪) goes toward each open invoice (B2B split flow). A receipt can fully cover several invoices and partially cover one more — an invoice is only "closed" (paidAt stamped) once its allocations across ALL receipts sum to its full gross amount; see computeInvoicePaidAmount in ypayService.ts. docId is the closed invoice's own syncId (self-referential FK into this same table).
+  partnerSplitOverride?: { uid: string; sharePercent: number }[] // Per-invoice partner-split override (aglamazo#338, spec 3.1) — one row per business partner (owner + sharees), percentages summing to 100. Set at invoice creation when a specific deal isn't split at the business's default ratio; undefined = use the business default (see resolveDefaultPartnerShares in utils/partnerSplit.ts). SettlementSummary.tsx traces an income transaction -> its receipt -> the invoice(s) that receipt's closesAllocations point at -> this field, to split that transaction's fair-share contribution accordingly instead of the default. Superseded a single ownerSharePercentOverride number design (2026-09-08) once the real spec (percent per partner, not just the owner) came to light.
   createdAt: string // ISO timestamp
   updatedAt?: string
 }
