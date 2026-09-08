@@ -70,7 +70,14 @@ export async function fetchCalendarEvents(date: string): Promise<{ events: Calen
     }
     const retry = await fetchEventsWithToken(date, token)
     if (retry.retryAuth) {
-      await clearGoogleAccess()
+      // Fail soft — do NOT clearGoogleAccess() here. A bare 401 from this one
+      // API call isn't a Google-confirmed "this grant is dead" signal (unlike
+      // gmailService.ts's SCOPE_INSUFFICIENT check or googleTokenService.ts's
+      // own invalid_grant check on the refresh response) — it's exactly the
+      // kind of failure the invalid_grant guard exists to NOT overreact to.
+      // getAccessToken() above already owns the one legitimate dead-grant
+      // check; clearing again here on a plain 401 wiped Drive+Gmail access
+      // too, since all three share one grant (aglamazo#343, 2026-09-08).
       return { events: [], error: 'Authorization expired. Please reconnect to calendar.' }
     }
     return { events: retry.events, error: retry.error }

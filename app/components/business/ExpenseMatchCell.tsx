@@ -1,10 +1,10 @@
 'use client'
 
-import React, { useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import type { ExpenseDocument } from '@/app/db/financeDB'
 import { matchReceiptForTransaction, parseDateFolder, type CheckedCandidate, type SearchInfo } from '@/app/services/receiptMatchService'
-import { hasGmailAccess, requestGmailAccess } from '@/app/services/gmailService'
 import { uploadExpenseDocument } from '@/app/services/googleDriveService'
+import { getAccessToken, requestGoogleAccess } from '@/app/services/googleTokenService'
 import SearchResultsModal from './SearchResultsModal'
 
 type MatchStatus = 'idle' | 'searching' | 'uploading' | 'matched' | 'no-match' | 'error'
@@ -33,6 +33,31 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
   const [searchInfo, setSearchInfo] = useState<SearchInfo | null>(null)
   const [showResults, setShowResults] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Google Drive/Gmail share one OAuth grant (googleTokenService.ts), stored
+  // device-local and never synced — so "connected" is per-browser-profile,
+  // not per-account. null = still checking (avoids a flash of "not
+  // connected" before the async check resolves). Both action buttons need
+  // this grant, so check it up front rather than let each button discover
+  // the gap on click — a device that never granted it showed "שגיאה" on
+  // every attempt with no visible reason (aglamazo#343, 2026-09-08).
+  const [googleConnected, setGoogleConnected] = useState<boolean | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    getAccessToken().then(token => { if (!cancelled) setGoogleConnected(!!token) })
+    return () => { cancelled = true }
+  }, [])
+
+  const handleConnectGoogle = async () => {
+    setErrorMsg('')
+    const r = await requestGoogleAccess()
+    if (r.success) {
+      setGoogleConnected(true)
+    } else {
+      setErrorMsg(r.error || 'החיבור ל-Google נכשל')
+      setStatus('error')
+    }
+  }
 
   // A doc counts as truly linked if either:
   //  - we have an independent stored copy on Drive (driveWebViewLink), or
@@ -68,15 +93,6 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
     setStatus('searching')
     setErrorMsg('')
     setCheckedCandidates([])
-    if (!hasGmailAccess()) {
-      const r = await requestGmailAccess()
-      if (!r.success) {
-        console.error('[ExpenseMatch] Gmail access denied:', r.error)
-        setErrorMsg(r.error || 'Gmail access denied')
-        setStatus('error')
-        return
-      }
-    }
     if (!claudeApiKey) {
       console.error('[ExpenseMatch] No Claude API key set — cannot verify/extract receipts')
       setErrorMsg('חסר מפתח Anthropic בהגדרות — נדרש לאימות וחילוץ הקבלה')
@@ -103,11 +119,6 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
   const handleUpload = async (file: File) => {
     setStatus('uploading')
     setErrorMsg('')
-    if (!claudeApiKey) {
-      setErrorMsg('חסר מפתח Anthropic בהגדרות — נדרש לחילוץ נתוני הקבלה')
-      setStatus('error')
-      return
-    }
     const isPdf = file.type === 'application/pdf'
     const isImage = file.type.startsWith('image/')
     if (!isPdf && !isImage) {
@@ -181,6 +192,38 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
     return <span style={{ color: '#64748b', fontSize: '0.8rem' }}>מעלה…</span>
   }
 
+  // Neither action works without this grant — show that state up front
+  // rather than let the user hit it on click. googleConnected === null
+  // (still checking) renders the same connect state, not the normal
+  // buttons, so nothing clickable-but-broken flashes before we know.
+  if (googleConnected !== true) {
+    return (
+      <div style={{ display: 'inline-flex', gap: '0.4rem', alignItems: 'center' }}>
+        <span title="נדרש חיבור ל-Google כדי לחפש ב-Gmail או להעלות קבצים" style={{ color: '#b45309', fontWeight: 600, fontSize: '0.85rem' }}>⚠️</span>
+        <button
+          type="button"
+          onClick={() => void handleConnectGoogle()}
+          style={{
+            padding: '0.2rem 0.55rem',
+            background: '#fffbeb',
+            color: '#92400e',
+            border: '1px solid #fde68a',
+            borderRadius: '0.375rem',
+            cursor: 'pointer',
+            fontSize: '0.8rem',
+          }}
+        >
+          התחבר ל-Google
+        </button>
+        {status === 'error' && errorMsg && (
+          <span style={{ color: '#b91c1c', fontSize: '0.75rem' }} title={errorMsg}>
+            שגיאה: {errorMsg}
+          </span>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div style={{ display: 'inline-flex', gap: '0.4rem', alignItems: 'center' }}>
       <span title="הוצאה ללא מסמך מאומת" style={{ color: '#b45309', fontWeight: 600, fontSize: '0.85rem' }}>⚠️</span>
@@ -224,11 +267,15 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
       />
       {status === 'no-match' && <span style={{ color: '#b45309', fontSize: '0.75rem' }}>לא נמצא</span>}
       {status === 'error' && (
+        // The badge alone hid a genuinely actionable message (e.g. "connect
+        // your Google account") behind a hover-only tooltip nobody saw live
+        // — Sheli + Agla lost an hour to an opaque "שגיאה" that had the real
+        // cause sitting in errorMsg the whole time (aglamazo#343, 2026-09-08).
         <span
-          style={{ color: '#b91c1c', fontSize: '0.75rem', cursor: 'help' }}
-          title={errorMsg || 'ראה קונסולה לפרטים'}
+          style={{ color: '#b91c1c', fontSize: '0.75rem', cursor: errorMsg ? 'help' : 'default' }}
+          title={errorMsg || undefined}
         >
-          שגיאה
+          {errorMsg ? `שגיאה: ${errorMsg}` : 'שגיאה'}
         </span>
       )}
       {(status === 'no-match' || status === 'matched') && checkedCandidates.length > 0 && (
