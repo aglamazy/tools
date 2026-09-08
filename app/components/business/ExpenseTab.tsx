@@ -7,8 +7,8 @@ import { subjectStore } from '@/app/stores/subjectStore'
 import { businessStore } from '@/app/stores/businessStore'
 import { appSettingsStore, type AccountOwners } from '@/app/stores/appSettingsStore'
 import { getTransactionAttributedUid } from '@/app/utils/transactionAttribution'
-import { hasGmailAccess, requestGmailAccess } from '@/app/services/gmailService'
-import { hasGoogleAccess, requestGoogleAccess, uploadExpenseDocument, downloadDriveFile } from '@/app/services/googleDriveService'
+import { uploadExpenseDocument, downloadDriveFile } from '@/app/services/googleDriveService'
+import { getAccessToken, requestGoogleAccess } from '@/app/services/googleTokenService'
 import { matchReceiptForTransaction, parseDateFolder } from '@/app/services/receiptMatchService'
 import { partnerStore, type Partner as Participant } from '@/app/stores/partnerStore'
 import { getUser } from '@/app/stores/authStore'
@@ -22,7 +22,7 @@ import DuplicateTransactionsModal from '@/app/components/DuplicateTransactionsMo
 import type { ExpenseTableRow, MatchStatus } from '@/app/components/business/expenseTabTypes'
 import { useToast } from '@/app/components/ToastContainer'
 import { normalizeDate, parseDateMs } from '@/app/utils/parsers/shared'
-import { effectiveExpenseAmount, resolveBusinessExpenseCategories } from '@/app/components/business/expenseScale'
+import { effectiveExpenseNetAmount, expenseScaleFraction, resolveBusinessExpenseCategories } from '@/app/components/business/expenseScale'
 
 type ExpenseTabProps = {
   businessId: string
@@ -35,7 +35,10 @@ type ExtractedData = {
 }
 
 async function extractFromFile(file: File, transaction: { date: string; description: string; amount: number }, claudeApiKey: string): Promise<ExtractedData> {
-  if (!claudeApiKey) return {}
+  // No early return on a missing claudeApiKey — /api/match-receipt tries
+  // Gemini first regardless (extractionLadder.ts), same class of bug as the
+  // rest of aglamazo#343: a client-side guard blocking a call that would
+  // have worked via the platform's own default provider.
   const buffer = await file.arrayBuffer()
   const bytes = new Uint8Array(buffer)
   let binary = ''
@@ -77,16 +80,37 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
   const [loading, setLoading] = useState(true)
   const [showDuplicates, setShowDuplicates] = useState(false)
   const [matchStatus, setMatchStatus] = useState<Record<number, MatchStatus>>({})
+  const [matchErrorMsg, setMatchErrorMsg] = useState<Record<number, string>>({})
   const [matchedDocs, setMatchedDocs] = useState<Record<number, ExpenseDocument[]>>({})
+  // Each row's VAT already scaled by the same household/business fraction as
+  // its net amount (aglamazo#345) — unreachable in practice today (no
+  // household row carries a matched receipt yet) but built correct up front
+  // rather than left to break the moment one does (Sheli, 2026-09-08).
+  const [netVatByTxId, setNetVatByTxId] = useState<Record<number, number>>({})
   const [claudeApiKey, setClaudeApiKey] = useState<string>('')
   const [allCategories, setAllCategories] = useState<Category[]>([])
+  // Drive/Gmail share one OAuth grant, device-local, never synced (see
+  // googleTokenService.ts) — null = still checking. Checked once here rather
+  // than per-row so a disconnected browser shows one clear state instead of
+  // every row failing silently on click (aglamazo#343, 2026-09-08).
+  const [googleConnected, setGoogleConnected] = useState<boolean | null>(null)
   const { showToast } = useToast()
 
   useEffect(() => {
     loadBusiness()
     loadClaudeKey()
     subjectStore.getAll().then(setAllCategories)
+    getAccessToken().then(token => setGoogleConnected(!!token))
   }, [businessId])
+
+  const handleConnectGoogle = async () => {
+    const r = await requestGoogleAccess()
+    if (r.success) {
+      setGoogleConnected(true)
+    } else {
+      showToast('error', r.error || 'החיבור ל-Google נכשל')
+    }
+  }
 
   useEffect(() => {
     if (business && (selectedMonth || filterMode !== 'month')) {
@@ -157,6 +181,22 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
         .toArray()
     }
 
+    // Matched documents' extracted VAT, keyed by transaction syncId — needed
+    // up front (before amounts are computed below) for the net (excl. VAT)
+    // figure. Never use doc.amount as a base: a foreign-currency invoice
+    // (Anthropic/Vercel/DigitalOcean...) is denominated in USD while the
+    // bank charged ILS — the bank amount is authoritative for shekels, the
+    // document only for the VAT portion (aglamazo#345, Sheli 2026-09-08).
+    const preFilterSyncIds = filteredTransactions.map(t => t.syncId).filter((id): id is string => !!id)
+    const vatDocs = await db.expenseDocuments.where('transactionId').anyOf(preFilterSyncIds).toArray()
+    const vatByTxSyncId = new Map<string, number>()
+    for (const d of vatDocs) {
+      if (d.transactionId && !vatByTxSyncId.has(d.transactionId) && d.vatAmount) {
+        vatByTxSyncId.set(d.transactionId, d.vatAmount)
+      }
+    }
+
+    const scaledVatByTxId: Record<number, number> = {}
     const expenseTransactions = filteredTransactions
       .filter(t => t.category && categoryNames.includes(t.category) && t.amount < 0)
       // Skip later installments — only show first (currentStep === 1 or no installments)
@@ -169,10 +209,16 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
         // Household-deductible categories (e.g. a shared electricity bill)
         // scale down to this business owner's percentage; directly-assigned
         // categories pass through at the full amount.
-        const effective = effectiveExpenseAmount({ ...t, amount: -fullAmount }, business, categoryByName)
-        return { ...t, amount: -effective }
+        const fullTx = { ...t, amount: -fullAmount }
+        const docVat = t.syncId ? vatByTxSyncId.get(t.syncId) : undefined
+        const netAmount = effectiveExpenseNetAmount(fullTx, business, categoryByName, docVat)
+        if (t.id != null && docVat) {
+          scaledVatByTxId[t.id] = docVat * expenseScaleFraction(fullTx, business, categoryByName)
+        }
+        return { ...t, amount: -netAmount }
       })
       .filter(t => t.amount < 0)
+    setNetVatByTxId(scaledVatByTxId)
 
     // Sort by date
     expenseTransactions.sort((a, b) => {
@@ -209,14 +255,7 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
   const handleMatchReceipt = async (t: Transaction) => {
     if (!t.id) return
     setMatchStatus(s => ({ ...s, [t.id!]: 'searching' }))
-
-    if (!hasGmailAccess()) {
-      const result = await requestGmailAccess()
-      if (!result.success) {
-        setMatchStatus(s => ({ ...s, [t.id!]: 'error' }))
-        return
-      }
-    }
+    setMatchErrorMsg(s => ({ ...s, [t.id!]: '' }))
 
     try {
       const result = await matchReceiptForTransaction(
@@ -231,8 +270,12 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
     } catch (err) {
       // A providerError (bad model id, depleted credits, rate limit) is
       // thrown here instead of silently skipped — surface the real reason,
-      // not just a generic failed-search state.
-      showToast('error', err instanceof Error ? err.message : 'שגיאה בחיפוש קבלה')
+      // not just a generic failed-search state. Kept on the row too (not
+      // just the toast, which disappears) — a bare "שגיאה" cost Agla and
+      // Sheli an hour tracing a real, actionable message (aglamazo#343).
+      const msg = err instanceof Error ? err.message : 'שגיאה בחיפוש קבלה'
+      showToast('error', msg)
+      setMatchErrorMsg(s => ({ ...s, [t.id!]: msg }))
       setMatchStatus(s => ({ ...s, [t.id!]: 'error' }))
     }
   }
@@ -240,6 +283,7 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
   const handleUploadReceipt = async (t: Transaction, files: FileList) => {
     if (!t.id || !t.syncId || files.length === 0) return
     setMatchStatus(s => ({ ...s, [t.id!]: 'searching' }))
+    setMatchErrorMsg(s => ({ ...s, [t.id!]: '' }))
 
     try {
       const desc = (t.merchant || t.description || '').trim()
@@ -281,7 +325,13 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
       }
       setMatchStatus(s => ({ ...s, [t.id!]: 'matched' }))
     } catch (err) {
+      // This catch had no visible message at all before aglamazo#343 — the
+      // real cause (e.g. "No Google access token available") only ever hit
+      // the console, while the row just said "שגיאה". Surface it on both.
       console.error('[ExpenseTab] Upload error:', err)
+      const msg = err instanceof Error ? err.message : 'העלאה נכשלה'
+      showToast('error', msg)
+      setMatchErrorMsg(s => ({ ...s, [t.id!]: msg }))
       setMatchStatus(s => ({ ...s, [t.id!]: 'error' }))
     }
   }
@@ -349,7 +399,10 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
         partyUid,
         partyLabel: resolvePartyLabel(partyUid),
         amount,
-        vatAmount: matchedDocs[t.id!]?.reduce((s, d) => s + (d.vatAmount || 0), 0) || 0,
+        // Pre-scaled by the same household/business fraction as `amount`
+        // itself (aglamazo#345) — a raw sum of matchedDocs' vatAmount would
+        // overstate a folded household row's VAT by up to 1/fraction.
+        vatAmount: netVatByTxId[t.id!] || 0,
         transaction: t,
       })
     }
@@ -387,7 +440,7 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
     })
 
     return rows
-  }, [transactions, partnerPaidDocs, partyFilter, amountMinFilter, amountMaxFilter, sortKey, sortDir, accountOwners, ownerUid, participants, matchedDocs])
+  }, [transactions, partnerPaidDocs, partyFilter, amountMinFilter, amountMaxFilter, sortKey, sortDir, accountOwners, ownerUid, participants, netVatByTxId])
 
   const visibleTransactions = useMemo(
     () => visibleRows.flatMap((row) => (row.kind === 'transaction' ? [row.transaction] : [])),
@@ -746,7 +799,10 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
             visibleRows={visibleRows}
             categories={categories}
             matchStatus={matchStatus}
+            matchErrorMsg={matchErrorMsg}
             matchedDocs={matchedDocs}
+            googleConnected={googleConnected}
+            onConnectGoogle={() => void handleConnectGoogle()}
             sortKey={sortKey}
             sortDir={sortDir}
             onSort={onSort}

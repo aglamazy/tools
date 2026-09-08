@@ -12,7 +12,10 @@ type Props = {
   visibleRows: ExpenseTableRow[]
   categories: Category[]
   matchStatus: Record<number, MatchStatus>
+  matchErrorMsg: Record<number, string>
   matchedDocs: Record<number, ExpenseDocument[]>
+  googleConnected: boolean | null
+  onConnectGoogle: () => void
   sortKey: 'date' | 'party' | 'amount'
   sortDir: 'asc' | 'desc'
   onSort: (key: 'date' | 'party' | 'amount') => void
@@ -42,7 +45,7 @@ function SortHeader({ label, active, dir, onClick }: { label: string; active: bo
 }
 
 export default function ExpenseRowsTable({
-  visibleRows, categories, matchStatus, matchedDocs, sortKey, sortDir, onSort,
+  visibleRows, categories, matchStatus, matchErrorMsg, matchedDocs, googleConnected, onConnectGoogle, sortKey, sortDir, onSort,
   editingTxId, editValues, setEditValues, editingIsCash,
   startEdit, saveEdit, cancelEdit, handleMatchReceipt, handleUploadReceipt, handleUnlink, handleDeleteCash,
 }: Props) {
@@ -164,12 +167,29 @@ export default function ExpenseRowsTable({
                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#f59e0b', fontSize: '0.85rem', padding: '0.1rem 0.3rem' }}
                       >לא נמצא</button>
                     ) : status === 'error' ? (
+                      // Title carries the real reason now (aglamazo#343) — a
+                      // bare "שגיאה — לחץ לניסיון נוסף" hid an actionable
+                      // message (e.g. "connect your Google account") behind
+                      // nothing at all, costing an hour to trace.
                       <button
                         onClick={() => handleMatchReceipt(t)}
                         disabled={searching}
-                        title="שגיאה — לחץ לניסיון נוסף"
+                        title={matchErrorMsg[txId] ? `שגיאה: ${matchErrorMsg[txId]} — לחץ לניסיון נוסף` : 'שגיאה — לחץ לניסיון נוסף'}
                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: '0.85rem', padding: '0.1rem 0.3rem' }}
                       >שגיאה</button>
+                    ) : googleConnected !== true ? (
+                      // Neither action below works without this grant — show
+                      // that up front instead of letting the click fail
+                      // silently (aglamazo#343, 2026-09-08). googleConnected
+                      // === null (still checking) renders this too, so
+                      // nothing clickable-but-broken flashes first.
+                      <button
+                        onClick={onConnectGoogle}
+                        title="נדרש חיבור ל-Google כדי לחפש ב-Gmail או להעלות קבצים"
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#b45309', fontSize: '0.8rem', padding: '0.1rem 0.3rem', fontWeight: 600 }}
+                      >
+                        התחבר ל-Google
+                      </button>
                     ) : (
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.2rem' }}>
                         <button

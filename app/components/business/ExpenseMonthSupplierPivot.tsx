@@ -6,7 +6,7 @@ import { subjectStore } from '@/app/stores/subjectStore'
 import { MONTH_NAMES_HE } from '@/app/lib/dateUtils'
 import { pickExpenseLabel, normalizeSupplierKey } from '@/app/utils/expenseLabel'
 import { normalizeDate } from '@/app/utils/parsers/shared'
-import { effectiveExpenseAmount, resolveBusinessExpenseCategories } from './expenseScale'
+import { effectiveExpenseNetAmount, resolveBusinessExpenseCategories } from './expenseScale'
 
 type Props = {
   businessId: string
@@ -123,17 +123,21 @@ export default function ExpenseMonthSupplierPivot({ businessId, business }: Prop
       for (const t of expenseTransactions) {
         // Installment purchases use the full purchase amount, same as
         // everywhere else this pivot's month-column figures come from.
-        // Then effectiveExpenseAmount scales household-deductible categories
-        // (e.g. a shared electricity bill) down to this business owner's
-        // percentage — direct business categories pass through at full amount.
         const fullAmount = t.totalSteps && t.totalSteps > 1
           ? (t.totalAmount || t.totalSteps * Math.abs(t.amount))
           : Math.abs(t.amount)
-        const amount = effectiveExpenseAmount({ ...t, amount: -fullAmount }, business, categoryByName)
+        const matchedDoc = t.syncId != null ? firstDocByTxId.get(t.syncId) : undefined
+        // Net (excl. VAT), aglamazo#345: the bank ILS amount minus the
+        // matched document's own extracted VAT — never doc.amount as the
+        // base, since a foreign-currency invoice is denominated in USD
+        // while the bank charged ILS (Sheli, 2026-09-08). Also scales
+        // household-deductible categories down to this owner's percentage,
+        // same as effectiveExpenseAmount did.
+        const amount = effectiveExpenseNetAmount({ ...t, amount: -fullAmount }, business, categoryByName, matchedDoc?.vatAmount)
         if (amount <= 0) continue
         const monthNum = Number(t.month.split('/')[0])
         const y = Number(t.month.split('/')[1])
-        const supplier = supplierLabelForTransaction(t, t.syncId != null ? firstDocByTxId.get(t.syncId) : undefined)
+        const supplier = supplierLabelForTransaction(t, matchedDoc)
         addAmount(supplier, monthNum - 1, y, amount, {
           key: `tx-${t.id}`,
           date: t.date,
@@ -150,7 +154,9 @@ export default function ExpenseMonthSupplierPivot({ businessId, business }: Prop
         if (!parts) continue
         const { year: y, month: monthNum } = parts
         const supplier = supplierLabelForDoc(d)
-        const amount = Math.abs(d.amount || 0)
+        // Net here too — no separate bank leg to defer to for a partner-paid
+        // doc, so the document's own amount/vatAmount are both authoritative.
+        const amount = Math.max(0, Math.abs(d.amount || 0) - Math.abs(d.vatAmount || 0))
         addAmount(supplier, monthNum - 1, y, amount, {
           key: `doc-${d.id}`,
           date: d.date || '',
@@ -216,6 +222,9 @@ export default function ExpenseMonthSupplierPivot({ businessId, business }: Prop
         >
           {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
         </select>
+        {/* aglamazo#345: all amounts below are net of VAT — stated once here
+            rather than annotating every סה״כ cell in the table. */}
+        <span style={{ color: '#94a3b8', fontSize: '0.8rem' }}>הסכומים בטבלה נטו, ללא מע״מ</span>
       </div>
 
       {loading ? (

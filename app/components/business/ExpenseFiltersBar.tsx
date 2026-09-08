@@ -111,8 +111,11 @@ export default function ExpenseFiltersBar({
         />
       </div>
       {showTotals ? (
+        // monthTotal is NET (excl. VAT) since aglamazo#345 — label says so
+        // explicitly so it doesn't read as the old gross total with a VAT
+        // side-note; vatTotal is what was subtracted, still shown alongside.
         <span style={{ color: '#64748b', fontSize: '0.9rem' }}>
-          סה"כ: ₪{monthTotal.toLocaleString()}
+          סה"כ (נטו): ₪{monthTotal.toLocaleString()}
           {vatTotal > 0 && ` (מע״מ: ₪${vatTotal.toLocaleString()})`}
         </span>
       ) : null}
