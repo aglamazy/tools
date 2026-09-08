@@ -17,3 +17,16 @@ export function pickExpenseLabel(...candidates: (string | null | undefined)[]): 
   }
   return candidates.find((c): c is string => !!c) || ''
 }
+
+/**
+ * Grouping key for "same vendor" comparisons — collapses the case/whitespace/
+ * punctuation variance a supplier's raw label picks up across different bank
+ * rows and extracted receipts (".VERCEL INC" / "Vercel Inc." / "VERCEL INC.")
+ * without touching the displayed label itself. Not a full canonicalization
+ * (aglamazo#341 is variance within literally the same name; genuinely
+ * different vendor names, like "Meta" vs "Meta Platforms Ireland Limited",
+ * need an actual rename — aglamazo#342).
+ */
+export function normalizeSupplierKey(s: string): string {
+  return s.trim().replace(/^\.+/, '').replace(/\.+$/, '').replace(/\s+/g, ' ').toLowerCase()
+}

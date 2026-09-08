@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { db, type Business, type Transaction, type ExpenseDocument } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { MONTH_NAMES_HE } from '@/app/lib/dateUtils'
-import { pickExpenseLabel } from '@/app/utils/expenseLabel'
+import { pickExpenseLabel, normalizeSupplierKey } from '@/app/utils/expenseLabel'
 import { normalizeDate } from '@/app/utils/parsers/shared'
 import { effectiveExpenseAmount, resolveBusinessExpenseCategories } from './expenseScale'
 
@@ -97,17 +97,27 @@ export default function ExpenseMonthSupplierPivot({ businessId, business }: Prop
       }
       years.add(currentYear)
 
-      const byYearMonth = new Map<string, Map<number, number>>() // supplier -> monthIdx -> sum
-      const items = new Map<string, DrillItem[]>() // `${supplier}|${monthIdx}` -> validation rows
-      const addAmount = (supplier: string, monthIdx: number, y: number, amount: number, item: DrillItem) => {
+      // Grouped on a normalized key (case/whitespace/leading-dot insensitive,
+      // aglamazo#341) so ".VERCEL INC", "Vercel Inc." and "VERCEL INC." land
+      // in one row instead of three. The displayed label is decided after
+      // the loop, from whichever raw variant occurred most often.
+      const byYearMonth = new Map<string, Map<number, number>>() // normalizedKey -> monthIdx -> sum
+      const itemsByKey = new Map<string, Map<number, DrillItem[]>>() // normalizedKey -> monthIdx -> validation rows
+      const labelCounts = new Map<string, Map<string, number>>() // normalizedKey -> raw label -> occurrences
+      const addAmount = (rawSupplier: string, monthIdx: number, y: number, amount: number, item: DrillItem) => {
         if (y !== year) return
-        if (!byYearMonth.has(supplier)) byYearMonth.set(supplier, new Map())
-        const m = byYearMonth.get(supplier)!
+        const key = normalizeSupplierKey(rawSupplier)
+        if (!byYearMonth.has(key)) byYearMonth.set(key, new Map())
+        const m = byYearMonth.get(key)!
         m.set(monthIdx, (m.get(monthIdx) || 0) + amount)
-        const key = cellKey(supplier, monthIdx)
-        const existing = items.get(key) || []
+        if (!itemsByKey.has(key)) itemsByKey.set(key, new Map())
+        const monthItems = itemsByKey.get(key)!
+        const existing = monthItems.get(monthIdx) || []
         existing.push(item)
-        items.set(key, existing)
+        monthItems.set(monthIdx, existing)
+        if (!labelCounts.has(key)) labelCounts.set(key, new Map())
+        const counts = labelCounts.get(key)!
+        counts.set(rawSupplier, (counts.get(rawSupplier) || 0) + 1)
       }
 
       for (const t of expenseTransactions) {
@@ -151,14 +161,36 @@ export default function ExpenseMonthSupplierPivot({ businessId, business }: Prop
         })
       }
 
-      const built: SupplierRow[] = Array.from(byYearMonth.entries()).map(([supplier, monthMap]) => {
+      // Most-frequent raw variant wins as the display label; ties broken by
+      // length (favors the fuller string, e.g. "Vercel Inc." over "VERCEL").
+      const displayLabelFor = (key: string): string => {
+        const counts = labelCounts.get(key)
+        let best: string | null = null
+        let bestCount = -1
+        for (const [label, count] of counts ?? []) {
+          if (count > bestCount || (count === bestCount && (best === null || label.length > best.length))) {
+            best = label
+            bestCount = count
+          }
+        }
+        return best ?? key
+      }
+
+      const built: SupplierRow[] = Array.from(byYearMonth.entries()).map(([key, monthMap]) => {
         const byMonth = Array.from({ length: 12 }, (_, i) => monthMap.get(i) || 0)
-        return { supplier, byMonth, total: byMonth.reduce((s, v) => s + v, 0) }
+        return { supplier: displayLabelFor(key), byMonth, total: byMonth.reduce((s, v) => s + v, 0) }
       }).sort((a, b) => b.total - a.total)
 
       const totals = Array.from({ length: 12 }, (_, i) => built.reduce((s, r) => s + r.byMonth[i], 0))
 
-      for (const list of items.values()) list.sort((a, b) => a.date.localeCompare(b.date))
+      const items = new Map<string, DrillItem[]>()
+      for (const [key, monthMap] of itemsByKey) {
+        const displayLabel = displayLabelFor(key)
+        for (const [monthIdx, list] of monthMap) {
+          list.sort((a, b) => a.date.localeCompare(b.date))
+          items.set(cellKey(displayLabel, monthIdx), list)
+        }
+      }
 
       if (cancelled) return
       setAvailableYears(Array.from(years).sort((a, b) => b - a))
