@@ -63,6 +63,10 @@ describe('#347/#350 regression: deletion resurrection race', () => {
   })
 
   afterEach(async () => {
+    // Let any pending deletion-hook flush (see the note in the first test)
+    // finish before clearing, so it can't land mid-clear or leak into the
+    // next test's appSettings state.
+    await new Promise(resolve => setTimeout(resolve, 50))
     await db.transactions.clear()
     await db.appSettings.clear()
   })
@@ -72,8 +76,13 @@ describe('#347/#350 regression: deletion resurrection race', () => {
     const localId = await db.transactions.add(makeTx(syncId))
     // Real delete, through the real Dexie hook -- writes a timestamped tombstone.
     await db.transactions.delete(localId as number)
-    // Ledger write is debounced via setTimeout(0,...) inside the hook -- flush it.
-    await new Promise(resolve => setTimeout(resolve, 10))
+    // Ledger write is queued via setTimeout(0,...) inside financeDB.ts's
+    // deletion hook (a module-level queue, not returned/awaited by
+    // db.transactions.delete() itself) -- give it real margin to settle
+    // before asserting, and before any other test's appSettings writes can
+    // interleave with it (a too-short wait here caused a real, order-
+    // dependent ConstraintError from a straggling flush landing mid-test).
+    await new Promise(resolve => setTimeout(resolve, 50))
 
     expect(await db.transactions.where('syncId').equals(syncId).count()).toBe(0)
 
