@@ -4,34 +4,34 @@ import { branding } from '@/app/config'
 
 export const dynamic = 'force-static'
 
-const PAGE_DATE_MODIFIED = '2026-04-28'
-const PAGE_DATE_PUBLISHED = '2026-03-29'
+const PAGE_DATE_MODIFIED = '2026-09-09'
+const PAGE_DATE_PUBLISHED = '2026-09-09'
 
 export const metadata: Metadata = {
-  title: `תנאי שימוש | ${branding.name}`,
-  description: `תנאי השימוש של ${branding.name}. קראו את התנאים וההגבלות לפני השימוש בשירות.`,
-  keywords: ['תנאי שימוש Aglamazo', 'מדיניות פרטיות', 'הסכם משתמש', 'תקנון שימוש', 'אחריות', 'משפטי'],
+  title: `מדיניות פרטיות | ${branding.name}`,
+  description: `מדיניות הפרטיות של ${branding.name}. איך נשמר, מעובד ומשותף המידע שלכם.`,
+  keywords: ['מדיניות פרטיות Aglamazo', 'privacy policy', 'הגנת מידע', 'Google OAuth', 'שימוש בבינה מלאכותית'],
   robots: { index: true, follow: true, googleBot: { index: true, follow: true, 'max-video-preview': -1, 'max-image-preview': 'large', 'max-snippet': -1 } },
   alternates: {
-    canonical: '/terms',
+    canonical: '/privacy',
     languages: {
-      'he-IL': '/terms',
-      'x-default': '/terms',
+      'he-IL': '/privacy',
+      'x-default': '/privacy',
     },
   },
   openGraph: {
-    title: `תנאי שימוש | ${branding.name}`,
-    description: `תנאי השימוש של ${branding.name}. קראו את התנאים וההגבלות לפני השימוש בשירות.`,
-    url: '/terms',
+    title: `מדיניות פרטיות | ${branding.name}`,
+    description: `מדיניות הפרטיות של ${branding.name}. איך נשמר, מעובד ומשותף המידע שלכם.`,
+    url: '/privacy',
     siteName: branding.name,
     type: 'website',
     locale: 'he_IL',
-    images: [{ url: '/logo.png', width: 2816, height: 1536, alt: `${branding.name} - תנאי שימוש` }],
+    images: [{ url: '/logo.png', width: 2816, height: 1536, alt: `${branding.name} - מדיניות פרטיות` }],
   },
   twitter: {
     card: 'summary_large_image',
-    title: `תנאי שימוש | ${branding.name}`,
-    description: `תנאי השימוש של ${branding.name}.`,
+    title: `מדיניות פרטיות | ${branding.name}`,
+    description: `מדיניות הפרטיות של ${branding.name}.`,
     images: ['/logo.png'],
   },
 }
@@ -40,9 +40,9 @@ const jsonLd = [
   {
     '@context': 'https://schema.org',
     '@type': 'WebPage',
-    name: `תנאי שימוש | ${branding.name}`,
-    description: `תנאי השימוש של ${branding.name}. קראו את התנאים וההגבלות לפני השימוש בשירות.`,
-    url: 'https://aglamazo.com/terms',
+    name: `מדיניות פרטיות | ${branding.name}`,
+    description: `מדיניות הפרטיות של ${branding.name}. איך נשמר, מעובד ומשותף המידע שלכם.`,
+    url: 'https://aglamazo.com/privacy',
     inLanguage: 'he-IL',
     datePublished: PAGE_DATE_PUBLISHED,
     dateModified: PAGE_DATE_MODIFIED,
@@ -54,12 +54,12 @@ const jsonLd = [
     '@type': 'BreadcrumbList',
     itemListElement: [
       { '@type': 'ListItem', position: 1, name: branding.name, item: 'https://aglamazo.com/' },
-      { '@type': 'ListItem', position: 2, name: 'תנאי שימוש', item: 'https://aglamazo.com/terms' },
+      { '@type': 'ListItem', position: 2, name: 'מדיניות פרטיות', item: 'https://aglamazo.com/privacy' },
     ],
   },
 ]
 
-export default function TermsLayout({ children }: { children: React.ReactNode }) {
+export default function PrivacyLayout({ children }: { children: React.ReactNode }) {
   return (
     <>
       <script
@@ -73,18 +73,16 @@ export default function TermsLayout({ children }: { children: React.ReactNode })
           <li><Link href="/about" style={{ color: '#4338ca' }}>אודות</Link></li>
           <li><Link href="/guide" style={{ color: '#4338ca' }}>מדריך שימוש</Link></li>
           <li><Link href="/pricing" style={{ color: '#4338ca' }}>מחירים</Link></li>
-          <li><Link href="/demo-form" style={{ color: '#4338ca' }}>טופס הדגמה</Link></li>
-          <li><Link href="/privacy" style={{ color: '#4338ca' }}>מדיניות פרטיות</Link></li>
+          <li><Link href="/terms" style={{ color: '#4338ca' }}>תנאי שימוש</Link></li>
           <li><Link href="/contact" style={{ color: '#4338ca' }}>צור קשר</Link></li>
         </ul>
       </nav>
       <noscript>
         <div dir="rtl" style={{ maxWidth: '700px', margin: '2rem auto', padding: '2rem' }}>
-          <h1>תנאי שימוש | {branding.name}</h1>
+          <h1>מדיניות פרטיות | {branding.name}</h1>
           <p>
-            {branding.name} הוא שירות לניהול פיננסי חכם.
-            הנתונים נשמרים בדפדפן שלכם בלבד.
-            קראו את התנאים המלאים לפני השימוש בשירות.
+            {branding.name} הוא שירות לניהול פיננסי חכם. הנתונים הפיננסיים נשמרים בדפדפן שלכם בלבד.
+            קראו את מדיניות הפרטיות המלאה לפני השימוש בשירות.
           </p>
         </div>
       </noscript>

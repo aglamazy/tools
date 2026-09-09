@@ -34,6 +34,7 @@ export const routes = {
   stores: '/app/stores',
   terms: '/app/terms',
   publicTerms: '/terms',
+  publicPrivacy: '/privacy',
   about: '/about',
   guide: '/guide',
   pricing: '/pricing',
