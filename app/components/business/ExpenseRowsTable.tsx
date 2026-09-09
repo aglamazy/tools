@@ -144,13 +144,31 @@ export default function ExpenseRowsTable({
                   <td style={{ padding: '0.6rem 0.5rem', textAlign: 'center' }}>
                     {status === 'matched' ? (
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}>
-                        {docs?.map((doc, i) => (
-                          doc.driveWebViewLink ? (
-                            <a key={i} href={doc.driveWebViewLink} target="_blank" rel="noopener noreferrer" title={doc.vendor || doc.fileName || 'פתח קבלה'} style={{ color: '#10b981', textDecoration: 'none', fontSize: '0.9rem' }}>📄</a>
+                        {docs?.map((doc, i) => {
+                          // A document with no extracted amount AND no date
+                          // is a file that got attached but never actually
+                          // read - the row previously showed the same 📄 as
+                          // a fully-processed receipt, so an empty-extraction
+                          // failure looked identical to success (aglamazo#343
+                          // follow-up, Sheli 2026-09-08: "a document with
+                          // every field blank was written and the row shows
+                          // a normal 📄").
+                          const extractionEmpty = doc.amount == null && !doc.date
+                          return doc.driveWebViewLink ? (
+                            <a
+                              key={i}
+                              href={doc.driveWebViewLink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title={extractionEmpty ? 'הקובץ הועלה אך לא נקראו ממנו נתונים - לחץ לפתיחה, ייתכן שיש לחלץ שוב' : (doc.vendor || doc.fileName || 'פתח קבלה')}
+                              style={{ color: extractionEmpty ? '#f59e0b' : '#10b981', textDecoration: 'none', fontSize: '0.9rem' }}
+                            >
+                              {extractionEmpty ? '📄⚠️' : '📄'}
+                            </a>
                           ) : (
                             <span key={i} title={doc.vendor || 'נמצאה קבלה'} style={{ color: '#10b981' }}>✓</span>
                           )
-                        ))}
+                        })}
                         <button
                           onClick={() => handleUnlink(txId)}
                           title="הסר קישור"
