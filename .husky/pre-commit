@@ -115,6 +115,22 @@ if [ -f tsconfig.json ]; then
   }
 fi
 
+# 4b. Test typecheck (ant_executor#2201, only if the repo has a top-level
+#     tsconfig.test.json). Step 4 above only ever sees the BASE config, so
+#     tests were never typechecked fleet-wide -- 7 of 16 agents-* libs carry
+#     tests in the base config's exclude, and an extending tsconfig.test.json
+#     that only sets `include` does NOT override an inherited `exclude`
+#     (exclude beats include), so a naive rollout of this step alone would
+#     read zero files and report clean. See this row's own ACCEPTANCE section
+#     for the required denominator check (--listFiles, non-zero, matches
+#     disk) before trusting a green run on any given repo.
+if [ -f tsconfig.test.json ]; then
+  npx --no-install tsc --noEmit -p tsconfig.test.json || {
+    echo "[ant pre-commit] tsc --noEmit -p tsconfig.test.json failed — aborting." >&2
+    exit 1
+  }
+fi
+
 # 5. Auto-bump package version before commit so version changes are captured.
 #    Mirrors ~/develop/Importa/importa-server: yy.mm.# via scripts/bump-version.cjs,
 #    then re-stage package.json + lockfile so the bump is part of THIS commit
