@@ -19,6 +19,7 @@ import type { BackupData } from './backupService'
 import { SYNCED_DB_TABLES, getSyncedDexieTables, getUniqueKeyTables } from './syncedTables'
 import { remapLegacyFks } from './migrations/remapLegacyFks'
 import { convertLegacySubjectStoreBlob } from './migrations/legacySubjectStoreConversion'
+import { entrySyncId, entryDeletedAt, isFreshTombstone, type DeletionLedgerEntry } from './deletionLedger'
 
 /**
  * Ingress normalization for a legacy-shape backup (pre the 2026-07-28 FK
@@ -77,17 +78,37 @@ function getTimestamp(record: any): string {
 }
 
 /**
- * Extract deletion ledger from appSettings array.
+ * Extract deletion ledger from appSettings array. Returns tableName ->
+ * Map<syncId, deletedAt|null> (null = legacy entry, no timestamp) so
+ * freshness can be evaluated per entry (aglamazo#347/#350).
  */
-function extractDeletionLedger(appSettings: any[]): Record<string, Set<string>> {
+function extractDeletionLedger(appSettings: any[]): Record<string, Map<string, string | null>> {
   const entry = appSettings.find((s: any) => s.key === 'deletedRecords')
-  const ledger: Record<string, Set<string>> = {}
+  const ledger: Record<string, Map<string, string | null>> = {}
   if (entry?.value) {
-    for (const [table, syncIds] of Object.entries(entry.value as Record<string, string[]>)) {
-      ledger[table] = new Set(syncIds)
+    for (const [table, entries] of Object.entries(entry.value as Record<string, DeletionLedgerEntry[]>)) {
+      const m = new Map<string, string | null>()
+      for (const e of entries) {
+        mergeDeletionTimestamp(m, entrySyncId(e), entryDeletedAt(e))
+      }
+      ledger[table] = m
     }
   }
   return ledger
+}
+
+/** Records the OLDEST known deletedAt for a syncId — the actual original
+ * delete time — never letting a legacy (null) entry overwrite a known
+ * timestamp seen elsewhere for the same record. */
+function mergeDeletionTimestamp(m: Map<string, string | null>, syncId: string, deletedAt: string | null): void {
+  const existing = m.get(syncId)
+  if (existing === undefined) {
+    m.set(syncId, deletedAt)
+  } else if (existing !== null && deletedAt !== null && deletedAt < existing) {
+    m.set(syncId, deletedAt)
+  } else if (existing === null && deletedAt !== null) {
+    m.set(syncId, deletedAt)
+  }
 }
 
 /**
@@ -103,11 +124,15 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
   const localDeletions = extractDeletionLedger(localAppSettings)
   const cloudDeletions = extractDeletionLedger(cloudStores.appSettings || [])
 
-  // Union of both ledgers
-  const allDeletions: Record<string, Set<string>> = {}
+  // Union of both ledgers, keeping the oldest known deletedAt per syncId.
+  const allDeletions: Record<string, Map<string, string | null>> = {}
   const allTables = new Set([...Object.keys(localDeletions), ...Object.keys(cloudDeletions)])
   for (const table of allTables) {
-    allDeletions[table] = new Set([...(localDeletions[table] || []), ...(cloudDeletions[table] || [])])
+    const merged = new Map<string, string | null>(localDeletions[table] || [])
+    for (const [syncId, deletedAt] of cloudDeletions[table] || []) {
+      mergeDeletionTimestamp(merged, syncId, deletedAt)
+    }
+    allDeletions[table] = merged
   }
 
   // Compute (and cache) the derived unique-key map once before entering the
@@ -126,27 +151,36 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
         if (tableName === 'appSettings') {
           cloudRecords = cloudRecords.filter((r: any) => !String(r?.key || '').startsWith('google_'))
         }
-        const deletedSyncIds = allDeletions[tableName] || new Set<string>()
+        const deletedSyncIds = allDeletions[tableName] || new Map<string, string | null>()
 
         // Resurrection guard: if the incoming cloud data still carries a
-        // record whose syncId our ledger marked deleted, the tombstone is
-        // stale — some device is actively re-syncing live data for it (e.g.
-        // a shared-business scoped backup that legitimately still has the
-        // business + its children). Prefer the live cloud data over an old
-        // tombstone and drop it from this run's effective deletion set (this
-        // mutates the same Set stored in allDeletions, so the cleanup also
-        // persists to the ledger below) — otherwise step 1 deletes the local
-        // record and step 2 then skips re-inserting it as "already deleted",
-        // permanently losing data that's still live on the syncing device.
-        // Root-caused 2026-07-22: a shared-business sync deleted a live
-        // business plus its projects/invoices this way — the business row
-        // and a years-old tombstone for it had been coexisting locally,
-        // inert until this table's deletion-ledger step finally ran.
+        // record whose syncId our ledger marked deleted, the tombstone MIGHT
+        // be stale — some device could be actively re-syncing live data for
+        // it (e.g. a shared-business scoped backup that legitimately still
+        // has the business + its children). Root-caused 2026-07-22: a
+        // shared-business sync deleted a live business plus its projects/
+        // invoices this way — the business row and a years-old tombstone for
+        // it had been coexisting locally, inert until this table's deletion-
+        // ledger step finally ran.
+        //
+        // But "cloud still has it" is also exactly what a delete looks like
+        // in the seconds before ITS OWN push reaches Firestore — and this
+        // app auto-syncs as soon as 3 seconds after a reload, so that window
+        // was being hit routinely (aglamazo#347/#350, 2026-09-08/09: two of
+        // Agla's real income transactions resurrected this way). A FRESH
+        // tombstone (deleted recently, this device just hasn't finished
+        // pushing yet) is honored unconditionally — only a tombstone old
+        // enough to plausibly be a genuine cross-device conflict gets
+        // dropped here, which is the case this guard exists for. See
+        // deletionLedger.ts for the exact rule and the asymmetry reasoning
+        // (an uncertain case must stay wrong on the "resurrects" side, never
+        // the "destroys" side July 22 was).
         for (const cloudRec of cloudRecords) {
-          if (cloudRec.syncId && deletedSyncIds.has(cloudRec.syncId)) {
-            console.warn(`[ApplyCloud] ${tableName}: dropping stale tombstone for syncId ${cloudRec.syncId} — cloud still has live data for it`)
-            deletedSyncIds.delete(cloudRec.syncId)
-          }
+          if (!cloudRec.syncId || !deletedSyncIds.has(cloudRec.syncId)) continue
+          const deletedAt = deletedSyncIds.get(cloudRec.syncId) ?? null
+          if (isFreshTombstone(deletedAt)) continue // trust it, don't resurrect
+          console.warn(`[ApplyCloud] ${tableName}: dropping stale tombstone for syncId ${cloudRec.syncId} — cloud still has live data for it`)
+          deletedSyncIds.delete(cloudRec.syncId)
         }
 
         // Read local state
@@ -286,11 +320,17 @@ export async function applyCloudBackup(cloud: BackupData): Promise<void> {
         }
       }
 
-      // Persist the combined deletion ledger so local-only deletions survive into the next export
-      const combinedLedgerValue: Record<string, string[]> = {}
-      for (const [table, syncIds] of Object.entries(allDeletions)) {
-        if (syncIds.size > 0) {
-          combinedLedgerValue[table] = Array.from(syncIds)
+      // Persist the combined deletion ledger so local-only deletions survive
+      // into the next export — timestamps preserved (legacy null entries
+      // stay bare strings, timestamped ones stay {syncId, deletedAt}) so a
+      // fresh tombstone doesn't get silently downgraded to legacy shape the
+      // next time a sync cycle writes this row.
+      const combinedLedgerValue: Record<string, DeletionLedgerEntry[]> = {}
+      for (const [table, m] of Object.entries(allDeletions)) {
+        if (m.size > 0) {
+          combinedLedgerValue[table] = Array.from(m.entries()).map(([syncId, deletedAt]) =>
+            deletedAt ? { syncId, deletedAt } : syncId
+          )
         }
       }
       if (Object.keys(combinedLedgerValue).length > 0) {

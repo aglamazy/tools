@@ -25,6 +25,7 @@ import { subjectStore } from '@/app/stores/subjectStore'
 import { getTaxProfile } from '@/app/components/TaxProfileSection'
 import { classifySyncError } from './syncErrorClassifier'
 import { VARIANT } from '@/app/config/variants'
+import { entrySyncId, type DeletionLedgerEntry } from './deletionLedger'
 
 /**
  * Status of a background shared-business sync, broadcast as a DOM CustomEvent so
@@ -83,9 +84,9 @@ export async function getSharedBusinessIdsFromToken(): Promise<string[]> {
  */
 async function getLocallyDeletedBusinessSyncIds(): Promise<Set<string>> {
   const entry = await db.appSettings.where('key').equals('deletedRecords').first()
-  const value = entry?.value as Record<string, string[]> | undefined
+  const value = entry?.value as Record<string, DeletionLedgerEntry[]> | undefined
   const list = value?.businesses
-  return new Set(Array.isArray(list) ? list : [])
+  return new Set(Array.isArray(list) ? list.map(entrySyncId) : [])
 }
 
 /**

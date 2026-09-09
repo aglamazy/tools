@@ -13,6 +13,7 @@
 
 import type { BackupData } from './backupService'
 import { SYNCED_DB_TABLES, getUniqueKeyTables } from './syncedTables'
+import { entrySyncId, type DeletionLedgerEntry } from './deletionLedger'
 
 // Parent→child FK relationships: child table → { fkField, parentTable, annotationField }
 const FK_RELATIONS: Record<string, { fkField: string; parentTable: string; annotationField: string }> = {
@@ -103,8 +104,8 @@ function extractDeletionLedger(appSettings: any[]): Record<string, Set<string>> 
   const entry = appSettings.find((s: any) => s.key === 'deletedRecords')
   const ledger: Record<string, Set<string>> = {}
   if (entry?.value) {
-    for (const [table, syncIds] of Object.entries(entry.value as Record<string, string[]>)) {
-      ledger[table] = new Set(syncIds)
+    for (const [table, entries] of Object.entries(entry.value as Record<string, DeletionLedgerEntry[]>)) {
+      ledger[table] = new Set(entries.map(entrySyncId))
     }
   }
   return ledger

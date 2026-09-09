@@ -3,6 +3,7 @@
 import { db } from '@/app/db/financeDB'
 import { config } from '@/app/config'
 import type { Notification, StoredNotification } from '@/app/types/notifications'
+import { entrySyncId, makeDeletionEntry, notifyDeletionLedgerUpdated, type DeletionLedgerEntry } from '@/app/services/deletionLedger'
 
 export interface CardTypeIndicatorsSettings {
   indicators: string[]
@@ -241,16 +242,21 @@ export const appSettingsStore = {
   recordDeletion: async (tableName: string, syncId: string): Promise<void> => {
     try {
       const setting = await db.appSettings.where('key').equals('deletedRecords').first()
-      const ledger: Record<string, string[]> = setting ? (setting.value as Record<string, string[]>) : {}
+      const ledger: Record<string, DeletionLedgerEntry[]> = setting ? (setting.value as Record<string, DeletionLedgerEntry[]>) : {}
       if (!ledger[tableName]) ledger[tableName] = []
-      if (!ledger[tableName].includes(syncId)) {
-        ledger[tableName].push(syncId)
+      // Timestamped entry (aglamazo#347/#350) — see deletionLedger.ts. This
+      // call is redundant with financeDB.ts's automatic `deleting` hook for
+      // any record actually removed via db.<table>.delete() right after —
+      // both write the same ledger, so both must agree on shape.
+      if (!ledger[tableName].some(e => entrySyncId(e) === syncId)) {
+        ledger[tableName].push(makeDeletionEntry(syncId))
       }
       if (setting) {
         await db.appSettings.update(setting.id!, { value: ledger, updatedAt: new Date().toISOString() })
       } else {
         await db.appSettings.add({ key: 'deletedRecords', value: ledger, updatedAt: new Date().toISOString() })
       }
+      notifyDeletionLedgerUpdated()
     } catch (error) {
       console.error('Error recording deletion:', error)
     }

@@ -9,6 +9,7 @@ import type { ScoutConfig } from '@/app/types/scoutConfig'
 import type { AgentTaskStatus } from '@/app/types/bot'
 import { BusinessType } from '@/app/types/business'
 import type { CredentialRow } from '@/app/types/credential'
+import { makeDeletionEntry, notifyDeletionLedgerUpdated, type DeletionLedgerEntry } from '@/app/services/deletionLedger'
 
 // Re-export types for convenience
 export type { CapitalEntry } from '@/app/types/capital'
@@ -497,16 +498,21 @@ class FinanceDB extends Dexie {
       flushChain = flushChain
         .then(async () => {
           const setting = await this.appSettings.where('key').equals('deletedRecords').first()
-          const ledger: Record<string, string[]> = (setting?.value as Record<string, string[]>) || {}
+          const ledger: Record<string, DeletionLedgerEntry[]> = (setting?.value as Record<string, DeletionLedgerEntry[]>) || {}
           for (const { tableName, syncId } of batch) {
             if (!ledger[tableName]) ledger[tableName] = []
-            if (!ledger[tableName].includes(syncId)) ledger[tableName].push(syncId)
+            // Timestamped entries (aglamazo#347/#350) — see deletionLedger.ts.
+            // Existing bare-string entries are left as-is; only new deletes
+            // get a deletedAt, matching entrySyncId's dual-shape handling.
+            const alreadyPresent = ledger[tableName].some(e => (typeof e === 'string' ? e : e.syncId) === syncId)
+            if (!alreadyPresent) ledger[tableName].push(makeDeletionEntry(syncId))
           }
           if (setting) {
             await this.appSettings.update(setting.id!, { value: ledger, updatedAt: new Date().toISOString() })
           } else {
             await this.appSettings.add({ key: 'deletedRecords', value: ledger, updatedAt: new Date().toISOString() })
           }
+          notifyDeletionLedgerUpdated()
         })
         .catch(err => console.error('[DB] deletion ledger error:', err))
     }

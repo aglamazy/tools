@@ -14,6 +14,7 @@ import {
 import { isLocalDataEmpty } from '@/app/services/backupService'
 import { syncAllSharedBusinesses, getSharedPassword } from '@/app/services/sharedBusinessSyncService'
 import { config } from '@/app/config'
+import { DELETION_LEDGER_UPDATED_EVENT } from '@/app/services/deletionLedger'
 import EncryptionPasswordModal from './EncryptionPasswordModal'
 import { useToast } from './ToastContainer'
 
@@ -274,11 +275,27 @@ export default function CloudSyncManager() {
       }
     })
 
+    // Eager sync on a fresh delete (aglamazo#347/#350) — pushes the new
+    // tombstone to the cloud well within its freshness window (see
+    // deletionLedger.ts) instead of waiting for the next scheduled interval.
+    // A latency optimization, not a safety mechanism: the freshness check in
+    // applyMergedBackupService.ts's resurrection guard is what actually
+    // makes a delete safe, this just gets it to converge sooner. Debounced
+    // so several deletes in a row trigger one sync, not one each.
+    let eagerSyncTimer: ReturnType<typeof setTimeout> | null = null
+    const onDeletionLedgerUpdated = () => {
+      if (eagerSyncTimer) clearTimeout(eagerSyncTimer)
+      eagerSyncTimer = setTimeout(() => void doSync(), 500)
+    }
+    window.addEventListener(DELETION_LEDGER_UPDATED_EVENT, onDeletionLedgerUpdated)
+
     return () => {
       unsubscribe()
       if (intervalRef.current) {
         clearInterval(intervalRef.current)
       }
+      if (eagerSyncTimer) clearTimeout(eagerSyncTimer)
+      window.removeEventListener(DELETION_LEDGER_UPDATED_EVENT, onDeletionLedgerUpdated)
     }
   }, [])
 
