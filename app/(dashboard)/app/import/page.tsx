@@ -251,13 +251,16 @@ const handleDeleteFile = (file: ImportedFile) => {
   }
 
   const handleFileSelect = async (file: File) => {
+    console.log(`[TEMP#358] handleFileSelect start: ${file.name} (${file.size}b, type=${file.type})`)
     setImporting(file.name)
     setPdfProgress(null)
     try {
       // Extract file metadata. Large PDFs split into page-range chunks
       // (#251) — onProgress drives the "קורא עמוד X מתוך Y" indicator below.
       const { extractFileMetadata } = await import('@/app/utils/filePreview')
+      console.log('[TEMP#358] extractFileMetadata module loaded, calling it')
       const metadata = await extractFileMetadata(file, (p) => setPdfProgress(p))
+      console.log('[TEMP#358] extractFileMetadata resolved:', metadata)
 
       if (metadata.fileType === 'unknown') {
         setMessageModal({

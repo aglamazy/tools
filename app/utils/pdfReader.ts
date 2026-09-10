@@ -47,8 +47,11 @@ async function fetchExtractionChunk(
   file: File,
   opts: { hint?: 'bank' | 'credit'; exampleContext?: string },
 ): Promise<Extraction & { rawRows: Extraction['rows'] }> {
+  console.log(`[TEMP#358] fetchExtractionChunk start: ${file.name} (${file.size}b)`)
   const apiKey = await getClaudeApiKey()
+  console.log('[TEMP#358] getClaudeApiKey done')
   const pdfBase64 = await fileToBase64(file)
+  console.log(`[TEMP#358] fileToBase64 done: ${pdfBase64.length} chars`)
 
   const response = await fetch('/api/extract-pdf-statement', {
     method: 'POST',
@@ -113,7 +116,9 @@ async function extractChunkWithRetry(
 }
 
 async function fetchExtraction(file: File, onProgress?: (p: PdfReadProgress) => void): Promise<SheetRow[]> {
+  console.log(`[TEMP#358] fetchExtraction start: ${file.name} (${file.size}b)`)
   const chunks = await splitPdfIntoChunks(file)
+  console.log(`[TEMP#358] splitPdfIntoChunks done: ${chunks.length} chunk(s)`)
   const total = chunks.length
 
   // Page 1 carries the only column-header row in an Israeli statement export
@@ -166,8 +171,10 @@ async function fetchExtraction(file: File, onProgress?: (p: PdfReadProgress) => 
  * so preview + import share one extraction.
  */
 export async function readPdfFile(file: File, onProgress?: (p: PdfReadProgress) => void): Promise<SheetRow[]> {
+  console.log(`[TEMP#358] readPdfFile called: ${file.name} (${file.size}b, lastModified=${file.lastModified})`)
   const key = cacheKey(file)
   let pending = cache.get(key)
+  console.log(`[TEMP#358] cache ${pending ? 'HIT' : 'MISS'} for key=${key}`)
   if (!pending) {
     pending = fetchExtraction(file, onProgress).catch((err) => {
       // Don't keep failed promises in the cache — let the next caller retry.
