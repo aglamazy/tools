@@ -113,6 +113,25 @@ ${exampleContext}
         if (extraction.kind !== 'bank' && extraction.kind !== 'credit') {
           return 'המסמך אינו דף בנק או פירוט כרטיס אשראי — אנא בדוק את הקובץ שהועלה.'
         }
+        // A real Israeli credit-card statement always prints the card's last
+        // 4 digits, and a real bank statement always prints its account
+        // number (per SYSTEM_PROMPT's own instruction) — this is a document
+        // Gemini occasionally hallucinates a near-empty read of even at
+        // temperature 0 (see pdfReader.ts's MAX_CHUNK_ATTEMPTS comment: a
+        // known, already-observed flakiness class). A missing identifier is
+        // the cheapest reliable signal that happened again: the existing
+        // zero-amount check alone let a degenerate 1-row, wrong-month,
+        // cardNumber-less extraction through as "success" (aglamazo#358,
+        // reproduced live 2026-09-10 via instrumented client-side trail —
+        // Gemini returned a plausible-looking but wrong single row, not an
+        // error). Rejecting here reuses the same retry path zero-amount
+        // rows already use — no new retry mechanism needed.
+        if (extraction.kind === 'credit' && !extraction.cardNumber) {
+          return 'החילוץ לא זיהה מספר כרטיס — ייתכן שהמסמך נקרא בצורה שגויה. מנסה שוב.'
+        }
+        if (extraction.kind === 'bank' && !extraction.accountNumber) {
+          return 'החילוץ לא זיהה מספר חשבון — ייתכן שהמסמך נקרא בצורה שגויה. מנסה שוב.'
+        }
         const zeroAmountRows = findZeroAmountRows(extraction)
         if (zeroAmountRows.length > 0) {
           return `החילוץ הניב ${zeroAmountRows.length} שורות עם סכום 0 מתוך ${extraction.rows.length} — ככל הנראה המסמך גדול מדי לחילוץ במכה אחת. פצל את הקובץ לחלקים קטנים יותר ונסה שוב.`
