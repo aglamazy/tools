@@ -198,6 +198,30 @@ async function tryGemini<T>(options: {
       }
     }
 
+    // A non-STOP finishReason (MAX_TOKENS above all) means the response was
+    // cut off before the model finished — structured-JSON mode can still
+    // close out syntactically valid JSON at the cutoff, so `text` parses
+    // fine and looks like a complete, plausible result while silently
+    // missing everything after the cut. This was aglamazo#359: a 4-page
+    // credit statement imported 23 of 78 real rows, validated clean (real
+    // card number via few-shot, real non-zero amounts on the rows that DID
+    // make it), reported success. No count of "how many rows are actually on
+    // this page" exists to check against, so the only reliable signal is
+    // Gemini's own admission that it didn't finish — checked here rather
+    // than trusting a complete-looking result to mean a complete result.
+    const finishReason = data.candidates?.[0]?.finishReason
+    if (finishReason && finishReason !== 'STOP') {
+      return {
+        ok: false,
+        provider: 'gemini',
+        error: `Gemini response was cut off (finishReason=${finishReason}) — likely incomplete`,
+        details: `finishReason=${finishReason}`,
+        raw: text.slice(0, 2000),
+        providerError: true,
+        fellBack: false,
+      }
+    }
+
     let parsed: T
     try {
       parsed = options.parse(text)
@@ -319,6 +343,21 @@ async function tryAnthropic<T>(options: {
         provider: 'anthropic',
         error: 'Claude did not return JSON text',
         raw: JSON.stringify(data).slice(0, 2000),
+        providerError: true,
+        fellBack: true,
+      }
+    }
+
+    // Same truncation guard as tryGemini's finishReason check — Claude's
+    // equivalent is stop_reason; 'max_tokens' means the response was cut
+    // off, and JSON can still parse cleanly up to the cutoff.
+    if (data.stop_reason && data.stop_reason !== 'end_turn') {
+      return {
+        ok: false,
+        provider: 'anthropic',
+        error: `Claude response was cut off (stop_reason=${data.stop_reason}) — likely incomplete`,
+        details: `stop_reason=${data.stop_reason}`,
+        raw: text.slice(0, 2000),
         providerError: true,
         fellBack: true,
       }
