@@ -37,4 +37,19 @@ describe('deletionLedger', () => {
     expect(isFreshTombstone(justUnder, now)).toBe(true)
     expect(isFreshTombstone(justOver, now)).toBe(false)
   })
+
+  // 2026-09-10 live incident: a literal `undefined`/`null` element in a
+  // ledger array (pre-existing legacy data, inert under the old plain-string
+  // reader) crashed every sync cycle the instant this module started doing
+  // unconditional property access on every entry. Must never throw again.
+  it('a malformed entry (undefined, null, or a bare object with no syncId) never throws', () => {
+    expect(() => entrySyncId(undefined as any)).not.toThrow()
+    expect(() => entrySyncId(null as any)).not.toThrow()
+    expect(() => entrySyncId({} as any)).not.toThrow()
+    expect(entrySyncId(undefined as any)).toBe('')
+    expect(entrySyncId(null as any)).toBe('')
+    expect(entrySyncId({} as any)).toBe('')
+    expect(() => entryDeletedAt(undefined as any)).not.toThrow()
+    expect(entryDeletedAt(undefined as any)).toBeNull()
+  })
 })

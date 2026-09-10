@@ -128,4 +128,30 @@ describe('#347/#350 regression: deletion resurrection race', () => {
     const survivors = await db.transactions.where('syncId').equals(syncId).toArray()
     expect(survivors).toHaveLength(1)
   })
+
+  // 2026-09-10 live incident on Agla's real books: a ledger array carrying a
+  // literal `undefined` element (legacy data, inert under the old
+  // plain-string-only reader) crashed applyCloudBackup on every sync cycle
+  // the instant extractDeletionLedger started doing property access on every
+  // entry unconditionally -- taking down sync entirely, not just the one
+  // malformed table. Must degrade to "ignore the garbage entry", never throw.
+  it('a malformed ledger entry (literal undefined) does not crash the sync and does not block unrelated real tombstones', async () => {
+    const goodSyncId = 'resurrection-mixed-good-1'
+    await db.appSettings.add({
+      key: 'deletedRecords',
+      value: {
+        // The exact live shape reported: a table whose only entry is undefined.
+        categories: [undefined as any],
+        // A real, fresh tombstone in a DIFFERENT table must still work.
+        transactions: [{ syncId: goodSyncId, deletedAt: new Date().toISOString() }],
+      },
+      updatedAt: new Date().toISOString(),
+    })
+
+    const cloud = emptyBackup({ transactions: [makeTx(goodSyncId)] })
+    await expect(applyCloudBackup(cloud)).resolves.not.toThrow()
+
+    const survivors = await db.transactions.where('syncId').equals(goodSyncId).toArray()
+    expect(survivors).toHaveLength(0) // the real fresh tombstone still wins
+  })
 })

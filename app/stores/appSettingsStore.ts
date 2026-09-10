@@ -244,6 +244,9 @@ export const appSettingsStore = {
       const setting = await db.appSettings.where('key').equals('deletedRecords').first()
       const ledger: Record<string, DeletionLedgerEntry[]> = setting ? (setting.value as Record<string, DeletionLedgerEntry[]>) : {}
       if (!ledger[tableName]) ledger[tableName] = []
+      // Drop any malformed entry on every write — see financeDB.ts's deleting
+      // hook for the matching self-healing filter.
+      ledger[tableName] = ledger[tableName].filter(e => !!entrySyncId(e))
       // Timestamped entry (aglamazo#347/#350) — see deletionLedger.ts. This
       // call is redundant with financeDB.ts's automatic `deleting` hook for
       // any record actually removed via db.<table>.delete() right after —

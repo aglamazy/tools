@@ -33,12 +33,21 @@ export type DeletionLedger = Record<string, DeletionLedgerEntry[]>
  * anything old enough to be a real cross-device conflict. */
 export const FRESH_TOMBSTONE_WINDOW_MS = 30 * 60 * 1000
 
+// Defensive against a malformed entry (observed live 2026-09-10: legacy
+// arrays carrying a literal `undefined`/`null` element from before this
+// module existed — inert under the old plain-string-only reader, but a hard
+// TypeError the instant anything here started doing property access on
+// every entry unconditionally). Returns '' rather than throwing; '' can
+// never match a real syncId (always a UUID), so callers that skip a falsy
+// result drop the garbage entry instead of crashing the whole sync.
 export function entrySyncId(e: DeletionLedgerEntry): string {
-  return typeof e === 'string' ? e : e.syncId
+  if (typeof e === 'string') return e
+  return (e && typeof e === 'object' && typeof e.syncId === 'string') ? e.syncId : ''
 }
 
 export function entryDeletedAt(e: DeletionLedgerEntry): string | null {
-  return typeof e === 'string' ? null : (e.deletedAt ?? null)
+  if (typeof e !== 'object' || !e) return null
+  return e.deletedAt ?? null
 }
 
 export function isFreshTombstone(deletedAt: string | null, now: number = Date.now()): boolean {

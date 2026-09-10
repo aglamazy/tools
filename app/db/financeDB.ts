@@ -9,7 +9,7 @@ import type { ScoutConfig } from '@/app/types/scoutConfig'
 import type { AgentTaskStatus } from '@/app/types/bot'
 import { BusinessType } from '@/app/types/business'
 import type { CredentialRow } from '@/app/types/credential'
-import { makeDeletionEntry, notifyDeletionLedgerUpdated, type DeletionLedgerEntry } from '@/app/services/deletionLedger'
+import { makeDeletionEntry, notifyDeletionLedgerUpdated, entrySyncId, type DeletionLedgerEntry } from '@/app/services/deletionLedger'
 
 // Re-export types for convenience
 export type { CapitalEntry } from '@/app/types/capital'
@@ -501,10 +501,15 @@ class FinanceDB extends Dexie {
           const ledger: Record<string, DeletionLedgerEntry[]> = (setting?.value as Record<string, DeletionLedgerEntry[]>) || {}
           for (const { tableName, syncId } of batch) {
             if (!ledger[tableName]) ledger[tableName] = []
+            // Drop any malformed entry (a literal undefined/null element from
+            // legacy data, or anything entrySyncId can't read a syncId from)
+            // on every write, so a corrupt array self-heals on the next
+            // local delete instead of persisting indefinitely.
+            ledger[tableName] = ledger[tableName].filter(e => !!entrySyncId(e))
             // Timestamped entries (aglamazo#347/#350) — see deletionLedger.ts.
             // Existing bare-string entries are left as-is; only new deletes
             // get a deletedAt, matching entrySyncId's dual-shape handling.
-            const alreadyPresent = ledger[tableName].some(e => (typeof e === 'string' ? e : e.syncId) === syncId)
+            const alreadyPresent = ledger[tableName].some(e => entrySyncId(e) === syncId)
             if (!alreadyPresent) ledger[tableName].push(makeDeletionEntry(syncId))
           }
           if (setting) {

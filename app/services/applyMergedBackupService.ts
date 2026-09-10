@@ -89,7 +89,13 @@ function extractDeletionLedger(appSettings: any[]): Record<string, Map<string, s
     for (const [table, entries] of Object.entries(entry.value as Record<string, DeletionLedgerEntry[]>)) {
       const m = new Map<string, string | null>()
       for (const e of entries) {
-        mergeDeletionTimestamp(m, entrySyncId(e), entryDeletedAt(e))
+        // Skip malformed entries (a literal undefined/null element, or an
+        // object with no usable syncId) — entrySyncId returns '' for these
+        // rather than throwing; dropping them here also means the next
+        // persisted ledger write self-heals, no longer carrying them forward.
+        const syncId = entrySyncId(e)
+        if (!syncId) continue
+        mergeDeletionTimestamp(m, syncId, entryDeletedAt(e))
       }
       ledger[table] = m
     }

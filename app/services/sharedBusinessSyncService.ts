@@ -86,7 +86,7 @@ async function getLocallyDeletedBusinessSyncIds(): Promise<Set<string>> {
   const entry = await db.appSettings.where('key').equals('deletedRecords').first()
   const value = entry?.value as Record<string, DeletionLedgerEntry[]> | undefined
   const list = value?.businesses
-  return new Set(Array.isArray(list) ? list.map(entrySyncId) : [])
+  return new Set(Array.isArray(list) ? list.map(entrySyncId).filter(Boolean) : [])
 }
 
 /**

@@ -105,7 +105,7 @@ function extractDeletionLedger(appSettings: any[]): Record<string, Set<string>> 
   const ledger: Record<string, Set<string>> = {}
   if (entry?.value) {
     for (const [table, entries] of Object.entries(entry.value as Record<string, DeletionLedgerEntry[]>)) {
-      ledger[table] = new Set(entries.map(entrySyncId))
+      ledger[table] = new Set(entries.map(entrySyncId).filter(Boolean))
     }
   }
   return ledger
