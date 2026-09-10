@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import Link from 'next/link'
 import type { FilePreview } from '@/app/types/file-preview'
 import { FileType } from '@/app/types/file-type'
@@ -68,6 +68,7 @@ export default function FileBrowser({
   const [importedFiles, setImportedFiles] = useState<ImportedFile[]>([])
   const [sortKey, setSortKey] = useState<SortKey>('modified')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Auto-load files when modal opens using the saved directory from settings
   useEffect(() => {
@@ -218,7 +219,16 @@ export default function FileBrowser({
 
   // Direct single-file pick (PDF / Excel). Additive to the folder picker (which
   // stays as the persistent-permission path). Feeds the same onFileSelect.
+  //
+  // showOpenFilePicker is Chromium-only and doesn't exist in Firefox/Safari,
+  // or in a browser automation context with no user gesture behind it. Fall
+  // back to a plain <input type="file"> in either case — same onFileSelect,
+  // an entry point automation and non-Chromium users can both actually use.
   const handleSelectFiles = async () => {
+    if (!('showOpenFilePicker' in window)) {
+      fileInputRef.current?.click()
+      return
+    }
     try {
       const [handle] = await (window as any).showOpenFilePicker({
         multiple: false,
@@ -237,6 +247,13 @@ export default function FileBrowser({
       console.error('Error selecting file:', err)
       setError('שגיאה בבחירת קובץ')
     }
+  }
+
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) onFileSelect(file)
+    // Reset so selecting the same file again still fires onChange.
+    e.target.value = ''
   }
 
   const handleEnterSubfolder = async (folder: { name: string; handle: FileSystemDirectoryHandle }) => {
@@ -285,6 +302,17 @@ export default function FileBrowser({
 
   return (
     <div>
+      {/* Non-native fallback for showOpenFilePicker (Chromium-only). Always
+          present so automation/tests can set it directly regardless of
+          browser support or which panel is currently shown. */}
+      <input
+        ref={fileInputRef}
+        id="file-select-input"
+        type="file"
+        accept=".pdf,.xls,.xlsx"
+        onChange={handleFileInputChange}
+        style={{ display: 'none' }}
+      />
       {!savedDirHandle && (
         <div style={{
           padding: '2rem',
