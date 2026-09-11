@@ -15,7 +15,7 @@ import { refreshIdToken } from '@/app/services/firebaseAuthService'
 import { migrateToHouseholdStorage } from '@/app/services/cloudBackupService'
 import { appSettingsStore, AccountOwners } from '@/app/stores/appSettingsStore'
 import { getUser } from '@/app/stores/authStore'
-import { db } from '@/app/db/financeDB'
+import { transactionStore } from '@/app/stores/transactionStore'
 import type { Household, HouseholdInvitation, HouseholdRole } from '@/app/types/household'
 import TaxProfileSection from '@/app/components/TaxProfileSection'
 
@@ -85,7 +85,11 @@ export default function HouseholdTab() {
 
   const loadAccountAssignments = async () => {
     try {
-      const importedFiles = await db.importedFiles.toArray()
+      // db.importedFiles is orphaned (nothing writes fresh rows into it since
+      // the import list moved to deriving live from transactions — aglamazo#356);
+      // transactionStore.getImportedFiles() is the actual current source, so a
+      // card/account first imported after that switch shows up here too.
+      const importedFiles = (await transactionStore.getImportedFiles())?.files || []
       const accountSet = new Map<string, string>()
 
       importedFiles.forEach(file => {
