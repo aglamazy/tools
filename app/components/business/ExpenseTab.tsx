@@ -584,11 +584,21 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
     return visibleRows.reduce((sum, row) => sum + row.vatAmount, 0)
   }
 
-  const handleUnlink = async (txId: number) => {
+  // docId omitted = legacy "unlink everything" behavior (still used by any
+  // caller that only has the row, not a specific document). Passing docId
+  // removes just that one document (aglamazo#346 — the row's single ✕ used
+  // to always wipe every attached document, not just the one clicked).
+  const handleUnlink = async (txId: number, docId?: number) => {
     const docs = matchedDocs[txId]
     if (!docs?.length) return
-    for (const doc of docs) {
+    const toRemove = docId == null ? docs : docs.filter(d => d.id === docId)
+    for (const doc of toRemove) {
       if (doc.id) await db.expenseDocuments.delete(doc.id)
+    }
+    const remaining = docId == null ? [] : docs.filter(d => d.id !== docId)
+    if (remaining.length > 0) {
+      setMatchedDocs(d => ({ ...d, [txId]: remaining }))
+      return
     }
     setMatchedDocs(d => {
       const next = { ...d }

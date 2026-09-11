@@ -28,7 +28,7 @@ type Props = {
   cancelEdit: () => void
   handleMatchReceipt: (t: Transaction) => void
   handleUploadReceipt: (t: Transaction, files: FileList) => void
-  handleUnlink: (txId: number) => void
+  handleUnlink: (txId: number, docId?: number) => void
   handleDeleteCash: (t: Transaction) => void
 }
 
@@ -154,26 +154,32 @@ export default function ExpenseRowsTable({
                           // every field blank was written and the row shows
                           // a normal 📄").
                           const extractionEmpty = doc.amount == null && !doc.date
-                          return doc.driveWebViewLink ? (
-                            <a
-                              key={i}
-                              href={doc.driveWebViewLink}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              title={extractionEmpty ? 'הקובץ הועלה אך לא נקראו ממנו נתונים - לחץ לפתיחה, ייתכן שיש לחלץ שוב' : (doc.vendor || doc.fileName || 'פתח קבלה')}
-                              style={{ color: extractionEmpty ? '#f59e0b' : '#10b981', textDecoration: 'none', fontSize: '0.9rem' }}
-                            >
-                              {extractionEmpty ? '📄⚠️' : '📄'}
-                            </a>
-                          ) : (
-                            <span key={i} title={doc.vendor || 'נמצאה קבלה'} style={{ color: '#10b981' }}>✓</span>
+                          return (
+                            <span key={doc.id ?? i} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.15rem' }}>
+                              {doc.driveWebViewLink ? (
+                                <a
+                                  href={doc.driveWebViewLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title={extractionEmpty ? 'הקובץ הועלה אך לא נקראו ממנו נתונים - לחץ לפתיחה, ייתכן שיש לחלץ שוב' : (doc.vendor || doc.fileName || 'פתח קבלה')}
+                                  style={{ color: extractionEmpty ? '#f59e0b' : '#10b981', textDecoration: 'none', fontSize: '0.9rem' }}
+                                >
+                                  {extractionEmpty ? '📄⚠️' : '📄'}
+                                </a>
+                              ) : (
+                                <span title={doc.vendor || 'נמצאה קבלה'} style={{ color: '#10b981' }}>✓</span>
+                              )}
+                              {/* Unlinks only THIS document (aglamazo#346 — the
+                                  old single row-level ✕ removed every attached
+                                  document, not just the one clicked). */}
+                              <button
+                                onClick={() => handleUnlink(txId, doc.id)}
+                                title="הסר קישור למסמך זה"
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', fontSize: '0.65rem', padding: 0 }}
+                              >✕</button>
+                            </span>
                           )
                         })}
-                        <button
-                          onClick={() => handleUnlink(txId)}
-                          title="הסר קישור"
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', fontSize: '0.7rem', padding: 0 }}
-                        >✕</button>
                       </div>
                     ) : status === 'searching' ? (
                       <span style={{ color: '#64748b' }}>...</span>
