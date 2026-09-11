@@ -27,6 +27,7 @@ type Props = {
   saveEdit: () => void
   cancelEdit: () => void
   handleMatchReceipt: (t: Transaction) => void
+  handleRetryError: (t: Transaction) => void
   handleUploadReceipt: (t: Transaction, files: FileList) => void
   handleUnlink: (txId: number, docId?: number) => void
   handleDeleteCash: (t: Transaction) => void
@@ -47,7 +48,7 @@ function SortHeader({ label, active, dir, onClick }: { label: string; active: bo
 export default function ExpenseRowsTable({
   visibleRows, categories, matchStatus, matchErrorMsg, matchedDocs, googleConnected, onConnectGoogle, sortKey, sortDir, onSort,
   editingTxId, editValues, setEditValues, editingIsCash,
-  startEdit, saveEdit, cancelEdit, handleMatchReceipt, handleUploadReceipt, handleUnlink, handleDeleteCash,
+  startEdit, saveEdit, cancelEdit, handleMatchReceipt, handleRetryError, handleUploadReceipt, handleUnlink, handleDeleteCash,
 }: Props) {
   if (visibleRows.length === 0) {
     return <p style={{ color: '#64748b', textAlign: 'center', padding: '2rem' }}>אין הוצאות בתקופה זו</p>
@@ -194,9 +195,14 @@ export default function ExpenseRowsTable({
                       // Title carries the real reason now (aglamazo#343) — a
                       // bare "שגיאה — לחץ לניסיון נוסף" hid an actionable
                       // message (e.g. "connect your Google account") behind
-                      // nothing at all, costing an hour to trace.
+                      // nothing at all, costing an hour to trace. Retry goes
+                      // through handleRetryError, not handleMatchReceipt
+                      // directly — an upload failure has no file left to
+                      // retry with, so calling the Gmail search instead used
+                      // to silently re-attach whatever document had just
+                      // been unlinked (aglamazo#343's second, worse defect).
                       <button
-                        onClick={() => handleMatchReceipt(t)}
+                        onClick={() => handleRetryError(t)}
                         disabled={searching}
                         title={matchErrorMsg[txId] ? `שגיאה: ${matchErrorMsg[txId]} — לחץ לניסיון נוסף` : 'שגיאה — לחץ לניסיון נוסף'}
                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: '0.85rem', padding: '0.1rem 0.3rem' }}

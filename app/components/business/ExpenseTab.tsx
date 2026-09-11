@@ -81,6 +81,11 @@ export default function ExpenseTab({ businessId }: ExpenseTabProps) {
   const [showDuplicates, setShowDuplicates] = useState(false)
   const [matchStatus, setMatchStatus] = useState<Record<number, MatchStatus>>({})
   const [matchErrorMsg, setMatchErrorMsg] = useState<Record<number, string>>({})
+  // Which action actually failed for this row — the retry button used to
+  // always re-run the Gmail search regardless, which on an upload failure
+  // silently re-attached whatever old document had just been unlinked
+  // instead of retrying the upload (aglamazo#343's second, worse defect).
+  const [lastFailedAction, setLastFailedAction] = useState<Record<number, 'upload' | 'search'>>({})
   const [matchedDocs, setMatchedDocs] = useState<Record<number, ExpenseDocument[]>>({})
   // Each row's VAT already scaled by the same household/business fraction as
   // its net amount (aglamazo#345) — unreachable in practice today (no
@@ -277,6 +282,7 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
       showToast('error', msg)
       setMatchErrorMsg(s => ({ ...s, [t.id!]: msg }))
       setMatchStatus(s => ({ ...s, [t.id!]: 'error' }))
+      setLastFailedAction(s => ({ ...s, [t.id!]: 'search' }))
     }
   }
 
@@ -333,7 +339,23 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
       showToast('error', msg)
       setMatchErrorMsg(s => ({ ...s, [t.id!]: msg }))
       setMatchStatus(s => ({ ...s, [t.id!]: 'error' }))
+      setLastFailedAction(s => ({ ...s, [t.id!]: 'upload' }))
     }
+  }
+
+  // The "שגיאה" row button's retry — must retry the action that actually
+  // failed. An upload failure has no File object left to retry with here,
+  // so clear back to a re-attachable state instead of silently running the
+  // Gmail search, which would re-attach whatever document was just unlinked
+  // and look like success (aglamazo#343's second, worse defect).
+  const handleRetryError = (t: Transaction) => {
+    if (!t.id) return
+    if (lastFailedAction[t.id] === 'upload') {
+      setMatchStatus(s => ({ ...s, [t.id!]: 'no-match' }))
+      setMatchErrorMsg(s => ({ ...s, [t.id!]: '' }))
+      return
+    }
+    handleMatchReceipt(t)
   }
 
   const [showCashForm, setShowCashForm] = useState(false)
@@ -824,6 +846,7 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
             saveEdit={saveEdit}
             cancelEdit={cancelEdit}
             handleMatchReceipt={handleMatchReceipt}
+            handleRetryError={handleRetryError}
             handleUploadReceipt={handleUploadReceipt}
             handleUnlink={handleUnlink}
             handleDeleteCash={handleDeleteCash}
