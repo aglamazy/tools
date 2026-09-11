@@ -20,9 +20,11 @@ import { ALL_PAGES } from '@/app/lib/pageRegistry'
 import Modal from '../Modal'
 import {
   mergeDuplicateSuppliers,
+  mergeSupplierEmptyEmailDuplicates,
   deleteCategoryById,
   deleteTransactionById,
   type SupplierMergeResult,
+  type SupplierEmailSubsetMergeResult,
 } from '@/app/services/duplicateCleanupService'
 
 export default function AdvancedTab() {
@@ -62,6 +64,12 @@ export default function AdvancedTab() {
   const [categoryArmed, setCategoryArmed] = useState(false)
   const [categoryRunning, setCategoryRunning] = useState(false)
   const [categoryResult, setCategoryResult] = useState<boolean | null>(null)
+  // aglamazo#364 second pass — the 16 groups/31 rows the strict-match merge
+  // above deliberately left behind (Sheli, 2026-09-11): one populated
+  // emailSenders copy + empty duplicates, strict-subset only.
+  const [emailMergeArmed, setEmailMergeArmed] = useState(false)
+  const [emailMergeRunning, setEmailMergeRunning] = useState(false)
+  const [emailMergeResult, setEmailMergeResult] = useState<SupplierEmailSubsetMergeResult | null>(null)
 
   useEffect(() => {
     loadDatabaseStats()
@@ -147,6 +155,21 @@ export default function AdvancedTab() {
       setAlertModal({ isOpen: true, message: 'המחיקה נכשלה, ראה קונסולה לפרטים.' })
     } finally {
       setCategoryRunning(false)
+    }
+  }
+
+  const runSupplierEmailSubsetMerge = async () => {
+    setEmailMergeRunning(true)
+    try {
+      const result = await mergeSupplierEmptyEmailDuplicates()
+      setEmailMergeResult(result)
+      setEmailMergeArmed(false)
+      await loadDatabaseStats()
+    } catch (err) {
+      console.error('Error running supplier email-subset merge:', err)
+      setAlertModal({ isOpen: true, message: 'הניקוי נכשל, ראה קונסולה לפרטים.' })
+    } finally {
+      setEmailMergeRunning(false)
     }
   }
 
@@ -557,6 +580,57 @@ export default function AdvancedTab() {
           <p style={{ marginTop: '0.75rem', color: '#166534', fontSize: '0.9rem' }}>
             קטגוריית תשתיות כפולה: {categoryResult ? 'נמחקה' : 'לא נמצאה (כבר טופלה?)'}.
           </p>
+        )}
+      </section>
+
+      <section style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid #fca5a5', borderRadius: '0.75rem', background: '#fef2f2' }}>
+        <h2 style={{ margin: 0, fontSize: '1.05rem' }}>מיזוג ספקים עם emailSenders חלקי (#364 המשך)</h2>
+        <p style={{ margin: '0.25rem 0 0', color: '#7f1d1d', fontSize: '0.9rem' }}>
+          16 קבוצות/31 שורות שהמיזוג הראשי דילג עליהן: עותק אחד עם emailSenders מלא, השאר ריקים.
+          שומר את העותק המלא, מוחק את הריקים בלבד. אם יש שני עותקים מלאים עם ערכים שונים — מדלג
+          ומדווח, לא מנחש. כולל את קבוצת ה-AgentsHead/Bubble Labs (ANTHROPIC, VERCEL וכו&apos;) שסהלי
+          צריכה תקינה לשלב 3 בטופס.
+        </p>
+        {!emailMergeResult && (
+          <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            {!emailMergeArmed ? (
+              <button onClick={() => setEmailMergeArmed(true)} className="file-picker secondary">
+                הכן ניקוי
+              </button>
+            ) : (
+              <>
+                <span style={{ color: '#7f1d1d', fontSize: '0.9rem' }}>בטוח? הפעולה בלתי הפיכה.</span>
+                <button onClick={runSupplierEmailSubsetMerge} disabled={emailMergeRunning} className="upload-another-btn">
+                  {emailMergeRunning ? 'מריץ...' : 'אשר והרץ ניקוי'}
+                </button>
+                <button onClick={() => setEmailMergeArmed(false)} className="file-picker secondary">
+                  ביטול
+                </button>
+              </>
+            )}
+          </div>
+        )}
+        {emailMergeResult && (
+          <div style={{ marginTop: '0.75rem', color: '#166534', fontSize: '0.9rem' }}>
+            <p style={{ margin: 0 }}>
+              נבדקו {emailMergeResult.groupsExamined} קבוצות, אוחדו {emailMergeResult.groupsMerged}, נמחקו{' '}
+              {emailMergeResult.rowsDeleted} שורות כפולות.
+            </p>
+            {emailMergeResult.skippedAmbiguous.length > 0 && (
+              <div style={{ margin: '0.5rem 0 0', color: '#92400e' }}>
+                <p style={{ margin: 0 }}>
+                  דילוג ({emailMergeResult.skippedAmbiguous.length} ספקים עם שני עותקים מלאים שונים — לבדיקה ידנית):
+                </p>
+                <ul style={{ margin: '0.25rem 0 0', paddingInlineStart: '1.25rem' }}>
+                  {emailMergeResult.skippedAmbiguous.map((g) => (
+                    <li key={g.variants.map((v) => v.id).join('-')}>
+                      {g.name} — שורות {g.variants.map((v) => v.id).join(', ')}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
         )}
       </section>
 

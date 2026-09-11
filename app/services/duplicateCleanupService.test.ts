@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { db } from '@/app/db/financeDB'
-import { mergeDuplicateSuppliers, deleteCategoryById, deleteTransactionById } from './duplicateCleanupService'
+import {
+  mergeDuplicateSuppliers,
+  mergeSupplierEmptyEmailDuplicates,
+  deleteCategoryById,
+  deleteTransactionById,
+} from './duplicateCleanupService'
 
 // aglamazo#364/#365, authorized by Agla (oct_message #44942 "go") after
 // Sheli's live audit found 1,176 excess Supplier rows from the 2026-07-13/14
@@ -63,6 +68,63 @@ describe('mergeDuplicateSuppliers', () => {
     const result = await mergeDuplicateSuppliers()
     expect(result.groupsMerged).toBe(1)
     expect(result.rowsDeleted).toBe(1)
+  })
+})
+
+describe('mergeSupplierEmptyEmailDuplicates', () => {
+  beforeEach(async () => {
+    await db.suppliers.clear()
+  })
+  afterEach(async () => {
+    await db.suppliers.clear()
+  })
+
+  it('keeps the populated-emailSenders copy, drops the empty ones (the ANTHROPIC case)', async () => {
+    await db.suppliers.bulkAdd([
+      { name: 'ANTHROPIC', bankCardAliases: ['ANTHROPIC'], emailSenders: [], createdAt: '2026-07-13T10:00:00Z' },
+      { name: 'ANTHROPIC', bankCardAliases: ['ANTHROPIC'], emailSenders: ['invoice+stat@anthropic.com'], createdAt: '2026-07-13T10:05:00Z' },
+      { name: 'ANTHROPIC', bankCardAliases: ['ANTHROPIC'], emailSenders: [], createdAt: '2026-07-14T09:00:00Z' },
+    ])
+    const result = await mergeSupplierEmptyEmailDuplicates()
+    expect(result.groupsMerged).toBe(1)
+    expect(result.rowsDeleted).toBe(2)
+    const remaining = await db.suppliers.toArray()
+    expect(remaining).toHaveLength(1)
+    expect(remaining[0].emailSenders).toEqual(['invoice+stat@anthropic.com'])
+  })
+
+  it('skips and reports a group where two populated copies genuinely differ', async () => {
+    await db.suppliers.bulkAdd([
+      { name: 'X', bankCardAliases: ['X'], emailSenders: ['a@x.com'], createdAt: '2026-07-13T10:00:00Z' },
+      { name: 'X', bankCardAliases: ['X'], emailSenders: ['b@x.com'], createdAt: '2026-07-13T10:05:00Z' },
+      { name: 'X', bankCardAliases: ['X'], emailSenders: [], createdAt: '2026-07-14T09:00:00Z' },
+    ])
+    const result = await mergeSupplierEmptyEmailDuplicates()
+    expect(result.groupsMerged).toBe(0)
+    expect(result.skippedAmbiguous).toHaveLength(1)
+    expect(await db.suppliers.count()).toBe(3)
+  })
+
+  it('leaves a group untouched if categoryId differs (not this rule\'s concern)', async () => {
+    await db.suppliers.bulkAdd([
+      { name: 'Y', bankCardAliases: ['Y'], emailSenders: [], categoryId: 'custom-1', createdAt: '2026-07-13T10:00:00Z' },
+      { name: 'Y', bankCardAliases: ['Y'], emailSenders: ['a@y.com'], categoryId: 'custom-2', createdAt: '2026-07-13T10:05:00Z' },
+    ])
+    const result = await mergeSupplierEmptyEmailDuplicates()
+    expect(result.groupsMerged).toBe(0)
+    expect(result.skippedAmbiguous).toHaveLength(0)
+    expect(await db.suppliers.count()).toBe(2)
+  })
+
+  it('leaves a group with no empty copies alone (already handled by the primary merge)', async () => {
+    await db.suppliers.bulkAdd([
+      { name: 'Z', bankCardAliases: ['Z'], emailSenders: ['a@z.com'], createdAt: '2026-07-13T10:00:00Z' },
+      { name: 'Z', bankCardAliases: ['Z'], emailSenders: ['a@z.com'], createdAt: '2026-07-13T10:05:00Z' },
+    ])
+    const result = await mergeSupplierEmptyEmailDuplicates()
+    expect(result.groupsMerged).toBe(0)
+    expect(result.rowsDeleted).toBe(0)
+    expect(await db.suppliers.count()).toBe(2)
   })
 })
 

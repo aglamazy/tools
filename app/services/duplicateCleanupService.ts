@@ -95,6 +95,84 @@ export async function mergeDuplicateSuppliers(): Promise<SupplierMergeResult> {
   return { groupsExamined: groups.size, groupsMerged, rowsDeleted, skippedNonIdentical }
 }
 
+export type SupplierEmailSubsetMergeResult = {
+  groupsExamined: number
+  groupsMerged: number
+  rowsDeleted: number
+  skippedAmbiguous: { name: string; variants: SkippedSupplierVariant[] }[]
+}
+
+/**
+ * Second-pass merge for the 31 rows `mergeDuplicateSuppliers` deliberately
+ * left behind (Sheli, 2026-09-11): 16 groups where categoryId/isForeign
+ * match but emailSenders doesn't — because one copy carries emailSenders
+ * and the other copies have it empty. An empty array holds nothing the
+ * populated one doesn't, so this is a strict-subset case, not a real
+ * conflict. Rule: keep the populated copy, drop the empty ones. If more
+ * than one populated copy exists with genuinely DIFFERENT senders, that's
+ * a real conflict — skip the whole group and report it rather than guess.
+ */
+export async function mergeSupplierEmptyEmailDuplicates(): Promise<SupplierEmailSubsetMergeResult> {
+  const all = await db.suppliers.toArray()
+  const groups = new Map<string, typeof all>()
+
+  const fingerprint = (s: (typeof all)[number]) =>
+    JSON.stringify({
+      name: s.name,
+      aliases: [...s.bankCardAliases].sort(),
+      businessId: s.businessId ?? null,
+    })
+
+  for (const s of all) {
+    const key = fingerprint(s)
+    const list = groups.get(key) || []
+    list.push(s)
+    groups.set(key, list)
+  }
+
+  let groupsMerged = 0
+  let rowsDeleted = 0
+  const skippedAmbiguous: { name: string; variants: SkippedSupplierVariant[] }[] = []
+
+  for (const group of groups.values()) {
+    if (group.length < 2) continue
+
+    // This rule relaxes ONLY emailSenders — categoryId/isForeign must
+    // still match exactly, otherwise it's not this rule's business.
+    const restKey = (s: (typeof group)[number]) =>
+      JSON.stringify({ categoryId: s.categoryId ?? null, isForeign: s.isForeign ?? false })
+    if (new Set(group.map(restKey)).size > 1) continue
+
+    const populated = group.filter((s) => s.emailSenders.length > 0)
+    const empty = group.filter((s) => s.emailSenders.length === 0)
+    if (populated.length === 0 || empty.length === 0) continue
+
+    const distinctSenderSets = new Set(populated.map((s) => [...s.emailSenders].sort().join('|')))
+    if (distinctSenderSets.size > 1) {
+      skippedAmbiguous.push({
+        name: group[0].name,
+        variants: populated
+          .filter((s) => s.id != null)
+          .map((s) => ({ id: s.id!, emailSenders: s.emailSenders, categoryId: s.categoryId, isForeign: s.isForeign })),
+      })
+      continue
+    }
+
+    const sortedPopulated = [...populated].sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''))
+    const [keep, ...dropPopulated] = sortedPopulated
+    void keep
+    for (const s of [...dropPopulated, ...empty]) {
+      if (s.id != null) {
+        await db.suppliers.delete(s.id)
+        rowsDeleted++
+      }
+    }
+    groupsMerged++
+  }
+
+  return { groupsExamined: groups.size, groupsMerged, rowsDeleted, skippedAmbiguous }
+}
+
 /**
  * Delete one specific category (Subject row — the app's actual category
  * table, string ids like `custom-<timestamp>`; the unrelated numeric-id
