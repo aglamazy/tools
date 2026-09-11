@@ -16,3 +16,41 @@ export function canonicalizeForDedup(s: string): string {
     .sort()
     .join('')
 }
+
+/**
+ * True if the shorter of two SORTED canonicalizeForDedup outputs is a
+ * sub-multiset of the longer one — i.e. every character in the shorter
+ * string appears in the longer string at least as many times.
+ */
+function isSubMultiset(shorter: string, longer: string): boolean {
+  let i = 0
+  for (const ch of longer) {
+    if (i < shorter.length && shorter[i] === ch) i++
+  }
+  return i === shorter.length
+}
+
+/**
+ * Same-transaction check for a merchant/description field that survives a
+ * genuine TRUNCATION, not just reordering (aglamazo#363): Isracard's own
+ * xlsx export truncates the merchant column to 16 characters, so a PDF
+ * import of "DIGITALOCEAN.COM AMSTERDAM" and an xlsx import of the same
+ * real charge as "DIGITALOCEAN.COM" have completely different exact-match
+ * dedup keys despite being the same transaction. canonicalizeForDedup alone
+ * can't absorb this — it makes reordering harmless, not missing characters.
+ *
+ * Exact match first (the common case); if lengths differ, treat the shorter
+ * one's characters as a truncation only if they're ALL present in the
+ * longer one (sub-multiset, since both are sorted) AND long enough to be
+ * real content — a bare few characters matching by coincidence against an
+ * unrelated long name is not evidence of the same vendor.
+ */
+export function merchantsMatchForDedup(a: string, b: string): boolean {
+  const normA = canonicalizeForDedup(a)
+  const normB = canonicalizeForDedup(b)
+  if (normA === normB) return true
+  if (normA.length === normB.length) return false
+  const [shorter, longer] = normA.length < normB.length ? [normA, normB] : [normB, normA]
+  if (shorter.length < 4) return false
+  return isSubMultiset(shorter, longer)
+}

@@ -3,7 +3,7 @@
 
 import { db, Transaction, ImportedFile } from '@/app/db/financeDB'
 import { addMonths } from '@/app/utils/formatters'
-import { canonicalizeForDedup } from '@/app/utils/dedupKey'
+import { canonicalizeForDedup, merchantsMatchForDedup } from '@/app/utils/dedupKey'
 import { findDuplicateTransactions, type DuplicateGroup } from '@/app/utils/findDuplicateTransactions'
 import { normalizeDate, parseDateMs } from '@/app/utils/parsers/shared'
 
@@ -336,17 +336,25 @@ export const transactionStore = {
         .and((t) => t.cardNumber === cardNumber)
         .toArray()
 
-      // Create a Set of existing transaction keys for quick lookup. Merchant is
-      // canonicalized for the same reason as saveBankTransactions above — XLS vs
-      // PDF import of the same statement can reorder bidi Hebrew/Latin text.
-      const existingKeys = new Set(
-        existingTransactions.map((t) => `${t.date}|${canonicalizeForDedup(t.merchant || '')}|${t.amount}|${t.currentStep}|${t.totalSteps}`)
-      )
-
-      // Filter out duplicates
+      // Same date/amount/step, and a merchant that either matches exactly
+      // (after canonicalization, which absorbs bidi reordering between XLS
+      // and PDF imports of the same statement) or is a TRUNCATION of the
+      // other. aglamazo#363: Isracard's own xlsx export truncates the
+      // merchant column to 16 characters, so the same real charge can be
+      // "DIGITALOCEAN.COM AMSTERDAM" from a PDF and "DIGITALOCEAN.COM" from
+      // the xlsx of the identical statement — an exact-match key alone
+      // (even canonicalized) never catches that, since characters are
+      // actually missing, not just reordered.
       const newPayments = payments.filter((p) => {
-        const key = `${p.transactionDate}|${canonicalizeForDedup(p.merchant || '')}|${-Math.abs(p.amount)}|${p.currentStep}|${p.totalSteps}`
-        return !existingKeys.has(key)
+        const pMerchant = p.merchant || ''
+        const pAmount = -Math.abs(p.amount)
+        return !existingTransactions.some((t) =>
+          t.date === p.transactionDate &&
+          t.amount === pAmount &&
+          t.currentStep === p.currentStep &&
+          t.totalSteps === p.totalSteps &&
+          merchantsMatchForDedup(t.merchant || '', pMerchant)
+        )
       })
 
       console.log(`💳 Credit import: ${payments.length} total, ${newPayments.length} new, ${payments.length - newPayments.length} duplicates skipped`)
