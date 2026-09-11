@@ -8,6 +8,7 @@ import { scanDirectoryRecursive } from '@/app/utils/folderScanner'
 import { analyzeImportStatus, type WizardFileEntry, type FileStatus } from '@/app/utils/importWizardAnalyzer'
 import { findBankGaps, findCreditGaps, type GapRange } from '@/app/utils/importGapAnalyzer'
 import { transactionStore } from '@/app/stores/transactionStore'
+import { appSettingsStore } from '@/app/stores/appSettingsStore'
 
 type ImportWizardProps = {
   isOpen: boolean
@@ -21,9 +22,13 @@ export default function ImportWizard({ isOpen, onClose, dirHandle, onFileSelect 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [gapsByKey, setGapsByKey] = useState<Map<string, GapRange[]>>(new Map())
+  const [notTracked, setNotTracked] = useState<string[]>([])
 
   const entryKey = (e: WizardFileEntry) =>
     `${e.fileType}-${e.month}-${e.accountNumber || e.cardNumber || ''}`
+
+  const accountKey = (e: WizardFileEntry): string | null =>
+    e.accountNumber ? `bank:${e.accountNumber}` : e.cardNumber ? `card:${e.cardNumber}` : null
 
   const scan = useCallback(async () => {
     if (!dirHandle) return
@@ -41,8 +46,10 @@ export default function ImportWizard({ isOpen, onClose, dirHandle, onFileSelect 
       const folderFiles = await scanDirectoryRecursive(dirHandle)
       const data = await transactionStore.getImportedFiles()
       const importedFiles: ImportedFile[] = data?.files || []
+      const notTrackedList = await appSettingsStore.getNotTrackedAccounts()
+      setNotTracked(notTrackedList)
 
-      setEntries(analyzeImportStatus(importedFiles, folderFiles))
+      setEntries(analyzeImportStatus(importedFiles, folderFiles, new Date(), new Set(notTrackedList)))
     } catch (err) {
       console.error('Wizard scan error:', err)
       setError('אירעה שגיאה בסריקת התיקייה.')
@@ -50,6 +57,18 @@ export default function ImportWizard({ isOpen, onClose, dirHandle, onFileSelect 
       setLoading(false)
     }
   }, [dirHandle])
+
+  // Mark a card/account not-tracked (aglamazo#353) — a personal card that
+  // isn't part of this business's books shouldn't sit permanently red in
+  // the wizard forever. Reversible from the same button.
+  const toggleNotTracked = async (key: string) => {
+    const next = notTracked.includes(key)
+      ? notTracked.filter((k) => k !== key)
+      : [...notTracked, key]
+    await appSettingsStore.setNotTrackedAccounts(next)
+    setNotTracked(next)
+    await scan()
+  }
 
   const scanGaps = useCallback(async () => {
     // Pure DB check — runs independently of the folder scan (no dirHandle needed).
@@ -190,6 +209,22 @@ export default function ImportWizard({ isOpen, onClose, dirHandle, onFileSelect 
             </div>
           )}
 
+          {notTracked.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.75rem', background: '#f8fafc', borderRadius: '0.375rem', marginBottom: '1rem', fontSize: '0.8rem', color: '#6b7280' }}>
+              <span>סומנו כלא רלוונטיים:</span>
+              {notTracked.map((key) => (
+                <button
+                  key={key}
+                  onClick={() => toggleNotTracked(key)}
+                  title="עקוב שוב אחר חשבון/כרטיס זה"
+                  style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '0.25rem', padding: '0.15rem 0.5rem', cursor: 'pointer', fontSize: '0.75rem', color: '#374151' }}
+                >
+                  {key.replace('bank:', '🏦 ').replace('card:', '💳 ')} ✕
+                </button>
+              ))}
+            </div>
+          )}
+
           {!loading && entries.length > 0 && (
             <>
               {/* Summary */}
@@ -266,7 +301,18 @@ export default function ImportWizard({ isOpen, onClose, dirHandle, onFileSelect 
                                 <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>יש להוריד מהבנק</span>
                               )}
                               {entry.status === 'missing' && (
-                                <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>יש להוריד מהבנק</span>
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                                  <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>יש להוריד מהבנק</span>
+                                  {accountKey(entry) && (
+                                    <button
+                                      onClick={() => toggleNotTracked(accountKey(entry)!)}
+                                      title="סמן שחשבון/כרטיס זה לא רלוונטי — האשף יפסיק לצפות לקבצים ממנו"
+                                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', fontSize: '0.75rem', textDecoration: 'underline', padding: 0 }}
+                                    >
+                                      לא רלוונטי
+                                    </button>
+                                  )}
+                                </span>
                               )}
                               {entry.status === 'fresh' && '—'}
                             </td>

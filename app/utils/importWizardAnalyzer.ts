@@ -71,7 +71,14 @@ function isFresh(importedFile: ImportedFile, now: Date = new Date()): boolean {
 export function analyzeImportStatus(
   importedFiles: ImportedFile[],
   folderFiles: FilePreview[],
-  now: Date = new Date()
+  now: Date = new Date(),
+  // Composite keys ("bank:5678" / "card:1234") for accounts/cards the wizard
+  // should stop expecting files for (aglamazo#353) — e.g. a personal card
+  // that isn't part of this business's books. Without this, any account/card
+  // that EVER appeared in an imported file is expected every month forever,
+  // and a permanently-red row for something that will never be filed trains
+  // the reader to ignore the warning surface entirely.
+  notTracked: Set<string> = new Set()
 ): WizardFileEntry[] {
   const entries: WizardFileEntry[] = []
 
@@ -86,6 +93,12 @@ export function analyzeImportStatus(
   for (const f of folderFiles) {
     if (f.fileType === 'bank' && f.accountNumber) bankAccounts.add(f.accountNumber)
     if (f.fileType === 'credit-card' && f.cardNumber) creditCards.add(f.cardNumber)
+  }
+  for (const account of [...bankAccounts]) {
+    if (notTracked.has(`bank:${account}`)) bankAccounts.delete(account)
+  }
+  for (const card of [...creditCards]) {
+    if (notTracked.has(`card:${card}`)) creditCards.delete(card)
   }
 
   // Build month range: last 3 months + all months from imported files and folder files

@@ -237,6 +237,43 @@ export const appSettingsStore = {
   },
 
   /**
+   * Cards/accounts the import wizard should stop expecting files for
+   * (aglamazo#353) — e.g. a personal card that isn't relevant to this
+   * business's books. Keys match AccountOwners' format: "card:1234" or
+   * "bank:5678".
+   */
+  getNotTrackedAccounts: async (): Promise<string[]> => {
+    try {
+      const setting = await db.appSettings.where('key').equals('notTrackedAccounts').first()
+      return setting ? (setting.value as string[]) : []
+    } catch (error) {
+      console.error('Error getting notTrackedAccounts:', error)
+      return []
+    }
+  },
+
+  setNotTrackedAccounts: async (list: string[]): Promise<void> => {
+    try {
+      const existing = await db.appSettings.where('key').equals('notTrackedAccounts').first()
+      if (existing) {
+        await db.appSettings.update(existing.id!, {
+          value: list,
+          updatedAt: new Date().toISOString(),
+        })
+      } else {
+        await db.appSettings.add({
+          key: 'notTrackedAccounts',
+          value: list,
+          updatedAt: new Date().toISOString(),
+        })
+      }
+    } catch (error) {
+      console.error('Error setting notTrackedAccounts:', error)
+      throw error
+    }
+  },
+
+  /**
    * Record a deleted syncId so merge-on-sync won't resurrect the record from cloud.
    */
   recordDeletion: async (tableName: string, syncId: string): Promise<void> => {
