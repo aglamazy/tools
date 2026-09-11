@@ -46,13 +46,22 @@ export default function AdvancedTab() {
   const [dirMeta, setDirMeta] = useState<{ name: string; savedAt: string } | null>(null)
   const [alertModal, setAlertModal] = useState<{ isOpen: boolean; message: string }>({ isOpen: false, message: '' })
   const [defaultPage, setDefaultPage] = useState<string>('home')
-  const [cleanupArmed, setCleanupArmed] = useState(false)
-  const [cleanupRunning, setCleanupRunning] = useState(false)
-  const [cleanupResult, setCleanupResult] = useState<{
+  // aglamazo#364/#365 supplier merge + stray-transaction delete — uncontested,
+  // covered by Agla's "go" (oct_message #44942).
+  const [mergeArmed, setMergeArmed] = useState(false)
+  const [mergeRunning, setMergeRunning] = useState(false)
+  const [mergeResult, setMergeResult] = useState<{
     suppliers: SupplierMergeResult
-    categoryDeleted: boolean
     transactionDeleted: boolean
   } | null>(null)
+  // general#48 תשתיות duplicate delete — kept as its own separate confirm,
+  // deliberately NOT bundled with the merge above: general#48 was still
+  // stalled awaiting Agla's own explicit confirm (Sheli, 2026-09-11) even
+  // though her recommendation matches this action. A shared button would
+  // hide that this specific delete is its own decision.
+  const [categoryArmed, setCategoryArmed] = useState(false)
+  const [categoryRunning, setCategoryRunning] = useState(false)
+  const [categoryResult, setCategoryResult] = useState<boolean | null>(null)
 
   useEffect(() => {
     loadDatabaseStats()
@@ -106,24 +115,38 @@ export default function AdvancedTab() {
   // aglamazo#364/#365 — one-time cleanup authorized by Agla (oct_message
   // #44942 "go"), backup taken first (~/finance/aglamazo-backup-20260911-092518):
   // merge the 1,176 duplicate Supplier rows from the 2026-07-13/14 seed
-  // race, remove the non-deductible תשתיות category duplicate, and remove
-  // the one stray transaction (id 2081) re-created this morning by #362's
-  // false import-gap bug. Not a generic sweep — the three targets are the
-  // exact ones Sheli and Agla agreed on.
-  const runDuplicateCleanup = async () => {
-    setCleanupRunning(true)
+  // race, and remove the one stray transaction (id 2081) re-created this
+  // morning by #362's false import-gap bug. Not a generic sweep — these are
+  // the exact targets Sheli and Agla agreed on.
+  const runSupplierMerge = async () => {
+    setMergeRunning(true)
     try {
       const suppliers = await mergeDuplicateSuppliers()
-      const categoryDeleted = await deleteCategoryById('custom-1783667477656')
       const transactionDeleted = await deleteTransactionById(2081)
-      setCleanupResult({ suppliers, categoryDeleted, transactionDeleted })
-      setCleanupArmed(false)
+      setMergeResult({ suppliers, transactionDeleted })
+      setMergeArmed(false)
       await loadDatabaseStats()
     } catch (err) {
-      console.error('Error running duplicate cleanup:', err)
+      console.error('Error running supplier merge cleanup:', err)
       setAlertModal({ isOpen: true, message: 'הניקוי נכשל, ראה קונסולה לפרטים.' })
     } finally {
-      setCleanupRunning(false)
+      setMergeRunning(false)
+    }
+  }
+
+  // general#48 — kept as its own separate action (see state comment above).
+  const runCategoryDuplicateDelete = async () => {
+    setCategoryRunning(true)
+    try {
+      const deleted = await deleteCategoryById('custom-1783667477656')
+      setCategoryResult(deleted)
+      setCategoryArmed(false)
+      await loadDatabaseStats()
+    } catch (err) {
+      console.error('Error deleting duplicate תשתיות category:', err)
+      setAlertModal({ isOpen: true, message: 'המחיקה נכשלה, ראה קונסולה לפרטים.' })
+    } finally {
+      setCategoryRunning(false)
     }
   }
 
@@ -452,48 +475,88 @@ export default function AdvancedTab() {
       </section>
 
       <section style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid #fca5a5', borderRadius: '0.75rem', background: '#fef2f2' }}>
-        <h2 style={{ margin: 0, fontSize: '1.05rem' }}>ניקוי כפילויות חד-פעמי (#364/#365)</h2>
+        <h2 style={{ margin: 0, fontSize: '1.05rem' }}>מיזוג ספקים כפולים (#364/#365)</h2>
         <p style={{ margin: '0.25rem 0 0', color: '#7f1d1d', fontSize: '0.9rem' }}>
-          מאחד כפילויות ספקים שנוצרו במרוץ מקבילי ב-13-14/7, מוחק את שורת הקטגוריה &quot;תשתיות&quot; הכפולה
-          שאינה מוכרת, ומוחק את עסקת ה-16.22 הכפולה שנוצרה הבוקר. פעולה מאושרת ומגובה מראש; מריצים פעם אחת בלבד.
+          מאחד כפילויות ספקים שנוצרו במרוץ מקבילי ב-13-14/7 (רק שורות זהות לחלוטין; שורות שנבדלות
+          בפרט כלשהו מדווחות ולא נמזגות), ומוחק את עסקת ה-16.22 הכפולה שנוצרה הבוקר. פעולה מאושרת
+          ומגובה מראש; מריצים פעם אחת בלבד.
         </p>
-        {!cleanupResult && (
+        {!mergeResult && (
           <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-            {!cleanupArmed ? (
-              <button onClick={() => setCleanupArmed(true)} className="file-picker secondary">
+            {!mergeArmed ? (
+              <button onClick={() => setMergeArmed(true)} className="file-picker secondary">
                 הכן ניקוי
               </button>
             ) : (
               <>
                 <span style={{ color: '#7f1d1d', fontSize: '0.9rem' }}>בטוח? הפעולה בלתי הפיכה.</span>
-                <button onClick={runDuplicateCleanup} disabled={cleanupRunning} className="upload-another-btn">
-                  {cleanupRunning ? 'מריץ...' : 'אשר והרץ ניקוי'}
+                <button onClick={runSupplierMerge} disabled={mergeRunning} className="upload-another-btn">
+                  {mergeRunning ? 'מריץ...' : 'אשר והרץ ניקוי'}
                 </button>
-                <button onClick={() => setCleanupArmed(false)} className="file-picker secondary">
+                <button onClick={() => setMergeArmed(false)} className="file-picker secondary">
                   ביטול
                 </button>
               </>
             )}
           </div>
         )}
-        {cleanupResult && (
+        {mergeResult && (
           <div style={{ marginTop: '0.75rem', color: '#166534', fontSize: '0.9rem' }}>
             <p style={{ margin: 0 }}>
-              ספקים: נבדקו {cleanupResult.suppliers.groupsExamined} קבוצות, אוחדו {cleanupResult.suppliers.groupsMerged},
-              נמחקו {cleanupResult.suppliers.rowsDeleted} שורות כפולות.
+              ספקים: נבדקו {mergeResult.suppliers.groupsExamined} קבוצות, אוחדו {mergeResult.suppliers.groupsMerged},
+              נמחקו {mergeResult.suppliers.rowsDeleted} שורות כפולות.
             </p>
-            {cleanupResult.suppliers.skippedNonIdentical.length > 0 && (
-              <p style={{ margin: '0.25rem 0 0', color: '#92400e' }}>
-                דילוג (לא זהות לחלוטין): {cleanupResult.suppliers.skippedNonIdentical.map((g) => g.name).join(', ')}
-              </p>
+            {mergeResult.suppliers.skippedNonIdentical.length > 0 && (
+              <div style={{ margin: '0.5rem 0 0', color: '#92400e' }}>
+                <p style={{ margin: 0 }}>
+                  דילוג ({mergeResult.suppliers.skippedNonIdentical.length} ספקים לא זהים לחלוטין — טעונים בדיקה ידנית):
+                </p>
+                <ul style={{ margin: '0.25rem 0 0', paddingInlineStart: '1.25rem' }}>
+                  {mergeResult.suppliers.skippedNonIdentical.map((g) => (
+                    <li key={g.variants.map((v) => v.id).join('-')}>
+                      {g.name} — שורות {g.variants.map((v) => v.id).join(', ')}
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
             <p style={{ margin: '0.25rem 0 0' }}>
-              קטגוריית תשתיות כפולה: {cleanupResult.categoryDeleted ? 'נמחקה' : 'לא נמצאה (כבר טופלה?)'}.
-            </p>
-            <p style={{ margin: '0.25rem 0 0' }}>
-              עסקת 2081 כפולה: {cleanupResult.transactionDeleted ? 'נמחקה' : 'לא נמצאה (כבר טופלה?)'}.
+              עסקת 2081 כפולה: {mergeResult.transactionDeleted ? 'נמחקה' : 'לא נמצאה (כבר טופלה?)'}.
             </p>
           </div>
+        )}
+      </section>
+
+      <section style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid #fca5a5', borderRadius: '0.75rem', background: '#fef2f2' }}>
+        <h2 style={{ margin: 0, fontSize: '1.05rem' }}>מחיקת קטגוריית &quot;תשתיות&quot; כפולה (general#48)</h2>
+        <p style={{ margin: '0.25rem 0 0', color: '#7f1d1d', fontSize: '0.9rem' }}>
+          מוחק את שורת הקטגוריה הכפולה שאינה מוכרת (custom-1783667477656), ומשאיר את השורה המוכרת
+          (custom-1783794975843) כשורה היחידה. פעולה נפרדת מכוונת: general#48 ממתין עדיין לאישור
+          מפורש שלך על מחיקה זו ספציפית — אל תריץ עד שאתה בטוח שזו ההחלטה.
+        </p>
+        {categoryResult === null && (
+          <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            {!categoryArmed ? (
+              <button onClick={() => setCategoryArmed(true)} className="file-picker secondary">
+                הכן מחיקה
+              </button>
+            ) : (
+              <>
+                <span style={{ color: '#7f1d1d', fontSize: '0.9rem' }}>בטוח? הפעולה בלתי הפיכה.</span>
+                <button onClick={runCategoryDuplicateDelete} disabled={categoryRunning} className="upload-another-btn">
+                  {categoryRunning ? 'מוחק...' : 'אשר ומחק'}
+                </button>
+                <button onClick={() => setCategoryArmed(false)} className="file-picker secondary">
+                  ביטול
+                </button>
+              </>
+            )}
+          </div>
+        )}
+        {categoryResult !== null && (
+          <p style={{ marginTop: '0.75rem', color: '#166534', fontSize: '0.9rem' }}>
+            קטגוריית תשתיות כפולה: {categoryResult ? 'נמחקה' : 'לא נמצאה (כבר טופלה?)'}.
+          </p>
         )}
       </section>
 

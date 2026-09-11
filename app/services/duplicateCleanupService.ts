@@ -13,11 +13,18 @@
 
 import { db } from '@/app/db/financeDB'
 
+export type SkippedSupplierVariant = {
+  id: number
+  emailSenders: string[]
+  categoryId?: string
+  isForeign?: boolean
+}
+
 export type SupplierMergeResult = {
   groupsExamined: number
   groupsMerged: number
   rowsDeleted: number
-  skippedNonIdentical: { name: string; ids: number[] }[]
+  skippedNonIdentical: { name: string; variants: SkippedSupplierVariant[] }[]
 }
 
 /**
@@ -48,7 +55,7 @@ export async function mergeDuplicateSuppliers(): Promise<SupplierMergeResult> {
 
   let groupsMerged = 0
   let rowsDeleted = 0
-  const skippedNonIdentical: { name: string; ids: number[] }[] = []
+  const skippedNonIdentical: { name: string; variants: SkippedSupplierVariant[] }[] = []
 
   for (const group of groups.values()) {
     if (group.length < 2) continue
@@ -64,7 +71,12 @@ export async function mergeDuplicateSuppliers(): Promise<SupplierMergeResult> {
       })
     const restKeys = new Set(group.map(rest))
     if (restKeys.size > 1) {
-      skippedNonIdentical.push({ name: group[0].name, ids: group.map((s) => s.id!).filter((id) => id != null) })
+      skippedNonIdentical.push({
+        name: group[0].name,
+        variants: group
+          .filter((s) => s.id != null)
+          .map((s) => ({ id: s.id!, emailSenders: s.emailSenders, categoryId: s.categoryId, isForeign: s.isForeign })),
+      })
       continue
     }
 

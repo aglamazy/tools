@@ -49,6 +49,9 @@ describe('mergeDuplicateSuppliers', () => {
     const result = await mergeDuplicateSuppliers()
     expect(result.groupsMerged).toBe(0)
     expect(result.skippedNonIdentical).toHaveLength(1)
+    expect(result.skippedNonIdentical[0].name).toBe('Vercel')
+    expect(result.skippedNonIdentical[0].variants).toHaveLength(2)
+    expect(result.skippedNonIdentical[0].variants.map((v) => v.categoryId).sort()).toEqual(['custom-1', 'custom-2'])
     expect(await db.suppliers.count()).toBe(2)
   })
 
