@@ -7,6 +7,7 @@ import { MONTH_NAMES_HE } from '@/app/lib/dateUtils'
 import { pickExpenseLabel, normalizeSupplierKey } from '@/app/utils/expenseLabel'
 import { normalizeDate } from '@/app/utils/parsers/shared'
 import { effectiveExpenseNetAmount, resolveBusinessExpenseCategories } from './expenseScale'
+import { buildSupplierAliasMap, renameSupplierAlias } from '@/app/services/supplierService'
 
 type Props = {
   businessId: string
@@ -14,10 +15,19 @@ type Props = {
 }
 
 type SupplierRow = {
+  key: string // normalizeSupplierKey(supplier) — stable identity across a rename's re-group
   supplier: string
   byMonth: number[] // index 0 = January
   total: number
 }
+
+// Where a group's display label actually came from, so a rename (aglamazo#342)
+// can write to the RIGHT place: a document's own field, or a supplier alias
+// (never transaction.merchant/description directly — that's the bank's own
+// record and the audit trail back to the statement).
+type RenameSource =
+  | { type: 'doc'; docId: number; field: 'vendor' | 'description' }
+  | { type: 'alias'; rawValue: string }
 
 // One line of the drill-down validation table under a clicked (supplier,
 // month) cell — everything that summed into that cell's number, so Agla can
@@ -32,12 +42,26 @@ type DrillItem = {
   txId?: number
 }
 
-function supplierLabelForTransaction(t: Transaction, doc?: ExpenseDocument): string {
-  return pickExpenseLabel(doc?.description, doc?.vendor, t.merchant, t.description)
+function resolveAlias(raw: string, aliasMap: Map<string, string>): string {
+  return aliasMap.get(raw.trim().toLowerCase()) ?? raw
 }
 
-function supplierLabelForDoc(d: ExpenseDocument): string {
-  return d.vendor || d.fileName
+function supplierLabelForTransaction(
+  t: Transaction,
+  aliasMap: Map<string, string>,
+  doc?: ExpenseDocument,
+): { label: string; source: RenameSource } {
+  const raw = pickExpenseLabel(doc?.description, doc?.vendor, t.merchant, t.description)
+  if (doc?.id != null && raw === doc.description) return { label: raw, source: { type: 'doc', docId: doc.id, field: 'description' } }
+  if (doc?.id != null && raw === doc.vendor) return { label: raw, source: { type: 'doc', docId: doc.id, field: 'vendor' } }
+  // t.merchant or t.description won — never edit the transaction itself
+  // (it's the bank's own record); group/display via a supplier alias instead.
+  return { label: resolveAlias(raw, aliasMap), source: { type: 'alias', rawValue: raw } }
+}
+
+function supplierLabelForDoc(d: ExpenseDocument): { label: string; source: RenameSource } {
+  const raw = d.vendor || d.fileName
+  return { label: raw, source: { type: 'doc', docId: d.id!, field: 'vendor' } }
 }
 
 function getCanonicalDateParts(date?: string): { year: number; month: number } | null {
@@ -59,12 +83,18 @@ export default function ExpenseMonthSupplierPivot({ businessId, business }: Prop
   const [loading, setLoading] = useState(true)
   const [cellItems, setCellItems] = useState<Map<string, DrillItem[]>>(new Map())
   const [drillDown, setDrillDown] = useState<{ supplier: string; monthIdx: number } | null>(null)
+  const [sourcesByKey, setSourcesByKey] = useState<Map<string, RenameSource[]>>(new Map())
+  const [editingKey, setEditingKey] = useState<string | null>(null)
+  const [editingValue, setEditingValue] = useState('')
+  const [renaming, setRenaming] = useState(false)
+  const [reloadTick, setReloadTick] = useState(0)
 
   const cellKey = (supplier: string, monthIdx: number) => `${supplier}|${monthIdx}`
 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
+      const aliasMap = await buildSupplierAliasMap()
       const allCategories = await subjectStore.getAll()
       const categories = resolveBusinessExpenseCategories(allCategories, business)
       const categoryNames = categories.map(c => c.name)
@@ -104,7 +134,8 @@ export default function ExpenseMonthSupplierPivot({ businessId, business }: Prop
       const byYearMonth = new Map<string, Map<number, number>>() // normalizedKey -> monthIdx -> sum
       const itemsByKey = new Map<string, Map<number, DrillItem[]>>() // normalizedKey -> monthIdx -> validation rows
       const labelCounts = new Map<string, Map<string, number>>() // normalizedKey -> raw label -> occurrences
-      const addAmount = (rawSupplier: string, monthIdx: number, y: number, amount: number, item: DrillItem) => {
+      const sourcesMap = new Map<string, RenameSource[]>() // normalizedKey -> where each contributing label came from
+      const addAmount = (rawSupplier: string, monthIdx: number, y: number, amount: number, item: DrillItem, source: RenameSource) => {
         if (y !== year) return
         const key = normalizeSupplierKey(rawSupplier)
         if (!byYearMonth.has(key)) byYearMonth.set(key, new Map())
@@ -118,6 +149,8 @@ export default function ExpenseMonthSupplierPivot({ businessId, business }: Prop
         if (!labelCounts.has(key)) labelCounts.set(key, new Map())
         const counts = labelCounts.get(key)!
         counts.set(rawSupplier, (counts.get(rawSupplier) || 0) + 1)
+        if (!sourcesMap.has(key)) sourcesMap.set(key, [])
+        sourcesMap.get(key)!.push(source)
       }
 
       for (const t of expenseTransactions) {
@@ -137,7 +170,7 @@ export default function ExpenseMonthSupplierPivot({ businessId, business }: Prop
         if (amount <= 0) continue
         const monthNum = Number(t.month.split('/')[0])
         const y = Number(t.month.split('/')[1])
-        const supplier = supplierLabelForTransaction(t, matchedDoc)
+        const { label: supplier, source } = supplierLabelForTransaction(t, aliasMap, matchedDoc)
         addAmount(supplier, monthNum - 1, y, amount, {
           key: `tx-${t.id}`,
           date: t.date,
@@ -146,14 +179,14 @@ export default function ExpenseMonthSupplierPivot({ businessId, business }: Prop
           effectiveAmount: amount,
           month: t.month,
           txId: t.id,
-        })
+        }, source)
       }
 
       for (const d of allPartnerDocs) {
         const parts = getCanonicalDateParts(d.date)
         if (!parts) continue
         const { year: y, month: monthNum } = parts
-        const supplier = supplierLabelForDoc(d)
+        const { label: supplier, source } = supplierLabelForDoc(d)
         // Net here too — no separate bank leg to defer to for a partner-paid
         // doc, so the document's own amount/vatAmount are both authoritative.
         const amount = Math.max(0, Math.abs(d.amount || 0) - Math.abs(d.vatAmount || 0))
@@ -164,7 +197,7 @@ export default function ExpenseMonthSupplierPivot({ businessId, business }: Prop
           rawAmount: amount,
           effectiveAmount: amount,
           month: `${String(monthNum).padStart(2, '0')}/${y}`,
-        })
+        }, source)
       }
 
       // Most-frequent raw variant wins as the display label; ties broken by
@@ -184,7 +217,7 @@ export default function ExpenseMonthSupplierPivot({ businessId, business }: Prop
 
       const built: SupplierRow[] = Array.from(byYearMonth.entries()).map(([key, monthMap]) => {
         const byMonth = Array.from({ length: 12 }, (_, i) => monthMap.get(i) || 0)
-        return { supplier: displayLabelFor(key), byMonth, total: byMonth.reduce((s, v) => s + v, 0) }
+        return { key, supplier: displayLabelFor(key), byMonth, total: byMonth.reduce((s, v) => s + v, 0) }
       }).sort((a, b) => b.total - a.total)
 
       const totals = Array.from({ length: 12 }, (_, i) => built.reduce((s, r) => s + r.byMonth[i], 0))
@@ -203,13 +236,48 @@ export default function ExpenseMonthSupplierPivot({ businessId, business }: Prop
       setRows(built)
       setMonthTotals(totals)
       setCellItems(items)
+      setSourcesByKey(sourcesMap)
       setDrillDown(null)
       setLoading(false)
     })()
     return () => { cancelled = true }
-  }, [businessId, business, year, currentYear])
+  }, [businessId, business, year, currentYear, reloadTick])
 
   const grandTotal = useMemo(() => monthTotals.reduce((s, v) => s + v, 0), [monthTotals])
+
+  // aglamazo#342 — a rename must reach BOTH sources that can feed a group's
+  // label or it'll look like it worked and then not merge: a document's own
+  // field, or (for a merchant/description-only row) a supplier alias. Never
+  // writes to transaction.merchant/description directly.
+  const handleRename = async (key: string, newName: string) => {
+    const trimmed = newName.trim()
+    if (!trimmed) { setEditingKey(null); return }
+    const sources = sourcesByKey.get(key) || []
+    setRenaming(true)
+    try {
+      const seenDocFields = new Set<string>()
+      const seenAliases = new Set<string>()
+      for (const source of sources) {
+        if (source.type === 'doc') {
+          const dedupeKey = `${source.docId}:${source.field}`
+          if (seenDocFields.has(dedupeKey)) continue
+          seenDocFields.add(dedupeKey)
+          await db.expenseDocuments.update(
+            source.docId,
+            source.field === 'vendor' ? { vendor: trimmed } : { description: trimmed },
+          )
+        } else {
+          if (seenAliases.has(source.rawValue)) continue
+          seenAliases.add(source.rawValue)
+          await renameSupplierAlias(source.rawValue, trimmed)
+        }
+      }
+      setEditingKey(null)
+      setReloadTick(t => t + 1)
+    } finally {
+      setRenaming(false)
+    }
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -245,8 +313,45 @@ export default function ExpenseMonthSupplierPivot({ businessId, business }: Prop
             </thead>
             <tbody>
               {rows.map(row => (
-                <tr key={row.supplier} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                  <td style={{ padding: '0.5rem', position: 'sticky', right: 0, background: '#fff', whiteSpace: 'nowrap' }}>{row.supplier}</td>
+                <tr key={row.key} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                  <td style={{ padding: '0.5rem', position: 'sticky', right: 0, background: '#fff', whiteSpace: 'nowrap' }}>
+                    {editingKey === row.key ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                        <input
+                          autoFocus
+                          value={editingValue}
+                          onChange={e => setEditingValue(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') handleRename(row.key, editingValue)
+                            if (e.key === 'Escape') setEditingKey(null)
+                          }}
+                          disabled={renaming}
+                          style={{ padding: '0.2rem 0.4rem', border: '1px solid #93c5fd', borderRadius: '0.25rem', fontSize: '0.85rem', width: '10rem' }}
+                        />
+                        <button
+                          onClick={() => handleRename(row.key, editingValue)}
+                          disabled={renaming}
+                          title="שמור"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#16a34a' }}
+                        >✓</button>
+                        <button
+                          onClick={() => setEditingKey(null)}
+                          disabled={renaming}
+                          title="בטל"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }}
+                        >✕</button>
+                      </div>
+                    ) : (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                        {row.supplier}
+                        <button
+                          onClick={() => { setEditingKey(row.key); setEditingValue(row.supplier) }}
+                          title="שנה שם ספק — ימזג שורות עם אותו שם"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', fontSize: '0.75rem', padding: 0 }}
+                        >✎</button>
+                      </span>
+                    )}
+                  </td>
                   {row.byMonth.map((amount, i) => {
                     const isActive = drillDown?.supplier === row.supplier && drillDown?.monthIdx === i
                     return (

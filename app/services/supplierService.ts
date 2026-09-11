@@ -51,3 +51,34 @@ export async function resolveSupplierDisplayName(raw: string): Promise<string> {
   const supplier = await findSupplierByAlias(raw)
   return supplier?.name ?? raw
 }
+
+/**
+ * Load every known alias -> canonical-name mapping once, for synchronous
+ * lookups inside a render loop (aglamazo#342) instead of an async DB read
+ * per row.
+ */
+export async function buildSupplierAliasMap(): Promise<Map<string, string>> {
+  const suppliers = await db.suppliers.toArray()
+  const map = new Map<string, string>()
+  for (const s of suppliers) {
+    for (const alias of s.bankCardAliases) {
+      map.set(alias.trim().toLowerCase(), s.name)
+    }
+  }
+  return map
+}
+
+/**
+ * Rename a raw bank/card description's group to a new canonical display
+ * name (aglamazo#342) — creates the alias's Supplier record if it doesn't
+ * exist yet, then renames it. Never touches transaction.merchant itself;
+ * this only changes how the raw value is DISPLAYED/GROUPED.
+ */
+export async function renameSupplierAlias(rawValue: string, newName: string): Promise<void> {
+  const trimmedName = newName.trim()
+  if (!trimmedName) return
+  const supplier = await resolveOrCreateSupplier(rawValue)
+  if (supplier.name !== trimmedName) {
+    await db.suppliers.update(supplier.id!, { name: trimmedName, updatedAt: new Date().toISOString() })
+  }
+}
