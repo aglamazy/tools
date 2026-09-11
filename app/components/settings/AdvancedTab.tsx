@@ -18,6 +18,12 @@ import {
 import { appSettingsStore } from '@/app/stores/appSettingsStore'
 import { ALL_PAGES } from '@/app/lib/pageRegistry'
 import Modal from '../Modal'
+import {
+  mergeDuplicateSuppliers,
+  deleteCategoryById,
+  deleteTransactionById,
+  type SupplierMergeResult,
+} from '@/app/services/duplicateCleanupService'
 
 export default function AdvancedTab() {
   const [dbStats, setDbStats] = useState<{
@@ -40,6 +46,13 @@ export default function AdvancedTab() {
   const [dirMeta, setDirMeta] = useState<{ name: string; savedAt: string } | null>(null)
   const [alertModal, setAlertModal] = useState<{ isOpen: boolean; message: string }>({ isOpen: false, message: '' })
   const [defaultPage, setDefaultPage] = useState<string>('home')
+  const [cleanupArmed, setCleanupArmed] = useState(false)
+  const [cleanupRunning, setCleanupRunning] = useState(false)
+  const [cleanupResult, setCleanupResult] = useState<{
+    suppliers: SupplierMergeResult
+    categoryDeleted: boolean
+    transactionDeleted: boolean
+  } | null>(null)
 
   useEffect(() => {
     loadDatabaseStats()
@@ -87,6 +100,30 @@ export default function AdvancedTab() {
       })
     } catch (err) {
       console.error('Error loading database stats:', err)
+    }
+  }
+
+  // aglamazo#364/#365 — one-time cleanup authorized by Agla (oct_message
+  // #44942 "go"), backup taken first (~/finance/aglamazo-backup-20260911-092518):
+  // merge the 1,176 duplicate Supplier rows from the 2026-07-13/14 seed
+  // race, remove the non-deductible תשתיות category duplicate, and remove
+  // the one stray transaction (id 2081) re-created this morning by #362's
+  // false import-gap bug. Not a generic sweep — the three targets are the
+  // exact ones Sheli and Agla agreed on.
+  const runDuplicateCleanup = async () => {
+    setCleanupRunning(true)
+    try {
+      const suppliers = await mergeDuplicateSuppliers()
+      const categoryDeleted = await deleteCategoryById('custom-1783667477656')
+      const transactionDeleted = await deleteTransactionById(2081)
+      setCleanupResult({ suppliers, categoryDeleted, transactionDeleted })
+      setCleanupArmed(false)
+      await loadDatabaseStats()
+    } catch (err) {
+      console.error('Error running duplicate cleanup:', err)
+      setAlertModal({ isOpen: true, message: 'הניקוי נכשל, ראה קונסולה לפרטים.' })
+    } finally {
+      setCleanupRunning(false)
     }
   }
 
@@ -411,6 +448,52 @@ export default function AdvancedTab() {
           <p style={{ marginTop: '0.75rem', color: '#64748b', fontSize: '0.9rem' }}>
             עדיין לא הוגדרה תיקייה. בחר תיקייה כדי לדלג על בחירת תיקייה בכל פעם שפותחים קובץ.
           </p>
+        )}
+      </section>
+
+      <section style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid #fca5a5', borderRadius: '0.75rem', background: '#fef2f2' }}>
+        <h2 style={{ margin: 0, fontSize: '1.05rem' }}>ניקוי כפילויות חד-פעמי (#364/#365)</h2>
+        <p style={{ margin: '0.25rem 0 0', color: '#7f1d1d', fontSize: '0.9rem' }}>
+          מאחד כפילויות ספקים שנוצרו במרוץ מקבילי ב-13-14/7, מוחק את שורת הקטגוריה &quot;תשתיות&quot; הכפולה
+          שאינה מוכרת, ומוחק את עסקת ה-16.22 הכפולה שנוצרה הבוקר. פעולה מאושרת ומגובה מראש; מריצים פעם אחת בלבד.
+        </p>
+        {!cleanupResult && (
+          <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            {!cleanupArmed ? (
+              <button onClick={() => setCleanupArmed(true)} className="file-picker secondary">
+                הכן ניקוי
+              </button>
+            ) : (
+              <>
+                <span style={{ color: '#7f1d1d', fontSize: '0.9rem' }}>בטוח? הפעולה בלתי הפיכה.</span>
+                <button onClick={runDuplicateCleanup} disabled={cleanupRunning} className="upload-another-btn">
+                  {cleanupRunning ? 'מריץ...' : 'אשר והרץ ניקוי'}
+                </button>
+                <button onClick={() => setCleanupArmed(false)} className="file-picker secondary">
+                  ביטול
+                </button>
+              </>
+            )}
+          </div>
+        )}
+        {cleanupResult && (
+          <div style={{ marginTop: '0.75rem', color: '#166534', fontSize: '0.9rem' }}>
+            <p style={{ margin: 0 }}>
+              ספקים: נבדקו {cleanupResult.suppliers.groupsExamined} קבוצות, אוחדו {cleanupResult.suppliers.groupsMerged},
+              נמחקו {cleanupResult.suppliers.rowsDeleted} שורות כפולות.
+            </p>
+            {cleanupResult.suppliers.skippedNonIdentical.length > 0 && (
+              <p style={{ margin: '0.25rem 0 0', color: '#92400e' }}>
+                דילוג (לא זהות לחלוטין): {cleanupResult.suppliers.skippedNonIdentical.map((g) => g.name).join(', ')}
+              </p>
+            )}
+            <p style={{ margin: '0.25rem 0 0' }}>
+              קטגוריית תשתיות כפולה: {cleanupResult.categoryDeleted ? 'נמחקה' : 'לא נמצאה (כבר טופלה?)'}.
+            </p>
+            <p style={{ margin: '0.25rem 0 0' }}>
+              עסקת 2081 כפולה: {cleanupResult.transactionDeleted ? 'נמחקה' : 'לא נמצאה (כבר טופלה?)'}.
+            </p>
+          </div>
         )}
       </section>
 
