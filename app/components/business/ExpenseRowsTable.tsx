@@ -28,7 +28,7 @@ type Props = {
   cancelEdit: () => void
   handleMatchReceipt: (t: Transaction) => void
   handleRetryError: (t: Transaction) => void
-  handleUploadReceipt: (t: Transaction, files: FileList) => void
+  handleUploadReceipt: (t: Transaction, files: File[]) => void
   handleUnlink: (txId: number, docId?: number) => void
   handleDeleteCash: (t: Transaction) => void
 }
@@ -241,9 +241,14 @@ export default function ExpenseRowsTable({
                             multiple
                             style={{ display: 'none' }}
                             onChange={(e) => {
-                              const files = e.target.files
-                              if (files && files.length > 0) handleUploadReceipt(t, files)
+                              // e.target.files is a LIVE FileList tied to the
+                              // input element — snapshot it into a real array
+                              // before resetting the input's value, so the
+                              // async handleUploadReceipt isn't reading from
+                              // a list the reset just invalidated.
+                              const files = e.target.files ? Array.from(e.target.files) : []
                               e.target.value = ''
+                              if (files.length > 0) handleUploadReceipt(t, files)
                             }}
                           />
                         </label>

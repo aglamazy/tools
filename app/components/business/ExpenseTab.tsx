@@ -286,7 +286,7 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
     }
   }
 
-  const handleUploadReceipt = async (t: Transaction, files: FileList) => {
+  const handleUploadReceipt = async (t: Transaction, files: File[]) => {
     if (!t.id || !t.syncId || files.length === 0) return
     setMatchStatus(s => ({ ...s, [t.id!]: 'searching' }))
     setMatchErrorMsg(s => ({ ...s, [t.id!]: '' }))
@@ -295,7 +295,7 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
       const desc = (t.merchant || t.description || '').trim()
       const newDocs: ExpenseDocument[] = []
 
-      for (const file of Array.from(files)) {
+      for (const file of files) {
         const uploaded = await uploadExpenseDocument(file, parseDateFolder(t.date))
         const finalExtracted = await extractFromFile(file, { date: t.date, description: desc, amount: t.amount }, claudeApiKey)
 
