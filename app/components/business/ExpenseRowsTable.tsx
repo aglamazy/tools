@@ -105,9 +105,9 @@ export default function ExpenseRowsTable({
                         title="פתח בעמוד התקציב לעדכון פרטי התנועה"
                         style={{ color: 'inherit', textDecoration: 'none' }}
                       >
-                        {pickExpenseLabel(firstDoc?.description, firstDoc?.vendor, t.merchant, t.description)}
+                        <bdi>{pickExpenseLabel(firstDoc?.description, firstDoc?.vendor, t.merchant, t.description)}</bdi>
                         <span style={{ display: 'block', fontSize: '0.75rem', color: '#94a3b8' }}>
-                          {t.description}
+                          <bdi>{t.description}</bdi>
                         </span>
                       </a>
                     )}

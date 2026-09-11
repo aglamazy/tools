@@ -46,6 +46,7 @@ function BudgetPageContent() {
   const [transactions, setTransactions] = useState<BudgetTransaction[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [autoClassifiedIds, setAutoClassifiedIds] = useState<Set<string>>(new Set())
   const [hideClassified, setHideClassified] = useState(false)
   // Free-text search across date/business/category/payment-method/amount —
@@ -103,44 +104,54 @@ function BudgetPageContent() {
   // Load available months from transactions and categories
   useEffect(() => {
     const loadData = async () => {
-      const months = await transactionStore.getAvailableMonths()
+      setLoadError(null)
+      try {
+        const months = await transactionStore.getAvailableMonths()
 
-      setAvailableMonths(months)
-      if (months.length > 0 && !selectedMonth) {
-        // Check URL parameter first
-        const monthParam = searchParams.get('month')
-        if (monthParam && months.includes(monthParam)) {
-          setSelectedMonth(monthParam)
-        } else {
-          // Try to restore from sessionStorage
-          const savedMonth = sessionStorage.getItem('selectedMonth')
-          if (savedMonth && months.includes(savedMonth)) {
-            setSelectedMonth(savedMonth)
+        setAvailableMonths(months)
+        if (months.length > 0 && !selectedMonth) {
+          // Check URL parameter first
+          const monthParam = searchParams.get('month')
+          if (monthParam && months.includes(monthParam)) {
+            setSelectedMonth(monthParam)
           } else {
-            setSelectedMonth(months[0]) // Select newest month by default
+            // Try to restore from sessionStorage
+            const savedMonth = sessionStorage.getItem('selectedMonth')
+            if (savedMonth && months.includes(savedMonth)) {
+              setSelectedMonth(savedMonth)
+            } else {
+              setSelectedMonth(months[0]) // Select newest month by default
+            }
           }
         }
+
+        // Check for filter parameter
+        const filterParam = searchParams.get('filter')
+        if (filterParam === 'unclassified') {
+          setHideClassified(true)
+          setIsPieChartCollapsed(true) // Collapse pie chart when showing unclassified
+        }
+
+        const txParam = searchParams.get('tx')
+        if (txParam) {
+          setFocusedTxId(txParam)
+          // Open expense rows by default so the focused row isn't hidden by the
+          // classified-filter toggle.
+          setHideClassified(false)
+        }
+
+        // Load categories from settings
+        setCategories(await subjectStore.getAll())
+      } catch (err) {
+        // Without this, an uncaught throw here left `loading` true forever —
+        // the table's own render guard (`selectedMonth && !loading`) never
+        // fires, so the page shows header-only with no error, no way out
+        // (aglamazo#368, Sheli/Tester 2026-09-11).
+        console.error('Error loading budget page data:', err)
+        setLoadError(err instanceof Error ? err.message : 'שגיאה בטעינת נתוני התקציב')
+      } finally {
+        setLoading(false)
       }
-
-      // Check for filter parameter
-      const filterParam = searchParams.get('filter')
-      if (filterParam === 'unclassified') {
-        setHideClassified(true)
-        setIsPieChartCollapsed(true) // Collapse pie chart when showing unclassified
-      }
-
-      const txParam = searchParams.get('tx')
-      if (txParam) {
-        setFocusedTxId(txParam)
-        // Open expense rows by default so the focused row isn't hidden by the
-        // classified-filter toggle.
-        setHideClassified(false)
-      }
-
-      // Load categories from settings
-      setCategories(await subjectStore.getAll())
-
-      setLoading(false)
     }
     loadData()
   }, [searchParams])
@@ -356,6 +367,11 @@ function BudgetPageContent() {
   return (
     <main className="app" dir="rtl">
       <div className="card">
+        {loadError && (
+          <div className="banner error" style={{ marginBottom: '1rem' }}>
+            שגיאה בטעינת עמוד התקציב: {loadError}
+          </div>
+        )}
         {/* Mode switcher: monthly budget analysis vs. all-time transaction search (#323) */}
         <div style={{ display: 'flex', gap: '0.375rem', marginBottom: '1.25rem', borderBottom: '1px solid #e5e7eb' }}>
           <button
@@ -725,7 +741,7 @@ function BudgetPageContent() {
                               style={{ cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }}
                               title="לחץ להיסטוריית עסקאות"
                             >
-                              {supplierDisplayNames.get(transaction.business) ?? transaction.business}
+                              <bdi>{supplierDisplayNames.get(transaction.business) ?? transaction.business}</bdi>
                             </span>
                             {isAutoClassified && (
                               <span style={{ marginLeft: '0.5rem', fontSize: '0.875rem' }}>✨</span>

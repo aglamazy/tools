@@ -699,7 +699,7 @@ export default function TaxVatSection({
                         style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }}
                         title="לחץ לצפייה/עריכת הספק — קביעת כתובת מייל הופכת את החיפוש למהיר וממוקד"
                       >
-                        {r.vendor}
+                        <bdi>{r.vendor}</bdi>
                       </button>
                     </td>
                     <td style={{ ...tdStyle, textAlign: 'left' }}>{ILS(r.amount)}</td>

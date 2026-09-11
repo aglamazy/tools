@@ -343,7 +343,7 @@ export default function ExpenseMonthSupplierPivot({ businessId, business }: Prop
                       </div>
                     ) : (
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
-                        {row.supplier}
+                        <bdi>{row.supplier}</bdi>
                         <button
                           onClick={() => { setEditingKey(row.key); setEditingValue(row.supplier) }}
                           title="שנה שם ספק — ימזג שורות עם אותו שם"

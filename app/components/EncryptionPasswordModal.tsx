@@ -130,6 +130,7 @@ export default function EncryptionPasswordModal({
               disabled={loading}
               minLength={8}
               placeholder="לפחות 8 תווים"
+              autoComplete={mode === 'setup' ? 'new-password' : 'off'}
               style={{
                 width: '100%',
                 padding: '0.75rem',
