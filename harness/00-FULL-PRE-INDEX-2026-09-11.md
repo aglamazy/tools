@@ -2,10 +2,6 @@
 @~/.claude/VERCEL.md
 # Aglamazo — Financial Management App
 
-Rules marked `→ harness/<file>.md` are still IN FORCE from this one line; the file holds the
-incident/reasoning, read only if you're about to break, dispute, or extend that rule.
-Full pre-index text: `harness/00-FULL-PRE-INDEX-2026-09-11.md`.
-
 ## Build & Dev
 - Dev: `npm run dev` (port 3100)
 - Build: `npm run build`
@@ -43,9 +39,9 @@ Full pre-index text: `harness/00-FULL-PRE-INDEX-2026-09-11.md`.
 - Don't commit until user confirms it works in the browser
 - Keep console.log until feature is verified working
 - Use Store classes for data access, not direct localStorage/IndexedDB
-- **No localStorage-backed stores** — all persistent app state goes in a Dexie synced table. → `harness/01-no-localstorage-stores.md`
+- **No localStorage-backed stores.** All persistent app state goes in a Dexie synced table (registered in `SYNCED_DB_TABLES`) so it gets the generic syncId-merge + deletion-ledger for free. localStorage stores sit outside that path and sync by whole-blob overwrite — a thinner-but-newer remote wiped every business-scoped subject on 2026-07-11. `subjectStore`/`timerStore` were the last two exceptions; both are now Dexie-backed (`subjects`/`subjectClassifications` tables, and appSettings key `activeTimer`) — no exceptions remain, don't add one.
 - Extension changes: bump version in `extension/manifest.json`
-- **Never use `git stash`** — commit (even WIP) instead. → `harness/02-never-git-stash.md`
+- **Never use `git stash`.** If a branch switch needs the working tree clean, commit the work first (a WIP commit is fine — amend or squash later) rather than stashing it. This repo already has 5+ pre-existing stashes nobody tracks the contents of; don't add to that pile. If you're unsure whether to commit, ask rather than stash.
 
 ## Landmines (worker-facing — `task-prepare` copies this into every baked spec)
 Build/ship-breakers a memoryless worker WILL hit unless told. Check each against your change:
@@ -57,7 +53,7 @@ Build/ship-breakers a memoryless worker WILL hit unless told. Check each against
 - **Never catch-and-swallow into a naked 500 or a silent default** — fix the cause; if you must catch, log/surface it (a swallowed throw was the Saliko `/api/chat` 500).
 - **Inline `if/else` needs a separator** — `if (c) a; else b` or braces; `if (c) a else b` on one line is an SWC parse error (broke the build 2026-07-03).
 - **DoD = merged AND runs on localhost:3100** (`tsc --noEmit` clean, the real UI action works). "Pushed to origin" is a separate deploy step — don't call it shipped when it's only committed. Keep console.logs until verified.
-- **This directory is shared by multiple Vercel projects** — use `scripts/vercel-deploy-scoped.sh <project-name> [args...]`, never a bare `vercel deploy`. → `harness/03-shared-vercel-directory.md`
+- **This directory is shared by multiple Vercel projects** (aglamazo, saliko, ...) distinguished by project-level env vars — `.vercel/project.json` only points at ONE at a time, so a bare `vercel deploy`/`vercel ls` silently targets whatever it's currently linked to, which may not be the one you mean (bit us 2026-08-02: a saliko-targeted deploy landed on aglamazo instead). Use `scripts/vercel-deploy-scoped.sh <project-name> [vercel deploy args...]` — it links, deploys, and restores the original link afterward even on failure.
 
 ## Telegram Bot (AglamazoBot)
 - Webhook: `app/api/telegram/webhook/route.ts`
