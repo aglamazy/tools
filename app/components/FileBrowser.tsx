@@ -196,6 +196,10 @@ export default function FileBrowser({
   }
 
   const handleSelectFolder = async () => {
+    if (!('showDirectoryPicker' in window)) {
+      setError('הדפדפן שלך לא תומך בבחירת תיקיות. נסה Chrome או Edge, או השתמש ב"בחר קובץ".')
+      return
+    }
     try {
       // Request directory picker
       const dirHandle = await (window as any).showDirectoryPicker({
