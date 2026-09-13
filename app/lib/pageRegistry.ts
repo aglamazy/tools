@@ -14,6 +14,7 @@ const ALL_PAGES_RAW: NavigablePage[] = [
   { id: 'home', label: 'בית', icon: '🏠', href: routes.dashboard, requiredTier: UserTier.FREE },
   { id: 'cash-flow', label: 'תזרים', icon: '💰', href: routes.cashFlow, requiredTier: UserTier.FREE },
   { id: 'budget', label: 'תקציב', icon: '📊', href: routes.budget, requiredTier: UserTier.FREE },
+  { id: 'household', label: 'משק בית', icon: '🏡', href: routes.household, requiredTier: UserTier.FREE },
   { id: 'todo', label: 'משימות', icon: '✅', href: routes.todo, requiredTier: UserTier.FREE },
   { id: 'credit-cards', label: 'כרטיסים', icon: '💳', href: routes.creditCards, requiredTier: UserTier.FREE },
   { id: 'import', label: 'ייבוא', icon: '📥', href: routes.import, requiredTier: UserTier.FREE },

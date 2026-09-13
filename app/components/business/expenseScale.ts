@@ -84,3 +84,32 @@ export function resolveBusinessExpenseCategories(categories: Category[], busines
     return c.businessId === business.syncId && !c.excludeFromBusinessTotals
   })
 }
+
+/**
+ * Every expense category that belongs to the household scope, not any
+ * business — i.e. every category with no businessId (aglamazo#373: there
+ * was no household equivalent of resolveBusinessExpenseCategories, so no
+ * page could show the same year×vendor pivot for מזון/בית/חשמל/... that
+ * every business already gets). Unlike resolveBusinessExpenseCategories,
+ * this is unconditional on isDeductible/deductibleByMember — household
+ * spend (groceries, culture, health) is real household spend whether or
+ * not any part of it happens to also be tax-deductible.
+ */
+export function resolveHouseholdExpenseCategories(categories: Category[]): Category[] {
+  return categories.filter((c) => c.type === 'expense' && !c.businessId)
+}
+
+/**
+ * Net (VAT-excluded) amount for a household-scope transaction — the FULL
+ * bank amount minus the matched document's own extracted VAT, never
+ * scaled by any percentage. Household spend is 100% household by
+ * definition; the business-side fractional scaling in
+ * expenseScaleFraction only exists because a business may claim a SHARE
+ * of a household-deductible category, which has no meaning on the
+ * household's own view of its own full spend.
+ */
+export function householdExpenseNetAmount(tx: Transaction, docVatAmount: number | undefined): number {
+  const raw = Math.abs(tx.amount || 0)
+  const vat = Math.abs(docVatAmount || 0)
+  return Math.max(0, raw - vat)
+}

@@ -18,6 +18,7 @@ export const routes = {
   import: '/app/import',
   cashFlow: '/app/cash-flow',
   budget: '/app/budget',
+  household: '/app/household',
   todo: '/app/todo',
   creditCards: '/app/credit-cards',
   futurePayments: '/app/future-payments',

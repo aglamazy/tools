@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import type { Category } from '@/app/types/category'
-import type { Business } from '@/app/db/financeDB'
-import { resolveBusinessExpenseCategories, expenseScaleFraction } from './expenseScale'
+import type { Business, Transaction } from '@/app/db/financeDB'
+import {
+  resolveBusinessExpenseCategories,
+  expenseScaleFraction,
+  resolveHouseholdExpenseCategories,
+  householdExpenseNetAmount,
+} from './expenseScale'
 
 // aglamazo#369, Agla 2026-09-13, live with Sheli: "The household items should
 // apear in taxes, but not iside BL." Household-deductible categories (no
@@ -82,5 +87,45 @@ describe('expenseScaleFraction (unchanged — still drives /app/taxes)', () => {
     const categoryByName = new Map([[household.name, household]])
     const tx = { category: household.name, amount: -100 } as any
     expect(expenseScaleFraction(tx, business, categoryByName)).toBe(0)
+  })
+})
+
+// aglamazo#373: no page showed the household equivalent of a business's
+// year×vendor expense pivot. resolveHouseholdExpenseCategories is that
+// page's category source — every category with no businessId, regardless
+// of isDeductible (groceries/culture/health are real household spend even
+// though they're never tax-deductible).
+describe('resolveHouseholdExpenseCategories', () => {
+  it('includes a category with no businessId, deductible or not', () => {
+    const groceries = makeCategory({ name: 'מזון' })
+    const electricity = makeCategory({ name: 'חשמל', isDeductible: true, deductibleByMember: { u1: 16 } })
+    expect(resolveHouseholdExpenseCategories([groceries, electricity])).toEqual([groceries, electricity])
+  })
+
+  it('excludes a category assigned to any business', () => {
+    const cat = makeCategory({ businessId: 'biz-1' })
+    expect(resolveHouseholdExpenseCategories([cat])).toEqual([])
+  })
+
+  it('excludes income-type categories', () => {
+    const cat = makeCategory({ type: 'income' })
+    expect(resolveHouseholdExpenseCategories([cat])).toEqual([])
+  })
+})
+
+describe('householdExpenseNetAmount', () => {
+  it('returns the full bank amount when there is no matched VAT', () => {
+    const tx = { amount: -100 } as Transaction
+    expect(householdExpenseNetAmount(tx, undefined)).toBe(100)
+  })
+
+  it('subtracts the matched document VAT, never scaling by any fraction', () => {
+    const tx = { amount: -100 } as Transaction
+    expect(householdExpenseNetAmount(tx, 17)).toBe(83)
+  })
+
+  it('never goes negative when VAT exceeds the amount', () => {
+    const tx = { amount: -10 } as Transaction
+    expect(householdExpenseNetAmount(tx, 17)).toBe(0)
   })
 })
