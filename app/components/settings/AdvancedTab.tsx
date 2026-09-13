@@ -77,6 +77,15 @@ export default function AdvancedTab() {
   const [dupTxArmed, setDupTxArmed] = useState(false)
   const [dupTxRunning, setDupTxRunning] = useState(false)
   const [dupTxResult, setDupTxResult] = useState<{ deleted: boolean; reason?: string } | null>(null)
+  // aglamazo#371 — the remaining 3 of 4 cross-feed duplicate pairs Sheli's
+  // sweep found (the 4th, Anthropic 1473/1859, is the #370 box above).
+  // Same decision in every pair: keep the card-statement row, delete the
+  // bank-export row.
+  const [dupTxBatchArmed, setDupTxBatchArmed] = useState(false)
+  const [dupTxBatchRunning, setDupTxBatchRunning] = useState(false)
+  const [dupTxBatchResult, setDupTxBatchResult] = useState<
+    { id: number; label: string; deleted: boolean; reason?: string }[] | null
+  >(null)
 
   useEffect(() => {
     loadDatabaseStats()
@@ -196,6 +205,34 @@ export default function AdvancedTab() {
       setAlertModal({ isOpen: true, message: 'המחיקה נכשלה, ראה קונסולה לפרטים.' })
     } finally {
       setDupTxRunning(false)
+    }
+  }
+
+  const runDuplicateTransactionBatchDelete = async () => {
+    setDupTxBatchRunning(true)
+    try {
+      const targets: { id: number; label: string; merchantContains: string; amount: number; date: string }[] = [
+        { id: 1387, label: 'MACSBAGS -תיקון (158.40)', merchantContains: 'CP*MACSBAGS', amount: -158.40, date: '2026-03-20' },
+        { id: 1391, label: 'פלאפל בריבוע צורן (98.00)', merchantContains: 'פלאלפל בריבוע צורן', amount: -98.00, date: '2026-05-10' },
+        { id: 1388, label: 'MACSBAGS -ריבית (1.40)', merchantContains: 'CP*MACSBAGS', amount: -1.40, date: '2026-03-20' },
+      ]
+      const results = []
+      for (const t of targets) {
+        const result = await deleteConfirmedDuplicateTransaction(t.id, {
+          merchantContains: t.merchantContains,
+          amount: t.amount,
+          date: t.date,
+        })
+        results.push({ id: t.id, label: t.label, ...result })
+      }
+      setDupTxBatchResult(results)
+      setDupTxBatchArmed(false)
+      await loadDatabaseStats()
+    } catch (err) {
+      console.error('Error deleting duplicate transaction batch:', err)
+      setAlertModal({ isOpen: true, message: 'המחיקה נכשלה, ראה קונסולה לפרטים.' })
+    } finally {
+      setDupTxBatchRunning(false)
     }
   }
 
@@ -693,6 +730,43 @@ export default function AdvancedTab() {
               ? 'עסקה 1473 נמחקה.'
               : `לא נמחקה: ${dupTxResult.reason}`}
           </p>
+        )}
+      </section>
+
+      <section style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid #fca5a5', borderRadius: '0.75rem', background: '#fef2f2' }}>
+        <h2 style={{ margin: 0, fontSize: '1.05rem' }}>מחיקת 3 עסקאות כפולות נוספות (aglamazo#371)</h2>
+        <p style={{ margin: '0.25rem 0 0', color: '#7f1d1d', fontSize: '0.9rem' }}>
+          אותו כשל חוצה-פיד כמו ה-Anthropic למעלה: MACSBAGS -תיקון (158.40), פלאפל בריבוע צורן
+          (98.00), MACSBAGS -ריבית (1.40) — כל אחת מופיעה גם מייבוא הבנק וגם מייבוא האשראי. מוחק
+          את שורת הבנק בכל זוג, לאחר בדיקת ספק/סכום/תאריך לכל שורה בנפרד.
+        </p>
+        {!dupTxBatchResult && (
+          <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            {!dupTxBatchArmed ? (
+              <button onClick={() => setDupTxBatchArmed(true)} className="file-picker secondary">
+                הכן מחיקה
+              </button>
+            ) : (
+              <>
+                <span style={{ color: '#7f1d1d', fontSize: '0.9rem' }}>בטוח? הפעולה בלתי הפיכה.</span>
+                <button onClick={runDuplicateTransactionBatchDelete} disabled={dupTxBatchRunning} className="upload-another-btn">
+                  {dupTxBatchRunning ? 'מוחק...' : 'אשר ומחק'}
+                </button>
+                <button onClick={() => setDupTxBatchArmed(false)} className="file-picker secondary">
+                  ביטול
+                </button>
+              </>
+            )}
+          </div>
+        )}
+        {dupTxBatchResult && (
+          <ul style={{ marginTop: '0.75rem', paddingInlineStart: '1.25rem', fontSize: '0.9rem' }}>
+            {dupTxBatchResult.map((r) => (
+              <li key={r.id} style={{ color: r.deleted ? '#166534' : '#92400e' }}>
+                {r.label} (שורה {r.id}): {r.deleted ? 'נמחקה' : `לא נמחקה — ${r.reason}`}
+              </li>
+            ))}
+          </ul>
         )}
       </section>
 

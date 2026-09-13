@@ -203,27 +203,41 @@ export type ConfirmedDuplicateDeleteResult = {
 }
 
 /**
- * Delete one specific transaction by id, but only after its merchant
+ * Delete one specific transaction by id, but only after its vendor text
  * (substring match — a truncated import can differ by a trailing
  * character or two, e.g. "ANTHROPIC* CLAUDE SU" vs "...SUB"), amount and
- * fileId all match what was actually verified as the duplicate
- * (aglamazo#370). A hardcoded id alone isn't enough evidence on live
- * financial data — if the row has since changed or been touched by
- * something else, this refuses rather than deleting the wrong thing.
+ * at least one of {date, fileId} all match what was actually verified as
+ * the duplicate (aglamazo#370/#371). A hardcoded id alone isn't enough
+ * evidence on live financial data — if the row has since changed or been
+ * touched by something else, this refuses rather than deleting the wrong
+ * thing.
+ *
+ * Vendor text falls back to `description` when `merchant` is empty — a
+ * BANK-type row (unlike a credit-card row) never populates `merchant`
+ * (see saveBankTransactions), so checking `merchant` alone would silently
+ * refuse to delete every genuine bank-side duplicate. Same
+ * merchant-or-description resolution ExpenseRowsTable/TaxVatSection
+ * already use elsewhere in this codebase.
  */
 export async function deleteConfirmedDuplicateTransaction(
   id: number,
-  expected: { merchantContains: string; amount: number; fileId: string },
+  expected: { merchantContains: string; amount: number; date?: string; fileId?: string },
 ): Promise<ConfirmedDuplicateDeleteResult> {
+  if (expected.date == null && expected.fileId == null) {
+    throw new Error('deleteConfirmedDuplicateTransaction requires at least one of {date, fileId}')
+  }
   const existing = await db.transactions.get(id)
   if (!existing) return { deleted: false, reason: 'not found — already deleted?' }
-  const merchantOk = (existing.merchant || '').includes(expected.merchantContains)
+  const vendorText = existing.merchant || existing.description || ''
+  const merchantOk = vendorText.includes(expected.merchantContains)
   const amountOk = existing.amount === expected.amount
-  const fileIdOk = existing.fileId === expected.fileId
-  if (!merchantOk || !amountOk || !fileIdOk) {
+  const dateOk = expected.date == null || existing.date === expected.date
+  const fileIdOk = expected.fileId == null || existing.fileId === expected.fileId
+  if (!merchantOk || !amountOk || !dateOk || !fileIdOk) {
     const mismatches = [
-      !merchantOk && `merchant "${existing.merchant}" doesn't contain "${expected.merchantContains}"`,
+      !merchantOk && `vendor text "${vendorText}" doesn't contain "${expected.merchantContains}"`,
       !amountOk && `amount ${existing.amount} !== ${expected.amount}`,
+      !dateOk && `date "${existing.date}" !== "${expected.date}"`,
       !fileIdOk && `fileId "${existing.fileId}" !== "${expected.fileId}"`,
     ].filter(Boolean).join('; ')
     return { deleted: false, reason: `row changed since verification — ${mismatches}` }

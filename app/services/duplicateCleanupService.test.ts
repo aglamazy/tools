@@ -218,6 +218,34 @@ describe('deleteConfirmedDuplicateTransaction', () => {
     expect(await db.transactions.get(id as number)).toBeUndefined()
   })
 
+  it('falls back to description when merchant is empty — the real shape of a bank row (aglamazo#371)', async () => {
+    // saveBankTransactions never sets `merchant` on an inserted row — only
+    // `description`. Checking `merchant` alone would silently refuse to
+    // delete every genuine bank-side duplicate.
+    const id = await db.transactions.add({
+      type: 'bank',
+      date: '2026-03-20',
+      amount: -158.40,
+      description: 'CP*MACSBAGS -תיקוןSU',
+      accountNumber: 'acc-1',
+      isFixed: false,
+      month: '03/2026',
+    } as any)
+    const result = await deleteConfirmedDuplicateTransaction(id as number, {
+      merchantContains: 'CP*MACSBAGS',
+      amount: -158.40,
+      date: '2026-03-20',
+    })
+    expect(result.deleted).toBe(true)
+    expect(await db.transactions.get(id as number)).toBeUndefined()
+  })
+
+  it('throws if neither date nor fileId is provided', async () => {
+    await expect(
+      deleteConfirmedDuplicateTransaction(1, { merchantContains: 'x', amount: -1 } as any)
+    ).rejects.toThrow(/requires at least one/)
+  })
+
   it('refuses and explains when the amount no longer matches', async () => {
     const id = await db.transactions.add({
       type: 'bank',
