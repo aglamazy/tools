@@ -5,6 +5,7 @@ import {
   mergeSupplierEmptyEmailDuplicates,
   deleteCategoryById,
   deleteTransactionById,
+  deleteConfirmedDuplicateTransaction,
 } from './duplicateCleanupService'
 
 // aglamazo#364/#365, authorized by Agla (oct_message #44942 "go") after
@@ -186,5 +187,85 @@ describe('deleteTransactionById', () => {
   it('returns false for a non-existent id without throwing', async () => {
     const ok = await deleteTransactionById(999999)
     expect(ok).toBe(false)
+  })
+})
+
+describe('deleteConfirmedDuplicateTransaction', () => {
+  beforeEach(async () => {
+    await db.transactions.clear()
+  })
+  afterEach(async () => {
+    await db.transactions.clear()
+  })
+
+  it('deletes when merchant (substring), amount and fileId all match (the aglamazo#370 case)', async () => {
+    const id = await db.transactions.add({
+      type: 'bank',
+      date: '2026-06-10',
+      amount: -517.69,
+      description: 'ANTHROPIC* CLAUDE SU',
+      merchant: 'ANTHROPIC* CLAUDE SU',
+      fileId: '1783794855524-FibiSave1783794113095.xls',
+      isFixed: false,
+      month: '06/2026',
+    } as any)
+    const result = await deleteConfirmedDuplicateTransaction(id as number, {
+      merchantContains: 'ANTHROPIC* CLAUDE SU',
+      amount: -517.69,
+      fileId: '1783794855524-FibiSave1783794113095.xls',
+    })
+    expect(result.deleted).toBe(true)
+    expect(await db.transactions.get(id as number)).toBeUndefined()
+  })
+
+  it('refuses and explains when the amount no longer matches', async () => {
+    const id = await db.transactions.add({
+      type: 'bank',
+      date: '2026-06-10',
+      amount: -999,
+      description: 'ANTHROPIC* CLAUDE SU',
+      merchant: 'ANTHROPIC* CLAUDE SU',
+      fileId: 'file-a',
+      isFixed: false,
+      month: '06/2026',
+    } as any)
+    const result = await deleteConfirmedDuplicateTransaction(id as number, {
+      merchantContains: 'ANTHROPIC* CLAUDE SU',
+      amount: -517.69,
+      fileId: 'file-a',
+    })
+    expect(result.deleted).toBe(false)
+    expect(result.reason).toContain('amount')
+    expect(await db.transactions.get(id as number)).toBeDefined()
+  })
+
+  it('refuses when the fileId no longer matches', async () => {
+    const id = await db.transactions.add({
+      type: 'bank',
+      date: '2026-06-10',
+      amount: -517.69,
+      description: 'ANTHROPIC* CLAUDE SU',
+      merchant: 'ANTHROPIC* CLAUDE SU',
+      fileId: 'a-different-file.xls',
+      isFixed: false,
+      month: '06/2026',
+    } as any)
+    const result = await deleteConfirmedDuplicateTransaction(id as number, {
+      merchantContains: 'ANTHROPIC* CLAUDE SU',
+      amount: -517.69,
+      fileId: 'file-a',
+    })
+    expect(result.deleted).toBe(false)
+    expect(result.reason).toContain('fileId')
+  })
+
+  it('returns not-found for a non-existent id without throwing', async () => {
+    const result = await deleteConfirmedDuplicateTransaction(999999, {
+      merchantContains: 'x',
+      amount: -1,
+      fileId: 'x',
+    })
+    expect(result.deleted).toBe(false)
+    expect(result.reason).toContain('not found')
   })
 })

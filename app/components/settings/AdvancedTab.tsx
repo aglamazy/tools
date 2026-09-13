@@ -23,6 +23,7 @@ import {
   mergeSupplierEmptyEmailDuplicates,
   deleteCategoryById,
   deleteTransactionById,
+  deleteConfirmedDuplicateTransaction,
   type SupplierMergeResult,
   type SupplierEmailSubsetMergeResult,
 } from '@/app/services/duplicateCleanupService'
@@ -70,6 +71,12 @@ export default function AdvancedTab() {
   const [emailMergeArmed, setEmailMergeArmed] = useState(false)
   const [emailMergeRunning, setEmailMergeRunning] = useState(false)
   const [emailMergeResult, setEmailMergeResult] = useState<SupplierEmailSubsetMergeResult | null>(null)
+  // aglamazo#370 — duplicate Anthropic charge (bank export itemized a
+  // card-level line the card statement PDF also carries). Sheli/Agla
+  // decided: keep tx 1859 (card statement), delete tx 1473 (bank export).
+  const [dupTxArmed, setDupTxArmed] = useState(false)
+  const [dupTxRunning, setDupTxRunning] = useState(false)
+  const [dupTxResult, setDupTxResult] = useState<{ deleted: boolean; reason?: string } | null>(null)
 
   useEffect(() => {
     loadDatabaseStats()
@@ -170,6 +177,25 @@ export default function AdvancedTab() {
       setAlertModal({ isOpen: true, message: 'הניקוי נכשל, ראה קונסולה לפרטים.' })
     } finally {
       setEmailMergeRunning(false)
+    }
+  }
+
+  const runDuplicateTransactionDelete = async () => {
+    setDupTxRunning(true)
+    try {
+      const result = await deleteConfirmedDuplicateTransaction(1473, {
+        merchantContains: 'ANTHROPIC* CLAUDE SU',
+        amount: -517.69,
+        fileId: '1783794855524-FibiSave1783794113095.xls',
+      })
+      setDupTxResult(result)
+      setDupTxArmed(false)
+      await loadDatabaseStats()
+    } catch (err) {
+      console.error('Error deleting duplicate Anthropic transaction:', err)
+      setAlertModal({ isOpen: true, message: 'המחיקה נכשלה, ראה קונסולה לפרטים.' })
+    } finally {
+      setDupTxRunning(false)
     }
   }
 
@@ -631,6 +657,42 @@ export default function AdvancedTab() {
               </div>
             )}
           </div>
+        )}
+      </section>
+
+      <section style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid #fca5a5', borderRadius: '0.75rem', background: '#fef2f2' }}>
+        <h2 style={{ margin: 0, fontSize: '1.05rem' }}>מחיקת עסקת Anthropic כפולה (aglamazo#370)</h2>
+        <p style={{ margin: '0.25rem 0 0', color: '#7f1d1d', fontSize: '0.9rem' }}>
+          אותה חיוב בדיוק (517.69, 10/06/2026) מופיע פעמיים: פעם אחת מייבוא הבנק (שורה 1473,
+          נתפס כפריט ברמת הכרטיס) ופעם מייבוא דוח האשראי עצמו (שורה 1859, המחרוזת המלאה). מוחק
+          את 1473 בלבד, לאחר בדיקה שהספק/סכום/קובץ המקור עדיין תואמים למה שאומת — אם השורה
+          השתנתה מאז, המחיקה מסרבת ומסבירה למה במקום למחוק בטעות.
+        </p>
+        {!dupTxResult && (
+          <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            {!dupTxArmed ? (
+              <button onClick={() => setDupTxArmed(true)} className="file-picker secondary">
+                הכן מחיקה
+              </button>
+            ) : (
+              <>
+                <span style={{ color: '#7f1d1d', fontSize: '0.9rem' }}>בטוח? הפעולה בלתי הפיכה.</span>
+                <button onClick={runDuplicateTransactionDelete} disabled={dupTxRunning} className="upload-another-btn">
+                  {dupTxRunning ? 'מוחק...' : 'אשר ומחק'}
+                </button>
+                <button onClick={() => setDupTxArmed(false)} className="file-picker secondary">
+                  ביטול
+                </button>
+              </>
+            )}
+          </div>
+        )}
+        {dupTxResult && (
+          <p style={{ marginTop: '0.75rem', color: dupTxResult.deleted ? '#166534' : '#92400e', fontSize: '0.9rem' }}>
+            {dupTxResult.deleted
+              ? 'עסקה 1473 נמחקה.'
+              : `לא נמחקה: ${dupTxResult.reason}`}
+          </p>
         )}
       </section>
 

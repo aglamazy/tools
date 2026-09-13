@@ -196,3 +196,38 @@ export async function deleteTransactionById(id: number): Promise<boolean> {
   await db.transactions.delete(id)
   return true
 }
+
+export type ConfirmedDuplicateDeleteResult = {
+  deleted: boolean
+  reason?: string
+}
+
+/**
+ * Delete one specific transaction by id, but only after its merchant
+ * (substring match — a truncated import can differ by a trailing
+ * character or two, e.g. "ANTHROPIC* CLAUDE SU" vs "...SUB"), amount and
+ * fileId all match what was actually verified as the duplicate
+ * (aglamazo#370). A hardcoded id alone isn't enough evidence on live
+ * financial data — if the row has since changed or been touched by
+ * something else, this refuses rather than deleting the wrong thing.
+ */
+export async function deleteConfirmedDuplicateTransaction(
+  id: number,
+  expected: { merchantContains: string; amount: number; fileId: string },
+): Promise<ConfirmedDuplicateDeleteResult> {
+  const existing = await db.transactions.get(id)
+  if (!existing) return { deleted: false, reason: 'not found — already deleted?' }
+  const merchantOk = (existing.merchant || '').includes(expected.merchantContains)
+  const amountOk = existing.amount === expected.amount
+  const fileIdOk = existing.fileId === expected.fileId
+  if (!merchantOk || !amountOk || !fileIdOk) {
+    const mismatches = [
+      !merchantOk && `merchant "${existing.merchant}" doesn't contain "${expected.merchantContains}"`,
+      !amountOk && `amount ${existing.amount} !== ${expected.amount}`,
+      !fileIdOk && `fileId "${existing.fileId}" !== "${expected.fileId}"`,
+    ].filter(Boolean).join('; ')
+    return { deleted: false, reason: `row changed since verification — ${mismatches}` }
+  }
+  await db.transactions.delete(id)
+  return { deleted: true }
+}
