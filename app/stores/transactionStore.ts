@@ -3,7 +3,7 @@
 
 import { db, Transaction, ImportedFile } from '@/app/db/financeDB'
 import { addMonths } from '@/app/utils/formatters'
-import { canonicalizeForDedup, merchantsMatchForDedup } from '@/app/utils/dedupKey'
+import { canonicalizeForDedup, merchantsMatchForDedup, isCrossFeedDuplicate } from '@/app/utils/dedupKey'
 import { findDuplicateTransactions, type DuplicateGroup } from '@/app/utils/findDuplicateTransactions'
 import { normalizeDate, parseDateMs } from '@/app/utils/parsers/shared'
 
@@ -281,11 +281,22 @@ export const transactionStore = {
         existingTransactions.map((t) => `${t.date}|${canonicalizeForDedup(t.description)}|${t.amount}`)
       )
 
+      // Cross-feed check (aglamazo#371): some bank exports itemize card-level
+      // lines a card statement also captures — compare against every existing
+      // credit-type row, not just this account's own bank rows.
+      const existingCreditTransactions = await db.transactions.where('type').equals('credit').toArray()
+
       // Filter out duplicates
       const newTransactions = transactions.filter((t) => {
         if (t.reference && existingRefKeys.has(refKey(t.date, t.reference, t.amount))) return false
         const key = `${t.date}|${canonicalizeForDedup(t.description)}|${t.amount}`
-        return !existingHeuristicKeys.has(key)
+        if (existingHeuristicKeys.has(key)) return false
+        return !existingCreditTransactions.some((ct) =>
+          isCrossFeedDuplicate(
+            { date: t.date, amount: t.amount, text: t.description || '' },
+            { date: ct.date, amount: ct.amount, text: ct.merchant || ct.description || '' }
+          )
+        )
       })
 
       console.log(`📊 Bank import: ${transactions.length} total, ${newTransactions.length} new, ${transactions.length - newTransactions.length} duplicates skipped`)
@@ -345,15 +356,29 @@ export const transactionStore = {
       // the xlsx of the identical statement — an exact-match key alone
       // (even canonicalized) never catches that, since characters are
       // actually missing, not just reordered.
+      // Cross-feed check (aglamazo#371): some bank exports itemize card-level
+      // lines a card statement also captures — compare against every existing
+      // bank-type row, not just this card's own credit rows. No
+      // currentStep/totalSteps here — a bank export doesn't carry installment
+      // metadata, so the exact-date+amount+merchant rule alone applies.
+      const existingBankTransactions = await db.transactions.where('type').equals('bank').toArray()
+
       const newPayments = payments.filter((p) => {
         const pMerchant = p.merchant || ''
         const pAmount = -Math.abs(p.amount)
-        return !existingTransactions.some((t) =>
+        const sameFeedDup = existingTransactions.some((t) =>
           t.date === p.transactionDate &&
           t.amount === pAmount &&
           t.currentStep === p.currentStep &&
           t.totalSteps === p.totalSteps &&
           merchantsMatchForDedup(t.merchant || '', pMerchant)
+        )
+        if (sameFeedDup) return false
+        return !existingBankTransactions.some((bt) =>
+          isCrossFeedDuplicate(
+            { date: bt.date, amount: bt.amount, text: bt.description || '' },
+            { date: p.transactionDate, amount: pAmount, text: pMerchant }
+          )
         )
       })
 

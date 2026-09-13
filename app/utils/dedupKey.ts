@@ -54,3 +54,31 @@ export function merchantsMatchForDedup(a: string, b: string): boolean {
   if (shorter.length < 4) return false
   return isSubMultiset(shorter, longer)
 }
+
+/**
+ * True if a bank-sourced row and a card-sourced row represent the same
+ * real-world charge (aglamazo#371): dedup previously ran card-vs-card and
+ * bank-vs-bank only, so a bank export that itemizes card-level lines (some
+ * FIBI exports do) could carry the exact same charge a card statement also
+ * captures, landing it twice with nobody comparing across feeds. Exact
+ * date+amount match, required deliberately: an off-by-a-day settlement lag
+ * between feeds is plausible but unverified against live data, so this
+ * under-matches rather than risk merging two genuinely different
+ * same-day/same-amount charges.
+ *
+ * Known gap, left open on purpose: 4 real pairs were found live, but only 2
+ * fit merchantsMatchForDedup's truncation shape (one side is the other with
+ * characters missing from the end). The other 2 (the "CP*…SU" / "OCP*…"
+ * shape) differ at BOTH ends — a dropped leading char AND an added trailing
+ * one — which isn't a sub-multiset either direction, so this correctly
+ * returns false for them. Catching that shape needs a looser fuzzy/edit-
+ * distance match, which trades away the truncation rule's proven safety
+ * against false-positiving two unrelated same-day/same-amount transactions
+ * — a deliberate follow-up decision, not silently folded into this fix.
+ */
+export function isCrossFeedDuplicate(
+  a: { date: string; amount: number; text: string },
+  b: { date: string; amount: number; text: string },
+): boolean {
+  return a.date === b.date && a.amount === b.amount && merchantsMatchForDedup(a.text, b.text)
+}
