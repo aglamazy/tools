@@ -113,3 +113,24 @@ export function householdExpenseNetAmount(tx: Transaction, docVatAmount: number 
   const vat = Math.abs(docVatAmount || 0)
   return Math.max(0, raw - vat)
 }
+
+/**
+ * A transaction's category resolves to its TOP-LEVEL name for the household
+ * pivot's rows (aglamazo#373) — a sub-category (cat.parentId set) rolls up
+ * into its parent's row rather than getting its own, matching the same
+ * top-level-only convention Settings > נושאים > 🏠 משק בית uses for its own
+ * listing (CategoriesTab.tsx's `!cat.parentId` filter). Falls back to the
+ * category's own name when it has no resolvable parent (parent missing or
+ * deleted) — rolling spend up to a name that no longer exists would hide
+ * it, not organize it.
+ */
+export function resolveTopLevelCategoryName(
+  categoryName: string,
+  categoriesByName: Map<string, Category>,
+  categoriesById: Map<string, Category>,
+): string {
+  const cat = categoriesByName.get(categoryName)
+  if (!cat || !cat.parentId) return categoryName
+  const parent = categoriesById.get(cat.parentId)
+  return parent ? parent.name : categoryName
+}

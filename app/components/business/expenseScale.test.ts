@@ -6,6 +6,7 @@ import {
   expenseScaleFraction,
   resolveHouseholdExpenseCategories,
   householdExpenseNetAmount,
+  resolveTopLevelCategoryName,
 } from './expenseScale'
 
 // aglamazo#369, Agla 2026-09-13, live with Sheli: "The household items should
@@ -127,5 +128,33 @@ describe('householdExpenseNetAmount', () => {
   it('never goes negative when VAT exceeds the amount', () => {
     const tx = { amount: -10 } as Transaction
     expect(householdExpenseNetAmount(tx, 17)).toBe(0)
+  })
+})
+
+describe('resolveTopLevelCategoryName', () => {
+  it('returns the category\'s own name when it has no parent', () => {
+    const cat = makeCategory({ id: 'c1', name: 'מזון' })
+    const byName = new Map([[cat.name, cat]])
+    const byId = new Map([[cat.id, cat]])
+    expect(resolveTopLevelCategoryName('מזון', byName, byId)).toBe('מזון')
+  })
+
+  it('rolls a sub-category up to its parent\'s name', () => {
+    const parent = makeCategory({ id: 'parent', name: 'רכב ונסיעות' })
+    const child = makeCategory({ id: 'child', name: 'דלק', parentId: 'parent' })
+    const byName = new Map([[parent.name, parent], [child.name, child]])
+    const byId = new Map([[parent.id, parent], [child.id, child]])
+    expect(resolveTopLevelCategoryName('דלק', byName, byId)).toBe('רכב ונסיעות')
+  })
+
+  it('falls back to the sub-category\'s own name if the parent no longer exists', () => {
+    const child = makeCategory({ id: 'child', name: 'דלק', parentId: 'deleted-parent' })
+    const byName = new Map([[child.name, child]])
+    const byId = new Map<string, Category>()
+    expect(resolveTopLevelCategoryName('דלק', byName, byId)).toBe('דלק')
+  })
+
+  it('returns the input string unchanged for an unknown category name', () => {
+    expect(resolveTopLevelCategoryName('לא קיים', new Map(), new Map())).toBe('לא קיים')
   })
 })

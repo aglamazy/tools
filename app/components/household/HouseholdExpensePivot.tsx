@@ -4,30 +4,27 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { db, type Transaction, type ExpenseDocument } from '@/app/db/financeDB'
 import { subjectStore } from '@/app/stores/subjectStore'
 import { MONTH_NAMES_HE } from '@/app/lib/dateUtils'
-import { pickExpenseLabel, normalizeSupplierKey } from '@/app/utils/expenseLabel'
-import { householdExpenseNetAmount, resolveHouseholdExpenseCategories } from '@/app/components/business/expenseScale'
-import { buildSupplierAliasMap, renameSupplierAlias } from '@/app/services/supplierService'
+import {
+  householdExpenseNetAmount,
+  resolveHouseholdExpenseCategories,
+  resolveTopLevelCategoryName,
+} from '@/app/components/business/expenseScale'
+import type { Category } from '@/app/types/category'
 
-// aglamazo#373: same year×vendor pivot every business already gets
-// (ExpenseMonthSupplierPivot.tsx), scoped to household categories instead
-// of a business's own. Deliberately a separate component rather than a
-// generalized shared one — household has no businessId, no partner-paid
-// docs, and no fractional scaling (household spend is always 100%
-// household), so bending the business component to cover both would have
-// meant threading optional business-only concepts through it for a single
-// new caller. Once this shape is confirmed on localhost, the shared
-// table/drill-down/rename rendering is a reasonable follow-up extraction.
+// aglamazo#373: rows are the configured household SUBJECTS themselves
+// (מזון, בית, חשמל, ...) — exactly what Settings > נושאים > 🏠 משק בית
+// lists (resolveHouseholdExpenseCategories: any expense subject with no
+// businessId), not a vendor/merchant pivot. Corrected after Agla's live
+// feedback: the business Expense tab's pivot groups by VENDOR because a
+// business's own bookkeeping is vendor-shaped; household budgeting is
+// subject-shaped (Agla, 2026-09-13: "should only take the subjects that
+// are included in the household subjects").
 
-type SupplierRow = {
-  key: string
-  supplier: string
+type SubjectRow = {
+  category: Category
   byMonth: number[]
   total: number
 }
-
-type RenameSource =
-  | { type: 'doc'; docId: number; field: 'vendor' | 'description' }
-  | { type: 'alias'; rawValue: string }
 
 type DrillItem = {
   key: string
@@ -38,49 +35,40 @@ type DrillItem = {
   txId?: number
 }
 
-function resolveAlias(raw: string, aliasMap: Map<string, string>): string {
-  return aliasMap.get(raw.trim().toLowerCase()) ?? raw
-}
-
-function supplierLabelForTransaction(
-  t: Transaction,
-  aliasMap: Map<string, string>,
-  doc?: ExpenseDocument,
-): { label: string; source: RenameSource } {
-  const raw = pickExpenseLabel(doc?.description, doc?.vendor, t.merchant, t.description)
-  if (doc?.id != null && raw === doc.description) return { label: raw, source: { type: 'doc', docId: doc.id, field: 'description' } }
-  if (doc?.id != null && raw === doc.vendor) return { label: raw, source: { type: 'doc', docId: doc.id, field: 'vendor' } }
-  return { label: resolveAlias(raw, aliasMap), source: { type: 'alias', rawValue: raw } }
+function getMonthYear(month: string): { monthNum: number; year: number } {
+  const [m, y] = month.split('/')
+  return { monthNum: Number(m), year: Number(y) }
 }
 
 export default function HouseholdExpensePivot() {
   const currentYear = new Date().getFullYear()
   const [year, setYear] = useState(currentYear)
   const [availableYears, setAvailableYears] = useState<number[]>([currentYear])
-  const [rows, setRows] = useState<SupplierRow[]>([])
+  const [rows, setRows] = useState<SubjectRow[]>([])
   const [monthTotals, setMonthTotals] = useState<number[]>(Array(12).fill(0))
   const [loading, setLoading] = useState(true)
   const [cellItems, setCellItems] = useState<Map<string, DrillItem[]>>(new Map())
-  const [drillDown, setDrillDown] = useState<{ supplier: string; monthIdx: number } | null>(null)
-  const [sourcesByKey, setSourcesByKey] = useState<Map<string, RenameSource[]>>(new Map())
-  const [editingKey, setEditingKey] = useState<string | null>(null)
-  const [editingValue, setEditingValue] = useState('')
-  const [renaming, setRenaming] = useState(false)
-  const [reloadTick, setReloadTick] = useState(0)
+  const [drillDown, setDrillDown] = useState<{ subjectName: string; monthIdx: number } | null>(null)
 
-  const cellKey = (supplier: string, monthIdx: number) => `${supplier}|${monthIdx}`
+  const cellKey = (subjectName: string, monthIdx: number) => `${subjectName}|${monthIdx}`
 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      const aliasMap = await buildSupplierAliasMap()
       const allCategories = await subjectStore.getAll()
-      const categories = resolveHouseholdExpenseCategories(allCategories)
-      const categoryNames = new Set(categories.map((c) => c.name))
+      // Same top-level-only convention as Settings > נושאים (CategoriesTab.tsx's
+      // `inScope`/parentId filter) — a sub-category's own transactions still
+      // count, rolled into its parent's row below, rather than getting a
+      // separate row absent from the configured subject list.
+      const householdCategories = resolveHouseholdExpenseCategories(allCategories)
+      const topLevel = householdCategories.filter((c) => !c.parentId)
+      const categoriesById = new Map(allCategories.filter((c) => c.id).map((c) => [c.id, c]))
+      const byName = new Map(householdCategories.map((c) => [c.name, c]))
+      const topLevelNames = new Set(topLevel.map((c) => c.name))
 
       const allTransactions = await db.transactions.toArray()
       const expenseTransactions = allTransactions
-        .filter((t) => t.category && categoryNames.has(t.category) && t.amount < 0)
+        .filter((t) => t.category && byName.has(t.category) && t.amount < 0)
         .filter((t) => !t.currentStep || t.currentStep === 1)
 
       const txSyncIds = expenseTransactions.map((t) => t.syncId).filter((id): id is string => id != null)
@@ -93,78 +81,55 @@ export default function HouseholdExpensePivot() {
       }
 
       const years = new Set<number>()
-      for (const t of expenseTransactions) years.add(Number(t.month.split('/')[1]))
+      for (const t of expenseTransactions) years.add(getMonthYear(t.month).year)
       years.add(currentYear)
 
-      const byYearMonth = new Map<string, Map<number, number>>()
-      const itemsByKey = new Map<string, Map<number, DrillItem[]>>()
-      const labelCounts = new Map<string, Map<string, number>>()
-      const sourcesMap = new Map<string, RenameSource[]>()
-      const addAmount = (rawSupplier: string, monthIdx: number, y: number, amount: number, item: DrillItem, source: RenameSource) => {
-        if (y !== year) return
-        const key = normalizeSupplierKey(rawSupplier)
-        if (!byYearMonth.has(key)) byYearMonth.set(key, new Map())
-        const m = byYearMonth.get(key)!
-        m.set(monthIdx, (m.get(monthIdx) || 0) + amount)
-        if (!itemsByKey.has(key)) itemsByKey.set(key, new Map())
-        const monthItems = itemsByKey.get(key)!
-        const existing = monthItems.get(monthIdx) || []
-        existing.push(item)
-        monthItems.set(monthIdx, existing)
-        if (!labelCounts.has(key)) labelCounts.set(key, new Map())
-        const counts = labelCounts.get(key)!
-        counts.set(rawSupplier, (counts.get(rawSupplier) || 0) + 1)
-        if (!sourcesMap.has(key)) sourcesMap.set(key, [])
-        sourcesMap.get(key)!.push(source)
-      }
+      const byNameMonth = new Map<string, Map<number, number>>()
+      const itemsByName = new Map<string, Map<number, DrillItem[]>>()
 
       for (const t of expenseTransactions) {
+        const { monthNum, year: y } = getMonthYear(t.month)
+        if (y !== year || !t.category) continue
+        const rowName = resolveTopLevelCategoryName(t.category, byName, categoriesById)
+        if (!topLevelNames.has(rowName)) continue // a sub-category whose parent isn't itself a household subject — shouldn't happen, but don't silently misattribute
         const fullAmount = t.totalSteps && t.totalSteps > 1
           ? (t.totalAmount || t.totalSteps * Math.abs(t.amount))
           : Math.abs(t.amount)
         const matchedDoc = t.syncId != null ? firstDocByTxId.get(t.syncId) : undefined
-        const fullTx = { ...t, amount: -fullAmount }
-        const amount = householdExpenseNetAmount(fullTx, matchedDoc?.vatAmount)
+        const amount = householdExpenseNetAmount({ ...t, amount: -fullAmount }, matchedDoc?.vatAmount)
         if (amount <= 0) continue
-        const monthNum = Number(t.month.split('/')[0])
-        const y = Number(t.month.split('/')[1])
-        const { label: supplier, source } = supplierLabelForTransaction(t, aliasMap, matchedDoc)
-        addAmount(supplier, monthNum - 1, y, amount, {
+
+        if (!byNameMonth.has(rowName)) byNameMonth.set(rowName, new Map())
+        const m = byNameMonth.get(rowName)!
+        m.set(monthNum - 1, (m.get(monthNum - 1) || 0) + amount)
+
+        if (!itemsByName.has(rowName)) itemsByName.set(rowName, new Map())
+        const monthItems = itemsByName.get(rowName)!
+        const existing = monthItems.get(monthNum - 1) || []
+        existing.push({
           key: `tx-${t.id}`,
           date: t.date,
-          description: t.description || t.merchant || supplier,
+          description: t.merchant || t.description || rowName,
           amount,
           month: t.month,
           txId: t.id,
-        }, source)
+        })
+        monthItems.set(monthNum - 1, existing)
       }
 
-      const displayLabelFor = (key: string): string => {
-        const counts = labelCounts.get(key)
-        let best: string | null = null
-        let bestCount = -1
-        for (const [label, count] of counts ?? []) {
-          if (count > bestCount || (count === bestCount && (best === null || label.length > best.length))) {
-            best = label
-            bestCount = count
-          }
-        }
-        return best ?? key
-      }
-
-      const built: SupplierRow[] = Array.from(byYearMonth.entries()).map(([key, monthMap]) => {
-        const byMonth = Array.from({ length: 12 }, (_, i) => monthMap.get(i) || 0)
-        return { key, supplier: displayLabelFor(key), byMonth, total: byMonth.reduce((s, v) => s + v, 0) }
-      }).sort((a, b) => b.total - a.total)
+      const built: SubjectRow[] = topLevel.map((category) => {
+        const monthMap = byNameMonth.get(category.name)
+        const byMonth = Array.from({ length: 12 }, (_, i) => monthMap?.get(i) || 0)
+        return { category, byMonth, total: byMonth.reduce((s, v) => s + v, 0) }
+      }).sort((a, b) => a.category.name.localeCompare(b.category.name, 'he'))
 
       const totals = Array.from({ length: 12 }, (_, i) => built.reduce((s, r) => s + r.byMonth[i], 0))
 
       const items = new Map<string, DrillItem[]>()
-      for (const [key, monthMap] of itemsByKey) {
-        const displayLabel = displayLabelFor(key)
+      for (const [name, monthMap] of itemsByName) {
         for (const [monthIdx, list] of monthMap) {
           list.sort((a, b) => a.date.localeCompare(b.date))
-          items.set(cellKey(displayLabel, monthIdx), list)
+          items.set(cellKey(name, monthIdx), list)
         }
       }
 
@@ -173,44 +138,13 @@ export default function HouseholdExpensePivot() {
       setRows(built)
       setMonthTotals(totals)
       setCellItems(items)
-      setSourcesByKey(sourcesMap)
       setDrillDown(null)
       setLoading(false)
     })()
     return () => { cancelled = true }
-  }, [year, currentYear, reloadTick])
+  }, [year, currentYear])
 
   const grandTotal = useMemo(() => monthTotals.reduce((s, v) => s + v, 0), [monthTotals])
-
-  const handleRename = async (key: string, newName: string) => {
-    const trimmed = newName.trim()
-    if (!trimmed) { setEditingKey(null); return }
-    const sources = sourcesByKey.get(key) || []
-    setRenaming(true)
-    try {
-      const seenDocFields = new Set<string>()
-      const seenAliases = new Set<string>()
-      for (const source of sources) {
-        if (source.type === 'doc') {
-          const dedupeKey = `${source.docId}:${source.field}`
-          if (seenDocFields.has(dedupeKey)) continue
-          seenDocFields.add(dedupeKey)
-          await db.expenseDocuments.update(
-            source.docId,
-            source.field === 'vendor' ? { vendor: trimmed } : { description: trimmed },
-          )
-        } else {
-          if (seenAliases.has(source.rawValue)) continue
-          seenAliases.add(source.rawValue)
-          await renameSupplierAlias(source.rawValue, trimmed)
-        }
-      }
-      setEditingKey(null)
-      setReloadTick((t) => t + 1)
-    } finally {
-      setRenaming(false)
-    }
-  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -229,13 +163,15 @@ export default function HouseholdExpensePivot() {
       {loading ? (
         <p style={{ color: '#64748b', textAlign: 'center', padding: '1.5rem' }}>טוען...</p>
       ) : rows.length === 0 ? (
-        <p style={{ color: '#64748b', textAlign: 'center', padding: '2rem' }}>אין הוצאות בשנה זו</p>
+        <p style={{ color: '#64748b', textAlign: 'center', padding: '2rem' }}>
+          אין נושאי הוצאה למשק בית. ניתן להוסיף בהגדרות ← נושאים ← 🏠 משק בית.
+        </p>
       ) : (
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <thead>
               <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
-                <th style={{ padding: '0.6rem 0.5rem', textAlign: 'right', position: 'sticky', right: 0, background: '#fff' }}>ספק</th>
+                <th style={{ padding: '0.6rem 0.5rem', textAlign: 'right', position: 'sticky', right: 0, background: '#fff' }}>נושא</th>
                 {MONTH_NAMES_HE.map((m) => (
                   <th key={m} style={{ padding: '0.6rem 0.4rem', textAlign: 'center', whiteSpace: 'nowrap' }}>{m}</th>
                 ))}
@@ -244,47 +180,15 @@ export default function HouseholdExpensePivot() {
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={row.key} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                <tr key={row.category.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                   <td style={{ padding: '0.5rem', position: 'sticky', right: 0, background: '#fff', whiteSpace: 'nowrap' }}>
-                    {editingKey === row.key ? (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                        <input
-                          autoFocus
-                          value={editingValue}
-                          onChange={(e) => setEditingValue(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleRename(row.key, editingValue)
-                            if (e.key === 'Escape') setEditingKey(null)
-                          }}
-                          disabled={renaming}
-                          style={{ padding: '0.2rem 0.4rem', border: '1px solid #93c5fd', borderRadius: '0.25rem', fontSize: '0.85rem', width: '10rem' }}
-                        />
-                        <button
-                          onClick={() => handleRename(row.key, editingValue)}
-                          disabled={renaming}
-                          title="שמור"
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#16a34a' }}
-                        >✓</button>
-                        <button
-                          onClick={() => setEditingKey(null)}
-                          disabled={renaming}
-                          title="בטל"
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }}
-                        >✕</button>
-                      </div>
-                    ) : (
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
-                        <bdi>{row.supplier}</bdi>
-                        <button
-                          onClick={() => { setEditingKey(row.key); setEditingValue(row.supplier) }}
-                          title="שנה שם ספק — ימזג שורות עם אותו שם"
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', fontSize: '0.75rem', padding: 0 }}
-                        >✎</button>
-                      </span>
-                    )}
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+                      <span style={{ width: '0.6rem', height: '0.6rem', borderRadius: '50%', background: row.category.color, display: 'inline-block' }} />
+                      <bdi>{row.category.name}</bdi>
+                    </span>
                   </td>
                   {row.byMonth.map((amount, i) => {
-                    const isActive = drillDown?.supplier === row.supplier && drillDown?.monthIdx === i
+                    const isActive = drillDown?.subjectName === row.category.name && drillDown?.monthIdx === i
                     return (
                       <td
                         key={i}
@@ -298,7 +202,7 @@ export default function HouseholdExpensePivot() {
                         {amount ? (
                           <button
                             onClick={() => setDrillDown((prev) =>
-                              prev?.supplier === row.supplier && prev?.monthIdx === i ? null : { supplier: row.supplier, monthIdx: i }
+                              prev?.subjectName === row.category.name && prev?.monthIdx === i ? null : { subjectName: row.category.name, monthIdx: i }
                             )}
                             title="לחץ לפירוט התנועות שמרכיבות סכום זה"
                             style={{
@@ -330,13 +234,13 @@ export default function HouseholdExpensePivot() {
       )}
 
       {drillDown && (() => {
-        const items = cellItems.get(cellKey(drillDown.supplier, drillDown.monthIdx)) || []
+        const items = cellItems.get(cellKey(drillDown.subjectName, drillDown.monthIdx)) || []
         const total = items.reduce((s, it) => s + it.amount, 0)
         return (
           <div style={{ border: '1px solid #bfdbfe', background: '#f8fafc', borderRadius: '0.5rem', padding: '1rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
               <h4 style={{ margin: 0, fontSize: '0.95rem' }}>
-                {drillDown.supplier} — {MONTH_NAMES_HE[drillDown.monthIdx]} {year}
+                {drillDown.subjectName} — {MONTH_NAMES_HE[drillDown.monthIdx]} {year}
               </h4>
               <button
                 onClick={() => setDrillDown(null)}
@@ -358,7 +262,7 @@ export default function HouseholdExpensePivot() {
                 {items.map((it) => (
                   <tr key={it.key} style={{ borderBottom: '1px solid #f1f5f9' }}>
                     <td style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap' }}>{it.date}</td>
-                    <td style={{ padding: '0.4rem 0.5rem' }}>{it.description}</td>
+                    <td style={{ padding: '0.4rem 0.5rem' }}><bdi>{it.description}</bdi></td>
                     <td style={{ padding: '0.4rem 0.5rem', textAlign: 'center', fontWeight: 500 }}>
                       {it.amount.toLocaleString()}
                     </td>
