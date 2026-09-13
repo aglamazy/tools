@@ -1,0 +1,86 @@
+import { describe, it, expect } from 'vitest'
+import type { Category } from '@/app/types/category'
+import type { Business } from '@/app/db/financeDB'
+import { resolveBusinessExpenseCategories, expenseScaleFraction } from './expenseScale'
+
+// aglamazo#369, Agla 2026-09-13, live with Sheli: "The household items should
+// apear in taxes, but not iside BL." Household-deductible categories (no
+// businessId) must no longer show up in a business's own Expense tab or
+// supplier pivot -- resolveBusinessExpenseCategories is their only caller,
+// and it's now direct-assignment-only. /app/taxes's TaxSelfEmployedSummaryTable
+// calls expenseScaleFraction directly, never this function -- that
+// proportional-split behavior is a separate, untouched concern (covered
+// below to prove the fix didn't reach it).
+
+function makeBusiness(overrides: Partial<Business> = {}): Business {
+  return {
+    syncId: 'biz-1',
+    name: 'Test Biz',
+    type: 'main',
+    userId: 'user-1',
+    createdAt: '2026-01-01',
+    updatedAt: '2026-01-01',
+    ...overrides,
+  } as Business
+}
+
+function makeCategory(overrides: Partial<Category> = {}): Category {
+  return {
+    id: 'cat-1',
+    name: 'Test Category',
+    type: 'expense',
+    color: '#000',
+    createdAt: '2026-01-01',
+    ...overrides,
+  }
+}
+
+describe('resolveBusinessExpenseCategories', () => {
+  it('includes a category directly assigned to the business', () => {
+    const business = makeBusiness()
+    const cat = makeCategory({ businessId: 'biz-1' })
+    expect(resolveBusinessExpenseCategories([cat], business)).toEqual([cat])
+  })
+
+  it('excludes a directly-assigned category flagged excludeFromBusinessTotals', () => {
+    const business = makeBusiness()
+    const cat = makeCategory({ businessId: 'biz-1', excludeFromBusinessTotals: true })
+    expect(resolveBusinessExpenseCategories([cat], business)).toEqual([])
+  })
+
+  it('excludes a category assigned to a different business', () => {
+    const business = makeBusiness()
+    const cat = makeCategory({ businessId: 'biz-2' })
+    expect(resolveBusinessExpenseCategories([cat], business)).toEqual([])
+  })
+
+  it('excludes a household-deductible category even for a wholly-owned business (aglamazo#369)', () => {
+    const business = makeBusiness() // no ownerSharePercent = wholly owned
+    const household = makeCategory({ isDeductible: true, deductibleByMember: { 'user-1': 16 } })
+    expect(resolveBusinessExpenseCategories([household], business)).toEqual([])
+  })
+
+  it('excludes income-type categories', () => {
+    const business = makeBusiness()
+    const cat = makeCategory({ businessId: 'biz-1', type: 'income' })
+    expect(resolveBusinessExpenseCategories([cat], business)).toEqual([])
+  })
+})
+
+describe('expenseScaleFraction (unchanged — still drives /app/taxes)', () => {
+  it('still returns the proportional household share, untouched by #369', () => {
+    const business = makeBusiness()
+    const household = makeCategory({ isDeductible: true, deductibleByMember: { 'user-1': 16 } })
+    const categoryByName = new Map([[household.name, household]])
+    const tx = { category: household.name, amount: -100 } as any
+    expect(expenseScaleFraction(tx, business, categoryByName)).toBeCloseTo(0.16)
+  })
+
+  it('still returns 0 for a household category on a partnership', () => {
+    const business = makeBusiness({ ownerSharePercent: 50 })
+    const household = makeCategory({ isDeductible: true, deductibleByMember: { 'user-1': 16 } })
+    const categoryByName = new Map([[household.name, household]])
+    const tx = { category: household.name, amount: -100 } as any
+    expect(expenseScaleFraction(tx, business, categoryByName)).toBe(0)
+  })
+})

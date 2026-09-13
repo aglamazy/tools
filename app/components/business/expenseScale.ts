@@ -63,31 +63,24 @@ export function effectiveExpenseNetAmount(
 }
 
 /**
- * Every expense category that contributes to a business's own expense
- * views: directly assigned (cat.businessId === business.syncId) OR a
- * household-scope deductible category folded in via the business owner's
- * deductibleByMember share (same rule effectiveExpenseAmount uses to scale
- * the amount). Centralized here so every consumer (ExpenseTab, the supplier
- * pivot, Taxes) resolves the same category set — a business-only view of
- * this list previously missed the household-deductible half entirely
- * (aglamazo: Agla's electricity/water example, 2026-08-23).
+ * Every expense category that contributes to a business's own Expense tab
+ * and supplier pivot: categories directly assigned to this business
+ * (cat.businessId === business.syncId) only.
  *
- * The household fold only applies to a business the member WHOLLY owns —
- * gated on ownerSharePercent being absent, not on its value (a partnership
- * temporarily at 100% is still a partnership). A personal home-office
- * deduction is Agla's own tax attribute; it has no place in a shared book a
- * partner reads, so it never reaches a business with ownerSharePercent set
- * (aglamazo#340, Agla 2026-09-08: "This doesn't relate to AH settlement with
- * Nadar" — it still belongs on /app/taxes and on his own solely-owned
- * businesses' Expense tabs, unchanged).
+ * Previously also folded in household-scope deductible categories via the
+ * owner's deductibleByMember share (2026-08-23, "Agla's electricity/water
+ * example"; narrowed to wholly-owned businesses by aglamazo#340). Agla's
+ * later, narrower call (aglamazo#369, 2026-09-13, live with Sheli): "The
+ * household items should apear in taxes, but not iside BL" — a household
+ * deduction (electricity, ארנונה) belongs on /app/taxes, never inside a
+ * business's own Expense tab/pivot, wholly-owned or not. The proportional
+ * split itself (expenseScaleFraction below) is unchanged and still drives
+ * /app/taxes's TaxSelfEmployedSummaryTable, which doesn't call this
+ * function — only the business-side category list narrowed.
  */
 export function resolveBusinessExpenseCategories(categories: Category[], business: Business): Category[] {
   return categories.filter((c) => {
     if (c.type !== 'expense') return false
-    if (c.businessId === business.syncId) return !c.excludeFromBusinessTotals
-    if (c.businessId) return false
-    if (business.ownerSharePercent !== undefined) return false
-    if (!business.userId) return false
-    return !!c.isDeductible && (c.deductibleByMember?.[business.userId] ?? 0) > 0
+    return c.businessId === business.syncId && !c.excludeFromBusinessTotals
   })
 }
