@@ -49,6 +49,15 @@ export default function HouseholdExpensePivot() {
   const [loading, setLoading] = useState(true)
   const [cellItems, setCellItems] = useState<Map<string, DrillItem[]>>(new Map())
   const [drillDown, setDrillDown] = useState<{ subjectName: string; monthIdx: number } | null>(null)
+  // aglamazo#373 follow-up (Agla, 2026-09-13): "add a checkbox to filter by
+  // those that are tax deductible" (the הוצאה מוכרת flag from the subject
+  // editor). Deductibility is set per SUB-topic (e.g. חשמל under בית), not
+  // the parent — so this mode deliberately does NOT roll sub-categories up
+  // into their parent the way the default view does; a deductible
+  // sub-topic gets its own row so the % breakdown it actually carries stays
+  // visible, instead of disappearing into a parent that isn't itself
+  // marked deductible.
+  const [onlyDeductible, setOnlyDeductible] = useState(false)
 
   const cellKey = (subjectName: string, monthIdx: number) => `${subjectName}|${monthIdx}`
 
@@ -56,15 +65,20 @@ export default function HouseholdExpensePivot() {
     let cancelled = false
     ;(async () => {
       const allCategories = await subjectStore.getAll()
-      // Same top-level-only convention as Settings > נושאים (CategoriesTab.tsx's
-      // `inScope`/parentId filter) — a sub-category's own transactions still
-      // count, rolled into its parent's row below, rather than getting a
-      // separate row absent from the configured subject list.
       const householdCategories = resolveHouseholdExpenseCategories(allCategories)
-      const topLevel = householdCategories.filter((c) => !c.parentId)
       const categoriesById = new Map(allCategories.filter((c) => c.id).map((c) => [c.id, c]))
       const byName = new Map(householdCategories.map((c) => [c.name, c]))
-      const topLevelNames = new Set(topLevel.map((c) => c.name))
+
+      // Row basis differs by mode (see onlyDeductible's own comment above):
+      // default rolls sub-categories into their top-level parent; deductible
+      // mode lists exactly the categories (top or sub-level) that carry the
+      // flag, unrolled.
+      const rowCategories = onlyDeductible
+        ? householdCategories.filter((c) => c.isDeductible)
+        : householdCategories.filter((c) => !c.parentId)
+      const rowNames = new Set(rowCategories.map((c) => c.name))
+      const resolveRowName = (categoryName: string): string =>
+        onlyDeductible ? categoryName : resolveTopLevelCategoryName(categoryName, byName, categoriesById)
 
       const allTransactions = await db.transactions.toArray()
       const expenseTransactions = allTransactions
@@ -90,8 +104,8 @@ export default function HouseholdExpensePivot() {
       for (const t of expenseTransactions) {
         const { monthNum, year: y } = getMonthYear(t.month)
         if (y !== year || !t.category) continue
-        const rowName = resolveTopLevelCategoryName(t.category, byName, categoriesById)
-        if (!topLevelNames.has(rowName)) continue // a sub-category whose parent isn't itself a household subject — shouldn't happen, but don't silently misattribute
+        const rowName = resolveRowName(t.category)
+        if (!rowNames.has(rowName)) continue // not one of this mode's rows — a non-deductible category while filtering, or a sub-category whose parent isn't itself a household subject
         const fullAmount = t.totalSteps && t.totalSteps > 1
           ? (t.totalAmount || t.totalSteps * Math.abs(t.amount))
           : Math.abs(t.amount)
@@ -117,7 +131,7 @@ export default function HouseholdExpensePivot() {
         monthItems.set(monthNum - 1, existing)
       }
 
-      const built: SubjectRow[] = topLevel.map((category) => {
+      const built: SubjectRow[] = rowCategories.map((category) => {
         const monthMap = byNameMonth.get(category.name)
         const byMonth = Array.from({ length: 12 }, (_, i) => monthMap?.get(i) || 0)
         return { category, byMonth, total: byMonth.reduce((s, v) => s + v, 0) }
@@ -142,7 +156,7 @@ export default function HouseholdExpensePivot() {
       setLoading(false)
     })()
     return () => { cancelled = true }
-  }, [year, currentYear])
+  }, [year, currentYear, onlyDeductible])
 
   const grandTotal = useMemo(() => monthTotals.reduce((s, v) => s + v, 0), [monthTotals])
 
@@ -157,6 +171,14 @@ export default function HouseholdExpensePivot() {
         >
           {availableYears.map((y) => <option key={y} value={y}>{y}</option>)}
         </select>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.9rem', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={onlyDeductible}
+            onChange={(e) => setOnlyDeductible(e.target.checked)}
+          />
+          רק הוצאות מוכרות
+        </label>
         <span style={{ color: '#94a3b8', fontSize: '0.8rem' }}>הסכומים בטבלה נטו, ללא מע״מ</span>
       </div>
 
@@ -164,7 +186,9 @@ export default function HouseholdExpensePivot() {
         <p style={{ color: '#64748b', textAlign: 'center', padding: '1.5rem' }}>טוען...</p>
       ) : rows.length === 0 ? (
         <p style={{ color: '#64748b', textAlign: 'center', padding: '2rem' }}>
-          אין נושאי הוצאה למשק בית. ניתן להוסיף בהגדרות ← נושאים ← 🏠 משק בית.
+          {onlyDeductible
+            ? 'אין נושאי הוצאה מוכרים למשק בית. ניתן לסמן "הוצאה מוכרת" בהגדרות ← נושאים ← 🏠 משק בית.'
+            : 'אין נושאי הוצאה למשק בית. ניתן להוסיף בהגדרות ← נושאים ← 🏠 משק בית.'}
         </p>
       ) : (
         <div style={{ overflowX: 'auto' }}>
