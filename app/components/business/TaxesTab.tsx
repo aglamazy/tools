@@ -558,6 +558,7 @@ function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBu
               transactions={transactions}
               bizCategoryMap={bizCategoryMap}
               expCategoryMap={expCategoryMap}
+              categoryByName={categoryByName}
               currentYear={currentYear}
               currentMonth={currentMonth}
               btlRates={btlRates}

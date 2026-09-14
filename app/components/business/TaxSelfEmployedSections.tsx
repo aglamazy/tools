@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { db } from '@/app/db/financeDB'
 import type { Business, TaxDocument, Transaction, AdvancePayment } from '@/app/db/financeDB'
+import type { Category } from '@/app/types/category'
 import { resolveBtlScheduleByMonth, vatTypeForDate, type TaxProfile } from '@/app/components/TaxProfileSection'
 import { getVatRateForDate } from '@/app/lib/vat'
+import { resolveExpenseLine, type ExpenseLine } from './expenseScale'
 import MonthBreakdownPanel from './MonthBreakdownPanel'
 
 export type BTLRates = {
@@ -479,9 +481,10 @@ function computeIncomeTax(income: number, brackets: IncomeTaxStep[]): number {
   return tax
 }
 
-export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, btlRates, brackets, salaryDocs, advancePayments, onUploadReceipt, taxProfile }: {
+export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCategoryMap, expCategoryMap, categoryByName, currentYear, currentMonth, btlRates, brackets, salaryDocs, advancePayments, onUploadReceipt, taxProfile }: {
   businesses: Business[]; transactions: Transaction[]; bizCategoryMap: Map<string, string[]>
-  expCategoryMap: Map<string, string[]>; currentYear: number; currentMonth: number; btlRates: BTLRates | null; brackets: IncomeTaxStep[]
+  expCategoryMap: Map<string, string[]>; categoryByName: Map<string, Category>
+  currentYear: number; currentMonth: number; btlRates: BTLRates | null; brackets: IncomeTaxStep[]
   salaryDocs: TaxDocument[]
   advancePayments?: AdvancePayment[]
   onUploadReceipt?: (month: string, file: File, type?: 'incomeTax' | 'btl') => Promise<void>
@@ -546,9 +549,14 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
   const monthlyRows = Array.from({ length: currentMonth + 1 }, (_, i) => {
     const monthStr = `${String(i + 1).padStart(2, '0')}/${currentYear}`
     const incomeTx = transactions.filter(t => t.month === monthStr && t.category && seCatNames.has(t.category))
-    const expenseTx = transactions.filter(t => t.month === monthStr && t.category && seExpCatNames.has(t.category))
+    // aglamazo#394: a household-folded category (ארנונה/חשמל) only counts
+    // toward this person's taxes at their own recognized % (Agla, aglamazo#369:
+    // "16% should go to taxes page. Not AH") — never at its full bank amount.
+    const expenseLines = transactions
+      .filter(t => t.month === monthStr && t.category && seExpCatNames.has(t.category))
+      .map(t => resolveExpenseLine(t, seBiz, categoryByName))
     const income = incomeTx.reduce((s, t) => s + (t.amount || 0), 0)
-    const expenses = expenseTx.reduce((s, t) => s + Math.abs(t.amount || 0), 0)
+    const expenses = expenseLines.reduce((s, l) => s + l.recognizedAmount, 0)
     const netIncome = income - expenses
 
     const btlPayMonth = btlPaymentMonthFor(i, currentYear)
@@ -603,7 +611,7 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
     const isPaymentMonth = advancePeriod === 2 ? i % 2 === 1 : true
     const isDue = hasAdvance && isPaymentMonth && advancePaid > 0
 
-    return { month: i, label: HEBREW_MONTHS[i], income, expenses, netIncome, incomeTx, expenseTx, btlPaid, btlIsForecast, btlDeduction, taxBase, salary, tax, advancePaid, monthKey, paymentRecord, isDue }
+    return { month: i, label: HEBREW_MONTHS[i], income, expenses, netIncome, incomeTx, expenseLines, btlPaid, btlIsForecast, btlDeduction, taxBase, salary, tax, advancePaid, monthKey, paymentRecord, isDue }
   })
 
   // Actual payments — the מקדמות מס הכנסה (<member>) transactions, NOT the
@@ -803,7 +811,7 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
             onClose={() => setBreakdownMonth(null)}
             monthLabel={`${row.label} ${currentYear}`}
             incomeTx={row.incomeTx}
-            expenseTx={row.expenseTx}
+            expenseLines={row.expenseLines}
           />
         )
       })()}

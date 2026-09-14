@@ -7,6 +7,7 @@ import {
   resolveHouseholdExpenseCategories,
   householdExpenseNetAmount,
   resolveTopLevelCategoryName,
+  resolveExpenseLine,
 } from './expenseScale'
 
 // aglamazo#369, Agla 2026-09-13, live with Sheli: "The household items should
@@ -128,6 +129,44 @@ describe('householdExpenseNetAmount', () => {
   it('never goes negative when VAT exceeds the amount', () => {
     const tx = { amount: -10 } as Transaction
     expect(householdExpenseNetAmount(tx, 17)).toBe(0)
+  })
+})
+
+// aglamazo#394 (Sheli): the month drill-down needs אחוז/חלק מוכר per line,
+// which requires knowing WHICH of a person's several self-employed
+// businesses a given expense's category actually resolves against —
+// SelfEmployedIncomeTaxSection aggregates across all of them at once.
+describe('resolveExpenseLine', () => {
+  it('a directly-assigned category is 100% recognized regardless of candidate order', () => {
+    const biz = makeBusiness({ syncId: 'biz-1' })
+    const other = makeBusiness({ syncId: 'biz-2' })
+    const cat = makeCategory({ businessId: 'biz-1' })
+    const categoryByName = new Map([[cat.name, cat]])
+    const tx = { id: 1, category: cat.name, amount: -500 } as Transaction
+    const line = resolveExpenseLine(tx, [other, biz], categoryByName)
+    expect(line.fraction).toBe(1)
+    expect(line.recognizedAmount).toBe(500)
+  })
+
+  it('a household-folded category recognizes only the owning member\'s share (real aglamazo#369 case)', () => {
+    const biz = makeBusiness({ syncId: 'biz-1', userId: 'user-1' })
+    const household = makeCategory({ isDeductible: true, deductibleByMember: { 'user-1': 16 } })
+    const categoryByName = new Map([[household.name, household]])
+    const tx = { id: 2, category: household.name, amount: -1000 } as Transaction
+    const line = resolveExpenseLine(tx, [biz], categoryByName)
+    expect(line.fraction).toBeCloseTo(0.16)
+    expect(line.recognizedAmount).toBeCloseTo(160)
+  })
+
+  it('tries every candidate business and recognizes 0 when none match', () => {
+    const biz1 = makeBusiness({ syncId: 'biz-1' })
+    const biz2 = makeBusiness({ syncId: 'biz-2' })
+    const cat = makeCategory({ businessId: 'biz-3' }) // a third, unrelated business
+    const categoryByName = new Map([[cat.name, cat]])
+    const tx = { id: 3, category: cat.name, amount: -300 } as Transaction
+    const line = resolveExpenseLine(tx, [biz1, biz2], categoryByName)
+    expect(line.fraction).toBe(0)
+    expect(line.recognizedAmount).toBe(0)
   })
 })
 

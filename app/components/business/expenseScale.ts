@@ -34,6 +34,32 @@ export function effectiveExpenseAmount(
   return raw * expenseScaleFraction(tx, business, categoryByName)
 }
 
+export type ExpenseLine = { tx: Transaction; fraction: number; recognizedAmount: number }
+
+/**
+ * aglamazo#394: a table that aggregates expenses across several of a
+ * person's businesses (e.g. SelfEmployedIncomeTaxSection) doesn't know in
+ * advance which business "owns" a given transaction's category — a
+ * directly-assigned category matches exactly one, a household-folded one
+ * (ארנונה/חשמל) matches whichever of the candidates the member owns. Try
+ * each candidate and take the first non-zero fraction; every business in
+ * the household-fold branch of expenseScaleFraction shares the same
+ * deductibleByMember% for a given member, so it's not order-sensitive.
+ */
+export function resolveExpenseLine(
+  tx: Transaction,
+  candidateBusinesses: Business[],
+  categoryByName: Map<string, Category>,
+): ExpenseLine {
+  let fraction = 0
+  for (const business of candidateBusinesses) {
+    fraction = expenseScaleFraction(tx, business, categoryByName)
+    if (fraction > 0) break
+  }
+  const raw = Math.abs(tx.amount || 0)
+  return { tx, fraction, recognizedAmount: raw * fraction }
+}
+
 /**
  * Net (VAT-excluded) counterpart of effectiveExpenseAmount (aglamazo#345).
  *
