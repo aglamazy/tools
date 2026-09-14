@@ -295,7 +295,7 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
         type="file"
         ref={fileInputRef}
         style={{ display: 'none' }}
-        accept=".pdf,.png,.jpg,.jpeg,.webp"
+        accept=".pdf,.png,.jpg,.jpeg,.webp,.html,.htm"
         onChange={async (e) => {
           const file = e.target.files?.[0]
           if (file && uploadMonth && onUploadReceipt) {
@@ -655,7 +655,7 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
         type="file"
         ref={fileInputRef}
         style={{ display: 'none' }}
-        accept=".pdf,.png,.jpg,.jpeg,.webp"
+        accept=".pdf,.png,.jpg,.jpeg,.webp,.html,.htm"
         onChange={async (e) => {
           const file = e.target.files?.[0]
           if (file && uploadMonth && onUploadReceipt) {
