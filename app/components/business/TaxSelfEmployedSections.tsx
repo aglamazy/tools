@@ -616,14 +616,15 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
     // Payment status from advancePayments records
     const monthKey = `${String(i + 1).padStart(2, '0')}/${currentYear}`
     const paymentRecord = advancePayments?.find(p => p.month === monthKey && p.type === 'incomeTax')
-    const isPaymentMonth = advancePeriod === 2 ? i % 2 === 1 : true
-    // Agla, live: "I can't upload the income tax payment" — a payment month
-    // whose computed expected amount happens to be ₪0 (e.g. this month's
-    // income isn't categorized yet) used to hide the upload control
-    // entirely, same class of bug as the BTL "0 can't be late" fix. A real
-    // payment can exist even when the app's own turnover-based estimate is
-    // 0, so the control must not be gated on that estimate.
-    const isDue = hasAdvance && isPaymentMonth
+    // Agla, live: "I can't upload the income tax payment," reproduced live
+    // via MCP on his real 2026 book — September isn't a bi-monthly
+    // isPaymentMonth (period 2 pairs it with October), so the upload
+    // control was hidden there even though he can make a real payment on
+    // any month he chooses. The BTL table already gives him that freedom
+    // (its own control gates only on already-paid, never on a schedule) —
+    // matched here: available whenever an advance regime exists, unless
+    // this month is already marked paid.
+    const isDue = hasAdvance
 
     return { month: i, label: HEBREW_MONTHS[i], income, expenses, netIncome, incomeTx, expenseLines, btlPaid, btlIsForecast, btlDeduction, taxBase, salary, tax, advancePaid, monthKey, paymentRecord, isDue }
   })
