@@ -39,6 +39,36 @@ export type OpenInvoice = YpayDocument & { remainingAmount: number }
 
 const parseSortableDate = (date?: string) => parseDateMs(date)
 
+/**
+ * The ypayDocuments row to write when manually linking a serial number that
+ * has no existing local record (aglamazo#380). Previously wrote no `amount`
+ * at all and `createdAt` as the link-click time, not the document's real
+ * date — every period filter keys on `createdAt`, so the document silently
+ * landed in whatever period happened to be current when it was linked,
+ * contributing ₪0 to that period's tax filing (understated a live
+ * 07-08/2026 declaration by ₪1,120 מחזור / ₪201.60 VAT before ypay's own
+ * screen caught it). The linked transaction's own amount and date are the
+ * best available proxy for the real document — not exact (ypay's own
+ * document date can lag the bank settlement by a day or two), but a real
+ * figure in the right period rather than a silent zero in the wrong one.
+ */
+export function buildLinkedYpayDocumentStub(
+  transaction: Pick<Transaction, 'syncId' | 'amount' | 'date'>,
+  serialNumber: string,
+  profileVatType: 'exempt' | 'authorized' | undefined,
+  closesAllocations?: { docId: string; amount: number }[],
+): Omit<YpayDocument, 'id' | 'syncId' | 'updatedAt'> {
+  return {
+    transactionId: transaction.syncId!,
+    url: '',
+    serialNumber,
+    docType: profileVatType === 'authorized' ? YpayDocType.TaxInvoiceReceipt : YpayDocType.Receipt,
+    amount: Math.abs(transaction.amount),
+    closesAllocations,
+    createdAt: new Date(formatDateForYpay(transaction.date)).toISOString(),
+  }
+}
+
 export default function IncomeTab({ businessId }: IncomeTabProps) {
   const [business, setBusiness] = useState<Business | null>(null)
   const [transactions, setTransactions] = useState<TransactionWithDoc[]>([])
@@ -436,14 +466,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
           updatedAt: new Date().toISOString(),
         })
       } else {
-        await db.ypayDocuments.add({
-          transactionId: transaction.syncId,
-          url: '',
-          serialNumber: wanted,
-          docType: profileVatType === 'authorized' ? YpayDocType.TaxInvoiceReceipt : YpayDocType.Receipt,
-          closesAllocations,
-          createdAt: new Date().toISOString(),
-        })
+        await db.ypayDocuments.add(buildLinkedYpayDocumentStub(transaction, wanted, profileVatType, closesAllocations))
       }
       if (closesAllocations && closesAllocations.length > 0) {
         await closeFullyPaidInvoices(closesAllocations, new Date(formatDateForYpay(transaction.date)).toISOString())
