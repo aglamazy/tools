@@ -1,6 +1,7 @@
 import { db, type YpayDocument, type Transaction } from '@/app/db/financeDB'
 import { YpayDocType } from '@/app/services/ypayService'
 import { subjectStore } from '@/app/stores/subjectStore'
+import { projectStore } from '@/app/stores/projectStore'
 
 const SYNTHETIC_TRANSACTION_ID_PREFIX = 'ypay-import:'
 const MATCH_TOLERANCE_DAYS = 5
@@ -39,6 +40,28 @@ async function findMatchingIncomeTransactionId(grossAmount: number, date: string
   })
 
   return candidates.length === 1 ? candidates[0].syncId : undefined
+}
+
+/**
+ * Second, independent attribution path — by CUSTOMER, per Agla's own
+ * question (aglamazo#381): "did you create a logic to send the incomes to
+ * the business, based on the customer?" ypay's export names the client on
+ * every row (row.customerName); when it matches a Project's name exactly
+ * (Projects are per-business), that project's name is the SAME projectName
+ * field ypayService already writes on every invoice created inside
+ * Aglamazo — sharedBusinessSyncService.ts already attributes a document via
+ * a matching projectName as an alternative to a linked transaction, so this
+ * doesn't need a new field either. Unlike the transaction match, this one
+ * doesn't require the payment to have landed in the bank yet — it works for
+ * an unpaid invoice too, not just a settled receipt. An ambiguous or absent
+ * match is left unset rather than guessed.
+ */
+async function findMatchingProjectName(customerName: string): Promise<string | undefined> {
+  const trimmed = customerName.trim()
+  if (!trimmed) return undefined
+  const allProjects = await projectStore.getAll()
+  const candidates = allProjects.filter((p) => !p.archived && p.name.trim() === trimmed)
+  return candidates.length === 1 ? candidates[0].name : undefined
 }
 
 // aglamazo#381 (Agla, 2026-09-14): ypay's own API has no bulk "list my
@@ -147,13 +170,17 @@ export function parseYpayIncomeExportRows(rows: unknown[][]): {
  */
 export async function buildYpayDocumentFromImportRow(row: YpayIncomeImportRow): Promise<Omit<YpayDocument, 'id' | 'syncId' | 'updatedAt'>> {
   const amount = row.docType === YpayDocType.TaxInvoice ? row.netAmount : row.grossAmount
-  const matchedTransactionId = await findMatchingIncomeTransactionId(row.grossAmount, row.date)
+  const [matchedTransactionId, matchedProjectName] = await Promise.all([
+    findMatchingIncomeTransactionId(row.grossAmount, row.date),
+    findMatchingProjectName(row.customerName),
+  ])
   return {
     transactionId: matchedTransactionId || `${SYNTHETIC_TRANSACTION_ID_PREFIX}${row.serialNumber}`,
     url: '',
     serialNumber: row.serialNumber,
     docType: row.docType,
     amount,
+    ...(matchedProjectName ? { projectName: matchedProjectName } : {}),
     createdAt: row.date ? new Date(row.date).toISOString() : new Date().toISOString(),
   }
 }
@@ -168,6 +195,13 @@ export type YpayIncomeImportSummary = {
 }
 
 const isSynthetic = (transactionId: string | undefined) => !!transactionId?.startsWith(SYNTHETIC_TRANSACTION_ID_PREFIX)
+
+// A document is attributed to a business if EITHER path resolved — a real
+// linked transaction, or a matching project (see sharedBusinessSyncService.ts's
+// OR condition). Neither means it's a genuine orphan, same as an invoice
+// nobody has entered a project/payment for yet.
+const isAttributed = (d: { transactionId?: string; projectName?: string }) =>
+  !isSynthetic(d.transactionId) || !!d.projectName
 
 /**
  * Imports the parsed rows into db.ypayDocuments, deduped by serialNumber
@@ -210,19 +244,20 @@ export async function importYpayIncomeRows(
       const built = await buildYpayDocumentFromImportRow(row)
       await db.ypayDocuments.add(built)
       summary.added++
-      if (isSynthetic(built.transactionId)) summary.unmatchedCount++
+      if (!isAttributed(built)) summary.unmatchedCount++
     } else {
       const needsAmount = !existing.amount
-      const needsRelink = isSynthetic(existing.transactionId)
-      if (needsAmount || needsRelink) {
+      const needsAttributionFix = !isAttributed(existing)
+      if (needsAmount || needsAttributionFix) {
         const built = await buildYpayDocumentFromImportRow(row)
         const patch: Partial<YpayDocument> = {}
         if (needsAmount) {
           patch.amount = built.amount
           patch.createdAt = built.createdAt
         }
-        if (needsRelink && !isSynthetic(built.transactionId)) {
-          patch.transactionId = built.transactionId
+        if (needsAttributionFix) {
+          if (!isSynthetic(built.transactionId)) patch.transactionId = built.transactionId
+          if (built.projectName && !existing.projectName) patch.projectName = built.projectName
         }
         if (Object.keys(patch).length > 0) {
           await db.ypayDocuments.update(existing.id!, patch)
@@ -230,7 +265,11 @@ export async function importYpayIncomeRows(
         } else {
           summary.alreadyCorrect++
         }
-        if (isSynthetic(patch.transactionId ?? existing.transactionId)) summary.unmatchedCount++
+        const afterState = {
+          transactionId: patch.transactionId ?? existing.transactionId,
+          projectName: patch.projectName ?? existing.projectName,
+        }
+        if (!isAttributed(afterState)) summary.unmatchedCount++
       } else {
         summary.alreadyCorrect++
       }

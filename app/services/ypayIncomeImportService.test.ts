@@ -73,10 +73,12 @@ describe('buildYpayDocumentFromImportRow', () => {
   beforeEach(async () => {
     await db.transactions.clear()
     await db.subjects.clear()
+    await db.projects.clear()
   })
   afterEach(async () => {
     await db.transactions.clear()
     await db.subjects.clear()
+    await db.projects.clear()
   })
 
   it('stores the NET amount for חשבונית מס (106), unlinked when no matching transaction exists', async () => {
@@ -122,6 +124,28 @@ describe('buildYpayDocumentFromImportRow', () => {
     const doc = await buildYpayDocumentFromImportRow(row)
     expect(doc.transactionId).toBe('ypay-import:900003')
   })
+
+  it('attributes an unpaid invoice by CUSTOMER->project match, with no transaction needed (Agla\'s direct question, aglamazo#381)', async () => {
+    await db.projects.add({ businessId: 'biz-1', name: 'אילן עוז', archived: false, createdAt: '', updatedAt: '' } as any)
+    const row = { serialNumber: '700005', docType: YpayDocType.TaxInvoice, date: '2026-06-29', customerName: 'אילן עוז', netAmount: 3000, vatAmount: 540, grossAmount: 3540 }
+    const doc = await buildYpayDocumentFromImportRow(row)
+    expect(doc.projectName).toBe('אילן עוז')
+    expect(doc.transactionId).toBe('ypay-import:700005') // still synthetic — attribution comes from projectName instead
+  })
+
+  it('leaves projectName unset when the customer name matches no project (still falls back to unmatched, not a guess)', async () => {
+    const row = { serialNumber: '700005', docType: YpayDocType.TaxInvoice, date: '2026-06-29', customerName: 'לקוח שלא קיים כפרויקט', netAmount: 3000, vatAmount: 540, grossAmount: 3540 }
+    const doc = await buildYpayDocumentFromImportRow(row)
+    expect(doc.projectName).toBeUndefined()
+  })
+
+  it('leaves projectName unset when two projects share the same customer name (ambiguous, not guessed)', async () => {
+    await db.projects.add({ businessId: 'biz-1', name: 'אילן עוז', archived: false, createdAt: '', updatedAt: '' } as any)
+    await db.projects.add({ businessId: 'biz-2', name: 'אילן עוז', archived: false, createdAt: '', updatedAt: '' } as any)
+    const row = { serialNumber: '700005', docType: YpayDocType.TaxInvoice, date: '2026-06-29', customerName: 'אילן עוז', netAmount: 3000, vatAmount: 540, grossAmount: 3540 }
+    const doc = await buildYpayDocumentFromImportRow(row)
+    expect(doc.projectName).toBeUndefined()
+  })
 })
 
 describe('importYpayIncomeRows', () => {
@@ -129,11 +153,13 @@ describe('importYpayIncomeRows', () => {
     await db.ypayDocuments.clear()
     await db.transactions.clear()
     await db.subjects.clear()
+    await db.projects.clear()
   })
   afterEach(async () => {
     await db.ypayDocuments.clear()
     await db.transactions.clear()
     await db.subjects.clear()
+    await db.projects.clear()
   })
 
   it('adds a genuinely new document, unlinked (no matching transaction imported yet)', async () => {

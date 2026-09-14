@@ -49,7 +49,8 @@ export default function YpayIncomeImportPanel({ onImported }: Props) {
       <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.85rem', color: '#64748b' }}>
         אין API לחילוץ מסמכים מ-ypay — ייבוא קובץ &quot;ארכיון הכנסות&quot; שהופק ידנית מהדשבורד של
         ypay. חשבוניות מס וחשבוניות מס קבלה בלבד; זיכויים וקבלות רגילות מדולגים. תיעוד קיים
-        (לפי מס&apos; אסמכתא) לא נדרס.
+        (לפי מס&apos; אסמכתא) לא נדרס. שיוך לעסק אוטומטי לפי עסקה תואמת בבנק/אשראי (סכום+תאריך),
+        או לפי שם הלקוח מול שם פרויקט קיים — ללא התאמה חד-משמעית, המסמך נשאר לא משויך לקישור ידני.
       </p>
       <label className="file-picker secondary" style={{ display: 'inline-block', cursor: importing ? 'default' : 'pointer' }}>
         {importing ? 'מייבא...' : 'ייבוא קובץ ארכיון הכנסות'}
@@ -75,7 +76,7 @@ export default function YpayIncomeImportPanel({ onImported }: Props) {
           </p>
           {summary.unmatchedCount > 0 && (
             <p style={{ margin: '0.25rem 0 0', color: '#b45309' }}>
-              ⚠️ {summary.unmatchedCount} מסמכים ללא עסקה תואמת בבנק/אשראי — לא משויכים לעסק עדיין; ניתן לקשר ידנית בטאב ההכנסות (&quot;קשר&quot;) לאחר שהעסקה תיובא.
+              ⚠️ {summary.unmatchedCount} מסמכים ללא עסקה תואמת בבנק/אשראי וללא פרויקט תואם לפי שם הלקוח — לא משויכים לעסק עדיין; ניתן לקשר ידנית בטאב ההכנסות (&quot;קשר&quot;), או שיובאו נכון בהרצה חוזרת לאחר שהעסקה/הפרויקט הרלוונטיים יתווספו.
             </p>
           )}
           {summary.possibleTestRows.length > 0 && (
