@@ -3,6 +3,7 @@ import { db } from '@/app/db/financeDB'
 import type { Business, TaxDocument, Transaction, AdvancePayment } from '@/app/db/financeDB'
 import { resolveBtlScheduleByMonth, vatTypeForDate, type TaxProfile } from '@/app/components/TaxProfileSection'
 import { getVatRateForDate } from '@/app/lib/vat'
+import MonthBreakdownModal from './MonthBreakdownModal'
 
 export type BTLRates = {
   reduced: { nationalInsurance: number; healthInsurance: number }
@@ -477,6 +478,7 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploadMonth, setUploadMonth] = React.useState<string | null>(null)
+  const [breakdownMonth, setBreakdownMonth] = React.useState<number | null>(null)
   const seBiz = businesses.filter(b => !b.isTaxFree)
   if (seBiz.length === 0) return null
 
@@ -531,8 +533,10 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
 
   const monthlyRows = Array.from({ length: currentMonth + 1 }, (_, i) => {
     const monthStr = `${String(i + 1).padStart(2, '0')}/${currentYear}`
-    const income = transactions.filter(t => t.month === monthStr && t.category && seCatNames.has(t.category)).reduce((s, t) => s + (t.amount || 0), 0)
-    const expenses = transactions.filter(t => t.month === monthStr && t.category && seExpCatNames.has(t.category)).reduce((s, t) => s + Math.abs(t.amount || 0), 0)
+    const incomeTx = transactions.filter(t => t.month === monthStr && t.category && seCatNames.has(t.category))
+    const expenseTx = transactions.filter(t => t.month === monthStr && t.category && seExpCatNames.has(t.category))
+    const income = incomeTx.reduce((s, t) => s + (t.amount || 0), 0)
+    const expenses = expenseTx.reduce((s, t) => s + Math.abs(t.amount || 0), 0)
     const netIncome = income - expenses
 
     const btlPayMonth = btlPaymentMonthFor(i, currentYear)
@@ -587,7 +591,7 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
     const isPaymentMonth = advancePeriod === 2 ? i % 2 === 1 : true
     const isDue = hasAdvance && isPaymentMonth && advancePaid > 0
 
-    return { month: i, label: HEBREW_MONTHS[i], income, expenses, netIncome, btlPaid, btlIsForecast, btlDeduction, taxBase, salary, tax, advancePaid, monthKey, paymentRecord, isDue }
+    return { month: i, label: HEBREW_MONTHS[i], income, expenses, netIncome, incomeTx, expenseTx, btlPaid, btlIsForecast, btlDeduction, taxBase, salary, tax, advancePaid, monthKey, paymentRecord, isDue }
   })
 
   // Actual payments — the מקדמות מס הכנסה (<member>) transactions, NOT the
@@ -683,7 +687,17 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
           {monthlyRows.map(row => (
             <tr key={row.month} style={{ borderBottom: '1px solid #f1f5f9' }}>
               <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 500 }}>{row.label}</td>
-              <td style={cellStyle}>{row.netIncome ? fmt(row.netIncome) : '—'}</td>
+              <td style={cellStyle}>
+                {row.netIncome ? (
+                  <button
+                    onClick={() => setBreakdownMonth(row.month)}
+                    title="לחץ לפירוט ההכנסות וההוצאות של החודש"
+                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'inherit', font: 'inherit', textDecoration: 'underline', textDecorationStyle: 'dotted', textUnderlineOffset: '2px' }}
+                  >
+                    {fmt(row.netIncome)}
+                  </button>
+                ) : '—'}
+              </td>
               <td style={cellStyle}>
                 {row.btlPaid ? fmt(row.btlPaid) : '—'}
                 {row.btlIsForecast && row.btlPaid > 0 && (
@@ -759,6 +773,19 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
           )}
         </tfoot>
       </table>
+      {breakdownMonth != null && (() => {
+        const row = monthlyRows.find(r => r.month === breakdownMonth)
+        if (!row) return null
+        return (
+          <MonthBreakdownModal
+            isOpen
+            onClose={() => setBreakdownMonth(null)}
+            monthLabel={`${row.label} ${currentYear}`}
+            incomeTx={row.incomeTx}
+            expenseTx={row.expenseTx}
+          />
+        )
+      })()}
     </div>
   )
 }
