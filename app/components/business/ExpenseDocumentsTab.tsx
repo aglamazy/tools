@@ -24,6 +24,24 @@ type GmailSearchResult = {
   snippet: string
 }
 
+/**
+ * ExpenseDocument.amount carries no currency of its own — the real extracted
+ * currency lives in extractedData.currency, and this view rendered every
+ * amount with a hardcoded ₪ regardless (Agla, 2026-09-14: "The extraction
+ * doesn't pay attention to currency. Some of the files are USD"). A real
+ * $174.46 Anthropic invoice was showing as "174.46₪" — silently wrong by
+ * the FX rate. This only formats with the currency actually extracted; it
+ * does not convert to ILS (a real FX-rate decision, not this fix's job).
+ */
+function formatDocAmount(amount: number, currency?: string | null): string {
+  const n = amount.toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  if (!currency || currency === 'ILS') return `${n}₪`
+  if (currency === 'USD') return `$${n}`
+  if (currency === 'EUR') return `€${n}`
+  if (currency === 'GBP') return `£${n}`
+  return `${n} ${currency}`
+}
+
 type Props = {
   businessId: string
 }
@@ -690,12 +708,12 @@ export default function ExpenseDocumentsTab({ businessId }: Props) {
                   <div style={{ display: 'flex', gap: '1rem', fontSize: '0.8rem', color: '#475569' }}>
                     <div>
                       <span style={{ color: '#94a3b8' }}>סכום: </span>
-                      {doc.amount?.toLocaleString('he-IL')}₪
+                      {formatDocAmount(doc.amount!, doc.extractedData?.currency)}
                     </div>
                     {doc.vatAmount != null && (
                       <div>
                         <span style={{ color: '#94a3b8' }}>מע״מ: </span>
-                        {doc.vatAmount?.toLocaleString('he-IL')}₪
+                        {formatDocAmount(doc.vatAmount, doc.extractedData?.currency)}
                       </div>
                     )}
                   </div>
