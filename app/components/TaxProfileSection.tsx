@@ -9,6 +9,7 @@ import { uploadTaxDocument } from '@/app/services/googleDriveService'
 import { getAccessToken } from '@/app/services/googleTokenService'
 import { getUser } from '@/app/stores/authStore'
 import { normalizeDate } from '@/app/utils/parsers/shared'
+import BtlMonthOverridesPanel from './BtlMonthOverridesPanel'
 
 export type VatConversion = {
   from: 'exempt' | 'authorized'
@@ -25,6 +26,24 @@ export type BtlPayment = {
   amount: number
   dueDate: string // YYYY-MM-DD
   paymentUrl?: string // Decoded from the month's QR code on the notice
+  isOverride?: boolean // manually set by Agla — no notice/ledger evidence covers this month (aglamazo#390)
+  overrideNote?: string
+}
+
+/**
+ * A manual per-month charged-amount override (aglamazo#390). Some months
+ * are genuinely not derivable from anything BTL sent — Agla's real case:
+ * June 2026's charge is listed at ₪6,013 by the April notice, never
+ * mentioned by the July notice, and a lump-sum reduction on 20/07 names no
+ * specific month. The only evidence is indirect (the balance BTL asked him
+ * to pay came to 2×₪1,091). Explicitly his own judgment call, not something
+ * the app may infer from the documents alone — hence a manual override,
+ * shown as an override in the UI, with his own note stored alongside it.
+ */
+export type BtlMonthOverride = {
+  month: string // MM/YYYY
+  amount: number
+  note?: string
 }
 
 export type BtlNotice = {
@@ -57,6 +76,7 @@ export type TaxProfile = {
   vatType?: 'exempt' | 'authorized'
   btlAdvancePayment?: number
   btlNotices?: BtlNotice[]
+  btlMonthOverrides?: BtlMonthOverride[]
   incomeTaxAdvancePercent?: number
   incomeTaxAdvancePeriod?: 1 | 2
   vatReportPeriod?: 1 | 2 // 1=חודשי, 2=דו-חודשי — VAT (מע״מ) reporting cadence for authorized dealer
@@ -94,6 +114,11 @@ export function vatTypeForDate(profile: TaxProfile, transactionDate: string): 'e
  * When two notices both cover the same month (a re-upload, or a correction),
  * the more recently uploaded one wins — resolved by upload order, not by
  * requiring a separate "effective date" field the notice may not state.
+ *
+ * A manual override (aglamazo#390) always wins over any notice for its
+ * month — it exists specifically for a month no notice or ledger entry
+ * actually settles (Agla's real June 2026 case), so it is never a
+ * tie-break, it is Agla's own stated judgment call.
  */
 export function resolveBtlScheduleByMonth(profile: TaxProfile, year: number): Map<string, BtlPayment> {
   const yearNotices = (profile.btlNotices || [])
@@ -104,6 +129,16 @@ export function resolveBtlScheduleByMonth(profile: TaxProfile, year: number): Ma
     for (const payment of notice.schedule || []) {
       byMonth.set(payment.month, payment)
     }
+  }
+  for (const override of profile.btlMonthOverrides || []) {
+    if (!override.month.endsWith(`/${year}`)) continue
+    byMonth.set(override.month, {
+      month: override.month,
+      amount: override.amount,
+      dueDate: '',
+      isOverride: true,
+      overrideNote: override.note,
+    })
   }
   return byMonth
 }
@@ -704,6 +739,10 @@ export default function TaxProfileSection({ userId, memberLabel }: TaxProfileSec
                     </div>
                   ) : null
                 })}
+                <BtlMonthOverridesPanel
+                  overrides={profile.btlMonthOverrides || []}
+                  onChange={(next) => update({ btlMonthOverrides: next })}
+                />
               </div>
               <div style={{
                 flex: 1,

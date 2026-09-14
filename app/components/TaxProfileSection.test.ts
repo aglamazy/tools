@@ -70,6 +70,46 @@ describe('resolveBtlScheduleByMonth', () => {
   })
 })
 
+// aglamazo#390, Agla via Sheli: June 2026 isn't derivable from any notice
+// (April lists it at 6,013, July never mentions it, the 29,532 reduction
+// names no month) — a manual override is his own judgment call, never
+// inferred by the app.
+describe('resolveBtlScheduleByMonth — manual overrides (aglamazo#390)', () => {
+  it('a month override wins over what the notices say for that month (the real June case)', () => {
+    const profile: TaxProfile = {
+      btlNotices: [aprilNotice(), julyNotice()],
+      btlMonthOverrides: [{ month: '06/2026', amount: 1091, note: 'הבדיקה: יתרת בל"ל אחרי הקטנה = 2×1,091' }],
+    }
+    const byMonth = resolveBtlScheduleByMonth(profile, 2026)
+    expect(byMonth.get('06/2026')?.amount).toBe(1091)
+    expect(byMonth.get('06/2026')?.isOverride).toBe(true)
+    expect(byMonth.get('06/2026')?.overrideNote).toContain('יתרת בל"ל')
+  })
+
+  it('leaves every other month untouched by an override elsewhere', () => {
+    const profile: TaxProfile = {
+      btlNotices: [aprilNotice(), julyNotice()],
+      btlMonthOverrides: [{ month: '06/2026', amount: 1091 }],
+    }
+    const byMonth = resolveBtlScheduleByMonth(profile, 2026)
+    expect(byMonth.get('01/2026')?.amount).toBe(6013)
+    expect(byMonth.get('01/2026')?.isOverride).toBeUndefined()
+    expect(byMonth.get('07/2026')?.amount).toBe(1091)
+  })
+
+  it('creates an entry for a month even with no covering notice at all', () => {
+    const profile: TaxProfile = { btlMonthOverrides: [{ month: '06/2026', amount: 500 }] }
+    const byMonth = resolveBtlScheduleByMonth(profile, 2026)
+    expect(byMonth.get('06/2026')?.amount).toBe(500)
+    expect(byMonth.size).toBe(1)
+  })
+
+  it('ignores an override for a different year', () => {
+    const profile: TaxProfile = { btlMonthOverrides: [{ month: '06/2025', amount: 500 }] }
+    expect(resolveBtlScheduleByMonth(profile, 2026).size).toBe(0)
+  })
+})
+
 describe('btlNoticeKey', () => {
   it('uses the id when present', () => {
     expect(btlNoticeKey({ id: 'abc', year: 2026, amount: 100, uploadedAt: '2026-01-01' })).toBe('abc')
