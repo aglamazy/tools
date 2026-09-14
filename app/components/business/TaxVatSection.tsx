@@ -7,6 +7,7 @@ import { getVatRateForDate } from '@/app/lib/vat'
 import { YpayDocType, invoiceNetAmount, invoiceVatAmount } from '@/app/services/ypayService'
 import { uploadExpenseDocument } from '@/app/services/googleDriveService'
 import { parseDateFolder } from '@/app/services/receiptMatchService'
+import ExpenseBatchMatchControl from './ExpenseBatchMatchControl'
 import { normalizeDate } from '@/app/utils/parsers/shared'
 import { resolveOrCreateSupplier } from '@/app/services/supplierService'
 import { partnerStore } from '@/app/stores/partnerStore'
@@ -676,8 +677,25 @@ export default function TaxVatSection({
       <SectionBlock
         title={`הוצאות מוכרות (${visibleExpenseRows.length})${missingDocCount ? ` · ${missingDocCount} ללא מסמך ⚠️` : ''}`}
         headerExtra={
-          (zeroVatCount > 0 || handledCount > 0) && (
-            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+          (missingDocCount > 0 || zeroVatCount > 0 || handledCount > 0) && (
+            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              {missingDocCount > 0 && (
+                <ExpenseBatchMatchControl
+                  rows={visibleExpenseRows
+                    .filter(r => !expenseDocs.find(d => d.transactionId === r.transactionSyncId))
+                    .map(r => ({
+                      transactionId: r.transactionId,
+                      transactionSyncId: r.transactionSyncId,
+                      txDescription: r.txDescription,
+                      txMerchant: r.txMerchant,
+                      txAmount: r.txAmount,
+                      txDateStr: r.txDateStr,
+                    }))}
+                  claudeApiKey={claudeApiKey}
+                  onMatched={onMatched}
+                  onError={setUploadError}
+                />
+              )}
               {zeroVatCount > 0 && (
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', color: '#64748b', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                   <input type="checkbox" checked={showZeroVatRows} onChange={(e) => setShowZeroVatRows(e.target.checked)} />

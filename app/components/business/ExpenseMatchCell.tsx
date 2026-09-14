@@ -117,7 +117,11 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
         onMatched(result.doc)
       }
       setStatus(result.status)
-      setShowResults(true)
+      // Agla, 2026-09-14, live, batch-testing many rows in a row: "I don't
+      // want this modal at all." Popping it after every single search made
+      // a multi-row batch unusable — the row's own status (⚠️/מסמך/לא נמצא)
+      // plus the existing "🔍 N נבדקו" link already let the user open it
+      // when THEY want detail, on any one row.
     } catch (err: any) {
       console.error('[ExpenseMatch] exception for tx', transaction.id, transaction.description, ':', err)
       setErrorMsg(err?.message || String(err))
