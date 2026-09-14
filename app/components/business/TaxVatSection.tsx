@@ -13,6 +13,7 @@ import { partnerStore } from '@/app/stores/partnerStore'
 import ExpenseMatchCell from './ExpenseMatchCell'
 import SupplierCardModal from './SupplierCardModal'
 import TransactionEditModal from './TransactionEditModal'
+import Modal from '@/app/components/Modal'
 
 const ILS = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
 
@@ -167,6 +168,11 @@ export default function TaxVatSection({
   const [showZeroVatRows, setShowZeroVatRows] = useState(true)
   const [showHandledRows, setShowHandledRows] = useState(true)
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null)
+  // aglamazo#381 (Agla, 2026-09-14): a settings entry point for revenue-
+  // document providers feeding this page's מחזור — reuses each business's
+  // already-configured ypay credentials (BizSettingsTab), doesn't duplicate
+  // them here. Grow is not wired up yet (next tax period, per Agla).
+  const [providersModalOpen, setProvidersModalOpen] = useState(false)
   // Local edits (e.g. fixing a wrongly-attributed transaction) applied on top
   // of the `transactions` prop — the parent owns the real fetch/refresh cycle,
   // this just keeps the table in sync without waiting for it.
@@ -522,6 +528,14 @@ export default function TaxVatSection({
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => setProvidersModalOpen(true)}
+            title="ספקי מסמכי הכנסה"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.1rem', padding: 0, lineHeight: 1 }}
+          >
+            ⚙️
+          </button>
           <h3 style={{ margin: 0, fontSize: '1rem' }}>תקופה</h3>
           <select
             value={selectedPeriodKey}
@@ -800,6 +814,43 @@ export default function TaxVatSection({
           }}
         />
       )}
+
+      <Modal isOpen={providersModalOpen} onClose={() => setProvidersModalOpen(false)} maxWidth="440px">
+        <div style={{ padding: '1.5rem' }}>
+          <h3 style={{ margin: '0 0 1rem 0' }}>ספקי מסמכי הכנסה</h3>
+          <p style={{ margin: '0 0 1rem 0', fontSize: '0.85rem', color: '#64748b' }}>
+            המחזור שמוצג כאן נבנה ממסמכים שהופקו בכל אחד מהעסקים הבאים. חיבור ypay מוגדר
+            בהגדרות העסק עצמו — כאן רק מצב החיבור.
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            {businesses.map(b => (
+              <div
+                key={b.syncId || b.id}
+                style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  padding: '0.5rem 0.75rem', border: '1px solid #e2e8f0', borderRadius: '0.5rem', fontSize: '0.9rem',
+                }}
+              >
+                <span>{b.name}</span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ color: b.ypayClientId ? '#166534' : '#b45309', fontSize: '0.8rem' }}>
+                    {b.ypayClientId ? '✓ ypay מחובר' : 'ypay לא מחובר'}
+                  </span>
+                  <a
+                    href={`/app/business/${b.slug || b.syncId}?tab=settings`}
+                    style={{ color: '#2563eb', fontSize: '0.8rem', textDecoration: 'underline' }}
+                  >
+                    הגדרות
+                  </a>
+                </span>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: '#f8fafc', borderRadius: '0.5rem', fontSize: '0.85rem', color: '#94a3b8' }}>
+            Grow — יתווסף בתקופת המס הבאה
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }
