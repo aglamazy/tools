@@ -617,7 +617,13 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
     const monthKey = `${String(i + 1).padStart(2, '0')}/${currentYear}`
     const paymentRecord = advancePayments?.find(p => p.month === monthKey && p.type === 'incomeTax')
     const isPaymentMonth = advancePeriod === 2 ? i % 2 === 1 : true
-    const isDue = hasAdvance && isPaymentMonth && advancePaid > 0
+    // Agla, live: "I can't upload the income tax payment" — a payment month
+    // whose computed expected amount happens to be ₪0 (e.g. this month's
+    // income isn't categorized yet) used to hide the upload control
+    // entirely, same class of bug as the BTL "0 can't be late" fix. A real
+    // payment can exist even when the app's own turnover-based estimate is
+    // 0, so the control must not be gated on that estimate.
+    const isDue = hasAdvance && isPaymentMonth
 
     return { month: i, label: HEBREW_MONTHS[i], income, expenses, netIncome, incomeTx, expenseLines, btlPaid, btlIsForecast, btlDeduction, taxBase, salary, tax, advancePaid, monthKey, paymentRecord, isDue }
   })
