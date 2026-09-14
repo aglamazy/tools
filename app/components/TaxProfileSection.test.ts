@@ -1,12 +1,18 @@
 import { describe, it, expect } from 'vitest'
 import { btlNoticeKey, resolveBtlScheduleByMonth, type BtlNotice, type TaxProfile } from './TaxProfileSection'
 
-// aglamazo#376, Sheli 2026-09-14, Agla: "Good morning, please handle 375"
-// (and separately #376): BTL reassessed Agla mid-year. The April notice
-// (₪6,013/month, Jan-Dec schedule) was replaced wholesale by the July
-// notice (₪1,091/month, Jul-Dec schedule only) because btlNotices was keyed
-// one-per-year -- silently restating Jan-Jun from ₪6,013 to ₪1,091 even
-// though five real payments at ₪6,013 are in the books for those months.
+// aglamazo#376: BTL reassessed Agla mid-year; btlNotices was keyed
+// one-per-year, so a second notice for the same year replaced the first
+// wholesale instead of coexisting. Fixed by keying notices by id.
+//
+// aglamazo#388 (superseding #376's own "only the months it covers" reading,
+// which was reasonable but wrong): a BTL notice for "לשנת 2026" sets the
+// rate for the WHOLE YEAR, retroactively — its own schedule rows are only
+// the payments still outstanding when it was issued, not its scope.
+// Confirmed against BTL's own account ledger (Agla, screenshot): a 20/07
+// הקטנת מקדמות of ₪29,532 satisfies exactly 6×₪6,013 − ₪29,532 = ₪6,546 =
+// 6×₪1,091 — Jan-Jun really were restated to the same ₪1,091 rate as
+// Jul-Dec, even though the July notice's schedule only lists Jul-Dec.
 
 function aprilNotice(): BtlNotice {
   return {
@@ -38,25 +44,37 @@ function julyNotice(): BtlNotice {
 }
 
 describe('resolveBtlScheduleByMonth', () => {
-  it('keeps the earlier notice\'s amount for months only it covers (the real Jan-Jun bug)', () => {
+  it('restates months only the EARLIER notice explicitly lists, to the LATER notice\'s rate (the real Jan-Jun case, aglamazo#388)', () => {
     const profile: TaxProfile = { btlNotices: [aprilNotice(), julyNotice()] }
     const byMonth = resolveBtlScheduleByMonth(profile, 2026)
-    expect(byMonth.get('01/2026')?.amount).toBe(6013)
-    expect(byMonth.get('06/2026')?.amount).toBe(6013)
+    expect(byMonth.get('01/2026')?.amount).toBe(1091)
+    expect(byMonth.get('06/2026')?.amount).toBe(1091)
   })
 
-  it('uses the later notice\'s amount for months only it covers', () => {
+  it('uses the later notice\'s amount for months it explicitly covers', () => {
     const profile: TaxProfile = { btlNotices: [aprilNotice(), julyNotice()] }
     const byMonth = resolveBtlScheduleByMonth(profile, 2026)
     expect(byMonth.get('07/2026')?.amount).toBe(1091)
     expect(byMonth.get('12/2026')?.amount).toBe(1091)
   })
 
-  it('is order-independent — the later-uploaded notice wins regardless of array order', () => {
+  it('a month restated (not explicitly listed) by the later notice has no due date — the real due date already passed under the superseded notice', () => {
+    const profile: TaxProfile = { btlNotices: [aprilNotice(), julyNotice()] }
+    const byMonth = resolveBtlScheduleByMonth(profile, 2026)
+    expect(byMonth.get('01/2026')?.dueDate).toBe('')
+  })
+
+  it('is order-independent — the later-uploaded notice governs the whole year regardless of array order', () => {
     const profile: TaxProfile = { btlNotices: [julyNotice(), aprilNotice()] }
     const byMonth = resolveBtlScheduleByMonth(profile, 2026)
-    expect(byMonth.get('01/2026')?.amount).toBe(6013)
+    expect(byMonth.get('01/2026')?.amount).toBe(1091)
     expect(byMonth.get('07/2026')?.amount).toBe(1091)
+  })
+
+  it('reproduces BTL\'s own reconciliation exactly: 6×6,013 minus the 20/07 הקטנת מקדמות of 29,532 equals 6×1,091', () => {
+    // The proof that grounded aglamazo#388: this is not an estimate, it is
+    // BTL's own ledger arithmetic.
+    expect(6 * 6013 - 29532).toBe(6 * 1091)
   })
 
   it('ignores notices for a different year', () => {
