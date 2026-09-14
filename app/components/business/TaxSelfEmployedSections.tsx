@@ -640,13 +640,21 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
     let advancePaid = 0
     if (hasAdvance) {
       if (advancePeriod === 2) {
-        // Bi-monthly: payment on even months (index 1, 3, 5... = Feb, Apr, Jun...)
-        const isPaymentMonth = i % 2 === 1
+        // Bi-monthly: a period covering the two PRECEDING calendar months is
+        // paid roughly a month after it closes — Agla, live 2026-09-14, on
+        // his own real bank data: the Jan+Feb period was paid in March
+        // (₪6,053), Mar+Apr in May (₪4,048), May+Jun in July (₪1,452). The
+        // old i%2===1 parity attributed each period's turnover to the LAST
+        // month of the period itself (Feb/Apr/Jun) instead of the month the
+        // payment actually lands in (Mar/May/Jul) — a full month early,
+        // which is exactly the row he kept uploading each real receipt
+        // under, one month off from where the bank shows it landing.
+        const isPaymentMonth = i >= 2 && i % 2 === 0
         if (isPaymentMonth) {
-          const prevMonthStr = `${String(i).padStart(2, '0')}/${currentYear}`
-          const prevIncomeTx = transactions.filter(t => t.month === prevMonthStr && t.category && seCatNames.has(t.category))
-          const prevAdvanceTurnover = turnoverExVat(prevIncomeTx, taxProfile)
-          advancePaid = (prevAdvanceTurnover + advanceTurnover) * (advancePercent / 100)
+          const periodMonth1Str = `${String(i - 1).padStart(2, '0')}/${currentYear}`
+          const periodMonth2Str = `${String(i).padStart(2, '0')}/${currentYear}`
+          const periodIncomeTx = transactions.filter(t => (t.month === periodMonth1Str || t.month === periodMonth2Str) && t.category && seCatNames.has(t.category))
+          advancePaid = turnoverExVat(periodIncomeTx, taxProfile) * (advancePercent / 100)
         }
       } else {
         advancePaid = advanceTurnover * (advancePercent / 100)
@@ -657,13 +665,12 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
     const monthKey = `${String(i + 1).padStart(2, '0')}/${currentYear}`
     const paymentRecord = advancePayments?.find(p => p.month === monthKey && p.type === 'incomeTax')
     // Agla, live: "I can't upload the income tax payment," reproduced live
-    // via MCP on his real 2026 book — September isn't a bi-monthly
-    // isPaymentMonth (period 2 pairs it with October), so the upload
-    // control was hidden there even though he can make a real payment on
-    // any month he chooses. The BTL table already gives him that freedom
-    // (its own control gates only on already-paid, never on a schedule) —
-    // matched here: available whenever an advance regime exists, unless
-    // this month is already marked paid.
+    // via MCP on his real 2026 book — a month outside the bi-monthly
+    // isPaymentMonth pattern hid the upload control even though he can
+    // make a real payment on any month he chooses. The BTL table already
+    // gives him that freedom (its own control gates only on already-paid,
+    // never on a schedule) — matched here: available whenever an advance
+    // regime exists, unless this month is already marked paid.
     const isDue = hasAdvance
 
     // Agla, live: "It probably used the figure (paid amount) from the line
