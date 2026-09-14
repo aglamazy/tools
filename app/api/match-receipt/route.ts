@@ -33,17 +33,9 @@ function extractionFailureResponse(result: ExtractionFailure, statusOverride?: n
  * actually looks like an invoice/receipt by subject line alone, so only that
  * one gets sent through the slow/costly body+PDF extraction pipeline.
  */
-async function handlePickCandidate(transaction: TransactionInfo, candidates: PickCandidateInput[]) {
-  if (!transaction || !candidates?.length) {
-    return NextResponse.json({ error: 'Missing transaction or candidates' }, { status: 400 })
-  }
-
-  const candidateList = candidates.map((c) =>
-    `[${c.index}] מאת: ${c.from}\n    נושא: ${c.subject}\n    תאריך: ${c.date}\n    תקציר: ${c.snippet}`
-  ).join('\n\n')
-
-  const result = await extractJsonWithFallback<{ candidateIndex: number | null; reason?: string }>({
-    routeName: 'match-receipt',
+async function runPickCandidatePrompt(transaction: TransactionInfo, candidateList: string, routeName: string) {
+  return extractJsonWithFallback<{ candidateIndex: number | null; reason?: string }>({
+    routeName,
     systemPrompt: `אתה מסנן מיילים לפי נושא בלבד, כדי לזהות אילו מהם הם בבירור חשבונית/קבלה/אישור תשלום עבור עסקת כרטיס אשראי — לפני שליחה לבדיקה יקרה ומלאה.
 
 כללים:
@@ -66,19 +58,40 @@ ${transaction.merchant ? `- בית עסק: ${transaction.merchant}` : ''}
 ${candidateList}`,
     }],
     geminiModel: 'gemini-2.5-flash',
-    // Reproduced live, 2026-09-14 (Agla, real YPAY search): a textbook
-    // "חשבונית מס קבלה" subject was rejected as "not identified by
-    // subject" — the raw Gemini response showed it WAS correctly picking
-    // that candidate ("הנושא מעיד בבירור על...") but got cut off
-    // (finishReason=MAX_TOKENS) before finishing the JSON, at 800 tokens.
-    // 2.5-flash's default thinking budget eats into the same output-token
-    // pool, so a tiny visible JSON payload can still truncate. Same fix
-    // pattern as aglamazo#385/#359 — more headroom, not a smaller prompt.
     geminiMaxTokens: 2048,
     geminiTemperature: 0,
   })
+}
+
+async function handlePickCandidate(transaction: TransactionInfo, candidates: PickCandidateInput[]) {
+  if (!transaction || !candidates?.length) {
+    return NextResponse.json({ error: 'Missing transaction or candidates' }, { status: 400 })
+  }
+
+  const candidateList = candidates.map((c) =>
+    `[${c.index}] מאת: ${c.from}\n    נושא: ${c.subject}\n    תאריך: ${c.date}\n    תקציר: ${c.snippet}`
+  ).join('\n\n')
 
   console.log(`[match-receipt] pick-candidate · candidates:\n${candidateList}`)
+
+  // Reproduced live, 2026-09-14 (Agla, real YPAY search): a textbook
+  // "חשבונית מס קבלה" subject was rejected as "not identified by subject"
+  // — the raw Gemini response showed it WAS correctly picking that
+  // candidate ("הנושא מעיד בבירור על...") but got cut off
+  // (finishReason=MAX_TOKENS) before finishing the JSON, at 800 tokens.
+  // 2.5-flash's default thinking budget eats into the same output-token
+  // pool, so a tiny visible JSON payload can still truncate. Raising the
+  // budget (800 → 2048) cut the failure rate a lot but didn't zero it —
+  // reproduced AGAIN live the same day, same signature, at 2048. Thinking
+  // budget is inherently variable per call, so one automatic retry before
+  // giving up costs one cheap extra Gemini call and turns an occasional
+  // truncation into a non-event instead of a false "not an invoice".
+  let result = await runPickCandidatePrompt(transaction, candidateList, 'match-receipt')
+
+  if (!result.ok && result.details?.includes('MAX_TOKENS')) {
+    console.log('[match-receipt] pick-candidate · MAX_TOKENS, retrying once')
+    result = await runPickCandidatePrompt(transaction, candidateList, 'match-receipt-retry')
+  }
 
   if (!result.ok) {
     return extractionFailureResponse(result)

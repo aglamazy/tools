@@ -32,6 +32,15 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
   const [checkedCandidates, setCheckedCandidates] = useState<CheckedCandidate[]>([])
   const [searchInfo, setSearchInfo] = useState<SearchInfo | null>(null)
   const [showResults, setShowResults] = useState(false)
+  // Agla, live, on the read-only checked-candidates list: "what is [this]
+  // good for? What can I do with it?" — the subject pre-filter can reject
+  // a candidate the user can see with their own eyes is the right one
+  // (aglamazo#396). Declared here, before the early return below, since
+  // every hook in this component must run on every render regardless of
+  // which branch it takes (a hook declared after an early return crashed
+  // live the moment linkedDoc got set mid-session: "Rendered fewer hooks
+  // than expected").
+  const [pickingId, setPickingId] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Google Drive/Gmail share one OAuth grant (googleTokenService.ts), stored
@@ -116,13 +125,9 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
     }
   }
 
-  // Agla, live, on the read-only checked-candidates list: "what is [this]
-  // good for? What can I do with it?" — the subject pre-filter can reject
-  // a candidate the user can see with their own eyes is the right one
-  // (aglamazo#396). Lets them force verification on ONE specific candidate,
+  // Lets the user force verification on ONE specific checked candidate,
   // skipping the subject guess — the real document/body check inside still
   // runs, so a wrong pick is still rejected on its own content.
-  const [pickingId, setPickingId] = useState<string | null>(null)
   const handleManualPick = async (candidate: CheckedCandidate) => {
     if (!claudeApiKey) {
       setErrorMsg('חסר מפתח Anthropic בהגדרות — נדרש לאימות וחילוץ הקבלה')
