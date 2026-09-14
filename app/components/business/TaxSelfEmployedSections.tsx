@@ -107,6 +107,30 @@ export function computeBtlRunningBalance(
   })
 }
 
+export type BtlStatus = 'paid' | 'overdue' | 'due-soon' | 'upcoming' | 'none'
+
+/**
+ * A month's payment status for the BTL table's status badge. Agla, live,
+ * on a real ₪0 row showing 🚨 באיחור: "0 can't be late." — a month with
+ * nothing charged has nothing to be late on, so `expected === 0` is
+ * checked as its own real state ('none'), ahead of the deadline
+ * comparison, rather than falling through into 'upcoming'/'overdue' logic
+ * that assumes there's something to track.
+ */
+export function resolveBtlStatus(params: {
+  paid: boolean
+  expected: number
+  today: Date
+  deadline: Date
+  windowStart: Date
+}): BtlStatus {
+  if (params.paid) return 'paid'
+  if (params.expected === 0) return 'none'
+  if (params.today > params.deadline) return 'overdue'
+  if (params.today >= params.windowStart) return 'due-soon'
+  return 'upcoming'
+}
+
 // ---------------------------------------------------------------------------
 // Self-Employed BTL Calculation Section (ביטוח לאומי + בריאות)
 // ---------------------------------------------------------------------------
@@ -216,11 +240,7 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
     const windowStart = new Date(deadline)
     windowStart.setDate(windowStart.getDate() - 5)
 
-    const status: 'paid' | 'overdue' | 'due-soon' | 'upcoming' =
-      paid ? 'paid'
-      : today > deadline ? 'overdue'
-      : today >= windowStart ? 'due-soon'
-      : 'upcoming'
+    const status = resolveBtlStatus({ paid, expected, today, deadline, windowStart })
     const diff = expected > 0 ? expected - btl.total : 0
     return {
       month: i,
@@ -322,6 +342,7 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
               {hasDownpayment && (
                 <td style={{ ...cellStyle, fontSize: '1rem' }} title={
                   row.status === 'paid' ? `שולם ✓ · סכום שנמצא: ${fmt(row.actualPaid)}`
+                  : row.status === 'none' ? 'אין חיוב לחודש זה'
                   : row.status === 'overdue' ? `באיחור — לא נמצא תשלום לאחר ${row.deadline.toLocaleDateString('he-IL')}`
                   : row.status === 'due-soon' ? `פעולה נדרשת — עד ${row.deadline.toLocaleDateString('he-IL')}`
                   : `יופיע לפעולה ב-${row.windowStart.toLocaleDateString('he-IL')}`
@@ -329,6 +350,9 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
                     {row.status === 'paid' && (
                       <span style={{ color: '#16a34a', fontWeight: 700 }}>✓</span>
+                    )}
+                    {row.status === 'none' && (
+                      <span style={{ color: '#cbd5e1' }}>—</span>
                     )}
                     {row.status === 'overdue' && (
                       <span style={{
@@ -360,7 +384,7 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
                     {row.status === 'paid' && row.paymentRecord?.driveWebViewLink && (
                       <a href={row.paymentRecord.driveWebViewLink} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', fontSize: '0.75rem' }}>אישור</a>
                     )}
-                    {row.status !== 'paid' && onUploadReceipt && (
+                    {row.status !== 'paid' && row.status !== 'none' && onUploadReceipt && (
                       <button
                         onClick={() => { setUploadMonth(row.monthKey); fileInputRef.current?.click() }}
                         style={{ background: 'none', border: '1px solid #e2e8f0', borderRadius: '0.25rem', padding: '0.1rem 0.35rem', cursor: 'pointer', fontSize: '0.7rem', color: '#64748b' }}

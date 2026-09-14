@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { turnoverExVat, btlPaymentMonthFor, resolveBtlPaidForMonth, computeBtlRunningBalance } from './TaxSelfEmployedSections'
+import { turnoverExVat, btlPaymentMonthFor, resolveBtlPaidForMonth, computeBtlRunningBalance, resolveBtlStatus } from './TaxSelfEmployedSections'
 import type { Transaction } from '@/app/db/financeDB'
 import type { TaxProfile } from '@/app/components/TaxProfileSection'
 
@@ -166,5 +166,45 @@ describe('computeBtlRunningBalance', () => {
 
   it('sums to zero across an empty year', () => {
     expect(computeBtlRunningBalance([])).toEqual([])
+  })
+})
+
+// Agla, live, on a real screenshot of a ₪0 row showing 🚨 באיחור: "0 can't
+// be late."
+describe('resolveBtlStatus', () => {
+  const today = new Date('2026-09-14')
+  const pastDeadline = new Date('2026-08-15')
+  const pastWindowStart = new Date('2026-08-10')
+  const futureDeadline = new Date('2026-10-15')
+  const futureWindowStart = new Date('2026-10-10')
+
+  it('is "none" for a ₪0 month even with a deadline already past (the real bug)', () => {
+    const status = resolveBtlStatus({
+      paid: false, expected: 0, today, deadline: pastDeadline, windowStart: pastWindowStart,
+    })
+    expect(status).toBe('none')
+  })
+
+  it('is "paid" regardless of the expected amount when a real payment/record exists', () => {
+    expect(resolveBtlStatus({ paid: true, expected: 0, today, deadline: pastDeadline, windowStart: pastWindowStart })).toBe('paid')
+    expect(resolveBtlStatus({ paid: true, expected: 1091, today, deadline: pastDeadline, windowStart: pastWindowStart })).toBe('paid')
+  })
+
+  it('is "overdue" for an unpaid month with a real charge past its deadline', () => {
+    const status = resolveBtlStatus({
+      paid: false, expected: 1091, today, deadline: pastDeadline, windowStart: pastWindowStart,
+    })
+    expect(status).toBe('overdue')
+  })
+
+  it('is "due-soon" inside the window, "upcoming" before it, for a real charge', () => {
+    const dueSoon = resolveBtlStatus({
+      paid: false, expected: 1091, today, deadline: new Date('2026-09-15'), windowStart: new Date('2026-09-10'),
+    })
+    expect(dueSoon).toBe('due-soon')
+    const upcoming = resolveBtlStatus({
+      paid: false, expected: 1091, today, deadline: futureDeadline, windowStart: futureWindowStart,
+    })
+    expect(upcoming).toBe('upcoming')
   })
 })
