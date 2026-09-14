@@ -80,42 +80,29 @@ export function vatTypeForDate(profile: TaxProfile, transactionDate: string): 'e
 }
 
 /**
- * The expected BTL payment for every MM/YYYY month a given year, resolved
- * per month (aglamazo#376), corrected per aglamazo#388's finding: a BTL
- * notice sets the rate for the WHOLE STATED YEAR, not just the months its
- * own schedule happens to list. Confirmed against BTL's own account ledger
- * (Agla, screenshot): a 20/07 הקטנת מקדמות of ₪29,532 satisfies exactly
- * 6×₪6,013 − ₪29,532 = ₪6,546 = 6×₪1,091 — the reassessment restated
- * Jan–Jun retroactively to the same ₪1,091 rate as Jul–Dec, even though the
- * notice's own schedule only lists Jul–Dec (the payments still outstanding
- * when it was issued, not the notice's scope).
+ * The expected BTL payment for every MM/YYYY month a given year's notices
+ * cover, resolved per month rather than per year (aglamazo#376). BTL can
+ * reassess mid-year — two notices for the same year, each with its own
+ * schedule covering only the months it actually governs (e.g. a July
+ * notice's schedule only has entries for יולי–דצמבר). A month is resolved
+ * by which notice's OWN schedule contains an entry for it, not by picking
+ * one notice to represent the whole year — so a month with no covering
+ * notice correctly has no entry here (caller decides the fallback), instead
+ * of silently inheriting whatever the most-recently-uploaded notice said
+ * about a month it was never issued for.
  *
- * So the LATEST notice uploaded for a year governs every month of that
- * year: a month explicitly listed in its schedule uses that row (real due
- * date, possible QR payment URL); a month not listed (already paid/passed
- * when the notice was issued) still uses the notice's own flat monthly
- * `amount`, with no due date to show (the caller's own "15th of next
- * month" fallback applies, but a month already marked paid never reaches
- * that code path anyway). An EARLIER notice for the same year is NOT
- * consulted at all once a later one exists — it has been fully superseded,
- * not merged month-by-month with it.
+ * When two notices both cover the same month (a re-upload, or a correction),
+ * the more recently uploaded one wins — resolved by upload order, not by
+ * requiring a separate "effective date" field the notice may not state.
  */
 export function resolveBtlScheduleByMonth(profile: TaxProfile, year: number): Map<string, BtlPayment> {
   const yearNotices = (profile.btlNotices || [])
     .filter((n) => n.year === year)
     .sort((a, b) => (a.uploadedAt || '').localeCompare(b.uploadedAt || ''))
   const byMonth = new Map<string, BtlPayment>()
-  if (yearNotices.length === 0) return byMonth
-
-  const latest = yearNotices[yearNotices.length - 1]
-  const scheduleByMonth = new Map((latest.schedule || []).map((p) => [p.month, p]))
-  for (let m = 1; m <= 12; m++) {
-    const monthStr = `${String(m).padStart(2, '0')}/${year}`
-    const scheduled = scheduleByMonth.get(monthStr)
-    if (scheduled) {
-      byMonth.set(monthStr, scheduled)
-    } else if (latest.amount > 0) {
-      byMonth.set(monthStr, { month: monthStr, amount: latest.amount, dueDate: '' })
+  for (const notice of yearNotices) {
+    for (const payment of notice.schedule || []) {
+      byMonth.set(payment.month, payment)
     }
   }
   return byMonth
