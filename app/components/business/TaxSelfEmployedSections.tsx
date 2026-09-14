@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { db } from '@/app/db/financeDB'
 import type { Business, TaxDocument, Transaction, AdvancePayment } from '@/app/db/financeDB'
-import { resolveBtlScheduleByMonth, type TaxProfile } from '@/app/components/TaxProfileSection'
+import { resolveBtlScheduleByMonth, vatTypeForDate, type TaxProfile } from '@/app/components/TaxProfileSection'
+import { getVatRateForDate } from '@/app/lib/vat'
 
 export type BTLRates = {
   reduced: { nationalInsurance: number; healthInsurance: number }
@@ -24,6 +25,25 @@ const cellStyle: React.CSSProperties = {
 }
 
 const fmt = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
+
+/**
+ * מקדמת מס הכנסה is a percentage of turnover (מחזור) EXCLUDING VAT — for an
+ * עוסק מורשה the deposited amount includes VAT it collected on the state's
+ * behalf, which is not the dealer's own turnover. Resolved per transaction
+ * (not per month) via vatTypeForDate, since a mid-year exempt→authorized
+ * conversion means a single bi-monthly period can straddle both statuses
+ * (aglamazo#381).
+ */
+export function turnoverExVat(monthTransactions: Transaction[], taxProfile: TaxProfile | undefined): number {
+  return monthTransactions.reduce((sum, t) => {
+    const amount = t.amount || 0
+    const vatType = taxProfile ? vatTypeForDate(taxProfile, t.date) : undefined
+    if (vatType === 'authorized') {
+      return sum + amount / (1 + getVatRateForDate(t.date))
+    }
+    return sum + amount
+  }, 0)
+}
 
 // ---------------------------------------------------------------------------
 // Self-Employed BTL Calculation Section (ביטוח לאומי + בריאות)
@@ -338,23 +358,27 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
     const taxSalaryOnly = computeIncomeTax(salary, brackets)
     const tax = taxTotal - taxSalaryOnly
 
-    // Advance payment paid = % of income for the period
-    // Bi-monthly: pay on even months (Feb, Apr, Jun...) covering 2 months of income
+    // Advance due = % of TURNOVER (excluding VAT) for the period — not net
+    // income. A מקדמת מס הכנסה is set by פקיד שומה as a percentage of מחזור;
+    // expenses never enter it (that's settled annually in the דוח), and for
+    // an עוסק מורשה the deposited amount includes VAT collected on the
+    // state's behalf, which isn't the dealer's own turnover either
+    // (aglamazo#381).
+    const monthIncomeTx = transactions.filter(t => t.month === monthStr && t.category && seCatNames.has(t.category))
+    const advanceTurnover = turnoverExVat(monthIncomeTx, taxProfile)
     let advancePaid = 0
     if (hasAdvance) {
       if (advancePeriod === 2) {
         // Bi-monthly: payment on even months (index 1, 3, 5... = Feb, Apr, Jun...)
         const isPaymentMonth = i % 2 === 1
         if (isPaymentMonth) {
-          // Sum net income of this month + previous month
           const prevMonthStr = `${String(i).padStart(2, '0')}/${currentYear}`
-          const prevIncome = transactions.filter(t => t.month === prevMonthStr && t.category && seCatNames.has(t.category)).reduce((s, t) => s + (t.amount || 0), 0)
-          const prevExpenses = transactions.filter(t => t.month === prevMonthStr && t.category && seExpCatNames.has(t.category)).reduce((s, t) => s + Math.abs(t.amount || 0), 0)
-          const prevNetIncome = prevIncome - prevExpenses
-          advancePaid = (prevNetIncome + netIncome) * (advancePercent / 100)
+          const prevIncomeTx = transactions.filter(t => t.month === prevMonthStr && t.category && seCatNames.has(t.category))
+          const prevAdvanceTurnover = turnoverExVat(prevIncomeTx, taxProfile)
+          advancePaid = (prevAdvanceTurnover + advanceTurnover) * (advancePercent / 100)
         }
       } else {
-        advancePaid = income * (advancePercent / 100)
+        advancePaid = advanceTurnover * (advancePercent / 100)
       }
     }
 
@@ -367,6 +391,22 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
     return { month: i, label: HEBREW_MONTHS[i], income, expenses, netIncome, btlPaid, btlDeduction, taxBase, salary, tax, advancePaid, monthKey, paymentRecord, isDue }
   })
 
+  // Actual payments — the מקדמות מס הכנסה (<member>) transactions, NOT the
+  // computed-due figure above (aglamazo#381's second bug: the footer summed
+  // advancePaid, which is what's DUE, and mislabeled it as what was PAID).
+  const [advanceTaxTx, setAdvanceTaxTx] = useState<Transaction[]>([])
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const all = await db.transactions.toArray()
+      const yearTx = all.filter(
+        (t) => t.category?.startsWith('מקדמות מס הכנסה') && t.month?.endsWith(`/${currentYear}`),
+      )
+      if (!cancelled) setAdvanceTaxTx(yearTx)
+    })()
+    return () => { cancelled = true }
+  }, [currentYear])
+
   const annualTotals = {
     income: monthlyRows.reduce((s, r) => s + r.income, 0),
     expenses: monthlyRows.reduce((s, r) => s + r.expenses, 0),
@@ -377,6 +417,7 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
     salary: monthlyRows.reduce((s, r) => s + r.salary, 0),
     tax: monthlyRows.reduce((s, r) => s + r.tax, 0),
     advancePaid: monthlyRows.reduce((s, r) => s + r.advancePaid, 0),
+    advancePaidActual: advanceTaxTx.reduce((s, t) => s + Math.abs(t.amount || 0), 0),
   }
 
   const hStyle: React.CSSProperties = { ...cellStyle, fontWeight: 600, background: '#fff7ed', color: '#92400e', borderBottom: '2px solid #e2e8f0' }
@@ -488,12 +529,12 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
           {hasAdvance && (
             <tr style={{ background: '#fef3c7' }}>
               <td colSpan={annualTotals.salary > 0 ? 7 : 6} style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 700 }}>
-                הפרש (מקדמות ששולמו − מס שחושב)
+                הפרש (מקדמות ששולמו בפועל − מס שחושב)
               </td>
-              <td colSpan={2} style={{ ...cellStyle, fontWeight: 700, fontSize: '0.95rem', color: annualTotals.advancePaid - annualTotals.tax > 0 ? '#16a34a' : '#dc2626' }}>
-                {fmt(annualTotals.advancePaid - annualTotals.tax)}
+              <td colSpan={2} style={{ ...cellStyle, fontWeight: 700, fontSize: '0.95rem', color: annualTotals.advancePaidActual - annualTotals.tax > 0 ? '#16a34a' : '#dc2626' }}>
+                {fmt(annualTotals.advancePaidActual - annualTotals.tax)}
                 <span style={{ fontSize: '0.75rem', fontWeight: 400, marginRight: '0.5rem' }}>
-                  {annualTotals.advancePaid - annualTotals.tax > 0 ? '(שולם ביתר — יוחזר)' : annualTotals.advancePaid - annualTotals.tax < 0 ? '(שולם בחסר — לתשלום)' : ''}
+                  {annualTotals.advancePaidActual - annualTotals.tax > 0 ? '(שולם ביתר — יוחזר)' : annualTotals.advancePaidActual - annualTotals.tax < 0 ? '(שולם בחסר — לתשלום)' : ''}
                 </span>
               </td>
             </tr>
