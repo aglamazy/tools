@@ -218,6 +218,27 @@ export async function matchReceiptForTransaction(
   const pickData = await pickRes.json()
   log('gemini subject pick →', JSON.stringify(pickData))
 
+  // Reproduced live, 2026-09-14 (Agla): a real "חשבונית מס קבלה" email was
+  // rejected as "not identified by subject" — the actual cause was Gemini
+  // getting cut off mid-response (finishReason=MAX_TOKENS) and the route
+  // returning an error shape with no candidateIndex key at all. Since
+  // undefined == null, that failure was silently falling into the genuine
+  // "nothing looks like an invoice" branch below and reporting a false,
+  // confident-sounding reason. A real call failure must surface as 'error',
+  // never masquerade as a considered rejection.
+  if (!pickRes.ok || pickData.error) {
+    log('pick-candidate call failed — not a real no-match:', pickData.error || pickRes.status)
+    const checkedCandidates: CheckedCandidate[] = pickList.map((p) => ({
+      messageId: p.id,
+      date: p.meta?.date || '',
+      subject: p.meta?.subject || '',
+      from: p.meta?.from || '',
+      outcome: 'rejected',
+      reason: `בדיקת הנושא נכשלה: ${pickData.error || `שגיאת שרת (${pickRes.status})`}`,
+    }))
+    return { status: 'error', checkedCandidates, searchInfo }
+  }
+
   if (pickData.candidateIndex == null) {
     log('no candidate looked like an invoice by subject — returning no-match without extraction')
     const checkedCandidates: CheckedCandidate[] = pickList.map((p) => ({

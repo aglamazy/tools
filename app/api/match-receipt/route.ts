@@ -66,7 +66,15 @@ ${transaction.merchant ? `- בית עסק: ${transaction.merchant}` : ''}
 ${candidateList}`,
     }],
     geminiModel: 'gemini-2.5-flash',
-    geminiMaxTokens: 800,
+    // Reproduced live, 2026-09-14 (Agla, real YPAY search): a textbook
+    // "חשבונית מס קבלה" subject was rejected as "not identified by
+    // subject" — the raw Gemini response showed it WAS correctly picking
+    // that candidate ("הנושא מעיד בבירור על...") but got cut off
+    // (finishReason=MAX_TOKENS) before finishing the JSON, at 800 tokens.
+    // 2.5-flash's default thinking budget eats into the same output-token
+    // pool, so a tiny visible JSON payload can still truncate. Same fix
+    // pattern as aglamazo#385/#359 — more headroom, not a smaller prompt.
+    geminiMaxTokens: 2048,
     geminiTemperature: 0,
   })
 

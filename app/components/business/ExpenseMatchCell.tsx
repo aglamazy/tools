@@ -278,7 +278,7 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
           {errorMsg ? `שגיאה: ${errorMsg}` : 'שגיאה'}
         </span>
       )}
-      {(status === 'no-match' || status === 'matched') && checkedCandidates.length > 0 && (
+      {(status === 'no-match' || status === 'matched' || status === 'error') && checkedCandidates.length > 0 && (
         <button
           type="button"
           onClick={() => setShowResults(true)}
