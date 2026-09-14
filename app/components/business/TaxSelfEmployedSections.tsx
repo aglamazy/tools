@@ -664,14 +664,6 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
     // Payment status from advancePayments records
     const monthKey = `${String(i + 1).padStart(2, '0')}/${currentYear}`
     const paymentRecord = advancePayments?.find(p => p.month === monthKey && p.type === 'incomeTax')
-    // Agla, live: "I can't upload the income tax payment," reproduced live
-    // via MCP on his real 2026 book — a month outside the bi-monthly
-    // isPaymentMonth pattern hid the upload control even though he can
-    // make a real payment on any month he chooses. The BTL table already
-    // gives him that freedom (its own control gates only on already-paid,
-    // never on a schedule) — matched here: available whenever an advance
-    // regime exists, unless this month is already marked paid.
-    const isDue = hasAdvance
 
     // Agla, live: "It probably used the figure (paid amount) from the line
     // itself. But it's wrong. It should extract from the document," then,
@@ -689,6 +681,16 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
     const advancePaidIsForecast = realPaidThisMonth === 0 && paymentRecord?.amount === undefined
     const advancePaidDisplay = realPaidThisMonth || paymentRecord?.amount || advancePaid
 
+    // Agla, live: "I can't upload the income tax payment" (any month should
+    // be able to record a real payment) vs., later, live again: "ממתין,
+    // שלם, העלאה אישור are not needed if there is future payment done" (a
+    // month with genuinely nothing due — no estimate, no real figure, not
+    // already paid — shouldn't clutter the status column at all). Both
+    // hold: the control is available on any month that has SOMETHING to
+    // show (a real amount, a forecast, or an existing paid record), and
+    // hidden only when there is truly nothing.
+    const isDue = hasAdvance && (advancePaidDisplay > 0 || !!paymentRecord?.paidAt)
+
     return { month: i, label: HEBREW_MONTHS[i], income, expenses, netIncome, incomeTx, expenseLines, btlPaid, btlIsForecast, btlDeduction, taxBase, salary, tax, advancePaid, advancePaidDisplay, advancePaidIsForecast, monthKey, paymentRecord, isDue }
   })
 
@@ -702,7 +704,15 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
     salary: monthlyRows.reduce((s, r) => s + r.salary, 0),
     tax: monthlyRows.reduce((s, r) => s + r.tax, 0),
     advancePaid: monthlyRows.reduce((s, r) => s + r.advancePaidDisplay, 0),
-    advancePaidActual: advanceTaxTx.reduce((s, t) => s + Math.abs(t.amount || 0), 0),
+    // Agla, live, cross-checking the הפרש row against his own numbers:
+    // "-14428 is still there, wrong. should be about 4K." advancePaidActual
+    // only summed the real BANK transactions, silently dropping a real
+    // payment whose only evidence is an uploaded receipt (document-extracted
+    // amount, no matching bank-categorized row yet) — exactly the ₪10,000
+    // September payment. Real money is real regardless of which of the two
+    // evidence sources it came from; only a pure forecast (no evidence at
+    // all) should be excluded here.
+    advancePaidActual: monthlyRows.reduce((s, r) => s + (r.advancePaidIsForecast ? 0 : r.advancePaidDisplay), 0),
     // The true annual net BTL cost (real payments minus real refunds, not
     // clamped per row the way btlPaid above is) — a refund can exceed any
     // single row's payment, so the row-level sum above can overstate the
