@@ -131,6 +131,25 @@ describe('buildYpayDocumentFromImportRow', () => {
     expect(doc.transactionId).toBe('tx-sync-900003')
   })
 
+  it('sets moneyReceivedAt from the matched transaction\'s own date — distinct from createdAt/issue date (Agla, aglamazo#381)', async () => {
+    await db.subjects.add({ id: 'cat-1', name: 'הכנסות ייעוץ', type: 'income', businessId: 'biz-1' } as any)
+    // The bank transaction landed a day after the document was issued in ypay.
+    await db.transactions.add({
+      type: 'income', date: '2026-08-11', amount: 1321.6, description: 'אילן עוז',
+      category: 'הכנסות ייעוץ', syncId: 'tx-sync-900003', isFixed: false, month: '08/2026',
+    } as any)
+    const row = { serialNumber: '900003', docType: YpayDocType.TaxInvoiceReceipt, date: '2026-08-10', customerName: 'אילן עוז', netAmount: 1120, vatAmount: 201.6, grossAmount: 1321.6 }
+    const doc = await buildYpayDocumentFromImportRow(row)
+    expect(doc.moneyReceivedAt).toBe('2026-08-11') // the transaction's date, not row.date
+    expect(doc.createdAt).toBe(new Date('2026-08-10').toISOString()) // still the ypay issue date
+  })
+
+  it('leaves moneyReceivedAt unset when no transaction match exists — not guessed', async () => {
+    const row = { serialNumber: '900003', docType: YpayDocType.TaxInvoiceReceipt, date: '2026-08-10', customerName: 'אילן עוז', netAmount: 1120, vatAmount: 201.6, grossAmount: 1321.6 }
+    const doc = await buildYpayDocumentFromImportRow(row)
+    expect(doc.moneyReceivedAt).toBeUndefined()
+  })
+
   it('falls back to the synthetic id when a candidate transaction is not an income category', async () => {
     await db.subjects.add({ id: 'cat-2', name: 'ציוד', type: 'expense', businessId: 'biz-1' } as any)
     await db.transactions.add({
@@ -256,6 +275,7 @@ describe('importYpayIncomeRows', () => {
     const stored = await db.ypayDocuments.filter((d) => d.serialNumber === '900003').first()
     expect(stored?.transactionId).toBe('tx-sync-900003')
     expect(stored?.amount).toBe(1321.6) // untouched — already correct
+    expect(stored?.moneyReceivedAt).toBe('2026-08-10') // backfilled from the newly-matched transaction
   })
 
   it('repairs an existing stub (no amount) instead of skipping it (the real #380 case)', async () => {

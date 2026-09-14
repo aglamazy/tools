@@ -117,6 +117,7 @@ function generatePeriods(effectiveISO: string, periodSize: 1 | 2): ReportPeriod[
 type IncomeRow = {
   id: number
   date: Date
+  moneyReceivedAt?: Date // when the money actually landed — distinct from `date` (ypay's own issue date), aglamazo#381
   serial: string
   projectName: string
   amount: number
@@ -300,6 +301,7 @@ export default function TaxVatSection({
       rows.push({
         id: d.id!,
         date: created,
+        moneyReceivedAt: d.moneyReceivedAt ? new Date(d.moneyReceivedAt) : undefined,
         serial: d.serialNumber,
         projectName: d.projectName || '—',
         // amount is NET regardless of docType — invoiceNetAmount strips VAT
@@ -633,7 +635,14 @@ export default function TaxVatSection({
             <tbody>
               {incomeRows.map(r => (
                 <tr key={r.id} style={trStyle}>
-                  <td style={tdStyle}>{formatDmy(r.date)}</td>
+                  <td style={tdStyle}>
+                    {formatDmy(r.date)}
+                    {r.moneyReceivedAt && r.moneyReceivedAt.getTime() !== r.date.getTime() && (
+                      <div style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
+                        כסף התקבל: {formatDmy(r.moneyReceivedAt)}
+                      </div>
+                    )}
+                  </td>
                   <td style={tdStyle}>#{r.serial}</td>
                   <td style={tdStyle}>{r.projectName}</td>
                   <td style={{ ...tdStyle, textAlign: 'left' }}>{ILS(r.amount)}</td>
@@ -650,6 +659,18 @@ export default function TaxVatSection({
             </tbody>
           </table>
         )}
+        <YpayIncomeImportPanel
+          onImported={async () => {
+            const [yp, ex, vp] = await Promise.all([
+              db.ypayDocuments.toArray(),
+              db.expenseDocuments.toArray(),
+              db.vatPayments.toArray(),
+            ])
+            setYpayDocs(yp)
+            setExpenseDocs(ex)
+            setVatPayments(vp)
+          }}
+        />
       </SectionBlock>
 
       <SectionBlock
@@ -850,18 +871,6 @@ export default function TaxVatSection({
           <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: '#f8fafc', borderRadius: '0.5rem', fontSize: '0.85rem', color: '#94a3b8' }}>
             Grow — יתווסף בתקופת המס הבאה
           </div>
-          <YpayIncomeImportPanel
-            onImported={async () => {
-              const [yp, ex, vp] = await Promise.all([
-                db.ypayDocuments.toArray(),
-                db.expenseDocuments.toArray(),
-                db.vatPayments.toArray(),
-              ])
-              setYpayDocs(yp)
-              setExpenseDocs(ex)
-              setVatPayments(vp)
-            }}
-          />
         </div>
       </Modal>
     </div>

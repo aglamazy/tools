@@ -21,7 +21,7 @@ const MATCH_TOLERANCE_DAYS = 5
  * no unambiguous match stays on the synthetic key (same as an invoice that
  * genuinely hasn't been paid yet) rather than guessing.
  */
-async function findMatchingIncomeTransactionId(grossAmount: number, date: string): Promise<string | undefined> {
+async function findMatchingIncomeTransaction(grossAmount: number, date: string): Promise<Transaction | undefined> {
   if (!date) return undefined
   const incomeCategories = await subjectStore.getIncomeCategories()
   const incomeCatNames = new Set(incomeCategories.map((c) => c.name))
@@ -39,7 +39,7 @@ async function findMatchingIncomeTransactionId(grossAmount: number, date: string
     return Math.abs(tMs - dateMs) <= MATCH_TOLERANCE_DAYS * 24 * 60 * 60 * 1000
   })
 
-  return candidates.length === 1 ? candidates[0].syncId : undefined
+  return candidates.length === 1 ? candidates[0] : undefined
 }
 
 /**
@@ -231,17 +231,24 @@ export function parseYpayIncomeExportRows(rows: unknown[][]): YpayParseResult {
  */
 export async function buildYpayDocumentFromImportRow(row: YpayIncomeImportRow): Promise<Omit<YpayDocument, 'id' | 'syncId' | 'updatedAt'>> {
   const amount = row.docType === YpayDocType.TaxInvoice ? row.netAmount : row.grossAmount
-  const [matchedTransactionId, matchedProjectName] = await Promise.all([
-    findMatchingIncomeTransactionId(row.grossAmount, row.date),
+  const [matchedTransaction, matchedProjectName] = await Promise.all([
+    findMatchingIncomeTransaction(row.grossAmount, row.date),
     findMatchingProjectName(row.customerName),
   ])
   return {
-    transactionId: matchedTransactionId || `${SYNTHETIC_TRANSACTION_ID_PREFIX}${row.serialNumber}`,
+    transactionId: matchedTransaction?.syncId || `${SYNTHETIC_TRANSACTION_ID_PREFIX}${row.serialNumber}`,
     url: '',
     serialNumber: row.serialNumber,
     docType: row.docType,
     amount,
     ...(matchedProjectName ? { projectName: matchedProjectName } : {}),
+    // The matched transaction's own date is the real day the money landed
+    // in the bank — distinct from createdAt (row.date, ypay's own issue
+    // date, which drives the tax-reporting period). aglamazo#381, Agla:
+    // "the first is when I created the document in ypay, the second is
+    // when the money come." Left unset when there's no matched transaction
+    // (nothing to source a real money-date from) rather than guessed.
+    ...(matchedTransaction ? { moneyReceivedAt: matchedTransaction.date } : {}),
     createdAt: row.date ? new Date(row.date).toISOString() : new Date().toISOString(),
   }
 }
@@ -272,7 +279,7 @@ const isAttributed = (d: { transactionId?: string; projectName?: string }) =>
  * and dedup from existing data"). Outcomes per row:
  *   - no existing record with this serial -> add a new one, linked to a
  *     matching transaction when one is found (see
- *     findMatchingIncomeTransactionId) so it's attributed to the right
+ *     findMatchingIncomeTransaction) so it's attributed to the right
  *     business, same as the manual "קשר" link flow.
  *   - an existing record with no `amount` (the #380 stub shape) and/or a
  *     still-orphaned synthetic transactionId (rows imported before this fix)
@@ -324,7 +331,10 @@ export async function importYpayIncomeRows(
           patch.createdAt = built.createdAt
         }
         if (needsAttributionFix) {
-          if (!isSynthetic(built.transactionId)) patch.transactionId = built.transactionId
+          if (!isSynthetic(built.transactionId)) {
+            patch.transactionId = built.transactionId
+            if (built.moneyReceivedAt && !existing.moneyReceivedAt) patch.moneyReceivedAt = built.moneyReceivedAt
+          }
           if (built.projectName && !existing.projectName) patch.projectName = built.projectName
         }
         if (Object.keys(patch).length > 0) {
