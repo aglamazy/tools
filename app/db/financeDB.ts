@@ -329,6 +329,12 @@ export interface AdvancePayment {
   driveFileId?: string
   driveWebViewLink?: string
   fileName?: string
+  // Actual amount paid, extracted from the uploaded receipt (aglamazo,
+  // Agla live: "It probably used the figure from the line itself. But
+  // it's wrong. It should extract from the document."). Best-effort —
+  // undefined when extraction wasn't run or failed; the row display then
+  // falls back to the computed estimate, same as before.
+  amount?: number
   userId?: string
   createdAt: string
   updatedAt?: string

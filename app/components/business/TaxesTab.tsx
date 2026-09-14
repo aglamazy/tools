@@ -289,6 +289,30 @@ function AnnualSummarySubTab() {
       console.error('[AdvancePayment] Drive upload failed, continuing with local save:', err)
     }
 
+    // Agla, live: "It probably used the figure (paid amount) from the line
+    // itself. But it's wrong. It should extract from the document." — the
+    // row's own מקדמה figure is a turnover-based estimate, never what was
+    // actually paid. Best-effort extraction (same ladder as expense docs):
+    // a missing key or a failed read just leaves amount unset, the row
+    // falls back to the estimate exactly as it did before this.
+    let extractedAmount: number | undefined
+    try {
+      const keyRow = await db.appSettings.where('key').equals('claudeApiKey').first()
+      const claudeApiKey = keyRow?.value as string | undefined
+      const base64 = await fileToBase64(file)
+      const res = await fetch('/api/extract-expense-doc', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: claudeApiKey, fileBase64: base64, mimeType: file.type }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (Number.isFinite(data.amount)) extractedAmount = Number(data.amount)
+      }
+    } catch (err) {
+      console.error('[AdvancePayment] receipt amount extraction failed, continuing with local save:', err)
+    }
+
     try {
       // Check for existing record
       const existing = await db.advancePayments
@@ -299,15 +323,17 @@ function AnnualSummarySubTab() {
       // Dexie's update({k: undefined}) deletes the key. If this re-upload's
       // Drive step failed (no token / network), we'd wipe a link saved by a
       // previous successful upload. Only include the Drive fields when we
-      // actually have a fresh link.
+      // actually have a fresh link — same reasoning for the extracted amount.
       const driveFields = driveWebViewLink
         ? { driveFileId, driveWebViewLink, fileName: file.name }
         : {}
+      const amountFields = extractedAmount !== undefined ? { amount: extractedAmount } : {}
 
       if (existing) {
         await db.advancePayments.update(existing.id!, {
           paidAt: new Date().toISOString(),
           ...driveFields,
+          ...amountFields,
         })
       } else {
         await db.advancePayments.add({
@@ -316,6 +342,7 @@ function AnnualSummarySubTab() {
           type,
           paidAt: new Date().toISOString(),
           ...driveFields,
+          ...amountFields,
           userId: getUser()?.uid,
           createdAt: new Date().toISOString(),
         })
@@ -667,5 +694,18 @@ function EmployeeSummaryTable({ docs, currentYear, currentMonth }: { docs: TaxDo
       </table>
     </div>
   )
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result as string
+      const base64 = result.split(',')[1]
+      resolve(base64)
+    }
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
 }
 

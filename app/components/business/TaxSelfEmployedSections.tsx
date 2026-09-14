@@ -626,7 +626,14 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
     // this month is already marked paid.
     const isDue = hasAdvance
 
-    return { month: i, label: HEBREW_MONTHS[i], income, expenses, netIncome, incomeTx, expenseLines, btlPaid, btlIsForecast, btlDeduction, taxBase, salary, tax, advancePaid, monthKey, paymentRecord, isDue }
+    // Agla, live: "It probably used the figure (paid amount) from the line
+    // itself. But it's wrong. It should extract from the document." —
+    // advancePaid above is always a turnover-based estimate; once a real
+    // receipt has an extracted amount, that's what was actually paid.
+    const advancePaidIsForecast = paymentRecord?.amount === undefined
+    const advancePaidDisplay = paymentRecord?.amount ?? advancePaid
+
+    return { month: i, label: HEBREW_MONTHS[i], income, expenses, netIncome, incomeTx, expenseLines, btlPaid, btlIsForecast, btlDeduction, taxBase, salary, tax, advancePaid, advancePaidDisplay, advancePaidIsForecast, monthKey, paymentRecord, isDue }
   })
 
   // Actual payments — the מקדמות מס הכנסה (<member>) transactions, NOT the
@@ -654,7 +661,7 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
     taxBase: monthlyRows.reduce((s, r) => s + r.taxBase, 0),
     salary: monthlyRows.reduce((s, r) => s + r.salary, 0),
     tax: monthlyRows.reduce((s, r) => s + r.tax, 0),
-    advancePaid: monthlyRows.reduce((s, r) => s + r.advancePaid, 0),
+    advancePaid: monthlyRows.reduce((s, r) => s + r.advancePaidDisplay, 0),
     advancePaidActual: advanceTaxTx.reduce((s, t) => s + Math.abs(t.amount || 0), 0),
     // The true annual net BTL cost (real payments minus real refunds, not
     // clamped per row the way btlPaid above is) — a refund can exceed any
@@ -753,7 +760,14 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
               <td style={{ ...cellStyle, background: '#fffbeb', fontWeight: 500 }}>{row.taxBase ? fmt(row.taxBase) : '—'}</td>
               {annualTotals.salary > 0 && <td style={cellStyle}>{row.salary ? fmt(row.salary) : '—'}</td>}
               <td style={{ ...cellStyle, background: '#fffbeb', fontWeight: 500, color: '#b45309' }}>{row.tax ? fmt(row.tax) : '—'}</td>
-              {hasAdvance && <td style={cellStyle}>{row.advancePaid ? fmt(row.advancePaid) : '—'}</td>}
+              {hasAdvance && (
+                <td style={cellStyle}>
+                  {row.advancePaidDisplay ? fmt(row.advancePaidDisplay) : '—'}
+                  {row.advancePaidIsForecast && row.advancePaidDisplay > 0 && (
+                    <span style={{ fontSize: '0.7rem', color: '#94a3b8', marginRight: '0.25rem' }}>(צפי)</span>
+                  )}
+                </td>
+              )}
               {hasAdvance && (
                 <td style={{ ...cellStyle, direction: 'rtl' }}>
                   {row.isDue ? (
