@@ -417,7 +417,11 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
       fallbackAmount: btlFallbackAmount,
     })
 
-    const btlDeduction = btlPaid * BTL_DEDUCTION_RATE
+    // aglamazo#384 follow-up (Sheli, live-verified against Agla's real
+    // 2026 book): the 52% rule applies to BTL actually PAID — a forecast
+    // row (no real transaction yet) must not reduce the tax base, the same
+    // way it's already excluded from being labeled "paid" in the column.
+    const btlDeduction = btlIsForecast ? 0 : btlPaid * BTL_DEDUCTION_RATE
     const taxBase = Math.max(0, netIncome - btlDeduction)
     const salary = monthlySalary[i] || 0
 
