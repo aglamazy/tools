@@ -27,6 +27,7 @@ import {
   type SupplierMergeResult,
   type SupplierEmailSubsetMergeResult,
 } from '@/app/services/duplicateCleanupService'
+import ForeignCurrencyRepairPanel from './ForeignCurrencyRepairPanel'
 
 export default function AdvancedTab() {
   const [dbStats, setDbStats] = useState<{
@@ -769,6 +770,8 @@ export default function AdvancedTab() {
           </ul>
         )}
       </section>
+
+      <ForeignCurrencyRepairPanel onDone={loadDatabaseStats} onError={(message) => setAlertModal({ isOpen: true, message })} />
 
       <Modal isOpen={alertModal.isOpen} onClose={() => setAlertModal({ isOpen: false, message: '' })} maxWidth="400px">
         <div className="modal-body" style={{ textAlign: 'center', padding: '2rem' }}>

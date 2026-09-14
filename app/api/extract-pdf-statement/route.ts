@@ -14,10 +14,13 @@ const SYSTEM_PROMPT = `אתה מומחה בקריאת דפי בנק וכרטיס
 הוראות:
 1. זהה האם זה דף בנק (kind="bank") או פירוט אשראי (kind="credit").
 2. עבור דף בנק: חלץ accountNumber (תבנית XXX-XXXXXX), processingMonth (MM/YYYY), ולכל שורה — date (DD/MM/YYYY), description, debit, credit, balance, reference (אסמכתא).
-3. עבור דף אשראי: חלץ cardNumber (4 ספרות אחרונות), billingDate (DD/MM/YYYY של מועד החיוב), ולכל שורה — date (DD/MM/YYYY), merchant, txAmount (סכום עסקה), billAmount (סכום חיוב — הסכום שמחויב החודש), detail (פירוט / תשלומים / זיכוי).
+3. עבור דף אשראי: חלץ cardNumber (4 ספרות אחרונות), billingDate (DD/MM/YYYY של מועד החיוב), ולכל שורה — date (DD/MM/YYYY), merchant, txAmount (סכום עסקה), billAmount (סכום חיוב — הסכום שמחויב המחיוב בפועל, תמיד בשקלים), currency (מטבע העסקה: "ILS" לעסקה בשקלים, אחרת קוד המטבע כפי שמופיע, לדוג' "USD"/"$"), detail (פירוט / תשלומים / זיכוי).
 4. אל תכלול שורות סיכום ("סה\"כ", "יתרת פתיחה" וכו'); רק עסקאות אמיתיות.
 5. סכומים חיוביים = חיוב; סכומי זיכוי = שליליים. שמור את הסימן.
-6. החזר אך ורק JSON תקין, ללא markdown, ללא הסברים.
+6. עסקאות מט"ח (currency שונה מ-ILS): בדוחות ישראכרט/כרטיסי אשראי כאלה מופיעים לעיתים בשני אופנים —
+   (א) בטבלת "עסקאות למועד חיוב" (הטבלה הרגילה) — שם מופיעות שתי עמודות סכום: הסכום המקורי במטבע חוץ (למשל "$200.00") והסכום שחויב בפועל בשקלים (למשל "₪607.21"), לרוב זו לצד זו על אותה שורה. billAmount חייב להיות הסכום בשקלים, לעולם לא הסכום במטבע חוץ — גם אם הוא נראה כמו "הסכום" הבולט יותר בשורה. שים לב לכיווניות RTL בעמוד: הסכום השמאלי בתצוגה אינו בהכרח הראשון לוגית.
+   (ב) בטבלת "עסקאות שטרם נקלטו" (עסקאות שעדיין לא נקלטו/הומרו סופית) — שם מופיע רק הסכום במטבע חוץ, ללא המרה לשקלים כלל (ההמרה תופיע רק בדוח החודש הבא לאחר שהעסקה תיסלק). עבור שורות כאלה: השאר billAmount כ-null (אל תמלא את הסכום במטבע חוץ בשדה billAmount) — עדיף להשמיט את הערך מאשר לנחש אותו.
+7. החזר אך ורק JSON תקין, ללא markdown, ללא הסברים.
 
 מבנה ה-JSON:
 {
@@ -52,6 +55,7 @@ const GEMINI_RESPONSE_SCHEMA = {
           description: { type: 'string', nullable: true },
           txAmount: { type: 'number', nullable: true },
           billAmount: { type: 'number', nullable: true },
+          currency: { type: 'string', nullable: true },
           debit: { type: 'number', nullable: true },
           credit: { type: 'number', nullable: true },
           balance: { type: 'number', nullable: true },

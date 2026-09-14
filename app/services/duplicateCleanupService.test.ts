@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { db } from '@/app/db/financeDB'
 import {
+  repairConfirmedForeignCurrencyAmount,
   mergeDuplicateSuppliers,
   mergeSupplierEmptyEmailDuplicates,
   deleteCategoryById,
@@ -294,6 +295,72 @@ describe('deleteConfirmedDuplicateTransaction', () => {
       fileId: 'x',
     })
     expect(result.deleted).toBe(false)
+    expect(result.reason).toContain('not found')
+  })
+})
+
+// aglamazo#372, Agla 2026-09-14: two ANTHROPIC CLAUDE SUB rows were imported
+// at their USD amount (-200.00) instead of the real NIS billing amount —
+// root cause fixed in pdfExtractionRows.ts/extract-pdf-statement/
+// extract-xls-statement (see pdfExtractionRows.test.ts); this repairs the
+// two rows that were already imported wrong before that fix.
+describe('repairConfirmedForeignCurrencyAmount', () => {
+  beforeEach(async () => {
+    await db.transactions.clear()
+  })
+  afterEach(async () => {
+    await db.transactions.clear()
+  })
+
+  it('repairs tx 1823 (07/2026 charge, confirmed real amount ₪607.21 from 1473_08_2026.xlsx row 79)', async () => {
+    const id = await db.transactions.add({
+      type: 'credit',
+      date: '2026-07-09',
+      amount: -200,
+      description: 'ANTHROPIC* CLAUDE SUB',
+      merchant: 'ANTHROPIC* CLAUDE SUB',
+      chargingDate: '10/08/2026',
+      isFixed: false,
+      month: '08/2026',
+    } as any)
+    const result = await repairConfirmedForeignCurrencyAmount(
+      id as number,
+      { merchantContains: 'ANTHROPIC* CLAUDE SUB', currentAmount: -200, date: '2026-07-09' },
+      -607.21,
+    )
+    expect(result.repaired).toBe(true)
+    const stored = await db.transactions.get(id as number)
+    expect(stored?.amount).toBe(-607.21)
+  })
+
+  it('refuses and explains when the amount no longer matches (row already fixed or changed)', async () => {
+    const id = await db.transactions.add({
+      type: 'credit',
+      date: '2026-07-09',
+      amount: -607.21,
+      description: 'ANTHROPIC* CLAUDE SUB',
+      merchant: 'ANTHROPIC* CLAUDE SUB',
+      isFixed: false,
+      month: '08/2026',
+    } as any)
+    const result = await repairConfirmedForeignCurrencyAmount(
+      id as number,
+      { merchantContains: 'ANTHROPIC* CLAUDE SUB', currentAmount: -200, date: '2026-07-09' },
+      -607.21,
+    )
+    expect(result.repaired).toBe(false)
+    expect(result.reason).toContain('amount')
+    const stored = await db.transactions.get(id as number)
+    expect(stored?.amount).toBe(-607.21) // untouched
+  })
+
+  it('returns not-found for a non-existent id without throwing', async () => {
+    const result = await repairConfirmedForeignCurrencyAmount(
+      999999,
+      { merchantContains: 'x', currentAmount: -1, date: '2026-01-01' },
+      -1,
+    )
+    expect(result.repaired).toBe(false)
     expect(result.reason).toContain('not found')
   })
 })

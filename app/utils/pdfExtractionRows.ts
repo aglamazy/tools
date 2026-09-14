@@ -8,6 +8,7 @@ export type ExtractedRow = {
   description?: string | null
   txAmount?: number | null
   billAmount?: number | null
+  currency?: string | null
   debit?: number | null
   credit?: number | null
   balance?: number | null
@@ -49,6 +50,22 @@ function creditRows(e: Extraction): Array<Array<string | number | null>> {
   rows.push(['תאריך עסקה', 'שם בית העסק', 'סכום עסקה', 'סכום חיוב', 'פירוט'])
   for (const r of e.rows) {
     if (!r.date) continue
+
+    // aglamazo#372: a foreign-currency row (currency != ILS/₪) with no
+    // billAmount has no real NIS figure anywhere in the source document —
+    // it's a not-yet-settled charge ("עסקאות שטרם נקלטו"), which Israeli
+    // card issuers print with ONLY the foreign amount until it clears next
+    // billing cycle. Silently writing txAmount into the "סכום חיוב" column
+    // (the old `r.billAmount ?? r.txAmount ?? 0` fallback) turned a $200
+    // charge into a recorded ₪200 charge — understating it by ~2.5-3x. Per
+    // the project's no-silent-fallback rule: exclude the row instead of
+    // guessing. It will be captured correctly once it appears settled in a
+    // later statement.
+    const isForeign = !!r.currency && !/^(ils|₪|שח|ש"ח|שקל)/i.test(r.currency.trim())
+    if (r.billAmount == null && isForeign) {
+      continue
+    }
+
     rows.push([
       r.date,
       r.merchant ?? '',

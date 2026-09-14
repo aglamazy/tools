@@ -197,6 +197,45 @@ export async function deleteTransactionById(id: number): Promise<boolean> {
   return true
 }
 
+export type ConfirmedAmountRepairResult = {
+  repaired: boolean
+  reason?: string
+}
+
+/**
+ * Overwrite one specific transaction's `amount` after verifying its vendor
+ * text, CURRENT (wrong) amount and date still match what was verified as
+ * mispriced (aglamazo#372: a foreign-currency charge got imported at its
+ * USD figure instead of the real NIS billing amount — root cause fixed in
+ * pdfExtractionRows.ts/extract-pdf-statement, extract-xls-statement; this
+ * repairs the two rows that were already imported wrong before the fix).
+ * Same verify-then-mutate discipline as deleteConfirmedDuplicateTransaction
+ * — refuses rather than overwriting if the row has changed since
+ * verification.
+ */
+export async function repairConfirmedForeignCurrencyAmount(
+  id: number,
+  expected: { merchantContains: string; currentAmount: number; date: string },
+  correctedAmount: number,
+): Promise<ConfirmedAmountRepairResult> {
+  const existing = await db.transactions.get(id)
+  if (!existing) return { repaired: false, reason: 'not found — already deleted?' }
+  const vendorText = existing.merchant || existing.description || ''
+  const merchantOk = vendorText.includes(expected.merchantContains)
+  const amountOk = existing.amount === expected.currentAmount
+  const dateOk = existing.date === expected.date
+  if (!merchantOk || !amountOk || !dateOk) {
+    const mismatches = [
+      !merchantOk && `vendor text "${vendorText}" doesn't contain "${expected.merchantContains}"`,
+      !amountOk && `amount ${existing.amount} !== ${expected.currentAmount}`,
+      !dateOk && `date "${existing.date}" !== "${expected.date}"`,
+    ].filter(Boolean).join('; ')
+    return { repaired: false, reason: `row changed since verification — ${mismatches}` }
+  }
+  await db.transactions.update(id, { amount: correctedAmount })
+  return { repaired: true }
+}
+
 export type ConfirmedDuplicateDeleteResult = {
   deleted: boolean
   reason?: string
