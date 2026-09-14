@@ -750,6 +750,7 @@ export default function TaxVatSection({
                       <ExpenseMatchCell
                         transaction={{
                           id: r.transactionId,
+                          syncId: r.transactionSyncId,
                           date: r.txDateStr,
                           description: r.txDescription,
                           merchant: r.txMerchant,
