@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react'
 import type { ExpenseDocument } from '@/app/db/financeDB'
-import { matchReceiptForTransaction, parseDateFolder, type CheckedCandidate, type SearchInfo } from '@/app/services/receiptMatchService'
+import { matchReceiptForTransaction, manualPickCandidate, parseDateFolder, type CheckedCandidate, type SearchInfo } from '@/app/services/receiptMatchService'
 import { uploadExpenseDocument } from '@/app/services/googleDriveService'
 import { getAccessToken, requestGoogleAccess } from '@/app/services/googleTokenService'
 import SearchResultsModal from './SearchResultsModal'
@@ -113,6 +113,39 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
       console.error('[ExpenseMatch] exception for tx', transaction.id, transaction.description, ':', err)
       setErrorMsg(err?.message || String(err))
       setStatus('error')
+    }
+  }
+
+  // Agla, live, on the read-only checked-candidates list: "what is [this]
+  // good for? What can I do with it?" — the subject pre-filter can reject
+  // a candidate the user can see with their own eyes is the right one
+  // (aglamazo#396). Lets them force verification on ONE specific candidate,
+  // skipping the subject guess — the real document/body check inside still
+  // runs, so a wrong pick is still rejected on its own content.
+  const [pickingId, setPickingId] = useState<string | null>(null)
+  const handleManualPick = async (candidate: CheckedCandidate) => {
+    if (!claudeApiKey) {
+      setErrorMsg('חסר מפתח Anthropic בהגדרות — נדרש לאימות וחילוץ הקבלה')
+      return
+    }
+    setPickingId(candidate.messageId)
+    try {
+      const result = await manualPickCandidate(
+        candidate.messageId,
+        { subject: candidate.subject, from: candidate.from },
+        transaction,
+        transaction.description,
+        claudeApiKey,
+      )
+      if ('doc' in result) {
+        onMatched(result.doc)
+        setStatus('matched')
+        setShowResults(false)
+      } else {
+        setCheckedCandidates((prev) => prev.map((c) => c.messageId === candidate.messageId ? { ...c, reason: result.error } : c))
+      }
+    } finally {
+      setPickingId(null)
     }
   }
 
@@ -288,7 +321,13 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
         </button>
       )}
       {showResults && (
-        <SearchResultsModal candidates={checkedCandidates} searchInfo={searchInfo} onClose={() => setShowResults(false)} />
+        <SearchResultsModal
+          candidates={checkedCandidates}
+          searchInfo={searchInfo}
+          onClose={() => setShowResults(false)}
+          onPick={handleManualPick}
+          pickingId={pickingId}
+        />
       )}
     </div>
   )

@@ -7,9 +7,11 @@ type SearchResultsModalProps = {
   candidates: CheckedCandidate[]
   searchInfo?: SearchInfo | null
   onClose: () => void
+  onPick?: (candidate: CheckedCandidate) => void
+  pickingId?: string | null
 }
 
-export default function SearchResultsModal({ candidates, searchInfo, onClose }: SearchResultsModalProps) {
+export default function SearchResultsModal({ candidates, searchInfo, onClose, onPick, pickingId }: SearchResultsModalProps) {
   return (
     <Modal isOpen onClose={onClose} maxWidth="650px">
       <div className="modal-header">
@@ -65,6 +67,26 @@ export default function SearchResultsModal({ candidates, searchInfo, onClose }: 
                   <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.25rem' }}>
                     {c.reason}
                   </div>
+                )}
+                {c.outcome === 'rejected' && onPick && (
+                  <button
+                    type="button"
+                    onClick={() => onPick(c)}
+                    disabled={pickingId === c.messageId}
+                    title="בדוק את המייל הזה ישירות, בלי סינון הנושא האוטומטי"
+                    style={{
+                      marginTop: '0.4rem',
+                      padding: '0.15rem 0.6rem',
+                      background: pickingId === c.messageId ? '#f1f5f9' : '#eff6ff',
+                      color: '#1e40af',
+                      border: '1px solid #bfdbfe',
+                      borderRadius: '0.375rem',
+                      cursor: pickingId === c.messageId ? 'default' : 'pointer',
+                      fontSize: '0.75rem',
+                    }}
+                  >
+                    {pickingId === c.messageId ? 'בודק…' : 'זה המסמך — בדוק ידנית'}
+                  </button>
                 )}
               </div>
             ))}

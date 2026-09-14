@@ -570,4 +570,41 @@ async function tryCandidate(
   }
 }
 
+/**
+ * Agla, live, on the read-only "מיילים שנבדקו" list showing a candidate his
+ * own eyes could tell was the right receipt: "what is [this] good for? What
+ * can I do with it?" — the subject pre-filter is a single non-deterministic
+ * LLM call over the whole batch (see matchReceiptForTransaction above) and
+ * can legitimately reject the right email in a tie (documented: three
+ * identical "חשבונית מס קבלה" YPAY subjects in one window). This lets the
+ * user pick ONE checked candidate directly and run the real
+ * verification+extraction on it, skipping the subject guess entirely — the
+ * PDF/body-level matchesTransaction and amount checks inside tryCandidate
+ * still apply, so a genuinely wrong pick still gets rejected on its own
+ * content, not rubber-stamped just because a human clicked it.
+ */
+export async function manualPickCandidate(
+  messageId: string,
+  candidateInfo: { subject: string; from: string },
+  tx: { id: number; syncId?: string; date: string; description: string; merchant?: string; amount: number },
+  desc: string,
+  claudeApiKey: string,
+): Promise<{ doc: ExpenseDocument } | { error: string }> {
+  let lastReason = ''
+  const log = (...args: unknown[]) => {
+    const text = args.filter((a) => typeof a === 'string').join(' ')
+    if (text.includes('  ↳')) lastReason = text.replace('  ↳', '').trim()
+    console.log('[ReceiptMatch:manual]', ...args)
+  }
+  try {
+    const doc = await tryCandidate(messageId, tx, desc, claudeApiKey, log, {
+      subject: candidateInfo.subject, from: candidateInfo.from, candidateIndex: 1, totalCandidates: 1,
+    })
+    if (doc) return { doc }
+    return { error: lastReason || 'המסמך לא אומת מול העסקה — ייתכן שהסכום או הפרטים אינם תואמים' }
+  } catch (err: any) {
+    return { error: err?.message || String(err) }
+  }
+}
+
 export { parseDateFolder }
