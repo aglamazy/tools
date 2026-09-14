@@ -1,0 +1,146 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { db } from '@/app/db/financeDB'
+import { YpayDocType } from '@/app/services/ypayService'
+import {
+  parseYpayIncomeExportRows,
+  buildYpayDocumentFromImportRow,
+  importYpayIncomeRows,
+} from './ypayIncomeImportService'
+
+// aglamazo#381, Agla 2026-09-14: real "ארכיון הכנסות" export from ypay's
+// dashboard (income (2).xls, 01/06/2026-31/08/2026). Rows reproduced
+// verbatim from the actual file. Row shape confirmed live: metadata rows
+// (export date, business name, business id, report title, date range),
+// then a header row, then data. Agla's explicit instruction, by doc-type
+// label: import חשבונית מס (106) and חשבונית מס קבלה (109); ignore חשבונית
+// מס זיכוי (107, credit note) and קבלה (108, plain receipt).
+
+const REAL_EXPORT_ROWS: unknown[][] = [
+  ['14/09/2026'],
+  ["בית העסק: יעקב אגלמז"],
+  ["מס' עוסק: 012680286"],
+  ['ארכיון הכנסות'],
+  ['לתאריכים: 01/06/2026 עד 31/08/2026'],
+  ['אסמכתא', 'סוג מסמך', 'תאריך', 'לקוח', 'מזהה לקוח', 'לפני מע"מ', 'מע"מ', 'אחרי מע"מ', "מס' הקצאה"],
+  ['900000', 'חשבונית מס קבלה', '22/06/2026', 'אימפורטה', '517166922', '3898.28', '701.69', '4599.97'],
+  ['600000', 'חשבונית מס זיכוי', '22/06/2026', 'אימפורטה', '517166922', '-3898.28', '-701.69', '-4599.97'],
+  ['800013', 'קבלה', '22/06/2026', 'אימפורטה', '517166922', '4599.97', '827.99', '4599.97'],
+  ['700005', 'חשבונית מס', '29/06/2026', 'אילן עוז', null, '3000', '540', '3540'],
+  ['700006', 'חשבונית מס', '29/06/2026', 'אלרון קאר ח.ר בע״מ', '513074500', '2900', '522', '3422'],
+  ['900001', 'חשבונית מס קבלה', '29/06/2026', 'בדיקות', '012680286', '0.85', '0.15', '1'],
+  ['900002', 'חשבונית מס קבלה', '29/06/2026', 'בדיקות', '012680286', '0.85', '0.15', '1'],
+  ['700007', 'חשבונית מס', '03/07/2026', 'אימפורטה', '517166922', '3534.12', '636.14', '4170.26'],
+  ['800014', 'קבלה', '13/07/2026', 'אילן עוז', null, '1652', '297.36', '1652'],
+  ['800015', 'קבלה', '13/07/2026', 'אלרון קאר ח.ר בע״מ', '513074500', '4130', '743.4', '4130'],
+  ['800016', 'קבלה', '13/07/2026', 'אילן עוז', null, '6550', '1179', '6550'],
+  ['900003', 'חשבונית מס קבלה', '10/08/2026', 'אילן עוז', null, '1120', '201.6', '1321.6'],
+  [],
+]
+
+describe('parseYpayIncomeExportRows', () => {
+  it('finds the header row past the metadata rows and parses only the importable types', () => {
+    const { imported, ignoredCount } = parseYpayIncomeExportRows(REAL_EXPORT_ROWS)
+    // 12 data rows total: 7 are חשבונית מס / חשבונית מס קבלה (imported), 5 are
+    // חשבונית מס זיכוי / קבלה (ignored).
+    expect(imported.map((r) => r.serialNumber)).toEqual([
+      '900000', '700005', '700006', '900001', '900002', '700007', '900003',
+    ])
+    expect(ignoredCount).toBe(5) // 600000 (זיכוי) + 800013/800014/800015/800016 (קבלה)
+  })
+
+  it('parses the real #900003 row exactly (the aglamazo#380 case)', () => {
+    const { imported } = parseYpayIncomeExportRows(REAL_EXPORT_ROWS)
+    const row = imported.find((r) => r.serialNumber === '900003')!
+    expect(row.docType).toBe(YpayDocType.TaxInvoiceReceipt)
+    expect(row.date).toBe('2026-08-10')
+    expect(row.netAmount).toBe(1120)
+    expect(row.vatAmount).toBe(201.6)
+    expect(row.grossAmount).toBe(1321.6)
+    expect(row.customerName).toBe('אילן עוז')
+  })
+
+  it('flags negative amounts on a credit note as ignored, not imported as negative income', () => {
+    const { imported } = parseYpayIncomeExportRows(REAL_EXPORT_ROWS)
+    expect(imported.some((r) => r.serialNumber === '600000')).toBe(false)
+  })
+
+  it('throws a clear error when the header row is missing', () => {
+    expect(() => parseYpayIncomeExportRows([['not', 'a', 'real', 'export']])).toThrow(/אסמכתא/)
+  })
+})
+
+describe('buildYpayDocumentFromImportRow', () => {
+  it('stores the NET amount for חשבונית מס (106)', () => {
+    const row = { serialNumber: '700007', docType: YpayDocType.TaxInvoice, date: '2026-07-03', customerName: 'אימפורטה', netAmount: 3534.12, vatAmount: 636.14, grossAmount: 4170.26 }
+    const doc = buildYpayDocumentFromImportRow(row)
+    expect(doc.amount).toBe(3534.12)
+    expect(doc.transactionId).toBe('ypay-import:700007')
+  })
+
+  it('stores the GROSS amount for חשבונית מס קבלה (109)', () => {
+    const row = { serialNumber: '900003', docType: YpayDocType.TaxInvoiceReceipt, date: '2026-08-10', customerName: 'אילן עוז', netAmount: 1120, vatAmount: 201.6, grossAmount: 1321.6 }
+    const doc = buildYpayDocumentFromImportRow(row)
+    expect(doc.amount).toBe(1321.6)
+  })
+})
+
+describe('importYpayIncomeRows', () => {
+  beforeEach(async () => {
+    await db.ypayDocuments.clear()
+  })
+  afterEach(async () => {
+    await db.ypayDocuments.clear()
+  })
+
+  it('adds a genuinely new document', async () => {
+    const { imported, ignoredCount } = parseYpayIncomeExportRows(REAL_EXPORT_ROWS)
+    const summary = await importYpayIncomeRows(imported, ignoredCount)
+    expect(summary.added).toBe(7)
+    expect(summary.ignoredType).toBe(5)
+    const stored = await db.ypayDocuments.filter((d) => d.serialNumber === '900003').first()
+    expect(stored?.amount).toBe(1321.6)
+  })
+
+  it('repairs an existing stub (no amount) instead of skipping it (the real #380 case)', async () => {
+    await db.ypayDocuments.add({
+      transactionId: 'linked-tx-syncid',
+      url: '',
+      serialNumber: '900003',
+      docType: YpayDocType.TaxInvoiceReceipt,
+      createdAt: '2026-09-07T17:14:32.990Z', // the wrong, sync-time date from #380
+    })
+    const { imported, ignoredCount } = parseYpayIncomeExportRows(REAL_EXPORT_ROWS)
+    const summary = await importYpayIncomeRows(imported, ignoredCount)
+    expect(summary.repaired).toBe(1)
+    expect(summary.added).toBe(6)
+    const stored = await db.ypayDocuments.filter((d) => d.serialNumber === '900003').first()
+    expect(stored?.amount).toBe(1321.6)
+    expect(stored?.createdAt).toBe(new Date('2026-08-10').toISOString())
+    expect(stored?.transactionId).toBe('linked-tx-syncid') // untouched
+  })
+
+  it('never overwrites an existing document that already has a real amount', async () => {
+    await db.ypayDocuments.add({
+      transactionId: '',
+      url: 'https://real-url',
+      serialNumber: '900003',
+      docType: YpayDocType.TaxInvoiceReceipt,
+      amount: 9999, // deliberately different from the export, to prove it's untouched
+      createdAt: '2026-08-10T00:00:00.000Z',
+    })
+    const { imported, ignoredCount } = parseYpayIncomeExportRows(REAL_EXPORT_ROWS)
+    const summary = await importYpayIncomeRows(imported, ignoredCount)
+    expect(summary.alreadyCorrect).toBe(1)
+    expect(summary.added).toBe(6)
+    const stored = await db.ypayDocuments.filter((d) => d.serialNumber === '900003').first()
+    expect(stored?.amount).toBe(9999)
+  })
+
+  it('flags בדיקות rows without excluding them', async () => {
+    const { imported, ignoredCount } = parseYpayIncomeExportRows(REAL_EXPORT_ROWS)
+    const summary = await importYpayIncomeRows(imported, ignoredCount)
+    expect(summary.possibleTestRows.sort()).toEqual(['900001', '900002'])
+    const stored = await db.ypayDocuments.filter((d) => d.serialNumber === '900001').first()
+    expect(stored).toBeDefined()
+  })
+})

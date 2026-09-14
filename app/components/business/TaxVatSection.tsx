@@ -14,6 +14,7 @@ import ExpenseMatchCell from './ExpenseMatchCell'
 import SupplierCardModal from './SupplierCardModal'
 import TransactionEditModal from './TransactionEditModal'
 import Modal from '@/app/components/Modal'
+import YpayIncomeImportPanel from './YpayIncomeImportPanel'
 
 const ILS = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
 
@@ -849,6 +850,18 @@ export default function TaxVatSection({
           <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: '#f8fafc', borderRadius: '0.5rem', fontSize: '0.85rem', color: '#94a3b8' }}>
             Grow — יתווסף בתקופת המס הבאה
           </div>
+          <YpayIncomeImportPanel
+            onImported={async () => {
+              const [yp, ex, vp] = await Promise.all([
+                db.ypayDocuments.toArray(),
+                db.expenseDocuments.toArray(),
+                db.vatPayments.toArray(),
+              ])
+              setYpayDocs(yp)
+              setExpenseDocs(ex)
+              setVatPayments(vp)
+            }}
+          />
         </div>
       </Modal>
     </div>
