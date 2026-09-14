@@ -146,9 +146,10 @@ function computeMonthlyBTL(monthlyIncome: number, rates: BTLRates) {
   return { nationalInsurance, healthInsurance, total: nationalInsurance + healthInsurance }
 }
 
-export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, rates, taxProfile, personUid, advancePayments, onUploadReceipt }: {
+export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMap, expCategoryMap, categoryByName, currentYear, currentMonth, rates, taxProfile, personUid, advancePayments, onUploadReceipt }: {
   businesses: Business[]; transactions: Transaction[]; bizCategoryMap: Map<string, string[]>
-  expCategoryMap: Map<string, string[]>; currentYear: number; currentMonth: number; rates: BTLRates; taxProfile?: TaxProfile; personUid?: string
+  expCategoryMap: Map<string, string[]>; categoryByName: Map<string, Category>
+  currentYear: number; currentMonth: number; rates: BTLRates; taxProfile?: TaxProfile; personUid?: string
   advancePayments?: AdvancePayment[]
   onUploadReceipt?: (month: string, file: File, type?: 'incomeTax' | 'btl') => Promise<void>
 }) {
@@ -206,7 +207,14 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
   const monthlyRows = Array.from({ length: currentMonth + 1 }, (_, i) => {
     const monthStr = `${String(i + 1).padStart(2, '0')}/${currentYear}`
     const income = transactions.filter(t => t.month === monthStr && t.category && seCatNames.has(t.category)).reduce((s, t) => s + (t.amount || 0), 0)
-    const expenses = transactions.filter(t => t.month === monthStr && t.category && seExpCatNames.has(t.category)).reduce((s, t) => s + Math.abs(t.amount || 0), 0)
+    // aglamazo#395 (Sheli): this table computed its own netIncome
+    // independently of SelfEmployedIncomeTaxSection and missed #394's fix —
+    // a household-folded category (ארנונה/חשמל) must scale by the member's
+    // recognized % here too, since this netIncome drives the ביטוח לאומי +
+    // בריאות calculation below.
+    const expenses = transactions
+      .filter(t => t.month === monthStr && t.category && seExpCatNames.has(t.category))
+      .reduce((s, t) => s + resolveExpenseLine(t, seBiz, categoryByName).recognizedAmount, 0)
     const netIncome = Math.max(0, income - expenses)
     const btl = computeMonthlyBTL(netIncome, rates)
     // A BTL payment for calendar month i shows up as a transaction in month i+1.
