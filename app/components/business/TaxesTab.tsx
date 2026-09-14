@@ -439,7 +439,7 @@ function AnnualSummarySubTab() {
           taxProfile.vatType === 'authorized' &&
           !!taxProfile.vatConversion?.effectiveDate &&
           nonRentalBiz.length > 0
-        if (showVat) sections.push({ id: 'vat', label: 'מע״מ' })
+        if (showVat) sections.push({ id: 'vat', label: 'מקדמות מס הכנסה ומע״מ' })
         if (sections.length === 0) return <p style={{ color: '#94a3b8', textAlign: 'center' }}>אין נתונים לשנה זו</p>
 
         return (
