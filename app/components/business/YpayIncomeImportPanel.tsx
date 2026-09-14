@@ -32,8 +32,8 @@ export default function YpayIncomeImportPanel({ onImported }: Props) {
     setSummary(null)
     try {
       const rows = await readExcelFile(file)
-      const { imported, ignoredCount } = parseYpayIncomeExportRows(rows)
-      const result = await importYpayIncomeRows(imported, ignoredCount)
+      const { imported, ignoredCount, cancelledCount, testRowsExcluded } = parseYpayIncomeExportRows(rows)
+      const result = await importYpayIncomeRows(imported, { ignoredCount, cancelledCount, testRowsExcluded })
       setSummary(result)
       await onImported()
     } catch (err: any) {
@@ -48,8 +48,10 @@ export default function YpayIncomeImportPanel({ onImported }: Props) {
     <div style={{ marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid #e2e8f0' }}>
       <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.85rem', color: '#64748b' }}>
         אין API לחילוץ מסמכים מ-ypay — ייבוא קובץ &quot;ארכיון הכנסות&quot; שהופק ידנית מהדשבורד של
-        ypay. חשבוניות מס וחשבוניות מס קבלה בלבד; זיכויים וקבלות רגילות מדולגים. תיעוד קיים
-        (לפי מס&apos; אסמכתא) לא נדרס. שיוך לעסק אוטומטי לפי עסקה תואמת בבנק/אשראי (סכום+תאריך),
+        ypay. חשבוניות מס וחשבוניות מס קבלה בלבד; זיכויים וקבלות רגילות מדולגים, ושורה שיש לה
+        זיכוי תואם (אותו לקוח, אותו תאריך, סכום הפוך) מבוטלת גם היא ולא נספרת כהכנסה. שורות של
+        לקוח &quot;בדיקות&quot; מדולגות לגמרי. שורה בתקופה שכבר דווחה ושולמה למע&quot;מ לא נוגעים בה. תיעוד
+        קיים (לפי מס&apos; אסמכתא) לא נדרס. שיוך לעסק אוטומטי לפי עסקה תואמת בבנק/אשראי (סכום+תאריך),
         או לפי שם הלקוח מול שם פרויקט קיים — ללא התאמה חד-משמעית, המסמך נשאר לא משויך לקישור ידני.
       </p>
       <label className="file-picker secondary" style={{ display: 'inline-block', cursor: importing ? 'default' : 'pointer' }}>
@@ -73,15 +75,17 @@ export default function YpayIncomeImportPanel({ onImported }: Props) {
         <div style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>
           <p style={{ margin: 0, color: '#166534' }}>
             נוספו {summary.added} · תוקנו {summary.repaired} · תקינים כבר {summary.alreadyCorrect} · דולגו (סוג לא רלוונטי) {summary.ignoredType}
+            {summary.cancelledCount > 0 ? ` · בוטלו ע"י זיכוי ${summary.cancelledCount}` : ''}
+            {summary.testRowsExcluded.length > 0 ? ` · דולגו (בדיקות) ${summary.testRowsExcluded.length}` : ''}
           </p>
           {summary.unmatchedCount > 0 && (
             <p style={{ margin: '0.25rem 0 0', color: '#b45309' }}>
               ⚠️ {summary.unmatchedCount} מסמכים ללא עסקה תואמת בבנק/אשראי וללא פרויקט תואם לפי שם הלקוח — לא משויכים לעסק עדיין; ניתן לקשר ידנית בטאב ההכנסות (&quot;קשר&quot;), או שיובאו נכון בהרצה חוזרת לאחר שהעסקה/הפרויקט הרלוונטיים יתווספו.
             </p>
           )}
-          {summary.possibleTestRows.length > 0 && (
-            <p style={{ margin: '0.25rem 0 0', color: '#b45309' }}>
-              ⚠️ שורות שנראות כמו בדיקות (לקוח &quot;בדיקות&quot;) — נכנסו, לבדוק ידנית: {summary.possibleTestRows.join(', ')}
+          {summary.skippedClosedPeriod.length > 0 && (
+            <p style={{ margin: '0.25rem 0 0', color: '#b91c1c' }}>
+              🚫 {summary.skippedClosedPeriod.length} מסמכים בתקופה שכבר דווחה ושולמה למע&quot;מ — לא נגעתי בהם: {summary.skippedClosedPeriod.join(', ')}
             </p>
           )}
         </div>

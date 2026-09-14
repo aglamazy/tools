@@ -64,6 +64,23 @@ async function findMatchingProjectName(customerName: string): Promise<string | u
   return candidates.length === 1 ? candidates[0].name : undefined
 }
 
+/**
+ * A period already reported to the tax authority and paid (a matching
+ * VatPayment record covers the date) must not change under it silently
+ * (aglamazo#383, Sheli: מאי-יוני moved from the declared, paid 18,148 to
+ * 22,750 with no warning). Neither adding a new document nor repairing an
+ * existing one may touch a date inside a closed period — TaxVatSection.tsx
+ * already has this exact concept (isPeriodClosed, gated on a matching
+ * VatPayment); this reuses the same signal rather than inventing a second
+ * one. Whether to eventually offer an override is a product call left to
+ * Agla — this is the safe default until he makes it.
+ */
+async function isDateInClosedPeriod(date: string): Promise<boolean> {
+  if (!date) return false
+  const payments = await db.vatPayments.toArray()
+  return payments.some((p) => p.periodStart <= date && date <= p.periodEnd)
+}
+
 // aglamazo#381 (Agla, 2026-09-14): ypay's own API has no bulk "list my
 // documents" endpoint (checked against the v1.9 API doc — only Document
 // Generator, Credit-Clearing + its own Transaction-Info callback, and Bank
@@ -91,10 +108,26 @@ export type YpayIncomeImportRow = {
 // invoice already counted elsewhere, and a plain receipt acknowledges
 // payment against turnover a tax invoice already recorded; counting either
 // separately would double- or mis-count מחזור.
+//
+// aglamazo#383 (Sheli, 2026-09-14): "already counted elsewhere" does not
+// hold when the credit note cancels THIS SAME row rather than a separate
+// tax invoice — a real pair in Agla's export: 900000 (חשבונית מס קבלה,
+// +3,898.28) and 600000 (חשבונית מס זיכוי, -3,898.28), same customer, same
+// day. Skipping the credit note while keeping the receipt it cancels books
+// revenue that does not exist. A credit note matching an imported row
+// EXACTLY (same customer, same date, exactly-negated net amount) now
+// excludes that row too, not just the credit note itself.
 const IMPORTABLE_DOC_TYPES: Record<string, number> = {
   'חשבונית מס': YpayDocType.TaxInvoice,
   'חשבונית מס קבלה': YpayDocType.TaxInvoiceReceipt,
 }
+const CREDIT_NOTE_LABEL = 'חשבונית מס זיכוי'
+
+// Agla's standing instruction, per Sheli 2026-09-14: sandbox/test rows
+// (customer "בדיקות") must be ignored outright, not surfaced for review —
+// the earlier flag-but-import behavior was a cautious default of mine, not
+// what he actually wants.
+const TEST_CUSTOMER_NAME = 'בדיקות'
 
 function parseYpayNumber(raw: string | number | null | undefined): number {
   if (raw == null || raw === '') return 0
@@ -108,25 +141,29 @@ function parseYpayDate(raw: string): string {
   return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
 }
 
+export type YpayParseResult = {
+  imported: YpayIncomeImportRow[]
+  ignoredCount: number // wrong doc type entirely (credit notes, plain receipts, unknown labels)
+  cancelledCount: number // a real importable type, but a matching credit note voids it
+  testRowsExcluded: string[] // serialNumbers of customer "בדיקות" rows — excluded, not imported
+}
+
 /**
  * Parses the raw sheet rows (as returned by XLSX's `sheet_to_json(sheet,
  * {header: 1})` — an array of arrays, one per row) into the two real income
- * document types, skipping credit notes and plain receipts. Finds the
- * header row by content (the cell reading "אסמכתא") rather than assuming a
- * fixed row offset, since the metadata rows above it (export date,
- * business name, business id, report title, date range) aren't a stable
- * count to hard-code against.
+ * document types. Finds the header row by content (the cell reading
+ * "אסמכתא") rather than assuming a fixed row offset, since the metadata
+ * rows above it (export date, business name, business id, report title,
+ * date range) aren't a stable count to hard-code against.
  */
-export function parseYpayIncomeExportRows(rows: unknown[][]): {
-  imported: YpayIncomeImportRow[]
-  ignoredCount: number
-} {
+export function parseYpayIncomeExportRows(rows: unknown[][]): YpayParseResult {
   const headerIdx = rows.findIndex((r) => String(r?.[0] ?? '').trim() === 'אסמכתא')
   if (headerIdx === -1) {
     throw new Error('לא נמצאה שורת כותרות ("אסמכתא") בקובץ — ודא שזהו ייצוא ארכיון הכנסות מ-ypay')
   }
 
-  const imported: YpayIncomeImportRow[] = []
+  const candidates: YpayIncomeImportRow[] = []
+  const creditNotes: YpayIncomeImportRow[] = []
   let ignoredCount = 0
 
   for (let i = headerIdx + 1; i < rows.length; i++) {
@@ -135,24 +172,48 @@ export function parseYpayIncomeExportRows(rows: unknown[][]): {
     const docTypeLabel = String(row?.[1] ?? '').trim()
     if (!serialNumber || !docTypeLabel) continue // trailing blank row
 
-    const docType = IMPORTABLE_DOC_TYPES[docTypeLabel]
-    if (docType == null) {
-      ignoredCount++
-      continue
-    }
-
-    imported.push({
+    const parsedRow: YpayIncomeImportRow = {
       serialNumber,
-      docType,
+      docType: IMPORTABLE_DOC_TYPES[docTypeLabel] ?? 0,
       date: parseYpayDate(String(row?.[2] ?? '')),
       customerName: String(row?.[3] ?? '').trim(),
       netAmount: parseYpayNumber(row?.[5] as string),
       vatAmount: parseYpayNumber(row?.[6] as string),
       grossAmount: parseYpayNumber(row?.[7] as string),
-    })
+    }
+
+    if (docTypeLabel === CREDIT_NOTE_LABEL) {
+      creditNotes.push({ ...parsedRow, docType: YpayDocType.TaxInvoiceCredit })
+      ignoredCount++
+      continue
+    }
+    if (!(docTypeLabel in IMPORTABLE_DOC_TYPES)) {
+      ignoredCount++
+      continue
+    }
+    candidates.push(parsedRow)
   }
 
-  return { imported, ignoredCount }
+  const imported: YpayIncomeImportRow[] = []
+  const testRowsExcluded: string[] = []
+  let cancelledCount = 0
+
+  for (const row of candidates) {
+    if (row.customerName === TEST_CUSTOMER_NAME) {
+      testRowsExcluded.push(row.serialNumber)
+      continue
+    }
+    const isCancelled = creditNotes.some(
+      (c) => c.customerName === row.customerName && c.date === row.date && Math.abs(c.netAmount + row.netAmount) < 0.01,
+    )
+    if (isCancelled) {
+      cancelledCount++
+      continue
+    }
+    imported.push(row)
+  }
+
+  return { imported, ignoredCount, cancelledCount, testRowsExcluded }
 }
 
 /**
@@ -189,9 +250,11 @@ export type YpayIncomeImportSummary = {
   added: number
   repaired: number // an existing STUB record (no amount, or an orphaned synthetic transactionId) got fixed in place
   alreadyCorrect: number
-  ignoredType: number
+  ignoredType: number // wrong doc type entirely (credit notes, plain receipts, unknown labels)
+  cancelledCount: number // a real importable type, excluded because a matching credit note voids it
+  testRowsExcluded: string[] // serialNumbers of customer "בדיקות" rows — excluded, not imported
   unmatchedCount: number // imported/kept on the synthetic key — no unambiguous matching transaction found, so not attributed to a business yet
-  possibleTestRows: string[] // serialNumbers whose customer name suggests test/sandbox data — flagged, not excluded
+  skippedClosedPeriod: string[] // serialNumbers whose date falls in an already-declared-and-paid VAT period — left untouched
 }
 
 const isSynthetic = (transactionId: string | undefined) => !!transactionId?.startsWith(SYNTHETIC_TRANSACTION_ID_PREFIX)
@@ -222,19 +285,24 @@ const isAttributed = (d: { transactionId?: string; projectName?: string }) =>
  */
 export async function importYpayIncomeRows(
   rows: YpayIncomeImportRow[],
-  ignoredCount: number,
+  counts: { ignoredCount: number; cancelledCount: number; testRowsExcluded: string[] },
 ): Promise<YpayIncomeImportSummary> {
   const summary: YpayIncomeImportSummary = {
     added: 0,
     repaired: 0,
     alreadyCorrect: 0,
-    ignoredType: ignoredCount,
+    ignoredType: counts.ignoredCount,
+    cancelledCount: counts.cancelledCount,
+    testRowsExcluded: counts.testRowsExcluded,
     unmatchedCount: 0,
-    possibleTestRows: [],
+    skippedClosedPeriod: [],
   }
 
   for (const row of rows) {
-    if (row.customerName === 'בדיקות') summary.possibleTestRows.push(row.serialNumber)
+    if (await isDateInClosedPeriod(row.date)) {
+      summary.skippedClosedPeriod.push(row.serialNumber)
+      continue
+    }
 
     const existing = await db.ypayDocuments
       .filter((d) => String(d.serialNumber).trim() === row.serialNumber)

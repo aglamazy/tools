@@ -39,13 +39,14 @@ const REAL_EXPORT_ROWS: unknown[][] = [
 
 describe('parseYpayIncomeExportRows', () => {
   it('finds the header row past the metadata rows and parses only the importable types', () => {
-    const { imported, ignoredCount } = parseYpayIncomeExportRows(REAL_EXPORT_ROWS)
-    // 12 data rows total: 7 are חשבונית מס / חשבונית מס קבלה (imported), 5 are
-    // חשבונית מס זיכוי / קבלה (ignored).
-    expect(imported.map((r) => r.serialNumber)).toEqual([
-      '900000', '700005', '700006', '900001', '900002', '700007', '900003',
-    ])
+    const { imported, ignoredCount, cancelledCount, testRowsExcluded } = parseYpayIncomeExportRows(REAL_EXPORT_ROWS)
+    // 12 data rows total: 7 are חשבונית מס / חשבונית מס קבלה, of which 900000 is
+    // cancelled by its own credit note and 900001/900002 are test rows — leaving
+    // 4 genuinely imported. 5 are חשבונית מס זיכוי / קבלה (ignored by type).
+    expect(imported.map((r) => r.serialNumber)).toEqual(['700005', '700006', '700007', '900003'])
     expect(ignoredCount).toBe(5) // 600000 (זיכוי) + 800013/800014/800015/800016 (קבלה)
+    expect(cancelledCount).toBe(1) // 900000, cancelled by 600000
+    expect(testRowsExcluded.sort()).toEqual(['900001', '900002'])
   })
 
   it('parses the real #900003 row exactly (the aglamazo#380 case)', () => {
@@ -62,6 +63,31 @@ describe('parseYpayIncomeExportRows', () => {
   it('flags negative amounts on a credit note as ignored, not imported as negative income', () => {
     const { imported } = parseYpayIncomeExportRows(REAL_EXPORT_ROWS)
     expect(imported.some((r) => r.serialNumber === '600000')).toBe(false)
+  })
+
+  it('excludes a row cancelled by its own matching credit note (the real 900000/600000 pair, aglamazo#383)', () => {
+    const { imported } = parseYpayIncomeExportRows(REAL_EXPORT_ROWS)
+    expect(imported.some((r) => r.serialNumber === '900000')).toBe(false)
+  })
+
+  it('does NOT cancel a row when the credit note is a different customer, date, or amount', () => {
+    const rows: unknown[][] = [
+      ['אסמכתא', 'סוג מסמך', 'תאריך', 'לקוח', 'מזהה לקוח', 'לפני מע"מ', 'מע"מ', 'אחרי מע"מ', "מס' הקצאה"],
+      ['100', 'חשבונית מס', '01/01/2026', 'לקוח א', null, '1000', '180', '1180'],
+      ['200', 'חשבונית מס זיכוי', '02/01/2026', 'לקוח א', null, '-1000', '-180', '-1180'], // different date
+      ['300', 'חשבונית מס', '01/01/2026', 'לקוח ב', null, '1000', '180', '1180'],
+      ['400', 'חשבונית מס זיכוי', '01/01/2026', 'לקוח ג', null, '-1000', '-180', '-1180'], // different customer
+    ]
+    const { imported, cancelledCount } = parseYpayIncomeExportRows(rows)
+    expect(imported.map((r) => r.serialNumber).sort()).toEqual(['100', '300'])
+    expect(cancelledCount).toBe(0)
+  })
+
+  it('excludes בדיקות rows entirely, per Agla\'s standing instruction (aglamazo#383)', () => {
+    const { imported, testRowsExcluded } = parseYpayIncomeExportRows(REAL_EXPORT_ROWS)
+    expect(imported.some((r) => r.customerName === 'בדיקות')).toBe(false)
+    expect(testRowsExcluded).toContain('900001')
+    expect(testRowsExcluded).toContain('900002')
   })
 
   it('throws a clear error when the header row is missing', () => {
@@ -154,23 +180,45 @@ describe('importYpayIncomeRows', () => {
     await db.transactions.clear()
     await db.subjects.clear()
     await db.projects.clear()
+    await db.vatPayments.clear()
   })
   afterEach(async () => {
     await db.ypayDocuments.clear()
     await db.transactions.clear()
     await db.subjects.clear()
     await db.projects.clear()
+    await db.vatPayments.clear()
   })
 
-  it('adds a genuinely new document, unlinked (no matching transaction imported yet)', async () => {
-    const { imported, ignoredCount } = parseYpayIncomeExportRows(REAL_EXPORT_ROWS)
-    const summary = await importYpayIncomeRows(imported, ignoredCount)
-    expect(summary.added).toBe(7)
+  const parseAndImport = async (rows: unknown[][] = REAL_EXPORT_ROWS) => {
+    const { imported, ignoredCount, cancelledCount, testRowsExcluded } = parseYpayIncomeExportRows(rows)
+    return importYpayIncomeRows(imported, { ignoredCount, cancelledCount, testRowsExcluded })
+  }
+
+  it('adds only the genuinely new, non-cancelled, non-test documents (4 of 12 real rows)', async () => {
+    const summary = await parseAndImport()
+    expect(summary.added).toBe(4) // 700005, 700006, 700007, 900003
     expect(summary.ignoredType).toBe(5)
-    expect(summary.unmatchedCount).toBe(7)
+    expect(summary.cancelledCount).toBe(1)
+    expect(summary.testRowsExcluded.sort()).toEqual(['900001', '900002'])
+    expect(summary.unmatchedCount).toBe(4)
     const stored = await db.ypayDocuments.filter((d) => d.serialNumber === '900003').first()
     expect(stored?.amount).toBe(1321.6)
     expect(stored?.transactionId).toBe('ypay-import:900003')
+  })
+
+  it('never books the cancelled invoice (900000) — the real Sheli-caught phantom-revenue case (aglamazo#383)', async () => {
+    await parseAndImport()
+    const stored = await db.ypayDocuments.filter((d) => d.serialNumber === '900000').first()
+    expect(stored).toBeUndefined()
+  })
+
+  it('never adds a בדיקות row to the database at all', async () => {
+    await parseAndImport()
+    const stored900001 = await db.ypayDocuments.filter((d) => d.serialNumber === '900001').first()
+    const stored900002 = await db.ypayDocuments.filter((d) => d.serialNumber === '900002').first()
+    expect(stored900001).toBeUndefined()
+    expect(stored900002).toBeUndefined()
   })
 
   it('links a new document to its real bank transaction when one already exists (aglamazo#381 fix)', async () => {
@@ -179,9 +227,8 @@ describe('importYpayIncomeRows', () => {
       type: 'income', date: '2026-08-10', amount: 1321.6, description: 'אילן עוז',
       category: 'הכנסות ייעוץ', syncId: 'tx-sync-900003', isFixed: false, month: '08/2026',
     } as any)
-    const { imported, ignoredCount } = parseYpayIncomeExportRows(REAL_EXPORT_ROWS)
-    const summary = await importYpayIncomeRows(imported, ignoredCount)
-    expect(summary.unmatchedCount).toBe(6) // one fewer than the fully-unmatched case above
+    const summary = await parseAndImport()
+    expect(summary.unmatchedCount).toBe(3) // one fewer than the fully-unmatched case above
     const stored = await db.ypayDocuments.filter((d) => d.serialNumber === '900003').first()
     expect(stored?.transactionId).toBe('tx-sync-900003')
   })
@@ -204,8 +251,7 @@ describe('importYpayIncomeRows', () => {
       type: 'income', date: '2026-08-10', amount: 1321.6, description: 'אילן עוז',
       category: 'הכנסות ייעוץ', syncId: 'tx-sync-900003', isFixed: false, month: '08/2026',
     } as any)
-    const { imported, ignoredCount } = parseYpayIncomeExportRows(REAL_EXPORT_ROWS)
-    const summary = await importYpayIncomeRows(imported, ignoredCount)
+    const summary = await parseAndImport()
     expect(summary.repaired).toBeGreaterThanOrEqual(1)
     const stored = await db.ypayDocuments.filter((d) => d.serialNumber === '900003').first()
     expect(stored?.transactionId).toBe('tx-sync-900003')
@@ -220,10 +266,9 @@ describe('importYpayIncomeRows', () => {
       docType: YpayDocType.TaxInvoiceReceipt,
       createdAt: '2026-09-07T17:14:32.990Z', // the wrong, sync-time date from #380
     })
-    const { imported, ignoredCount } = parseYpayIncomeExportRows(REAL_EXPORT_ROWS)
-    const summary = await importYpayIncomeRows(imported, ignoredCount)
+    const summary = await parseAndImport()
     expect(summary.repaired).toBe(1)
-    expect(summary.added).toBe(6)
+    expect(summary.added).toBe(3) // 700005, 700006, 700007 — 900003 already existed
     const stored = await db.ypayDocuments.filter((d) => d.serialNumber === '900003').first()
     expect(stored?.amount).toBe(1321.6)
     expect(stored?.createdAt).toBe(new Date('2026-08-10').toISOString())
@@ -239,19 +284,46 @@ describe('importYpayIncomeRows', () => {
       amount: 9999, // deliberately different from the export, to prove it's untouched
       createdAt: '2026-08-10T00:00:00.000Z',
     })
-    const { imported, ignoredCount } = parseYpayIncomeExportRows(REAL_EXPORT_ROWS)
-    const summary = await importYpayIncomeRows(imported, ignoredCount)
+    const summary = await parseAndImport()
     expect(summary.alreadyCorrect).toBe(1)
-    expect(summary.added).toBe(6)
+    expect(summary.added).toBe(3)
     const stored = await db.ypayDocuments.filter((d) => d.serialNumber === '900003').first()
     expect(stored?.amount).toBe(9999)
   })
 
-  it('flags בדיקות rows without excluding them', async () => {
-    const { imported, ignoredCount } = parseYpayIncomeExportRows(REAL_EXPORT_ROWS)
-    const summary = await importYpayIncomeRows(imported, ignoredCount)
-    expect(summary.possibleTestRows.sort()).toEqual(['900001', '900002'])
-    const stored = await db.ypayDocuments.filter((d) => d.serialNumber === '900001').first()
-    expect(stored).toBeDefined()
+  it('skips a row whose date falls in an already-declared-and-paid VAT period (the real מאי-יוני case, aglamazo#383)', async () => {
+    // מאי-יוני 2026, declared and paid — agreeing with שע"מ to the shekel,
+    // per Sheli's evidence. 900003 (10/08/2026) is outside this period so
+    // it must still import normally; only rows inside a closed period skip.
+    await db.vatPayments.add({
+      periodLabel: 'מאי-יוני 2026', periodStart: '2026-05-01', periodEnd: '2026-06-30',
+      paymentDate: '2026-07-14',
+    } as any)
+    const summary = await parseAndImport()
+    // 700005/700006 are 29/06/2026 — inside the closed period.
+    expect(summary.skippedClosedPeriod.sort()).toEqual(['700005', '700006'])
+    expect(summary.added).toBe(2) // 700007, 900003 — outside the closed period
+    const stored700005 = await db.ypayDocuments.filter((d) => d.serialNumber === '700005').first()
+    expect(stored700005).toBeUndefined()
+    const stored900003 = await db.ypayDocuments.filter((d) => d.serialNumber === '900003').first()
+    expect(stored900003).toBeDefined()
+  })
+
+  it('does not repair an existing document whose date falls in a closed period either', async () => {
+    await db.ypayDocuments.add({
+      transactionId: 'ypay-import:900003',
+      url: '',
+      serialNumber: '900003',
+      docType: YpayDocType.TaxInvoiceReceipt,
+      createdAt: '2026-09-07T17:14:32.990Z', // stub, needs repair
+    })
+    await db.vatPayments.add({
+      periodLabel: 'יולי-אוגוסט 2026', periodStart: '2026-07-01', periodEnd: '2026-08-31',
+      paymentDate: '2026-09-14',
+    } as any)
+    const summary = await parseAndImport()
+    expect(summary.skippedClosedPeriod).toContain('900003')
+    const stored = await db.ypayDocuments.filter((d) => d.serialNumber === '900003').first()
+    expect(stored?.amount).toBeUndefined() // untouched — still the stub
   })
 })
