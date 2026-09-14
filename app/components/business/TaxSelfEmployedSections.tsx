@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { db } from '@/app/db/financeDB'
 import type { Business, TaxDocument, Transaction, AdvancePayment } from '@/app/db/financeDB'
-import type { TaxProfile } from '@/app/components/TaxProfileSection'
+import { resolveBtlScheduleByMonth, type TaxProfile } from '@/app/components/TaxProfileSection'
 
 export type BTLRates = {
   reduced: { nationalInsurance: number; healthInsurance: number }
@@ -74,9 +74,11 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
     return `${String(nextIdx + 1).padStart(2, '0')}/${currentYear}`
   }
 
-  // Expected BTL amount and due date from the uploaded notice schedule, if any.
-  const schedule = (taxProfile?.btlNotices || []).find(n => n.year === currentYear)?.schedule || []
-  const scheduleByMonth = new Map(schedule.map(s => [s.month, s]))
+  // Expected BTL amount and due date from the uploaded notice schedule(s),
+  // resolved per month (aglamazo#376 — a mid-year BTL revision adds a
+  // second notice for the same year rather than replacing the first, so a
+  // single "find one notice for this year" no longer covers every month).
+  const scheduleByMonth = resolveBtlScheduleByMonth(taxProfile || {}, currentYear)
   const fallbackAmount = taxProfile?.btlAdvancePayment || 0
 
   const today = new Date()

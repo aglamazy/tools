@@ -28,6 +28,13 @@ export type BtlPayment = {
 }
 
 export type BtlNotice = {
+  // Stable identity (aglamazo#376): a year can hold more than one notice —
+  // BTL reassesses mid-year, and the July notice covering יולי–דצמבר must
+  // not overwrite the April one that correctly covered ינואר–יוני. `id` is
+  // what a specific notice is edited/deleted by; `year` alone is no longer
+  // unique. Legacy rows saved before this field existed have no `id` — see
+  // btlNoticeKey below for how callers key them safely regardless.
+  id?: string
   year: number
   amount: number
   driveFileId?: string
@@ -37,6 +44,13 @@ export type BtlNotice = {
   annualTotal?: number
   schedule?: BtlPayment[]
   extractError?: string
+}
+
+/** A stable React/lookup key for a notice, even for a legacy row saved
+ * before `id` existed (falls back to its year — safe because every
+ * pre-#376 profile has at most one notice per year). */
+export function btlNoticeKey(n: BtlNotice): string {
+  return n.id ?? String(n.year)
 }
 
 export type TaxProfile = {
@@ -63,6 +77,35 @@ export function vatTypeForDate(profile: TaxProfile, transactionDate: string): 'e
   if (!conversion) return profile.vatType
   const normalized = normalizeDate(transactionDate) || transactionDate
   return normalized >= conversion.effectiveDate ? conversion.to : conversion.from
+}
+
+/**
+ * The expected BTL payment for every MM/YYYY month a given year's notices
+ * cover, resolved per month rather than per year (aglamazo#376). BTL can
+ * reassess mid-year — two notices for the same year, each with its own
+ * schedule covering only the months it actually governs (e.g. a July
+ * notice's schedule only has entries for יולי–דצמבר). A month is resolved
+ * by which notice's OWN schedule contains an entry for it, not by picking
+ * one notice to represent the whole year — so a month with no covering
+ * notice correctly has no entry here (caller decides the fallback), instead
+ * of silently inheriting whatever the most-recently-uploaded notice said
+ * about a month it was never issued for.
+ *
+ * When two notices both cover the same month (a re-upload, or a correction),
+ * the more recently uploaded one wins — resolved by upload order, not by
+ * requiring a separate "effective date" field the notice may not state.
+ */
+export function resolveBtlScheduleByMonth(profile: TaxProfile, year: number): Map<string, BtlPayment> {
+  const yearNotices = (profile.btlNotices || [])
+    .filter((n) => n.year === year)
+    .sort((a, b) => (a.uploadedAt || '').localeCompare(b.uploadedAt || ''))
+  const byMonth = new Map<string, BtlPayment>()
+  for (const notice of yearNotices) {
+    for (const payment of notice.schedule || []) {
+      byMonth.set(payment.month, payment)
+    }
+  }
+  return byMonth
 }
 
 const TAX_PROFILE_LEGACY_KEY = 'taxProfile'
@@ -163,6 +206,10 @@ export default function TaxProfileSection({ userId, memberLabel }: TaxProfileSec
   const [btlFile, setBtlFile] = useState<File | null>(null)
   const [btlUploading, setBtlUploading] = useState(false)
   const [btlError, setBtlError] = useState('')
+  // Which SPECIFIC notice is being edited (aglamazo#376 — a year can hold
+  // more than one, so identity is the notice's own key, never its year).
+  // undefined = adding a new notice, not editing an existing one.
+  const [editingBtlKey, setEditingBtlKey] = useState<string | undefined>(undefined)
   const btlFileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -243,8 +290,9 @@ export default function TaxProfileSection({ userId, memberLabel }: TaxProfileSec
     }
   }
 
-  const openBtlModal = (editYear?: number) => {
-    const existing = editYear != null ? (profile.btlNotices || []).find(n => n.year === editYear) : undefined
+  const openBtlModal = (editKey?: string) => {
+    const existing = editKey != null ? (profile.btlNotices || []).find(n => btlNoticeKey(n) === editKey) : undefined
+    setEditingBtlKey(existing ? editKey : undefined)
     setBtlYear(existing?.year ?? new Date().getFullYear())
     setBtlAmount(existing ? String(existing.amount) : (profile.btlAdvancePayment ? String(profile.btlAdvancePayment) : ''))
     setBtlFile(null)
@@ -260,7 +308,9 @@ export default function TaxProfileSection({ userId, memberLabel }: TaxProfileSec
     setBtlUploading(true)
     setBtlError('')
     try {
-      const existing = (profile.btlNotices || []).find(n => n.year === btlYear)
+      const existing = editingBtlKey != null
+        ? (profile.btlNotices || []).find(n => btlNoticeKey(n) === editingBtlKey)
+        : undefined
 
       let driveFileId = existing?.driveFileId
       let driveWebViewLink = existing?.driveWebViewLink
@@ -321,6 +371,7 @@ export default function TaxProfileSection({ userId, memberLabel }: TaxProfileSec
       }
 
       const notice: BtlNotice = {
+        id: existing?.id ?? crypto.randomUUID(),
         year: btlYear,
         amount: amountNum,
         driveFileId,
@@ -332,15 +383,25 @@ export default function TaxProfileSection({ userId, memberLabel }: TaxProfileSec
         extractError,
       }
 
-      const rest = (profile.btlNotices || []).filter(n => n.year !== btlYear)
-      const nextNotices = [...rest, notice].sort((a, b) => b.year - a.year)
+      // Replace the specific notice being edited (by its own key); adding a
+      // new notice for a year that already has one APPENDS rather than
+      // replacing (aglamazo#376 — a mid-year BTL revision must not erase
+      // the earlier months' real schedule).
+      const rest = editingBtlKey != null
+        ? (profile.btlNotices || []).filter(n => btlNoticeKey(n) !== editingBtlKey)
+        : (profile.btlNotices || [])
+      const nextNotices = [...rest, notice].sort((a, b) => b.year - a.year || (b.uploadedAt || '').localeCompare(a.uploadedAt || ''))
 
-      // Keep `btlAdvancePayment` in sync with the most-recent year's amount
+      // Keep `btlAdvancePayment` (the flat fallback for a month no notice's
+      // schedule covers) in sync with the most RECENTLY UPLOADED notice's
+      // amount — not "the latest year's", since two notices can now share a
+      // year and only upload order says which is newer.
       const latestAmount = nextNotices[0]?.amount ?? amountNum
       const nextProfile: TaxProfile = { ...profile, btlNotices: nextNotices, btlAdvancePayment: latestAmount }
       await saveTaxProfile(nextProfile, userId)
       setProfile(nextProfile)
       setBtlModalOpen(false)
+      setEditingBtlKey(undefined)
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } catch (err: any) {
@@ -363,8 +424,10 @@ export default function TaxProfileSection({ userId, memberLabel }: TaxProfileSec
     })
   }
 
-  const handleBtlDelete = async (year: number) => {
-    const nextNotices = (profile.btlNotices || []).filter(n => n.year !== year).sort((a, b) => b.year - a.year)
+  const handleBtlDelete = async (key: string) => {
+    const nextNotices = (profile.btlNotices || [])
+      .filter(n => btlNoticeKey(n) !== key)
+      .sort((a, b) => b.year - a.year || (b.uploadedAt || '').localeCompare(a.uploadedAt || ''))
     const latestAmount = nextNotices[0]?.amount
     const nextProfile: TaxProfile = {
       ...profile,
@@ -541,56 +604,67 @@ export default function TaxProfileSection({ userId, memberLabel }: TaxProfileSec
                 <span style={{ fontSize: '0.75rem', color: '#64748b' }}>ביטוח לאומי (סכום חודשי)</span>
                 {profile.btlNotices && profile.btlNotices.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginTop: '0.4rem' }}>
-                    {profile.btlNotices.map(n => (
-                      <span
-                        key={n.year}
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '0.3rem',
-                          padding: '0.2rem 0.5rem',
-                          fontSize: '0.75rem',
-                          background: '#f1f5f9',
-                          border: '1px solid #e2e8f0',
-                          borderRadius: '0.375rem',
-                        }}
-                      >
-                        {n.driveWebViewLink ? (
-                          <a
-                            href={n.driveWebViewLink}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{ color: '#1e40af', textDecoration: 'underline' }}
-                            title={n.fileName || ''}
+                    {profile.btlNotices.map(n => {
+                      const key = btlNoticeKey(n)
+                      // aglamazo#376: a year can hold more than one notice now —
+                      // show which months this one actually covers (from its own
+                      // schedule) so two same-year notices are distinguishable.
+                      const months = (n.schedule || []).map(p => p.month.split('/')[0])
+                      const monthsLabel = months.length > 0
+                        ? months.length === 1 ? `, ${months[0]}` : `, ${months[0]}–${months[months.length - 1]}`
+                        : ''
+                      return (
+                        <span
+                          key={key}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.3rem',
+                            padding: '0.2rem 0.5rem',
+                            fontSize: '0.75rem',
+                            background: '#f1f5f9',
+                            border: '1px solid #e2e8f0',
+                            borderRadius: '0.375rem',
+                          }}
+                        >
+                          {n.driveWebViewLink ? (
+                            <a
+                              href={n.driveWebViewLink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ color: '#1e40af', textDecoration: 'underline' }}
+                              title={n.fileName || ''}
+                            >
+                              {n.year}{monthsLabel}: {n.amount.toLocaleString('he-IL')} ₪
+                            </a>
+                          ) : (
+                            <span>{n.year}{monthsLabel}: {n.amount.toLocaleString('he-IL')} ₪</span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => openBtlModal(key)}
+                            title="ערוך"
+                            style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', padding: 0, fontSize: '0.75rem' }}
                           >
-                            {n.year}: {n.amount.toLocaleString('he-IL')} ₪
-                          </a>
-                        ) : (
-                          <span>{n.year}: {n.amount.toLocaleString('he-IL')} ₪</span>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => openBtlModal(n.year)}
-                          title="ערוך"
-                          style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', padding: 0, fontSize: '0.75rem' }}
-                        >
-                          ✎
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleBtlDelete(n.year)}
-                          title="מחק"
-                          style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', padding: 0, fontSize: '0.75rem' }}
-                        >
-                          ✕
-                        </button>
-                      </span>
-                    ))}
+                            ✎
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleBtlDelete(key)}
+                            title="מחק"
+                            style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', padding: 0, fontSize: '0.75rem' }}
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      )
+                    })}
                   </div>
                 )}
-                {profile.btlNotices && profile.btlNotices.length > 0 && profile.btlNotices.map(n => (
-                  n.schedule && n.schedule.length > 0 ? (
-                    <details key={`sched-${n.year}`} style={{ marginTop: '0.4rem' }}>
+                {profile.btlNotices && profile.btlNotices.length > 0 && profile.btlNotices.map(n => {
+                  const key = btlNoticeKey(n)
+                  return n.schedule && n.schedule.length > 0 ? (
+                    <details key={`sched-${key}`} style={{ marginTop: '0.4rem' }}>
                       <summary style={{ cursor: 'pointer', fontSize: '0.75rem', color: '#475569' }}>
                         לוח תשלומים {n.year} ({n.schedule.length} תשלומים
                         {n.annualTotal ? ` · סה"כ ${n.annualTotal.toLocaleString('he-IL')} ₪` : ''})
@@ -606,7 +680,7 @@ export default function TaxProfileSection({ userId, memberLabel }: TaxProfileSec
                         </thead>
                         <tbody>
                           {n.schedule.map(p => (
-                            <tr key={`${n.year}-${p.month}`} style={{ borderTop: '1px solid #f1f5f9' }}>
+                            <tr key={`${key}-${p.month}`} style={{ borderTop: '1px solid #f1f5f9' }}>
                               <td style={{ padding: '0.25rem 0.4rem' }}>{p.month}</td>
                               <td style={{ padding: '0.25rem 0.4rem' }}>{formatDisplayDate(p.dueDate)}</td>
                               <td style={{ padding: '0.25rem 0.4rem', textAlign: 'left', direction: 'ltr' }}>
@@ -625,11 +699,11 @@ export default function TaxProfileSection({ userId, memberLabel }: TaxProfileSec
                       </table>
                     </details>
                   ) : n.extractError ? (
-                    <div key={`err-${n.year}`} style={{ marginTop: '0.4rem', fontSize: '0.7rem', color: '#b45309' }}>
+                    <div key={`err-${key}`} style={{ marginTop: '0.4rem', fontSize: '0.7rem', color: '#b45309' }}>
                       {n.year}: חילוץ לוח תשלומים נכשל — {n.extractError}
                     </div>
                   ) : null
-                ))}
+                })}
               </div>
               <div style={{
                 flex: 1,
@@ -828,8 +902,11 @@ export default function TaxProfileSection({ userId, memberLabel }: TaxProfileSec
               )}
               <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.25rem' }}>
                 הקובץ יועלה ל-Google Drive תחת Tax Documents/{btlYear}.
-                {(profile.btlNotices || []).some(n => n.year === btlYear) && !btlFile && (
-                  <> כרגע מוחלף קובץ קיים לשנה זו; השאר ריק כדי לעדכן רק את הסכום.</>
+                {editingBtlKey != null && !btlFile && (
+                  <> כרגע מוחלף קובץ קיים; השאר ריק כדי לעדכן רק את הסכום.</>
+                )}
+                {editingBtlKey == null && (profile.btlNotices || []).some(n => n.year === btlYear) && (
+                  <> קיימת כבר הודעה לשנה זו — זו תתווסף כהודעה נוספת (למשל עדכון אמצע-שנה), לא תחליף אותה.</>
                 )}
               </div>
             </div>

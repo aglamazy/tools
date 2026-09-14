@@ -4,7 +4,7 @@ import { getUser } from './authStore'
 import { appSettingsStore, AccountOwners } from './appSettingsStore'
 import { routes } from '@/app/config'
 import type { AgentTaskStatus } from '@/app/types/bot'
-import { getTaxProfile } from '@/app/components/TaxProfileSection'
+import { getTaxProfile, resolveBtlScheduleByMonth } from '@/app/components/TaxProfileSection'
 import { MONTH_NAMES_HE } from '@/app/lib/dateUtils'
 
 type Priority = 'low' | 'medium' | 'high'
@@ -719,11 +719,12 @@ async function checkBtlPaymentReminders(): Promise<AutoTask[]> {
   const year = new Date().getFullYear()
   const currentMonthIdx = new Date().getMonth()
 
-  const schedule = profile.btlNotices?.find((n) => n.year === year)?.schedule || []
-  const scheduleByMonth = new Map(schedule.map((s) => [s.month, s]))
+  // Resolved per month (aglamazo#376) — a mid-year BTL revision adds a
+  // second notice for the same year rather than replacing the first.
+  const scheduleByMonth = resolveBtlScheduleByMonth(profile, year)
   const fallbackAmount = profile.btlAdvancePayment || 0
 
-  if (schedule.length === 0 && fallbackAmount === 0) return []
+  if (scheduleByMonth.size === 0 && fallbackAmount === 0) return []
 
   // Link target per task:
   //   1. The month's QR payment URL (decoded from the notice), if present.
