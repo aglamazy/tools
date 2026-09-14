@@ -45,6 +45,46 @@ export function turnoverExVat(monthTransactions: Transaction[], taxProfile: TaxP
   }, 0)
 }
 
+// A payment made for calendar month i shows up as a transaction the
+// following month — the same convention SelfEmployedBTLSection's
+// paymentMonthStr already uses.
+export function btlPaymentMonthFor(monthIndex: number, currentYear: number): string {
+  const nextIdx = monthIndex + 1
+  if (nextIdx >= 12) return `01/${currentYear + 1}`
+  return `${String(nextIdx + 1).padStart(2, '0')}/${currentYear}`
+}
+
+/**
+ * aglamazo#384 (Sheli/Agla, 2026-09-14): "בל״ל ששולם" was the flat profile
+ * advance for every month regardless of what actually happened — real
+ * payments stopped after May, and a ₪23,744 refund in July was never
+ * subtracted. Real payments (minus real refunds landing in the same
+ * payMonth) take priority; only when nothing real has landed yet does a
+ * forecast apply — the per-month notice schedule (aglamazo#376) first, the
+ * flat profile advance as a last resort — and it's flagged (isForecast) so
+ * the UI never shows it as "paid".
+ */
+export function resolveBtlPaidForMonth(params: {
+  payMonth: string
+  btlPaymentTx: Transaction[]
+  btlRefundTx: Transaction[]
+  scheduledAmount: number | undefined
+  fallbackAmount: number
+}): { amount: number; isForecast: boolean } {
+  const paymentsThisMonth = params.btlPaymentTx.filter((t) => t.month === params.payMonth)
+  const refundsThisMonth = params.btlRefundTx.filter((t) => t.month === params.payMonth)
+  // A real refund fully offsetting a real payment (net exactly 0) is still
+  // a REAL month, not "nothing happened yet" — must not fall through to a
+  // forecast just because the net figure happens to be zero.
+  if (paymentsThisMonth.length > 0 || refundsThisMonth.length > 0) {
+    const paid = paymentsThisMonth.reduce((s, t) => s + Math.abs(t.amount || 0), 0)
+    const refunded = refundsThisMonth.reduce((s, t) => s + Math.abs(t.amount || 0), 0)
+    return { amount: Math.max(0, paid - refunded), isForecast: false }
+  }
+  const scheduled = params.scheduledAmount ?? params.fallbackAmount
+  return scheduled > 0 ? { amount: scheduled, isForecast: true } : { amount: 0, isForecast: false }
+}
+
 // ---------------------------------------------------------------------------
 // Self-Employed BTL Calculation Section (ביטוח לאומי + בריאות)
 // ---------------------------------------------------------------------------
@@ -333,21 +373,49 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
     return salaryDocs.filter(d => d.month === monthStr).reduce((s, d) => s + (d.grossIncome || 0), 0)
   })
 
+  // Actual BTL payments/refunds — the ביטוח לאומי (<member>) / החזר ביטוח
+  // לאומי (<member>) transactions, NOT the flat profile advance or a
+  // computed-from-rates figure (aglamazo#384: the flat advance rendered
+  // ₪6,013 under "בל״ל ששולם" for every one of 9 months regardless of what
+  // was actually paid — real payments stopped after May, and a ₪23,744
+  // refund in July was never subtracted at all). A payment made for
+  // calendar month i shows up as a transaction the following month, same
+  // convention as SelfEmployedBTLSection's paymentMonthStr; a refund is
+  // netted against whichever payMonth bucket it itself falls into, since
+  // there's no reliable way to attribute a lump refund back to the specific
+  // months it overpaid.
+  const [btlPaymentTx, setBtlPaymentTx] = useState<Transaction[]>([])
+  const [btlRefundTx, setBtlRefundTx] = useState<Transaction[]>([])
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const all = await db.transactions.toArray()
+      const yearOf = (t: Transaction) => t.month?.endsWith(`/${currentYear}`)
+      if (!cancelled) {
+        setBtlPaymentTx(all.filter((t) => t.category?.startsWith('ביטוח לאומי') && yearOf(t)))
+        setBtlRefundTx(all.filter((t) => t.category?.startsWith('החזר ביטוח לאומי') && yearOf(t)))
+      }
+    })()
+    return () => { cancelled = true }
+  }, [currentYear])
+
+  const btlScheduleByMonth = resolveBtlScheduleByMonth(taxProfile || {}, currentYear)
+  const btlFallbackAmount = taxProfile?.btlAdvancePayment || 0
+
   const monthlyRows = Array.from({ length: currentMonth + 1 }, (_, i) => {
     const monthStr = `${String(i + 1).padStart(2, '0')}/${currentYear}`
     const income = transactions.filter(t => t.month === monthStr && t.category && seCatNames.has(t.category)).reduce((s, t) => s + (t.amount || 0), 0)
     const expenses = transactions.filter(t => t.month === monthStr && t.category && seExpCatNames.has(t.category)).reduce((s, t) => s + Math.abs(t.amount || 0), 0)
     const netIncome = income - expenses
 
-    // BTL paid (use advance or calculated)
-    let btlPaid = 0
-    if (btlRates) {
-      const monthlyNetForBtl = Math.max(0, netIncome)
-      const btl = computeMonthlyBTL(monthlyNetForBtl, btlRates)
-      btlPaid = btl.total
-    }
-    const btlMonthlyAdvance = taxProfile?.btlAdvancePayment || 0
-    if (btlMonthlyAdvance > 0) btlPaid = btlMonthlyAdvance
+    const btlPayMonth = btlPaymentMonthFor(i, currentYear)
+    const { amount: btlPaid, isForecast: btlIsForecast } = resolveBtlPaidForMonth({
+      payMonth: btlPayMonth,
+      btlPaymentTx,
+      btlRefundTx,
+      scheduledAmount: btlScheduleByMonth.get(monthStr)?.amount,
+      fallbackAmount: btlFallbackAmount,
+    })
 
     const btlDeduction = btlPaid * BTL_DEDUCTION_RATE
     const taxBase = Math.max(0, netIncome - btlDeduction)
@@ -388,7 +456,7 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
     const isPaymentMonth = advancePeriod === 2 ? i % 2 === 1 : true
     const isDue = hasAdvance && isPaymentMonth && advancePaid > 0
 
-    return { month: i, label: HEBREW_MONTHS[i], income, expenses, netIncome, btlPaid, btlDeduction, taxBase, salary, tax, advancePaid, monthKey, paymentRecord, isDue }
+    return { month: i, label: HEBREW_MONTHS[i], income, expenses, netIncome, btlPaid, btlIsForecast, btlDeduction, taxBase, salary, tax, advancePaid, monthKey, paymentRecord, isDue }
   })
 
   // Actual payments — the מקדמות מס הכנסה (<member>) transactions, NOT the
@@ -418,6 +486,13 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
     tax: monthlyRows.reduce((s, r) => s + r.tax, 0),
     advancePaid: monthlyRows.reduce((s, r) => s + r.advancePaid, 0),
     advancePaidActual: advanceTaxTx.reduce((s, t) => s + Math.abs(t.amount || 0), 0),
+    // The true annual net BTL cost (real payments minus real refunds, not
+    // clamped per row the way btlPaid above is) — a refund can exceed any
+    // single row's payment, so the row-level sum above can overstate the
+    // year's real net cost even after aglamazo#384's per-row fix. This is
+    // the number that matches what Agla actually owes/paid this year.
+    btlPaidNet: btlPaymentTx.reduce((s, t) => s + Math.abs(t.amount || 0), 0)
+      - btlRefundTx.reduce((s, t) => s + Math.abs(t.amount || 0), 0),
   }
 
   const hStyle: React.CSSProperties = { ...cellStyle, fontWeight: 600, background: '#fff7ed', color: '#92400e', borderBottom: '2px solid #e2e8f0' }
@@ -478,7 +553,12 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
             <tr key={row.month} style={{ borderBottom: '1px solid #f1f5f9' }}>
               <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 500 }}>{row.label}</td>
               <td style={cellStyle}>{row.netIncome ? fmt(row.netIncome) : '—'}</td>
-              <td style={cellStyle}>{row.btlPaid ? fmt(row.btlPaid) : '—'}</td>
+              <td style={cellStyle}>
+                {row.btlPaid ? fmt(row.btlPaid) : '—'}
+                {row.btlIsForecast && row.btlPaid > 0 && (
+                  <span style={{ fontSize: '0.7rem', color: '#94a3b8', marginRight: '0.25rem' }}>(צפי)</span>
+                )}
+              </td>
               <td style={{ ...cellStyle, color: '#16a34a' }}>{row.btlDeduction ? fmt(row.btlDeduction) : '—'}</td>
               <td style={{ ...cellStyle, background: '#fffbeb', fontWeight: 500 }}>{row.taxBase ? fmt(row.taxBase) : '—'}</td>
               {annualTotals.salary > 0 && <td style={cellStyle}>{row.salary ? fmt(row.salary) : '—'}</td>}
@@ -526,6 +606,13 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
             {hasAdvance && <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(annualTotals.advancePaid)}</td>}
             {hasAdvance && <td style={cellStyle} />}
           </tr>
+          {Math.abs(annualTotals.btlPaidNet - annualTotals.btlPaid) > 1 && (
+            <tr style={{ background: '#fef2f2' }}>
+              <td colSpan={annualTotals.salary > 0 ? 8 : 7} style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontSize: '0.8rem', color: '#7f1d1d' }}>
+                עלות בל&quot;ל נטו בפועל השנה (לאחר החזרים, ללא חלוקה חודשית): {fmt(annualTotals.btlPaidNet)} — שונה מסכום &quot;בל&quot;ל ששולם&quot; למעלה כי החזר יחיד יכול לעלות על תשלום של חודש בודד
+              </td>
+            </tr>
+          )}
           {hasAdvance && (
             <tr style={{ background: '#fef3c7' }}>
               <td colSpan={annualTotals.salary > 0 ? 7 : 6} style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 700 }}>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { turnoverExVat } from './TaxSelfEmployedSections'
+import { turnoverExVat, btlPaymentMonthFor, resolveBtlPaidForMonth } from './TaxSelfEmployedSections'
 import type { Transaction } from '@/app/db/financeDB'
 import type { TaxProfile } from '@/app/components/TaxProfileSection'
 
@@ -48,5 +48,84 @@ describe('turnoverExVat', () => {
 
   it('sums to zero for an empty month', () => {
     expect(turnoverExVat([], { vatType: 'authorized' })).toBe(0)
+  })
+})
+
+// aglamazo#384, Sheli/Agla 2026-09-14: "בל״ל ששולם" showed the flat profile
+// advance (₪6,013) for every one of 9 months, ignoring that real payments
+// stopped after May and a ₪23,744 refund landed in July. Real numbers from
+// the ticket: payments 15/02, 12/03, 20/04, 12/05 (₪6,013 each, cash-basis
+// months Jan-Apr), 15/06 (₪6,033, for May) = ₪30,085 total; refund 27/07
+// (₪23,744, category "החזר ביטוח לאומי").
+
+const btlTx = (month: string, amount: number, category = 'ביטוח לאומי (Yaakov)'): Transaction =>
+  ({ date: '', amount, description: '', isFixed: false, month, category }) as Transaction
+
+describe('btlPaymentMonthFor', () => {
+  it('a payment for calendar month i shows up the following month', () => {
+    expect(btlPaymentMonthFor(0, 2026)).toBe('02/2026') // Jan -> paid Feb
+    expect(btlPaymentMonthFor(4, 2026)).toBe('06/2026') // May -> paid Jun
+  })
+
+  it('December rolls over into January of the next year', () => {
+    expect(btlPaymentMonthFor(11, 2026)).toBe('01/2027')
+  })
+})
+
+describe('resolveBtlPaidForMonth', () => {
+  const payments = [
+    btlTx('02/2026', -6013), btlTx('03/2026', -6013), btlTx('04/2026', -6013), btlTx('05/2026', -6013),
+    btlTx('06/2026', -6033),
+  ]
+  const refunds = [btlTx('07/2026', 23744, 'החזר ביטוח לאומי (Yaakov)')]
+
+  it('uses the real payment for a month that has one (the real Jan/Feb-pay case)', () => {
+    const result = resolveBtlPaidForMonth({
+      payMonth: '02/2026', btlPaymentTx: payments, btlRefundTx: refunds,
+      scheduledAmount: 6013, fallbackAmount: 6013,
+    })
+    expect(result.amount).toBe(6013)
+    expect(result.isForecast).toBe(false)
+  })
+
+  it('nets a refund against the payMonth it lands in, clamped at zero (the real June case)', () => {
+    // June has no BTL payment transaction of its own (per Sheli: "netted
+    // against the credit before refunding") but July's payMonth carries the
+    // ₪23,744 refund with no matching payment — nets to 0, not negative.
+    const result = resolveBtlPaidForMonth({
+      payMonth: '07/2026', btlPaymentTx: payments, btlRefundTx: refunds,
+      scheduledAmount: 6013, fallbackAmount: 6013,
+    })
+    expect(result.amount).toBe(0)
+    expect(result.isForecast).toBe(false) // a real (zero, refunded) month, not a forecast
+  })
+
+  it('falls back to the per-month notice schedule as a labeled forecast when nothing real has landed', () => {
+    // Jul-Dec service months (per aglamazo#376's per-month schedule) have no
+    // real payment/refund transaction of their own in their payMonth.
+    const result = resolveBtlPaidForMonth({
+      payMonth: '09/2026', btlPaymentTx: payments, btlRefundTx: refunds,
+      scheduledAmount: 1091, fallbackAmount: 6013,
+    })
+    expect(result.amount).toBe(1091) // schedule rate, not the stale flat ₪6,013
+    expect(result.isForecast).toBe(true)
+  })
+
+  it('falls back to the flat profile advance only when no schedule entry exists either', () => {
+    const result = resolveBtlPaidForMonth({
+      payMonth: '09/2026', btlPaymentTx: [], btlRefundTx: [],
+      scheduledAmount: undefined, fallbackAmount: 6013,
+    })
+    expect(result.amount).toBe(6013)
+    expect(result.isForecast).toBe(true)
+  })
+
+  it('returns zero, not a forecast, when there is nothing real and no forecast source at all', () => {
+    const result = resolveBtlPaidForMonth({
+      payMonth: '09/2026', btlPaymentTx: [], btlRefundTx: [],
+      scheduledAmount: undefined, fallbackAmount: 0,
+    })
+    expect(result.amount).toBe(0)
+    expect(result.isForecast).toBe(false)
   })
 })
