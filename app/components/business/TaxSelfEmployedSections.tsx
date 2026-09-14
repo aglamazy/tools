@@ -186,7 +186,12 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
       }
     })()
     return () => { cancelled = true }
-  }, [currentYear])
+    // Agla, live: "useEffect is missing to calculate" — this only re-read
+    // db.transactions on a year change, so a same-session edit (new BTL
+    // payment/refund, sync pulling in fresh rows) left btlTx/btlRefundTx
+    // stale until the user flipped the year dropdown. transactions is the
+    // same prop that drives every other figure on this page.
+  }, [currentYear, transactions])
 
   const paymentMonthStr = (i: number): string => {
     // Payment for month index i (0 = Jan) is made in the following calendar month.
@@ -563,10 +568,31 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
       }
     })()
     return () => { cancelled = true }
-  }, [currentYear])
+    // Agla, live: "useEffect is missing to calculate" — see the matching
+    // fix in SelfEmployedBTLSection above; same staleness, same cause.
+  }, [currentYear, transactions])
 
   const btlScheduleByMonth = resolveBtlScheduleByMonth(taxProfile || {}, currentYear)
   const btlFallbackAmount = taxProfile?.btlAdvancePayment || 0
+
+  // Actual payments — the מקדמות מס הכנסה (<member>) transactions, NOT the
+  // computed-due figure below (aglamazo#381's second bug: the footer summed
+  // advancePaid, which is what's DUE, and mislabeled it as what was PAID).
+  const [advanceTaxTx, setAdvanceTaxTx] = useState<Transaction[]>([])
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const all = await db.transactions.toArray()
+      const yearTx = all.filter(
+        (t) => t.category?.startsWith('מקדמות מס הכנסה') && t.month?.endsWith(`/${currentYear}`),
+      )
+      if (!cancelled) setAdvanceTaxTx(yearTx)
+    })()
+    return () => { cancelled = true }
+    // Agla, live: "useEffect is missing to calculate" — same staleness as
+    // the BTL tx effects above; this feeds annualTotals.advancePaidActual,
+    // which drives the הפרש figure at the bottom of the table.
+  }, [currentYear, transactions])
 
   const monthlyRows = Array.from({ length: currentMonth + 1 }, (_, i) => {
     const monthStr = `${String(i + 1).padStart(2, '0')}/${currentYear}`
@@ -641,30 +667,23 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
     const isDue = hasAdvance
 
     // Agla, live: "It probably used the figure (paid amount) from the line
-    // itself. But it's wrong. It should extract from the document." —
-    // advancePaid above is always a turnover-based estimate; once a real
-    // receipt has an extracted amount, that's what was actually paid.
-    const advancePaidIsForecast = paymentRecord?.amount === undefined
-    const advancePaidDisplay = paymentRecord?.amount ?? advancePaid
+    // itself. But it's wrong. It should extract from the document," then,
+    // after the document-extraction fix, live again: "It's wrong
+    // calculation. It probably count the amount calculated by percentage
+    // and not what was paid." — advanceTaxTx (real bank מקדמות transactions,
+    // already loaded above) was never consulted per row, only summed for
+    // the annual advancePaidActual. The bank ledger is the most
+    // authoritative source of what actually left the account (same
+    // reasoning as expense net-amount elsewhere), so it wins over a
+    // document extraction, which wins over the turnover-based estimate.
+    const realPaidThisMonth = advanceTaxTx
+      .filter(t => t.month === monthKey)
+      .reduce((s, t) => s + Math.abs(t.amount || 0), 0)
+    const advancePaidIsForecast = realPaidThisMonth === 0 && paymentRecord?.amount === undefined
+    const advancePaidDisplay = realPaidThisMonth || paymentRecord?.amount || advancePaid
 
     return { month: i, label: HEBREW_MONTHS[i], income, expenses, netIncome, incomeTx, expenseLines, btlPaid, btlIsForecast, btlDeduction, taxBase, salary, tax, advancePaid, advancePaidDisplay, advancePaidIsForecast, monthKey, paymentRecord, isDue }
   })
-
-  // Actual payments — the מקדמות מס הכנסה (<member>) transactions, NOT the
-  // computed-due figure above (aglamazo#381's second bug: the footer summed
-  // advancePaid, which is what's DUE, and mislabeled it as what was PAID).
-  const [advanceTaxTx, setAdvanceTaxTx] = useState<Transaction[]>([])
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      const all = await db.transactions.toArray()
-      const yearTx = all.filter(
-        (t) => t.category?.startsWith('מקדמות מס הכנסה') && t.month?.endsWith(`/${currentYear}`),
-      )
-      if (!cancelled) setAdvanceTaxTx(yearTx)
-    })()
-    return () => { cancelled = true }
-  }, [currentYear])
 
   const annualTotals = {
     income: monthlyRows.reduce((s, r) => s + r.income, 0),
