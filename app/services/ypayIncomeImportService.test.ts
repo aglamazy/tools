@@ -70,35 +70,120 @@ describe('parseYpayIncomeExportRows', () => {
 })
 
 describe('buildYpayDocumentFromImportRow', () => {
-  it('stores the NET amount for חשבונית מס (106)', () => {
+  beforeEach(async () => {
+    await db.transactions.clear()
+    await db.subjects.clear()
+  })
+  afterEach(async () => {
+    await db.transactions.clear()
+    await db.subjects.clear()
+  })
+
+  it('stores the NET amount for חשבונית מס (106), unlinked when no matching transaction exists', async () => {
     const row = { serialNumber: '700007', docType: YpayDocType.TaxInvoice, date: '2026-07-03', customerName: 'אימפורטה', netAmount: 3534.12, vatAmount: 636.14, grossAmount: 4170.26 }
-    const doc = buildYpayDocumentFromImportRow(row)
+    const doc = await buildYpayDocumentFromImportRow(row)
     expect(doc.amount).toBe(3534.12)
     expect(doc.transactionId).toBe('ypay-import:700007')
   })
 
-  it('stores the GROSS amount for חשבונית מס קבלה (109)', () => {
+  it('stores the GROSS amount for חשבונית מס קבלה (109)', async () => {
     const row = { serialNumber: '900003', docType: YpayDocType.TaxInvoiceReceipt, date: '2026-08-10', customerName: 'אילן עוז', netAmount: 1120, vatAmount: 201.6, grossAmount: 1321.6 }
-    const doc = buildYpayDocumentFromImportRow(row)
+    const doc = await buildYpayDocumentFromImportRow(row)
     expect(doc.amount).toBe(1321.6)
+  })
+
+  it('links to a matching income transaction instead of a synthetic id (aglamazo#381: "incomes should go into existing business")', async () => {
+    await db.subjects.add({ id: 'cat-1', name: 'הכנסות ייעוץ', type: 'income', businessId: 'biz-1' } as any)
+    await db.transactions.add({
+      type: 'income', date: '2026-08-10', amount: 1321.6, description: 'אילן עוז',
+      category: 'הכנסות ייעוץ', syncId: 'tx-sync-900003', isFixed: false, month: '08/2026',
+    } as any)
+    const row = { serialNumber: '900003', docType: YpayDocType.TaxInvoiceReceipt, date: '2026-08-10', customerName: 'אילן עוז', netAmount: 1120, vatAmount: 201.6, grossAmount: 1321.6 }
+    const doc = await buildYpayDocumentFromImportRow(row)
+    expect(doc.transactionId).toBe('tx-sync-900003')
+  })
+
+  it('falls back to the synthetic id when a candidate transaction is not an income category', async () => {
+    await db.subjects.add({ id: 'cat-2', name: 'ציוד', type: 'expense', businessId: 'biz-1' } as any)
+    await db.transactions.add({
+      type: 'expense', date: '2026-08-10', amount: 1321.6, description: 'לא רלוונטי',
+      category: 'ציוד', syncId: 'tx-sync-999', isFixed: false, month: '08/2026',
+    } as any)
+    const row = { serialNumber: '900003', docType: YpayDocType.TaxInvoiceReceipt, date: '2026-08-10', customerName: 'אילן עוז', netAmount: 1120, vatAmount: 201.6, grossAmount: 1321.6 }
+    const doc = await buildYpayDocumentFromImportRow(row)
+    expect(doc.transactionId).toBe('ypay-import:900003')
+  })
+
+  it('falls back to the synthetic id when two income transactions match ambiguously', async () => {
+    await db.subjects.add({ id: 'cat-1', name: 'הכנסות ייעוץ', type: 'income', businessId: 'biz-1' } as any)
+    await db.transactions.add({ type: 'income', date: '2026-08-10', amount: 1321.6, description: 'a', category: 'הכנסות ייעוץ', syncId: 'tx-a', isFixed: false, month: '08/2026' } as any)
+    await db.transactions.add({ type: 'income', date: '2026-08-11', amount: 1321.6, description: 'b', category: 'הכנסות ייעוץ', syncId: 'tx-b', isFixed: false, month: '08/2026' } as any)
+    const row = { serialNumber: '900003', docType: YpayDocType.TaxInvoiceReceipt, date: '2026-08-10', customerName: 'אילן עוז', netAmount: 1120, vatAmount: 201.6, grossAmount: 1321.6 }
+    const doc = await buildYpayDocumentFromImportRow(row)
+    expect(doc.transactionId).toBe('ypay-import:900003')
   })
 })
 
 describe('importYpayIncomeRows', () => {
   beforeEach(async () => {
     await db.ypayDocuments.clear()
+    await db.transactions.clear()
+    await db.subjects.clear()
   })
   afterEach(async () => {
     await db.ypayDocuments.clear()
+    await db.transactions.clear()
+    await db.subjects.clear()
   })
 
-  it('adds a genuinely new document', async () => {
+  it('adds a genuinely new document, unlinked (no matching transaction imported yet)', async () => {
     const { imported, ignoredCount } = parseYpayIncomeExportRows(REAL_EXPORT_ROWS)
     const summary = await importYpayIncomeRows(imported, ignoredCount)
     expect(summary.added).toBe(7)
     expect(summary.ignoredType).toBe(5)
+    expect(summary.unmatchedCount).toBe(7)
     const stored = await db.ypayDocuments.filter((d) => d.serialNumber === '900003').first()
     expect(stored?.amount).toBe(1321.6)
+    expect(stored?.transactionId).toBe('ypay-import:900003')
+  })
+
+  it('links a new document to its real bank transaction when one already exists (aglamazo#381 fix)', async () => {
+    await db.subjects.add({ id: 'cat-1', name: 'הכנסות ייעוץ', type: 'income', businessId: 'biz-1' } as any)
+    await db.transactions.add({
+      type: 'income', date: '2026-08-10', amount: 1321.6, description: 'אילן עוז',
+      category: 'הכנסות ייעוץ', syncId: 'tx-sync-900003', isFixed: false, month: '08/2026',
+    } as any)
+    const { imported, ignoredCount } = parseYpayIncomeExportRows(REAL_EXPORT_ROWS)
+    const summary = await importYpayIncomeRows(imported, ignoredCount)
+    expect(summary.unmatchedCount).toBe(6) // one fewer than the fully-unmatched case above
+    const stored = await db.ypayDocuments.filter((d) => d.serialNumber === '900003').first()
+    expect(stored?.transactionId).toBe('tx-sync-900003')
+  })
+
+  it('re-links an already-imported orphaned row once its matching transaction is imported (the real Agla case)', async () => {
+    // Simulates the exact live sequence: the ypay file was imported FIRST
+    // (before the matching bank transaction existed locally), leaving a
+    // synthetic, business-unattributed transactionId. Re-running the same
+    // import after the bank statement is imported should pick up the match.
+    await db.ypayDocuments.add({
+      transactionId: 'ypay-import:900003',
+      url: '',
+      serialNumber: '900003',
+      docType: YpayDocType.TaxInvoiceReceipt,
+      amount: 1321.6,
+      createdAt: '2026-08-10T00:00:00.000Z',
+    })
+    await db.subjects.add({ id: 'cat-1', name: 'הכנסות ייעוץ', type: 'income', businessId: 'biz-1' } as any)
+    await db.transactions.add({
+      type: 'income', date: '2026-08-10', amount: 1321.6, description: 'אילן עוז',
+      category: 'הכנסות ייעוץ', syncId: 'tx-sync-900003', isFixed: false, month: '08/2026',
+    } as any)
+    const { imported, ignoredCount } = parseYpayIncomeExportRows(REAL_EXPORT_ROWS)
+    const summary = await importYpayIncomeRows(imported, ignoredCount)
+    expect(summary.repaired).toBeGreaterThanOrEqual(1)
+    const stored = await db.ypayDocuments.filter((d) => d.serialNumber === '900003').first()
+    expect(stored?.transactionId).toBe('tx-sync-900003')
+    expect(stored?.amount).toBe(1321.6) // untouched — already correct
   })
 
   it('repairs an existing stub (no amount) instead of skipping it (the real #380 case)', async () => {

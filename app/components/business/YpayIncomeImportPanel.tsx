@@ -73,6 +73,11 @@ export default function YpayIncomeImportPanel({ onImported }: Props) {
           <p style={{ margin: 0, color: '#166534' }}>
             נוספו {summary.added} · תוקנו {summary.repaired} · תקינים כבר {summary.alreadyCorrect} · דולגו (סוג לא רלוונטי) {summary.ignoredType}
           </p>
+          {summary.unmatchedCount > 0 && (
+            <p style={{ margin: '0.25rem 0 0', color: '#b45309' }}>
+              ⚠️ {summary.unmatchedCount} מסמכים ללא עסקה תואמת בבנק/אשראי — לא משויכים לעסק עדיין; ניתן לקשר ידנית בטאב ההכנסות (&quot;קשר&quot;) לאחר שהעסקה תיובא.
+            </p>
+          )}
           {summary.possibleTestRows.length > 0 && (
             <p style={{ margin: '0.25rem 0 0', color: '#b45309' }}>
               ⚠️ שורות שנראות כמו בדיקות (לקוח &quot;בדיקות&quot;) — נכנסו, לבדוק ידנית: {summary.possibleTestRows.join(', ')}

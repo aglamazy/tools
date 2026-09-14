@@ -1,5 +1,45 @@
-import { db, type YpayDocument } from '@/app/db/financeDB'
+import { db, type YpayDocument, type Transaction } from '@/app/db/financeDB'
 import { YpayDocType } from '@/app/services/ypayService'
+import { subjectStore } from '@/app/stores/subjectStore'
+
+const SYNTHETIC_TRANSACTION_ID_PREFIX = 'ypay-import:'
+const MATCH_TOLERANCE_DAYS = 5
+
+/**
+ * A ypayDocuments row belongs to a business via either a linked transaction
+ * or a matching projectName (sharedBusinessSyncService.ts) — there is no
+ * businessId field on the table at all. A synthetic `ypay-import:<serial>`
+ * transactionId (the old always-unlinked shape) matches neither, so an
+ * imported row was an orphan: it existed, but no business tab ever showed
+ * it (aglamazo#381, Agla: "the incomes should go into existing business").
+ *
+ * Fix: look for an already-imported bank/card Transaction whose amount and
+ * date match the real, gross-amount deposit this document represents, and
+ * link to ITS syncId instead — the existing category->business chain then
+ * attributes the document correctly, with no new field needed. A row with
+ * no unambiguous match stays on the synthetic key (same as an invoice that
+ * genuinely hasn't been paid yet) rather than guessing.
+ */
+async function findMatchingIncomeTransactionId(grossAmount: number, date: string): Promise<string | undefined> {
+  if (!date) return undefined
+  const incomeCategories = await subjectStore.getIncomeCategories()
+  const incomeCatNames = new Set(incomeCategories.map((c) => c.name))
+  if (incomeCatNames.size === 0) return undefined
+
+  const dateMs = new Date(date).getTime()
+  if (Number.isNaN(dateMs)) return undefined
+
+  const allTransactions = await db.transactions.toArray()
+  const candidates = allTransactions.filter((t: Transaction) => {
+    if (!t.syncId || !t.category || !incomeCatNames.has(t.category)) return false
+    if (Math.abs((t.amount || 0) - grossAmount) > 0.01) return false
+    const tMs = new Date(t.date).getTime()
+    if (Number.isNaN(tMs)) return false
+    return Math.abs(tMs - dateMs) <= MATCH_TOLERANCE_DAYS * 24 * 60 * 60 * 1000
+  })
+
+  return candidates.length === 1 ? candidates[0].syncId : undefined
+}
 
 // aglamazo#381 (Agla, 2026-09-14): ypay's own API has no bulk "list my
 // documents" endpoint (checked against the v1.9 API doc — only Document
@@ -105,10 +145,11 @@ export function parseYpayIncomeExportRows(rows: unknown[][]): {
  * matching only); every other importable type (109) stores the GROSS
  * amount directly.
  */
-export function buildYpayDocumentFromImportRow(row: YpayIncomeImportRow): Omit<YpayDocument, 'id' | 'syncId' | 'updatedAt'> {
+export async function buildYpayDocumentFromImportRow(row: YpayIncomeImportRow): Promise<Omit<YpayDocument, 'id' | 'syncId' | 'updatedAt'>> {
   const amount = row.docType === YpayDocType.TaxInvoice ? row.netAmount : row.grossAmount
+  const matchedTransactionId = await findMatchingIncomeTransactionId(row.grossAmount, row.date)
   return {
-    transactionId: `ypay-import:${row.serialNumber}`,
+    transactionId: matchedTransactionId || `${SYNTHETIC_TRANSACTION_ID_PREFIX}${row.serialNumber}`,
     url: '',
     serialNumber: row.serialNumber,
     docType: row.docType,
@@ -119,24 +160,31 @@ export function buildYpayDocumentFromImportRow(row: YpayIncomeImportRow): Omit<Y
 
 export type YpayIncomeImportSummary = {
   added: number
-  repaired: number // an existing STUB record (no amount) got its real amount+date filled in
+  repaired: number // an existing STUB record (no amount, or an orphaned synthetic transactionId) got fixed in place
   alreadyCorrect: number
   ignoredType: number
+  unmatchedCount: number // imported/kept on the synthetic key — no unambiguous matching transaction found, so not attributed to a business yet
   possibleTestRows: string[] // serialNumbers whose customer name suggests test/sandbox data — flagged, not excluded
 }
+
+const isSynthetic = (transactionId: string | undefined) => !!transactionId?.startsWith(SYNTHETIC_TRANSACTION_ID_PREFIX)
 
 /**
  * Imports the parsed rows into db.ypayDocuments, deduped by serialNumber
  * against whatever's already there (aglamazo#381: "should be taken care
- * and dedup from existing data"). Three outcomes per row:
- *   - no existing record with this serial -> add a new one.
- *   - an existing record with no `amount` (the #380 stub shape) -> repair
- *     it in place with the real amount/date, keeping everything else
- *     (transactionId, url, closesAllocations) untouched.
- *   - an existing record that already has a real amount -> leave it alone;
- *     it's already correct (created directly inside Aglamazo, or already
- *     fixed) and this import must never clobber a real, possibly-different
- *     figure with a guess.
+ * and dedup from existing data"). Outcomes per row:
+ *   - no existing record with this serial -> add a new one, linked to a
+ *     matching transaction when one is found (see
+ *     findMatchingIncomeTransactionId) so it's attributed to the right
+ *     business, same as the manual "קשר" link flow.
+ *   - an existing record with no `amount` (the #380 stub shape) and/or a
+ *     still-orphaned synthetic transactionId (rows imported before this fix)
+ *     -> repair whichever of those is wrong, keeping everything else
+ *     (url, closesAllocations) untouched.
+ *   - an existing record that already has a real amount AND a real
+ *     (non-synthetic) transactionId -> leave it alone; it's already correct
+ *     and this import must never clobber a real, possibly-different figure
+ *     or a manually-set link with a guess.
  */
 export async function importYpayIncomeRows(
   rows: YpayIncomeImportRow[],
@@ -147,6 +195,7 @@ export async function importYpayIncomeRows(
     repaired: 0,
     alreadyCorrect: 0,
     ignoredType: ignoredCount,
+    unmatchedCount: 0,
     possibleTestRows: [],
   }
 
@@ -158,14 +207,33 @@ export async function importYpayIncomeRows(
       .first()
 
     if (!existing) {
-      await db.ypayDocuments.add(buildYpayDocumentFromImportRow(row))
+      const built = await buildYpayDocumentFromImportRow(row)
+      await db.ypayDocuments.add(built)
       summary.added++
-    } else if (!existing.amount) {
-      const built = buildYpayDocumentFromImportRow(row)
-      await db.ypayDocuments.update(existing.id!, { amount: built.amount, createdAt: built.createdAt })
-      summary.repaired++
+      if (isSynthetic(built.transactionId)) summary.unmatchedCount++
     } else {
-      summary.alreadyCorrect++
+      const needsAmount = !existing.amount
+      const needsRelink = isSynthetic(existing.transactionId)
+      if (needsAmount || needsRelink) {
+        const built = await buildYpayDocumentFromImportRow(row)
+        const patch: Partial<YpayDocument> = {}
+        if (needsAmount) {
+          patch.amount = built.amount
+          patch.createdAt = built.createdAt
+        }
+        if (needsRelink && !isSynthetic(built.transactionId)) {
+          patch.transactionId = built.transactionId
+        }
+        if (Object.keys(patch).length > 0) {
+          await db.ypayDocuments.update(existing.id!, patch)
+          summary.repaired++
+        } else {
+          summary.alreadyCorrect++
+        }
+        if (isSynthetic(patch.transactionId ?? existing.transactionId)) summary.unmatchedCount++
+      } else {
+        summary.alreadyCorrect++
+      }
     }
   }
 
