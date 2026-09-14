@@ -44,9 +44,13 @@ async function handler(req: NextRequest) {
       ],
       anthropicApiKey: apiKey,
       geminiModel: 'gemini-2.5-flash',
-      geminiMaxTokens: 2048,
+      // aglamazo#385: reproduced live against Agla's real 20/07/2026 notice —
+      // 2048 truncated a 6-row schedule mid-response (finishReason=MAX_TOKENS).
+      // A full 12-row schedule with per-row QR paymentUrl strings needs more
+      // headroom than a flat monthly-amount notice does.
+      geminiMaxTokens: 4096,
       anthropicModel: 'claude-sonnet-5',
-      anthropicMaxTokens: 2048,
+      anthropicMaxTokens: 4096,
     })
 
     if (!result.ok) {
