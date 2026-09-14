@@ -261,7 +261,12 @@ function AnnualSummarySubTab() {
     }).catch(() => setTaxExemptInfo(null))
   }, [selectedUser, relevantBusinesses.length, transactions.length])
 
-  const handleUploadReceipt = async (month: string, file: File) => {
+  // aglamazo#387 — Agla: "if these two where paid, we need to upload the
+  // approval and mark them as paid," pointing at BTL months that only
+  // SelfEmployedIncomeTaxSection could handle. AdvancePayment.type already
+  // supports 'btl' (unused until now) — no schema change, just wiring the
+  // same upload+mark flow through with the right type.
+  const handleUploadReceipt = async (month: string, file: File, type: 'incomeTax' | 'btl' = 'incomeTax') => {
     const seBiz = relevantBusinesses.filter(b => !b.isTaxFree)
     const businessId = seBiz[0]?.syncId
     if (!businessId) {
@@ -289,7 +294,7 @@ function AnnualSummarySubTab() {
       // Check for existing record
       const existing = await db.advancePayments
         .where('[businessId+month+type]')
-        .equals([businessId, month, 'incomeTax'])
+        .equals([businessId, month, type])
         .first()
 
       // Dexie's update({k: undefined}) deletes the key. If this re-upload's
@@ -309,7 +314,7 @@ function AnnualSummarySubTab() {
         await db.advancePayments.add({
           businessId,
           month,
-          type: 'incomeTax',
+          type,
           paidAt: new Date().toISOString(),
           ...driveFields,
           userId: getUser()?.uid,
@@ -483,7 +488,7 @@ type SummarySectionsProps = {
   btlRates: BTLRates | null
   incomeTaxBrackets: IncomeTaxStep[] | null
   advancePayments: AdvancePayment[]
-  onUploadReceipt: (month: string, file: File) => Promise<void>
+  onUploadReceipt: (month: string, file: File, type?: 'incomeTax' | 'btl') => Promise<void>
   taxProfile?: TaxProfile
   personUid?: string
 }
@@ -543,6 +548,8 @@ function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBu
               rates={btlRates}
               taxProfile={taxProfile}
               personUid={personUid}
+              advancePayments={advancePayments}
+              onUploadReceipt={onUploadReceipt}
             />
           )}
           {incomeTaxBrackets && incomeTaxBrackets.length > 0 && (

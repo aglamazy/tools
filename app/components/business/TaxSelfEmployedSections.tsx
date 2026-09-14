@@ -115,10 +115,14 @@ function computeMonthlyBTL(monthlyIncome: number, rates: BTLRates) {
   return { nationalInsurance, healthInsurance, total: nationalInsurance + healthInsurance }
 }
 
-export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, rates, taxProfile, personUid }: {
+export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMap, expCategoryMap, currentYear, currentMonth, rates, taxProfile, personUid, advancePayments, onUploadReceipt }: {
   businesses: Business[]; transactions: Transaction[]; bizCategoryMap: Map<string, string[]>
   expCategoryMap: Map<string, string[]>; currentYear: number; currentMonth: number; rates: BTLRates; taxProfile?: TaxProfile; personUid?: string
+  advancePayments?: AdvancePayment[]
+  onUploadReceipt?: (month: string, file: File, type?: 'incomeTax' | 'btl') => Promise<void>
 }) {
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [uploadMonth, setUploadMonth] = useState<string | null>(null)
   const seBiz = businesses.filter(b => !b.isTaxFree)
   if (seBiz.length === 0) return null
 
@@ -181,7 +185,13 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
     const actualRefunded = btlRefundTx
       .filter((t) => t.month === payMonth)
       .reduce((s, t) => s + Math.abs(t.amount || 0), 0)
-    const paid = actualPaid > 0
+    // aglamazo#387: a month can also be marked paid manually (paid directly
+    // on BTL's site, approval uploaded here) before any matching bank
+    // transaction lands — same shape as the income-tax section's
+    // paymentRecord, now wired up for BTL too.
+    const monthKey = `${String(i + 1).padStart(2, '0')}/${currentYear}`
+    const paymentRecord = advancePayments?.find(p => p.month === monthKey && p.type === 'btl')
+    const paid = actualPaid > 0 || !!paymentRecord?.paidAt
 
     // Expected amount: prefer schedule entry for this month, else the flat fallback.
     const scheduled = scheduleByMonth.get(monthStr)
@@ -213,7 +223,7 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
       label: HEBREW_MONTHS[i],
       income, expenses, netIncome, ...btl,
       expected, actualPaid, actualRefunded, status, diff,
-      deadline, windowStart,
+      deadline, windowStart, monthKey, paymentRecord,
     }
   })
 
@@ -261,6 +271,20 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
         <span>ביטוח בריאות: {rates.reduced.healthInsurance}%/{rates.regular.healthInsurance}% (סף: {fmt(rates.threshold)})</span>
         <span>תקרה: {fmt(rates.maxIncome)}</span>
       </div>
+      <input
+        type="file"
+        ref={fileInputRef}
+        style={{ display: 'none' }}
+        accept=".pdf,.png,.jpg,.jpeg,.webp"
+        onChange={async (e) => {
+          const file = e.target.files?.[0]
+          if (file && uploadMonth && onUploadReceipt) {
+            await onUploadReceipt(uploadMonth, file, 'btl')
+          }
+          e.target.value = ''
+          setUploadMonth(null)
+        }}
+      />
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
         <thead>
           <tr>
@@ -291,42 +315,55 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
               <td style={{ ...cellStyle, background: '#faf5ff', fontWeight: 500 }}>{row.total ? fmt(row.total) : '—'}</td>
               {hasDownpayment && <td style={cellStyle}>{row.expected ? fmt(row.expected) : '—'}</td>}
               {hasDownpayment && (
-                <td style={{ ...cellStyle, fontSize: '1rem', textAlign: 'center' }} title={
+                <td style={{ ...cellStyle, fontSize: '1rem' }} title={
                   row.status === 'paid' ? `שולם ✓ · סכום שנמצא: ${fmt(row.actualPaid)}`
                   : row.status === 'overdue' ? `באיחור — לא נמצא תשלום לאחר ${row.deadline.toLocaleDateString('he-IL')}`
                   : row.status === 'due-soon' ? `פעולה נדרשת — עד ${row.deadline.toLocaleDateString('he-IL')}`
                   : `יופיע לפעולה ב-${row.windowStart.toLocaleDateString('he-IL')}`
                 }>
-                  {row.status === 'paid' && (
-                    <span style={{ color: '#16a34a', fontWeight: 700 }}>✓</span>
-                  )}
-                  {row.status === 'overdue' && (
-                    <span style={{
-                      display: 'inline-block',
-                      padding: '0.1rem 0.4rem',
-                      background: '#fef2f2',
-                      border: '1px solid #fecaca',
-                      borderRadius: '0.375rem',
-                      color: '#b91c1c',
-                      fontSize: '0.85rem',
-                      fontWeight: 600,
-                    }}>🚨 באיחור</span>
-                  )}
-                  {row.status === 'due-soon' && (
-                    <span style={{
-                      display: 'inline-block',
-                      padding: '0.1rem 0.4rem',
-                      background: '#fefce8',
-                      border: '1px solid #fde68a',
-                      borderRadius: '0.375rem',
-                      color: '#a16207',
-                      fontSize: '0.85rem',
-                      fontWeight: 600,
-                    }}>⏰ לתשלום</span>
-                  )}
-                  {row.status === 'upcoming' && (
-                    <span style={{ color: '#cbd5e1' }}>·</span>
-                  )}
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
+                    {row.status === 'paid' && (
+                      <span style={{ color: '#16a34a', fontWeight: 700 }}>✓</span>
+                    )}
+                    {row.status === 'overdue' && (
+                      <span style={{
+                        display: 'inline-block',
+                        padding: '0.1rem 0.4rem',
+                        background: '#fef2f2',
+                        border: '1px solid #fecaca',
+                        borderRadius: '0.375rem',
+                        color: '#b91c1c',
+                        fontSize: '0.85rem',
+                        fontWeight: 600,
+                      }}>🚨 באיחור</span>
+                    )}
+                    {row.status === 'due-soon' && (
+                      <span style={{
+                        display: 'inline-block',
+                        padding: '0.1rem 0.4rem',
+                        background: '#fefce8',
+                        border: '1px solid #fde68a',
+                        borderRadius: '0.375rem',
+                        color: '#a16207',
+                        fontSize: '0.85rem',
+                        fontWeight: 600,
+                      }}>⏰ לתשלום</span>
+                    )}
+                    {row.status === 'upcoming' && (
+                      <span style={{ color: '#cbd5e1' }}>·</span>
+                    )}
+                    {row.status === 'paid' && row.paymentRecord?.driveWebViewLink && (
+                      <a href={row.paymentRecord.driveWebViewLink} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', fontSize: '0.75rem' }}>אישור</a>
+                    )}
+                    {row.status !== 'paid' && onUploadReceipt && (
+                      <button
+                        onClick={() => { setUploadMonth(row.monthKey); fileInputRef.current?.click() }}
+                        style={{ background: 'none', border: '1px solid #e2e8f0', borderRadius: '0.25rem', padding: '0.1rem 0.35rem', cursor: 'pointer', fontSize: '0.7rem', color: '#64748b' }}
+                      >
+                        העלה אישור
+                      </button>
+                    )}
+                  </span>
                 </td>
               )}
               {hasDownpayment && <td style={{ ...cellStyle, color: '#16a34a' }}>{row.actualPaid ? fmt(row.actualPaid) : '—'}</td>}
@@ -406,7 +443,7 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
   expCategoryMap: Map<string, string[]>; currentYear: number; currentMonth: number; btlRates: BTLRates | null; brackets: IncomeTaxStep[]
   salaryDocs: TaxDocument[]
   advancePayments?: AdvancePayment[]
-  onUploadReceipt?: (month: string, file: File) => Promise<void>
+  onUploadReceipt?: (month: string, file: File, type?: 'incomeTax' | 'btl') => Promise<void>
   taxProfile?: TaxProfile
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
