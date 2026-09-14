@@ -59,6 +59,23 @@ const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
 const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash'
 const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5'
 
+// aglamazo#385 (Sheli, 2026-09-14; Agla follow-up, same day: "make sure
+// Aglamazo take the model name from the maker/model name and handle the
+// temp field"): the live Anthropic fallback started rejecting requests with
+// "`temperature` is deprecated for this model" for claude-sonnet-5. Keyed
+// by exact model string, not a blanket per-vendor rule — Anthropic (and any
+// future maker) can drop `temperature` support model-by-model as reasoning-
+// capable models roll out, and a different/older model may still both
+// accept and benefit from it. Add a model string here the moment a maker's
+// own error says it no longer accepts the parameter; every extraction route
+// (extract-btl-notice, extract-pdf-statement, extract-xls-statement,
+// extract-expense-doc, extract-tax-doc) shares this one check.
+const MODELS_WITHOUT_TEMPERATURE_SUPPORT = new Set<string>(['claude-sonnet-5'])
+
+export function modelSupportsTemperature(model: string): boolean {
+  return !MODELS_WITHOUT_TEMPERATURE_SUPPORT.has(model)
+}
+
 export async function extractJsonWithFallback<T>(options: ExtractionLadderOptions<T>): Promise<ExtractionResult<T>> {
   const parse = options.parse ?? parseClaudeJson<T>
   const geminiKey = process.env.GEMINI_API_KEY?.trim()
@@ -295,15 +312,6 @@ async function tryAnthropic<T>(options: {
   const content = options.userParts.map(mapAnthropicPart)
   const hasPdf = options.userParts.some((part) => part.type === 'document')
 
-  // aglamazo#385 (Sheli, 2026-09-14): the live Anthropic fallback started
-  // rejecting requests with "`temperature` is deprecated for this model" —
-  // this is the ONLY place in the codebase that sends `temperature` to
-  // Anthropic, shared by every extraction route (extract-btl-notice,
-  // extract-pdf-statement, extract-xls-statement, extract-expense-doc,
-  // extract-tax-doc), so fixing it here fixes all of them at once. Every
-  // caller here already asks for strict JSON with explicit formatting
-  // instructions, so dropping the parameter (Anthropic's own default) costs
-  // nothing extraction-quality-wise.
   const body: Record<string, unknown> = {
     model: options.model,
     max_tokens: options.maxTokens,
@@ -312,6 +320,9 @@ async function tryAnthropic<T>(options: {
       role: 'user',
       content,
     }],
+  }
+  if (options.temperature != null && modelSupportsTemperature(options.model)) {
+    body.temperature = options.temperature
   }
 
   try {
