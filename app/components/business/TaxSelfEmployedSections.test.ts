@@ -130,44 +130,38 @@ describe('resolveBtlPaidForMonth', () => {
   })
 })
 
-// aglamazo#386, Agla (twice): "this page should reflect my balance with
-// BTL" / "the refund is not here." Real 2026 shape: charged ₪6,013/month
-// Jan-Jun then ₪1,091/month Jul-Dec (per #376/#385); paid ₪6,013 x4 +
-// ₪6,033 landing Feb-Jun; a ₪23,744 refund landing in July.
+// aglamazo#391 (supersedes #386's charged-minus-paid-plus-refunded
+// definition — Sheli, after #390 established that a month's "charged"
+// figure can itself be unreliable/overridden, so it should never enter a
+// figure meant to track real money movement): net of what Agla has
+// actually put into BTL — payments minus refunds, cumulative, charges never
+// enter it. Real 2026 total: ₪30,085 paid − ₪23,744 refunded = ₪6,341,
+// matching the income-tax table's own #384 footnote exactly.
 describe('computeBtlRunningBalance', () => {
-  it('nets to zero when charged equals paid exactly, with no refund', () => {
-    const balances = computeBtlRunningBalance([{ charged: 6013, paid: 6013, refunded: 0 }])
-    expect(balances).toEqual([0])
+  it('accumulates payments with no refund', () => {
+    const balances = computeBtlRunningBalance([{ paid: 6013, refunded: 0 }, { paid: 6013, refunded: 0 }])
+    expect(balances).toEqual([6013, 12026])
   })
 
-  it('carries an unpaid charge forward as an open balance', () => {
+  it('an unpaid, unrefunded month carries the previous line forward rather than accruing', () => {
     const balances = computeBtlRunningBalance([
-      { charged: 6013, paid: 6013, refunded: 0 },
-      { charged: 6013, paid: 0, refunded: 0 }, // not yet paid
+      { paid: 6013, refunded: 0 },
+      { paid: 0, refunded: 0 }, // nothing happened this month
     ])
-    expect(balances).toEqual([0, 6013])
+    expect(balances).toEqual([6013, 6013])
   })
 
-  it('a refund RE-OPENS balance rather than just canceling the payment it followed (the real July case)', () => {
-    // Jan-May: charged and paid in step, balance stays 0. June: charged
-    // 6,013 but only 6,033 was paid against May (close enough, treated as
-    // settled for this test) and NOTHING pays June's own charge yet, THEN
-    // BTL refunds 23,744 — the refund makes the running balance jump
-    // strongly positive (Agla is owed nothing further; on our OWN
-    // charged-vs-paid bookkeeping this reads as him being far ahead, which
-    // is exactly why the UI frames it as "per our records" rather than
-    // BTL's own יתרה — see the component's caveat note).
-    const rows = [
-      { charged: 6013, paid: 6013, refunded: 0 }, // Jan
-      { charged: 6013, paid: 6013, refunded: 0 }, // Feb
-      { charged: 6013, paid: 6013, refunded: 0 }, // Mar
-      { charged: 6013, paid: 6013, refunded: 0 }, // Apr
-      { charged: 6013, paid: 6033, refunded: 0 }, // May (paid slightly more)
-      { charged: 6013, paid: 0, refunded: 23744 }, // Jun: unpaid + the refund lands here
-    ]
-    const balances = computeBtlRunningBalance(rows)
-    expect(balances[4]).toBe(-20) // slight overpay through May
-    expect(balances[5]).toBe(-20 + 6013 + 23744) // June's unpaid charge plus the refund
+  it('a refund reduces the running net (the real July case)', () => {
+    const balances = computeBtlRunningBalance([
+      { paid: 6013, refunded: 0 }, // Jan
+      { paid: 6013, refunded: 0 }, // Feb
+      { paid: 6013, refunded: 0 }, // Mar
+      { paid: 6013, refunded: 0 }, // Apr
+      { paid: 6033, refunded: 0 }, // May
+      { paid: 0, refunded: 23744 }, // Jun: the refund lands here
+    ])
+    expect(balances[4]).toBe(30085) // 6013*4 + 6033
+    expect(balances[5]).toBe(30085 - 23744) // = 6341, the real annual net
   })
 
   it('sums to zero across an empty year', () => {
