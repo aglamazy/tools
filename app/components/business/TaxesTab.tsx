@@ -357,6 +357,40 @@ function AnnualSummarySubTab() {
     }
   }
 
+  // Agla, live: "Add detach option to file, so I can upload the correct
+  // file." Clears the attached receipt + extracted amount and resets the
+  // row back to unpaid, so the upload control reappears and he can attach
+  // the right document. Doesn't touch the file already sitting in Drive —
+  // only detaches the local reference.
+  const handleDetachReceipt = async (month: string, type: 'incomeTax' | 'btl' = 'incomeTax') => {
+    const seBiz = relevantBusinesses.filter(b => !b.isTaxFree)
+    const businessId = seBiz[0]?.syncId
+    if (!businessId) {
+      throw new Error('לא נמצא עסק עצמאי לשיוך הקבלה')
+    }
+    try {
+      const existing = await db.advancePayments
+        .where('[businessId+month+type]')
+        .equals([businessId, month, type])
+        .first()
+      if (!existing) return
+
+      await db.advancePayments.update(existing.id!, {
+        paidAt: undefined,
+        driveFileId: undefined,
+        driveWebViewLink: undefined,
+        fileName: undefined,
+        amount: undefined,
+      })
+
+      const advPay = await db.advancePayments.filter(p => p.month.endsWith(`/${currentYear}`)).toArray()
+      setAdvancePayments(advPay)
+    } catch (err) {
+      console.error('[AdvancePayment] detach failed:', err)
+      throw err instanceof Error ? err : new Error('הסרת הקבלה נכשלה')
+    }
+  }
+
   if (loading) return <p style={{ textAlign: 'center', color: '#94a3b8' }}>טוען...</p>
 
   // Build user tabs
@@ -491,6 +525,7 @@ function AnnualSummarySubTab() {
             incomeTaxBrackets={incomeTaxBrackets}
             advancePayments={advancePayments}
             onUploadReceipt={handleUploadReceipt}
+            onDetachReceipt={handleDetachReceipt}
             taxProfile={taxProfile}
             personUid={selectedUser}
           />
@@ -516,11 +551,12 @@ type SummarySectionsProps = {
   incomeTaxBrackets: IncomeTaxStep[] | null
   advancePayments: AdvancePayment[]
   onUploadReceipt: (month: string, file: File, type?: 'incomeTax' | 'btl') => Promise<void>
+  onDetachReceipt: (month: string, type?: 'incomeTax' | 'btl') => Promise<void>
   taxProfile?: TaxProfile
   personUid?: string
 }
 
-function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBusinesses, transactions, bizCategoryMap, expCategoryMap, categoryByName, currentYear, currentMonth, taxExemptInfo, btlRates, incomeTaxBrackets, advancePayments, onUploadReceipt, taxProfile, personUid }: SummarySectionsProps) {
+function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBusinesses, transactions, bizCategoryMap, expCategoryMap, categoryByName, currentYear, currentMonth, taxExemptInfo, btlRates, incomeTaxBrackets, advancePayments, onUploadReceipt, onDetachReceipt, taxProfile, personUid }: SummarySectionsProps) {
   const [activeSection, setActiveSection] = useState(sections[0].id)
 
   return (
@@ -578,6 +614,7 @@ function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBu
               personUid={personUid}
               advancePayments={advancePayments}
               onUploadReceipt={onUploadReceipt}
+              onDetachReceipt={onDetachReceipt}
             />
           )}
           {incomeTaxBrackets && incomeTaxBrackets.length > 0 && (
@@ -594,6 +631,7 @@ function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBu
               salaryDocs={filteredDocs}
               advancePayments={advancePayments}
               onUploadReceipt={onUploadReceipt}
+              onDetachReceipt={onDetachReceipt}
               taxProfile={taxProfile}
             />
           )}

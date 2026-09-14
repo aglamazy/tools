@@ -146,12 +146,13 @@ function computeMonthlyBTL(monthlyIncome: number, rates: BTLRates) {
   return { nationalInsurance, healthInsurance, total: nationalInsurance + healthInsurance }
 }
 
-export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMap, expCategoryMap, categoryByName, currentYear, currentMonth, rates, taxProfile, personUid, advancePayments, onUploadReceipt }: {
+export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMap, expCategoryMap, categoryByName, currentYear, currentMonth, rates, taxProfile, personUid, advancePayments, onUploadReceipt, onDetachReceipt }: {
   businesses: Business[]; transactions: Transaction[]; bizCategoryMap: Map<string, string[]>
   expCategoryMap: Map<string, string[]>; categoryByName: Map<string, Category>
   currentYear: number; currentMonth: number; rates: BTLRates; taxProfile?: TaxProfile; personUid?: string
   advancePayments?: AdvancePayment[]
   onUploadReceipt?: (month: string, file: File, type?: 'incomeTax' | 'btl') => Promise<void>
+  onDetachReceipt?: (month: string, type?: 'incomeTax' | 'btl') => Promise<void>
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploadMonth, setUploadMonth] = useState<string | null>(null)
@@ -406,6 +407,18 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
                     {row.status === 'paid' && row.paymentRecord?.driveWebViewLink && (
                       <a href={row.paymentRecord.driveWebViewLink} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', fontSize: '0.75rem' }}>אישור</a>
                     )}
+                    {row.status === 'paid' && onDetachReceipt && (
+                      <button
+                        onClick={async () => {
+                          setUploadError(null)
+                          try { await onDetachReceipt(row.monthKey, 'btl') } catch (err) { setUploadError(err instanceof Error ? err.message : 'הסרת הקבלה נכשלה') }
+                        }}
+                        title="הסר קובץ — כדי להעלות את הקובץ הנכון"
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', color: '#dc2626', padding: 0 }}
+                      >
+                        ✕
+                      </button>
+                    )}
                     {row.status !== 'paid' && row.status !== 'none' && onUploadReceipt && (
                       <button
                         onClick={() => { setUploadMonth(row.monthKey); fileInputRef.current?.click() }}
@@ -489,13 +502,14 @@ function computeIncomeTax(income: number, brackets: IncomeTaxStep[]): number {
   return tax
 }
 
-export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCategoryMap, expCategoryMap, categoryByName, currentYear, currentMonth, btlRates, brackets, salaryDocs, advancePayments, onUploadReceipt, taxProfile }: {
+export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCategoryMap, expCategoryMap, categoryByName, currentYear, currentMonth, btlRates, brackets, salaryDocs, advancePayments, onUploadReceipt, onDetachReceipt, taxProfile }: {
   businesses: Business[]; transactions: Transaction[]; bizCategoryMap: Map<string, string[]>
   expCategoryMap: Map<string, string[]>; categoryByName: Map<string, Category>
   currentYear: number; currentMonth: number; btlRates: BTLRates | null; brackets: IncomeTaxStep[]
   salaryDocs: TaxDocument[]
   advancePayments?: AdvancePayment[]
   onUploadReceipt?: (month: string, file: File, type?: 'incomeTax' | 'btl') => Promise<void>
+  onDetachReceipt?: (month: string, type?: 'incomeTax' | 'btl') => Promise<void>
   taxProfile?: TaxProfile
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -776,6 +790,18 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
                         <span style={{ color: '#16a34a', fontWeight: 500, fontSize: '0.8rem' }}>שולם</span>
                         {row.paymentRecord.driveWebViewLink && (
                           <a href={row.paymentRecord.driveWebViewLink} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', fontSize: '0.75rem' }}>קבלה</a>
+                        )}
+                        {onDetachReceipt && (
+                          <button
+                            onClick={async () => {
+                              setUploadError(null)
+                              try { await onDetachReceipt(row.monthKey, 'incomeTax') } catch (err) { setUploadError(err instanceof Error ? err.message : 'הסרת הקבלה נכשלה') }
+                            }}
+                            title="הסר קובץ — כדי להעלות את הקובץ הנכון"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', color: '#dc2626', padding: 0 }}
+                          >
+                            ✕
+                          </button>
                         )}
                       </span>
                     ) : (
