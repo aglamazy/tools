@@ -82,3 +82,50 @@ export function isCrossFeedDuplicate(
 ): boolean {
   return a.date === b.date && a.amount === b.amount && merchantsMatchForDedup(a.text, b.text)
 }
+
+/** How many days apart two dates (as epoch ms — caller parses) may be and
+ * still be treated as the same near-duplicate transaction. See
+ * isOverlappingFileNearDuplicate's own comment for why this needs the
+ * file-overlap gate to be safe. */
+export const NEAR_DUPLICATE_DAY_TOLERANCE_MS = 2 * 24 * 60 * 60 * 1000
+
+/**
+ * True if two date ranges (each a [minMs, maxMs] pair, epoch ms) intersect
+ * at all. Two statement exports covering the same real period is the
+ * precondition aglamazo#375 needs before a ±day date mismatch is trusted —
+ * see isOverlappingFileNearDuplicate.
+ */
+export function dateRangesOverlap(
+  a: { minMs: number; maxMs: number },
+  b: { minMs: number; maxMs: number },
+): boolean {
+  return a.minMs <= b.maxMs && b.minMs <= a.maxMs
+}
+
+/**
+ * True if two SAME-amount, SAME-description (post-canonicalization) bank
+ * rows from two DIFFERENT files are the same real transaction that two
+ * overlapping statement exports simply printed on different days
+ * (aglamazo#375, Sheli 2026-09-14): a bank-reversal row appeared as
+ * 2026-08-06 in one PDF export and 2026-08-05 in another, ₪756.16 קיזוז
+ * counted twice in the live books because the two overlapping statements
+ * (Jul1–Aug16 and Aug1–Sep7) disagreed on the exact date.
+ *
+ * The file-range-overlap requirement is load-bearing, not incidental: Sheli's
+ * own retroactive sweep found the SAME amount+description ±day pattern on 3
+ * genuinely separate פנגו parking charges days apart — a blind "±2 days,
+ * same amount/description" rule would silently merge those. Two exports
+ * whose covered date ranges intersect is the only configuration where a
+ * date disagreement on the SAME row (not two really-different visits) can
+ * occur, so the tolerance only applies there.
+ */
+export function isOverlappingFileNearDuplicate(
+  a: { dateMs: number; amount: number; text: string; fileRange: { minMs: number; maxMs: number } | null },
+  b: { dateMs: number; amount: number; text: string; fileRange: { minMs: number; maxMs: number } | null },
+): boolean {
+  if (a.amount !== b.amount) return false
+  if (canonicalizeForDedup(a.text) !== canonicalizeForDedup(b.text)) return false
+  if (!a.fileRange || !b.fileRange || !dateRangesOverlap(a.fileRange, b.fileRange)) return false
+  if (a.dateMs === 0 || b.dateMs === 0) return false
+  return Math.abs(a.dateMs - b.dateMs) <= NEAR_DUPLICATE_DAY_TOLERANCE_MS
+}

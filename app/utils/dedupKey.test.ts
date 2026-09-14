@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { canonicalizeForDedup, merchantsMatchForDedup, isCrossFeedDuplicate } from './dedupKey'
+import {
+  canonicalizeForDedup,
+  merchantsMatchForDedup,
+  isCrossFeedDuplicate,
+  dateRangesOverlap,
+  isOverlappingFileNearDuplicate,
+} from './dedupKey'
+
+const ms = (date: string) => new Date(date).getTime()
 
 describe('canonicalizeForDedup', () => {
   it('collapses word-order-reversed (bidi) text to the same key', () => {
@@ -96,5 +104,60 @@ describe('isCrossFeedDuplicate', () => {
     const bank = { date: '2026-05-10', amount: -98.00, text: 'PELEPHONE' }
     const card = { date: '2026-05-10', amount: -98.00, text: 'MACSBAGS' }
     expect(isCrossFeedDuplicate(bank, card)).toBe(false)
+  })
+})
+
+describe('dateRangesOverlap', () => {
+  it('is true when ranges intersect', () => {
+    expect(dateRangesOverlap({ minMs: ms('2026-07-01'), maxMs: ms('2026-08-16') }, { minMs: ms('2026-08-01'), maxMs: ms('2026-09-07') })).toBe(true)
+  })
+
+  it('is false when ranges are disjoint', () => {
+    expect(dateRangesOverlap({ minMs: ms('2026-01-01'), maxMs: ms('2026-01-31') }, { minMs: ms('2026-06-01'), maxMs: ms('2026-06-30') })).toBe(false)
+  })
+
+  it('is true when ranges touch at a single point', () => {
+    expect(dateRangesOverlap({ minMs: ms('2026-01-01'), maxMs: ms('2026-02-01') }, { minMs: ms('2026-02-01'), maxMs: ms('2026-03-01') })).toBe(true)
+  })
+})
+
+// aglamazo#375, Sheli 2026-09-14: two overlapping bank-statement PDF exports
+// (Jul1-Aug16 and Aug1-Sep7) printed the same ₪756.16 קיזוז reversal on
+// different days (08-05 vs 08-06) -- exact-date dedup missed it, ₪756.16 of
+// phantom income landed in the classified books.
+describe('isOverlappingFileNearDuplicate', () => {
+  const overlappingRangeA = { minMs: ms('2026-07-01'), maxMs: ms('2026-08-16') }
+  const overlappingRangeB = { minMs: ms('2026-08-01'), maxMs: ms('2026-09-07') }
+
+  it('matches the real live קיזוז pair — same amount/description, 1 day apart, overlapping files', () => {
+    const a = { dateMs: ms('2026-08-06'), amount: 756.16, text: 'החזרת חיוב עפ הרשאה מסיבות טכניות הום סימיקארד', fileRange: overlappingRangeA }
+    const b = { dateMs: ms('2026-08-05'), amount: 756.16, text: 'החזרת חיוב עפ הרשאה מסיבות טכניות הום סימיקארד', fileRange: overlappingRangeB }
+    expect(isOverlappingFileNearDuplicate(a, b)).toBe(true)
+  })
+
+  it('does NOT match genuinely separate same-amount/description charges from non-overlapping files (the פנגו case)', () => {
+    const nonOverlappingA = { minMs: ms('2025-09-01'), maxMs: ms('2025-09-10') }
+    const nonOverlappingB = { minMs: ms('2025-09-20'), maxMs: ms('2025-09-30') }
+    const a = { dateMs: ms('2025-09-05'), amount: 25, text: 'פנגו-חניונים', fileRange: nonOverlappingA }
+    const b = { dateMs: ms('2025-09-06'), amount: 25, text: 'פנגו-חניונים', fileRange: nonOverlappingB }
+    expect(isOverlappingFileNearDuplicate(a, b)).toBe(false)
+  })
+
+  it('does not match beyond the day tolerance even with overlapping files', () => {
+    const a = { dateMs: ms('2026-08-01'), amount: 756.16, text: 'קיזוז', fileRange: overlappingRangeA }
+    const b = { dateMs: ms('2026-08-10'), amount: 756.16, text: 'קיזוז', fileRange: overlappingRangeB }
+    expect(isOverlappingFileNearDuplicate(a, b)).toBe(false)
+  })
+
+  it('does not match when the amount differs', () => {
+    const a = { dateMs: ms('2026-08-06'), amount: 756.16, text: 'קיזוז', fileRange: overlappingRangeA }
+    const b = { dateMs: ms('2026-08-05'), amount: 999, text: 'קיזוז', fileRange: overlappingRangeB }
+    expect(isOverlappingFileNearDuplicate(a, b)).toBe(false)
+  })
+
+  it('does not match when either file range is missing (no fileId or no parsable dates in that file)', () => {
+    const a = { dateMs: ms('2026-08-06'), amount: 756.16, text: 'קיזוז', fileRange: null }
+    const b = { dateMs: ms('2026-08-05'), amount: 756.16, text: 'קיזוז', fileRange: overlappingRangeB }
+    expect(isOverlappingFileNearDuplicate(a, b)).toBe(false)
   })
 })

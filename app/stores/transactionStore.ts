@@ -3,7 +3,12 @@
 
 import { db, Transaction, ImportedFile } from '@/app/db/financeDB'
 import { addMonths } from '@/app/utils/formatters'
-import { canonicalizeForDedup, merchantsMatchForDedup, isCrossFeedDuplicate } from '@/app/utils/dedupKey'
+import {
+  canonicalizeForDedup,
+  merchantsMatchForDedup,
+  isCrossFeedDuplicate,
+  isOverlappingFileNearDuplicate,
+} from '@/app/utils/dedupKey'
 import { findDuplicateTransactions, type DuplicateGroup } from '@/app/utils/findDuplicateTransactions'
 import { normalizeDate, parseDateMs } from '@/app/utils/parsers/shared'
 
@@ -286,15 +291,47 @@ export const transactionStore = {
       // credit-type row, not just this account's own bank rows.
       const existingCreditTransactions = await db.transactions.where('type').equals('credit').toArray()
 
+      // Overlapping-export near-duplicate check (aglamazo#375): two bank
+      // statement PDFs covering overlapping periods can print the SAME row
+      // on different days (a reversal appeared as 08-05 in one export,
+      // 08-06 in the other) — the exact-date heuristic above misses this
+      // entirely. Only trusted when the two FILES' covered date ranges
+      // actually overlap (see isOverlappingFileNearDuplicate's own comment
+      // for why that gate matters — without it, genuinely separate same-
+      // amount/description charges days apart would wrongly merge).
+      const existingByFile = new Map<string, Transaction[]>()
+      for (const t of existingTransactions) {
+        if (!t.fileId) continue
+        if (!existingByFile.has(t.fileId)) existingByFile.set(t.fileId, [])
+        existingByFile.get(t.fileId)!.push(t)
+      }
+      const fileDateRange = (dates: string[]): { minMs: number; maxMs: number } | null => {
+        const times = dates.map((d) => parseDateMs(d)).filter((ms) => ms > 0)
+        if (times.length === 0) return null
+        return { minMs: Math.min(...times), maxMs: Math.max(...times) }
+      }
+      const existingFileRanges = new Map<string, { minMs: number; maxMs: number } | null>()
+      for (const [fid, txs] of existingByFile) {
+        existingFileRanges.set(fid, fileDateRange(txs.map((t) => t.date)))
+      }
+      const newBatchRange = fileDateRange(transactions.map((t) => t.date))
+
       // Filter out duplicates
       const newTransactions = transactions.filter((t) => {
         if (t.reference && existingRefKeys.has(refKey(t.date, t.reference, t.amount))) return false
         const key = `${t.date}|${canonicalizeForDedup(t.description)}|${t.amount}`
         if (existingHeuristicKeys.has(key)) return false
-        return !existingCreditTransactions.some((ct) =>
+        if (existingCreditTransactions.some((ct) =>
           isCrossFeedDuplicate(
             { date: t.date, amount: t.amount, text: t.description || '' },
             { date: ct.date, amount: ct.amount, text: ct.merchant || ct.description || '' }
+          )
+        )) return false
+        return !existingTransactions.some((et) =>
+          et.fileId !== fileId &&
+          isOverlappingFileNearDuplicate(
+            { dateMs: parseDateMs(t.date), amount: t.amount, text: t.description || '', fileRange: newBatchRange },
+            { dateMs: parseDateMs(et.date), amount: et.amount, text: et.description || '', fileRange: et.fileId ? existingFileRanges.get(et.fileId) ?? null : null }
           )
         )
       })
