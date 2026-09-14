@@ -270,8 +270,7 @@ function AnnualSummarySubTab() {
     const seBiz = relevantBusinesses.filter(b => !b.isTaxFree)
     const businessId = seBiz[0]?.syncId
     if (!businessId) {
-      console.error('[AdvancePayment] upload aborted: no self-employed business found for', selectedUser)
-      return
+      throw new Error('לא נמצא עסק עצמאי לשיוך הקבלה')
     }
 
     // Drive upload is best-effort — never let it block the local "paid" save.
@@ -327,6 +326,7 @@ function AnnualSummarySubTab() {
       setAdvancePayments(advPay)
     } catch (err) {
       console.error('[AdvancePayment] local DB save failed:', err)
+      throw err instanceof Error ? err : new Error('שמירת האישור נכשלה')
     }
   }
 

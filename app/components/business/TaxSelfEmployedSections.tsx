@@ -152,6 +152,7 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploadMonth, setUploadMonth] = useState<string | null>(null)
+  const [uploadError, setUploadError] = useState<string | null>(null)
   const seBiz = businesses.filter(b => !b.isTaxFree)
   if (seBiz.length === 0) return null
 
@@ -300,12 +301,22 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
         onChange={async (e) => {
           const file = e.target.files?.[0]
           if (file && uploadMonth && onUploadReceipt) {
-            await onUploadReceipt(uploadMonth, file, 'btl')
+            setUploadError(null)
+            try {
+              await onUploadReceipt(uploadMonth, file, 'btl')
+            } catch (err) {
+              setUploadError(err instanceof Error ? err.message : 'העלאת הקבלה נכשלה')
+            }
           }
           e.target.value = ''
           setUploadMonth(null)
         }}
       />
+      {uploadError && (
+        <p style={{ fontSize: '0.8rem', color: '#dc2626', margin: '0 0 0.75rem 0' }}>
+          ⚠️ {uploadError}
+        </p>
+      )}
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
         <thead>
           <tr>
@@ -478,6 +489,7 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploadMonth, setUploadMonth] = React.useState<string | null>(null)
+  const [uploadError, setUploadError] = React.useState<string | null>(null)
   const [breakdownMonth, setBreakdownMonth] = React.useState<number | null>(null)
   const seBiz = businesses.filter(b => !b.isTaxFree)
   if (seBiz.length === 0) return null
@@ -663,12 +675,22 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
         onChange={async (e) => {
           const file = e.target.files?.[0]
           if (file && uploadMonth && onUploadReceipt) {
-            await onUploadReceipt(uploadMonth, file)
+            setUploadError(null)
+            try {
+              await onUploadReceipt(uploadMonth, file)
+            } catch (err) {
+              setUploadError(err instanceof Error ? err.message : 'העלאת הקבלה נכשלה')
+            }
           }
           e.target.value = ''
           setUploadMonth(null)
         }}
       />
+      {uploadError && (
+        <p style={{ fontSize: '0.8rem', color: '#dc2626', margin: '0 0 0.75rem 0' }}>
+          ⚠️ {uploadError}
+        </p>
+      )}
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
         <thead>
           <tr>
