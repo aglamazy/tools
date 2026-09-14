@@ -14,15 +14,21 @@ type InvoicesTabProps = {
   businessId: string
 }
 
-function formatDateForDisplay(iso: string): string {
+export function formatDateForDisplay(iso: string): string {
   return iso.split('T')[0].split('-').reverse().join('/')
 }
 
-function inferDocDate(doc: YpayDocument): string {
-  if (doc.transactionId.startsWith('invoice:') && doc.monthName) {
-    return doc.monthName
-  }
-  return formatDateForDisplay(doc.createdAt)
+// aglamazo#377 (Sheli, 2026-09-14): this column used to show the SERVICE
+// month for hourly invoices but the ISSUE date for item invoices — same
+// heading, two different quantities. A מקדמות declaration to שע"מ is filed
+// on מחזור by issue date, and the tab is the natural screen to prepare it
+// from, so the issue date must always be primary. Already reproduced a
+// real wrong figure: an hourly invoice issued 01/09 displayed as "אוגוסט
+// 2026", read as belonging to the wrong bimonthly period.
+export function docDisplayDate(doc: Pick<YpayDocument, 'transactionId' | 'monthName' | 'createdAt'>): { primary: string; serviceMonth?: string } {
+  const primary = formatDateForDisplay(doc.createdAt)
+  const isHourly = doc.transactionId.startsWith('invoice:') && !!doc.monthName
+  return isHourly ? { primary, serviceMonth: doc.monthName } : { primary }
 }
 
 function docTypeLabel(docType: number): string {
@@ -160,7 +166,7 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
               <tr style={{ background: '#f8fafc', textAlign: 'right' }}>
                 <th style={{ padding: '0.75rem', borderBottom: '1px solid #e2e8f0' }}>מס׳ סידורי</th>
                 <th style={{ padding: '0.75rem', borderBottom: '1px solid #e2e8f0' }}>פרויקט</th>
-                <th style={{ padding: '0.75rem', borderBottom: '1px solid #e2e8f0' }}>תאריך / חודש</th>
+                <th style={{ padding: '0.75rem', borderBottom: '1px solid #e2e8f0' }}>תאריך הפקה</th>
                 <th style={{ padding: '0.75rem', borderBottom: '1px solid #e2e8f0' }}>סוג</th>
                 <th style={{ padding: '0.75rem', borderBottom: '1px solid #e2e8f0', textAlign: 'left' }}>סכום</th>
                 <th style={{ padding: '0.75rem', borderBottom: '1px solid #e2e8f0' }}>סטטוס</th>
@@ -178,6 +184,7 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
                 // ItemInvoiceModal only sets this when it differs from the
                 // business default, so presence alone is the signal.
                 const splitRows = doc.partnerSplitOverride
+                const displayDate = docDisplayDate(doc)
                 return (
                   <tr key={doc.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                     <td style={{ padding: '0.75rem', fontWeight: 600 }}>
@@ -196,7 +203,12 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
                       )}
                     </td>
                     <td style={{ padding: '0.75rem' }}>{doc.projectName || '—'}</td>
-                    <td style={{ padding: '0.75rem' }}>{inferDocDate(doc)}</td>
+                    <td style={{ padding: '0.75rem' }}>
+                      {displayDate.primary}
+                      {displayDate.serviceMonth && (
+                        <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>{displayDate.serviceMonth}</div>
+                      )}
+                    </td>
                     <td style={{ padding: '0.75rem', color: '#64748b', fontSize: '0.85rem' }}>
                       {docTypeLabel(doc.docType)} · {isItemBased ? 'פריטים' : 'שעתי'}
                     </td>
