@@ -83,6 +83,12 @@ export type MatchResult =
  */
 const URL_ONLY_INVOICE_SENDERS = [
   'no-reply@ypay.co.il',
+  // Confirmed live 2026-09-14: a real מעיינות השרון water-utility bill
+  // (sent via the shared "Mast" billing platform) hit the exact same shape
+  // as YPAY — downloadPdfFromUrl correctly detected and rejected the
+  // bill-viewer URL as an HTML wrapper, not a binary PDF, and the candidate
+  // was skipped even though it plausibly WAS the real bill.
+  'mast@outbox.co.il',
 ]
 
 function isUrlOnlyInvoiceSender(fromHeader: string | undefined): boolean {
@@ -90,6 +96,18 @@ function isUrlOnlyInvoiceSender(fromHeader: string | undefined): boolean {
   const lower = fromHeader.toLowerCase()
   return URL_ONLY_INVOICE_SENDERS.some(addr => lower.includes(addr))
 }
+
+// A generic OR-of-terms query, deliberately NOT ANDed with the vendor name —
+// an earlier attempt at a broad search ANDed subject terms with the vendor
+// name and missed a real receipt because the wording didn't match exactly.
+// The vendor/amount are hints handed to the LLM pick-candidate step below,
+// never a hard Gmail query filter (Agla, 2026-09-14: "Agent should look by
+// content. Vendor supplier is hint, not limitation. I don't want to overhead
+// the user to find vendor email.") — precision comes from that step plus the
+// extraction-verification step's matchesTransaction check, both of which
+// already protect the known-sender path, not from narrowing the query.
+const RECEIPT_KEYWORD_QUERY = '(חשבונית OR קבלה OR invoice OR receipt OR "tax invoice")'
+const CONTENT_SEARCH_MAX_RESULTS = 15
 
 /**
  * Extract a "view document" CTA URL from an HTML email body.
@@ -145,41 +163,59 @@ export async function matchReceiptForTransaction(
   log('start', { date: tx.date, amount: tx.amount })
 
   // Known-supplier sender search. If a prior match already taught us this
-  // vendor's real invoice sender address(es), search those directly —
-  // deterministic and far more precise than the broad subject search below.
-  // Tried first; when it finds candidates, the broad search is skipped.
-  // Widens the date window progressively (see SEARCH_WINDOWS_DAYS) instead of
-  // giving up after one fixed window.
-  let knownSenderMessageIds: string[] = []
+  // vendor's real invoice sender address(es), search those directly first —
+  // deterministic and far cheaper than the content search below. Widens the
+  // date window progressively (see SEARCH_WINDOWS_DAYS) instead of giving up
+  // after one fixed window.
+  let candidateMessageIds: string[] = []
   let dateRange = buildDateRange(tx.date, SEARCH_WINDOWS_DAYS[0])
   const knownSupplier = await findSupplierByAlias(desc)
-  if (knownSupplier && knownSupplier.emailSenders.length > 0) {
-    log('known supplier match:', knownSupplier.name, '· trying known senders first:', knownSupplier.emailSenders)
+  const knownSenders = knownSupplier?.emailSenders || []
+  if (knownSenders.length > 0) {
+    log('known supplier match:', knownSupplier!.name, '· trying known senders first:', knownSenders)
     for (const days of SEARCH_WINDOWS_DAYS) {
       dateRange = buildDateRange(tx.date, days)
-      for (const sender of knownSupplier.emailSenders) {
+      for (const sender of knownSenders) {
         const senderQuery = `from:${sender} ${dateRange}`
         const senderResult = await searchMessages(senderQuery, { searchAllMail: true, maxResults: 5 })
         log(`known-sender search →`, sender, `±${days}d`, { count: senderResult.messageIds.length, error: senderResult.error })
-        knownSenderMessageIds.push(...senderResult.messageIds)
+        candidateMessageIds.push(...senderResult.messageIds)
       }
-      if (knownSenderMessageIds.length > 0) break
+      if (candidateMessageIds.length > 0) break
       log(`no candidates within ±${days} days for any known sender`)
     }
   }
-  const searchInfo: SearchInfo = { senders: knownSupplier?.emailSenders || [], dateRange }
 
-  // No known sender → no search. Guessing by subject/keyword or asking an
-  // LLM to pick a sender out of a date-window dump is exactly the fragility
-  // this replaced (confirmed live: Gmail's AND-of-terms search missed a real
-  // receipt, and LLM guessing added latency without reliability). The fix is
-  // to set the supplier's email once (SupplierCardModal) — after that this
-  // vendor always hits the deterministic path above.
-  if (knownSenderMessageIds.length === 0) {
-    log('no known supplier sender — set the supplier email to enable search')
+  // The known sender is a HINT, never a hard requirement (Agla, 2026-09-14:
+  // "Agent should look by content. Vendor supplier is hint, not limitation. I
+  // don't want to overhead the user to find vendor email.") — no configured
+  // supplier, no sender at all, or a configured sender that's simply wrong
+  // must never dead-end the user. Fall back to a broad content search across
+  // ALL mail in the date window; the same pick-candidate subject-filter and
+  // extraction-verification steps that already guard the known-sender path
+  // protect this wider candidate pool too, so precision comes from THEM, not
+  // from a narrow query (an earlier ANDed-with-vendor-name query missed a
+  // real receipt over wording differences — this is deliberately an
+  // OR-of-generic-terms query instead).
+  if (candidateMessageIds.length === 0) {
+    log('no known-sender candidates — falling back to content search')
+    for (const days of SEARCH_WINDOWS_DAYS) {
+      dateRange = buildDateRange(tx.date, days)
+      const contentResult = await searchMessages(`${RECEIPT_KEYWORD_QUERY} ${dateRange}`, { searchAllMail: true, maxResults: CONTENT_SEARCH_MAX_RESULTS })
+      log(`content search →`, `±${days}d`, { count: contentResult.messageIds.length, error: contentResult.error })
+      candidateMessageIds.push(...contentResult.messageIds)
+      if (candidateMessageIds.length > 0) break
+      log(`no candidates within ±${days} days for content search either`)
+    }
+  }
+
+  const searchInfo: SearchInfo = { senders: knownSenders, dateRange }
+
+  if (candidateMessageIds.length === 0) {
+    log('no candidates found — neither known sender nor content search')
     return { status: 'no-match', checkedCandidates: [], searchInfo }
   }
-  const candidateMessageIds = Array.from(new Set(knownSenderMessageIds))
+  candidateMessageIds = Array.from(new Set(candidateMessageIds))
 
   // From here on we REQUIRE Claude: verification + extraction + storage.
   if (!claudeApiKey) {
@@ -198,16 +234,20 @@ export async function matchReceiptForTransaction(
   // extraction. The known-sender search can return unrelated mail from the
   // same address (confirmed live: YPAY's from:no-reply@ypay.co.il matched
   // both a real "חשבונית מס קבלה" AND an unrelated login-verification-code
-  // email) — sending every candidate's full body through Claude to find out
-  // is slow (7-12s each) and expensive. Gemini looks at subjects only and
-  // picks the single best candidate (or none); only that one goes on to the
-  // real extraction below.
+  // email), and the broad content search (aglamazo#397) can return real
+  // financial documents for OTHER vendors — sending every candidate's full
+  // body through Claude to find out is slow (7-12s each) and expensive, so
+  // this only triages "not a document at all" (login codes, newsletters) out
+  // — every candidate that DOES look like some kind of document goes on to
+  // real extraction below, regardless of whether it looks like THIS vendor
+  // (vendor relevance is decided by real content, not a subject-only guess).
   const pickList = candidateMessageIds.map((id, i) => ({ index: i, id, meta: metaByMsgId.get(id) }))
   const pickRes = await fetch('/api/match-receipt', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       action: 'pick-candidate',
+      claudeApiKey,
       transaction: { date: tx.date, description: desc, amount: tx.amount, merchant: tx.merchant },
       candidates: pickList.map((p) => ({
         index: p.index, subject: p.meta?.subject || '', from: p.meta?.from || '',
@@ -239,33 +279,37 @@ export async function matchReceiptForTransaction(
     return { status: 'error', checkedCandidates, searchInfo }
   }
 
-  if (pickData.candidateIndex == null) {
-    log('no candidate looked like an invoice by subject — returning no-match without extraction')
-    const checkedCandidates: CheckedCandidate[] = pickList.map((p) => ({
+  // Candidates the cheap filter is confident aren't a financial document at
+  // all (login codes, newsletters, marketing) skip the expensive real check
+  // — the only thing this step decides. Everything that looks like SOME kind
+  // of document goes on to real extraction below, in the order the filter
+  // judged most likely (see route.ts prompt), stopping at the first real
+  // match but trying the rest if it turns out wrong (confirmed live: two
+  // same-sender "חשבונית מס קבלה" emails 34 seconds apart, only one had the
+  // right amount).
+  const documentIndices: number[] = Array.isArray(pickData.documentIndices) ? pickData.documentIndices : []
+  const documentIndexSet = new Set(documentIndices)
+  const notDocumentCandidates: CheckedCandidate[] = pickList
+    .filter((p) => !documentIndexSet.has(p.index))
+    .map((p) => ({
       messageId: p.id,
       date: p.meta?.date || '',
       subject: p.meta?.subject || '',
       from: p.meta?.from || '',
       outcome: 'rejected',
-      reason: pickData.reason || 'לא זוהה כחשבונית/קבלה לפי הנושא',
+      reason: pickData.reason || 'לא זוהה כמסמך חשבונאי לפי הנושא',
     }))
-    return { status: 'no-match', checkedCandidates, searchInfo }
+
+  if (documentIndices.length === 0) {
+    log('no candidate looked like any kind of financial document by subject — returning no-match without extraction')
+    return { status: 'no-match', checkedCandidates: notDocumentCandidates, searchInfo }
   }
 
-  // Try Gemini's pick first, then fall back to the rest if it's rejected —
-  // subject-only filtering can't always disambiguate (confirmed live: two
-  // YPAY "חשבונית מס קבלה" emails, same sender, 34 seconds apart, identical
-  // subject — Gemini picked one arbitrarily, it turned out to be the wrong
-  // amount, and the real receipt was the other one). A single shot with no
-  // fallback silently drops genuine matches in exactly this case. Cost stays
-  // bounded — this is at most the handful of candidates the known-sender
-  // search itself found, not a broad re-search.
-  const order = [pickData.candidateIndex, ...pickList.map((p) => p.index).filter((i) => i !== pickData.candidateIndex)]
-  const checkedCandidates: CheckedCandidate[] = []
-  for (const idx of order) {
+  const checkedCandidates: CheckedCandidate[] = [...notDocumentCandidates]
+  for (const idx of documentIndices) {
     const msgId = candidateMessageIds[idx]
     const meta = metaByMsgId.get(msgId)
-    log('verifying candidate:', meta?.subject || msgId, idx === pickData.candidateIndex ? '(gemini pick)' : '(fallback)')
+    log('verifying candidate:', meta?.subject || msgId)
     let lastReason = ''
     const candidateLog = (...args: unknown[]) => {
       const text = args.filter((a) => typeof a === 'string').join(' ')
@@ -275,8 +319,8 @@ export async function matchReceiptForTransaction(
     const doc = await tryCandidate(msgId, tx, desc, claudeApiKey, candidateLog, {
       subject: meta?.subject || '',
       from: meta?.from || '',
-      candidateIndex: order.indexOf(idx) + 1,
-      totalCandidates: order.length,
+      candidateIndex: documentIndices.indexOf(idx) + 1,
+      totalCandidates: documentIndices.length,
     })
     checkedCandidates.push({
       messageId: msgId,
@@ -288,7 +332,7 @@ export async function matchReceiptForTransaction(
     })
     if (doc) return { status: 'matched', doc, checkedCandidates, searchInfo }
   }
-  log('all candidates exhausted — returning no-match')
+  log('all document candidates exhausted — returning no-match')
   return { status: 'no-match', checkedCandidates, searchInfo }
 }
 

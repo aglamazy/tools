@@ -29,26 +29,42 @@ function extractionFailureResponse(result: ExtractionFailure, statusOverride?: n
  * Cheap subject-only pre-filter, run before any expensive Claude extraction.
  * A known-sender search can return non-invoice mail from the same address
  * (confirmed live: YPAY's no-reply@ypay.co.il sends both real receipts and
- * login-verification-code emails) — this picks the one candidate that
- * actually looks like an invoice/receipt by subject line alone, so only that
- * one gets sent through the slow/costly body+PDF extraction pipeline.
+ * login-verification-code emails), and a broad content search (aglamazo#397)
+ * can return real financial documents for OTHER vendors entirely — this
+ * classifies EVERY candidate by subject/sender alone as "could plausibly be
+ * a financial document" or not, and returns all of them. It does NOT decide
+ * whether a candidate belongs to THIS specific vendor/transaction — that
+ * judgment needs real content (date/amount/vendor on the actual document)
+ * and belongs entirely to the extraction+verification step below, which runs
+ * on every returned candidate.
+ *
+ * An earlier version tried to also reject by vendor name at this subject-only
+ * stage and single-picked one "best" candidate. Reproduced live 2026-09-14
+ * (Agla, a real מעיינות השרון water-utility bill rejected here as "wrong
+ * vendor" for a כפר יונה municipality transaction — plausibly the actual
+ * regional water corporation for that municipality, not verifiable from the
+ * subject line alone): "System should look into suspected, rather than ask
+ * the user." A subject line can't reliably rule out a real vendor
+ * relationship (regional utilities, DBA names, rebrands) — only the document
+ * itself can. This step's only job now is triage: not-a-document (login
+ * codes, newsletters, marketing) vs. plausibly-a-document, nothing more.
  */
-async function runPickCandidatePrompt(transaction: TransactionInfo, candidateList: string, routeName: string) {
-  return extractJsonWithFallback<{ candidateIndex: number | null; reason?: string }>({
+async function runPickCandidatePrompt(transaction: TransactionInfo, candidateList: string, routeName: string, claudeApiKey?: string) {
+  return extractJsonWithFallback<{ documentIndices: number[]; reason?: string }>({
     routeName,
-    systemPrompt: `אתה מסנן מיילים לפי נושא בלבד, כדי לזהות אילו מהם הם בבירור חשבונית/קבלה/אישור תשלום עבור עסקת כרטיס אשראי — לפני שליחה לבדיקה יקרה ומלאה.
+    systemPrompt: `אתה מסנן מיילים לפי נושא בלבד (ללא תוכן מלא), כדי לזהות אילו מהם עשויים להיות מסמך חשבונאי (חשבונית/קבלה/אישור תשלום) כלשהו — לפני שליחה לבדיקה יקרה ומלאה שתוודא אם כל אחד מהם שייך בפועל לעסקה המצוינת למטה.
 
 כללים:
-- בחר אך ורק מייל שכותרתו מעידה בבירור על מסמך חשבונאי (למשל: "חשבונית", "קבלה", "אישור תשלום", "receipt", "invoice", "tax invoice").
-- אל תבחר קוד אימות/התחברות, עדכון מערכת, פרסום, ניוזלטר, או כל מייל שאינו בעצמו מסמך חשבונאי — גם אם הוא מאותו שולח.
-- אם כמה מועמדים נראים כמו חשבונית — בחר את הקרוב ביותר בתאריך לעסקה.
-- אם אף מועמד לא נראה בבירור כמו חשבונית/קבלה — החזר candidateIndex: null.
+- סמן כל מייל שכותרתו מעידה בבירור על מסמך חשבונאי (למשל: "חשבונית", "קבלה", "אישור תשלום", "receipt", "invoice", "tax invoice") — גם אם שם השולח לא נראה זהה לספק בעסקה. אל תפסול לפי התאמת ספק — זו לא המשימה שלך כאן, וזיהוי ספק אמין דורש את תוכן המסמך עצמו.
+- אל תסמן קוד אימות/התחברות, עדכון מערכת, פרסום, ניוזלטר, או כל מייל שאינו בעצמו מסמך חשבונאי.
+- מיין את הרשימה כך שהמועמד הסביר ביותר (למשל הקרוב ביותר בתאריך לעסקה, או שהשולח נראה קרוב יותר לבית העסק) יופיע ראשון.
+- אם אף מייל לא נראה בבירור כמו מסמך חשבונאי — החזר documentIndices: [].
 
 אל תחשוב בקול רם ואל תסביר את תהליך החשיבה. החזר אך ורק את אובייקט ה-JSON, ללא שום טקסט נוסף:
-{ "candidateIndex": <מספר מהרשימה, או null>, "reason": "<הסבר קצר>" }`,
+{ "documentIndices": [<מספרים מהרשימה שנראים כמו מסמך חשבונאי>], "reason": "<הסבר קצר>" }`,
     userParts: [{
       type: 'text',
-      text: `עסקה בכרטיס אשראי:
+      text: `עסקה בכרטיס אשראי (הקשר בלבד — אל תשתמש בו כדי לפסול מועמד בשלב הזה):
 - תיאור: ${transaction.description}
 - סכום: ₪${Math.abs(transaction.amount)}
 - תאריך: ${transaction.date}
@@ -60,10 +76,12 @@ ${candidateList}`,
     geminiModel: 'gemini-2.5-flash',
     geminiMaxTokens: 2048,
     geminiTemperature: 0,
+    geminiDisableThinking: true,
+    anthropicApiKey: claudeApiKey,
   })
 }
 
-async function handlePickCandidate(transaction: TransactionInfo, candidates: PickCandidateInput[]) {
+async function handlePickCandidate(transaction: TransactionInfo, candidates: PickCandidateInput[], claudeApiKey?: string) {
   if (!transaction || !candidates?.length) {
     return NextResponse.json({ error: 'Missing transaction or candidates' }, { status: 400 })
   }
@@ -74,31 +92,29 @@ async function handlePickCandidate(transaction: TransactionInfo, candidates: Pic
 
   console.log(`[match-receipt] pick-candidate · candidates:\n${candidateList}`)
 
-  // Reproduced live, 2026-09-14 (Agla, real YPAY search): a textbook
-  // "חשבונית מס קבלה" subject was rejected as "not identified by subject"
-  // — the raw Gemini response showed it WAS correctly picking that
-  // candidate ("הנושא מעיד בבירור על...") but got cut off
-  // (finishReason=MAX_TOKENS) before finishing the JSON, at 800 tokens.
-  // 2.5-flash's default thinking budget eats into the same output-token
-  // pool, so a tiny visible JSON payload can still truncate. Raising the
-  // budget (800 → 2048) cut the failure rate a lot but didn't zero it —
-  // reproduced AGAIN live the same day, same signature, at 2048. Thinking
-  // budget is inherently variable per call, so one automatic retry before
-  // giving up costs one cheap extra Gemini call and turns an occasional
-  // truncation into a non-event instead of a false "not an invoice".
-  let result = await runPickCandidatePrompt(transaction, candidateList, 'match-receipt')
-
-  if (!result.ok && result.details?.includes('MAX_TOKENS')) {
-    console.log('[match-receipt] pick-candidate · MAX_TOKENS, retrying once')
-    result = await runPickCandidatePrompt(transaction, candidateList, 'match-receipt-retry')
-  }
+  // Reproduced live, 2026-09-14 (Agla, real YPAY search, twice): a textbook
+  // "חשבונית מס קבלה" subject was rejected as "not identified by subject" —
+  // Gemini's own raw response showed it WAS correctly picking that candidate
+  // ("הנושא מעיד בבירור על...") but got cut off (finishReason=MAX_TOKENS)
+  // before finishing the JSON. Root cause: 2.5-flash's thinking tokens share
+  // the SAME output-token budget with no cap, so even a trivial "pick 1 of
+  // N" task can spend the whole budget thinking. Because temperature=0 makes
+  // this near-deterministic per prompt, a same-prompt retry reliably failed
+  // the SAME way twice in a row (confirmed live) — raising maxTokens
+  // (800→2048) and retrying were both treating the symptom, not the cause.
+  // Real fix: disable thinking outright for this mechanical task
+  // (geminiDisableThinking, see extractionLadder.ts) so the full budget goes
+  // to the answer, PLUS a genuine cross-model fallback to Claude
+  // (anthropicApiKey) as a safety net — a different model's failure mode
+  // won't correlate with Gemini's on the same prompt, unlike a same-model retry.
+  const result = await runPickCandidatePrompt(transaction, candidateList, 'match-receipt', claudeApiKey)
 
   if (!result.ok) {
     return extractionFailureResponse(result)
   }
 
   console.log(`[match-receipt] pick-candidate · ${result.provider} raw result →\n${result.text}`)
-  return NextResponse.json({ candidateIndex: result.data.candidateIndex ?? null, reason: result.data.reason || '' })
+  return NextResponse.json({ documentIndices: result.data.documentIndices ?? [], reason: result.data.reason || '' })
 }
 
 export async function POST(req: NextRequest) {
@@ -107,7 +123,7 @@ export async function POST(req: NextRequest) {
     const { action } = body
 
     if (action === 'pick-candidate') {
-      return handlePickCandidate(body.transaction, body.candidates)
+      return handlePickCandidate(body.transaction, body.candidates, body.claudeApiKey)
     } else if (action === 'extract') {
       return handleExtract(body.emailBody, body.transaction, body.claudeApiKey, {
         subject: body.candidateSubject, from: body.candidateFrom,
@@ -311,7 +327,15 @@ async function handleExtract(
     userParts: [{ type: 'text', text: `חלץ נתוני קבלה מהמייל הבא:\n\n${textContent}` }],
     anthropicApiKey: claudeApiKey,
     geminiModel: 'gemini-2.5-flash',
-    geminiMaxTokens: 1024,
+    // Reproduced live 2026-09-14 (Agla, same YPAY row as aglamazo#396): once
+    // the pick-candidate step stopped truncating, THIS step (the real
+    // body/PDF extraction+verification, a genuinely reasoning-heavy 13-field
+    // JSON schema) hit the same MAX_TOKENS wall on Gemini AND then on Claude
+    // — anthropicMaxTokens wasn't set, so it silently inherited this same
+    // tight 1024 cap (extractionLadder's `anthropicMaxTokens ?? geminiMaxTokens`).
+    // Raised both explicitly with real headroom for this task.
+    geminiMaxTokens: 4096,
+    anthropicMaxTokens: 4096,
     geminiTemperature: 0,
   })
 
@@ -434,7 +458,8 @@ async function handleExtractPdf(pdfBase64: string, transaction: TransactionInfo,
     ],
     anthropicApiKey: claudeApiKey,
     geminiModel: 'gemini-2.5-pro',
-    geminiMaxTokens: 1024,
+    geminiMaxTokens: 4096,
+    anthropicMaxTokens: 4096,
     geminiTemperature: 0,
     // A syntactically-valid but empty `{}` used to count as success — no
     // schema enforcement here, so a provider that "complies" with no real
@@ -481,7 +506,8 @@ async function handleExtractImage(imageBase64: string, mediaType: string, transa
     ],
     anthropicApiKey: claudeApiKey,
     geminiModel: 'gemini-2.5-flash',
-    geminiMaxTokens: 1024,
+    geminiMaxTokens: 4096,
+    anthropicMaxTokens: 4096,
     geminiTemperature: 0,
     validate: (data) => (!data?.vendor && !data?.amount) ? 'Extraction returned no usable fields' : null,
   })
@@ -526,7 +552,8 @@ async function handleExtractVatPayment(payloadBase64: string, mediaType: string 
     ],
     anthropicApiKey: claudeApiKey,
     geminiModel: 'gemini-2.5-flash',
-    geminiMaxTokens: 1024,
+    geminiMaxTokens: 4096,
+    anthropicMaxTokens: 4096,
     geminiTemperature: 0,
   })
 

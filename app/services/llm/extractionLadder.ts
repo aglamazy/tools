@@ -49,6 +49,20 @@ export type ExtractionLadderOptions<T> = {
   geminiMaxTokens?: number
   geminiTemperature?: number
   geminiResponseSchema?: Record<string, unknown>
+  /**
+   * Gemini 2.5 Flash's "thinking" tokens are drawn from the SAME
+   * maxOutputTokens pool as the visible JSON answer, with no cap by default
+   * — a task simple enough not to need reasoning (e.g. picking 1 of N by
+   * subject line) can still spend the entire budget thinking and leave
+   * nothing for the answer (finishReason=MAX_TOKENS, aglamazo#396). Because
+   * temperature is normally 0, this is near-deterministic per prompt — a
+   * bare retry of the same prompt reliably fails the same way (confirmed
+   * live 2026-09-14: same YPAY row failed identically twice in a row).
+   * Setting this reserves the whole budget for the answer by disabling
+   * extended thinking outright. Only use for tasks that are genuinely
+   * mechanical; leave unset for anything that benefits from reasoning.
+   */
+  geminiDisableThinking?: boolean
   anthropicModel?: string
   anthropicMaxTokens?: number
   anthropicTemperature?: number
@@ -92,6 +106,7 @@ export async function extractJsonWithFallback<T>(options: ExtractionLadderOption
     maxTokens: options.geminiMaxTokens ?? 4096,
     temperature: options.geminiTemperature ?? 0,
     responseSchema: options.geminiResponseSchema,
+    disableThinking: options.geminiDisableThinking,
   })
   if (geminiAttempt.ok) {
     return geminiAttempt
@@ -144,6 +159,7 @@ async function tryGemini<T>(options: {
   maxTokens: number
   temperature: number
   responseSchema?: Record<string, unknown>
+  disableThinking?: boolean
 }): Promise<ExtractionResult<T>> {
   if (!options.apiKey) {
     return {
@@ -164,6 +180,9 @@ async function tryGemini<T>(options: {
   const generationConfig: Record<string, unknown> = {
     temperature: options.temperature,
     maxOutputTokens: options.maxTokens,
+  }
+  if (options.disableThinking) {
+    generationConfig.thinkingConfig = { thinkingBudget: 0 }
   }
   if (options.responseSchema) {
     generationConfig.responseMimeType = 'application/json'
