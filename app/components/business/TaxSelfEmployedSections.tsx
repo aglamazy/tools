@@ -3,7 +3,7 @@ import { db } from '@/app/db/financeDB'
 import type { Business, TaxDocument, Transaction, AdvancePayment } from '@/app/db/financeDB'
 import { resolveBtlScheduleByMonth, vatTypeForDate, type TaxProfile } from '@/app/components/TaxProfileSection'
 import { getVatRateForDate } from '@/app/lib/vat'
-import MonthBreakdownModal from './MonthBreakdownModal'
+import MonthBreakdownPanel from './MonthBreakdownPanel'
 
 export type BTLRates = {
   reduced: { nationalInsurance: number; healthInsurance: number }
@@ -777,8 +777,7 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
         const row = monthlyRows.find(r => r.month === breakdownMonth)
         if (!row) return null
         return (
-          <MonthBreakdownModal
-            isOpen
+          <MonthBreakdownPanel
             onClose={() => setBreakdownMonth(null)}
             monthLabel={`${row.label} ${currentYear}`}
             incomeTx={row.incomeTx}
