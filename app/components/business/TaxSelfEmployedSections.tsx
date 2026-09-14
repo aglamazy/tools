@@ -85,6 +85,24 @@ export function resolveBtlPaidForMonth(params: {
   return scheduled > 0 ? { amount: scheduled, isForecast: true } : { amount: 0, isForecast: false }
 }
 
+/**
+ * Cumulative balance with BTL through each row: charged minus paid plus
+ * refunded, running (aglamazo#386). A refund is money BTL gave back — it
+ * re-opens balance the same way a fresh charge does, not simply erasing a
+ * payment. Per-row, never clamped, since the whole point is to show the
+ * true running position, not a month-by-month snapshot that can't go
+ * negative or carry forward.
+ */
+export function computeBtlRunningBalance(
+  rows: { charged: number; paid: number; refunded: number }[],
+): number[] {
+  let running = 0
+  return rows.map((r) => {
+    running += r.charged - r.paid + r.refunded
+    return running
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Self-Employed BTL Calculation Section (ביטוח לאומי + בריאות)
 // ---------------------------------------------------------------------------
@@ -111,18 +129,23 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
     ;(biz.syncId && expCategoryMap.get(biz.syncId) || []).forEach(n => seExpCatNames.add(n))
   }
 
-  // A BTL payment is any transaction whose category starts with "ביטוח לאומי".
+  // A BTL payment is any transaction whose category starts with "ביטוח לאומי";
+  // a refund is "החזר ביטוח לאומי" (aglamazo#386 — Agla, twice: "this page
+  // should reflect my balance with BTL", "the refund is not here"). Both
+  // shown as their own visible lines per his spec, never netted away.
   // personUid (the selected tab's uid) is passed in so we can still scope per
   // tab when classifications are tagged like "ביטוח לאומי (yaakov)".
   const [btlTx, setBtlTx] = useState<Transaction[]>([])
+  const [btlRefundTx, setBtlRefundTx] = useState<Transaction[]>([])
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       const all = await db.transactions.toArray()
-      const yearTx = all.filter(
-        (t) => t.category?.startsWith('ביטוח לאומי') && t.month?.endsWith(`/${currentYear}`),
-      )
-      if (!cancelled) setBtlTx(yearTx)
+      const yearOf = (t: Transaction) => t.month?.endsWith(`/${currentYear}`)
+      if (!cancelled) {
+        setBtlTx(all.filter((t) => t.category?.startsWith('ביטוח לאומי') && yearOf(t)))
+        setBtlRefundTx(all.filter((t) => t.category?.startsWith('החזר ביטוח לאומי') && yearOf(t)))
+      }
     })()
     return () => { cancelled = true }
   }, [currentYear])
@@ -153,6 +176,9 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
     // A BTL payment for calendar month i shows up as a transaction in month i+1.
     const payMonth = paymentMonthStr(i)
     const actualPaid = btlTx
+      .filter((t) => t.month === payMonth)
+      .reduce((s, t) => s + Math.abs(t.amount || 0), 0)
+    const actualRefunded = btlRefundTx
       .filter((t) => t.month === payMonth)
       .reduce((s, t) => s + Math.abs(t.amount || 0), 0)
     const paid = actualPaid > 0
@@ -186,10 +212,22 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
       month: i,
       label: HEBREW_MONTHS[i],
       income, expenses, netIncome, ...btl,
-      expected, actualPaid, status, diff,
+      expected, actualPaid, actualRefunded, status, diff,
       deadline, windowStart,
     }
   })
+
+  // Running balance with BTL: cumulative charged minus cumulative paid plus
+  // cumulative refunded, through each row (aglamazo#386 — Agla's own spec,
+  // twice: "this page should reflect my balance with BTL"). A refund is
+  // money BTL gave back, so it re-opens balance the same way a charge does,
+  // rather than simply canceling a payment. Computed FROM OUR OWN RECORDS
+  // ONLY — BTL's own יתרה can differ when they've reassessed mid-year (a
+  // history we don't hold), so this is framed as "per our records" in the
+  // UI rather than claimed to reproduce their number exactly.
+  const btlRunningBalances = computeBtlRunningBalance(
+    monthlyRows.map((r) => ({ charged: r.expected, paid: r.actualPaid, refunded: r.actualRefunded })),
+  )
 
   const totals = {
     income: monthlyRows.reduce((s, r) => s + r.income, 0),
@@ -200,6 +238,9 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
     total: monthlyRows.reduce((s, r) => s + r.total, 0),
     expected: monthlyRows.reduce((s, r) => s + r.expected, 0),
     diff: monthlyRows.reduce((s, r) => s + r.diff, 0),
+    actualPaid: monthlyRows.reduce((s, r) => s + r.actualPaid, 0),
+    actualRefunded: monthlyRows.reduce((s, r) => s + r.actualRefunded, 0),
+    balance: btlRunningBalances.length > 0 ? btlRunningBalances[btlRunningBalances.length - 1] : 0,
   }
 
   // Only show the advance/status/diff columns when the person actually has a
@@ -230,8 +271,11 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
             <th style={hStyle}>ביטוח לאומי</th>
             <th style={hStyle}>ביטוח בריאות</th>
             <th style={{ ...hStyle, background: '#f3e8ff' }}>סה&quot;כ</th>
-            {hasDownpayment && <th style={hStyle}>מקדמות</th>}
+            {hasDownpayment && <th style={hStyle}>מקדמות (חיוב)</th>}
             {hasDownpayment && <th style={hStyle}>סטטוס</th>}
+            {hasDownpayment && <th style={hStyle}>שולם</th>}
+            {hasDownpayment && <th style={hStyle}>הוחזר</th>}
+            {hasDownpayment && <th style={{ ...hStyle, background: '#f3e8ff' }}>יתרה*</th>}
             {hasDownpayment && <th style={hStyle}>הפרש</th>}
           </tr>
         </thead>
@@ -285,6 +329,13 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
                   )}
                 </td>
               )}
+              {hasDownpayment && <td style={{ ...cellStyle, color: '#16a34a' }}>{row.actualPaid ? fmt(row.actualPaid) : '—'}</td>}
+              {hasDownpayment && <td style={{ ...cellStyle, color: '#2563eb' }}>{row.actualRefunded ? fmt(row.actualRefunded) : '—'}</td>}
+              {hasDownpayment && (
+                <td style={{ ...cellStyle, background: '#faf5ff', fontWeight: 500, color: btlRunningBalances[row.month] > 0 ? '#b45309' : btlRunningBalances[row.month] < 0 ? '#16a34a' : undefined }}>
+                  {fmt(btlRunningBalances[row.month])}
+                </td>
+              )}
               {hasDownpayment && (
                 <td style={{ ...cellStyle, fontWeight: 500, color: row.diff > 0 ? '#b45309' : row.diff < 0 ? '#dc2626' : undefined }}>{row.expected ? fmt(row.diff) : '—'}</td>
               )}
@@ -302,12 +353,22 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
             <td style={{ ...cellStyle, fontWeight: 700, background: '#f3e8ff', color: '#6b21a8' }}>{fmt(totals.total)}</td>
             {hasDownpayment && <td style={{ ...cellStyle, fontWeight: 700 }}>{fmt(totals.expected)}</td>}
             {hasDownpayment && <td style={cellStyle} />}
+            {hasDownpayment && <td style={{ ...cellStyle, fontWeight: 700, color: '#16a34a' }}>{fmt(totals.actualPaid)}</td>}
+            {hasDownpayment && <td style={{ ...cellStyle, fontWeight: 700, color: '#2563eb' }}>{fmt(totals.actualRefunded)}</td>}
+            {hasDownpayment && (
+              <td style={{ ...cellStyle, fontWeight: 700, background: '#f3e8ff', color: totals.balance > 0 ? '#b45309' : totals.balance < 0 ? '#16a34a' : undefined }}>{fmt(totals.balance)}</td>
+            )}
             {hasDownpayment && (
               <td style={{ ...cellStyle, fontWeight: 700, color: totals.diff > 0 ? '#b45309' : totals.diff < 0 ? '#dc2626' : '#16a34a' }}>{fmt(totals.diff)}</td>
             )}
           </tr>
         </tfoot>
       </table>
+      {hasDownpayment && (
+        <p style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: '0.35rem' }}>
+          * יתרה לפי הנתונים שלנו בלבד (חיוב − שולם + הוחזר) — עשויה שלא להתאים בדיוק ליתרה בשירות האישי של המוסד לביטוח לאומי, למשל אם בוצעה שומה מחודשת שלא הגיע אלינו מסמך עבורה.
+        </p>
+      )}
     </div>
   )
 }
