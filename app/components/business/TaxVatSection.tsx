@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { db, type Business, type Transaction, type YpayDocument, type ExpenseDocument, type Project, type VatPayment, type Supplier } from '@/app/db/financeDB'
 import type { Category } from '@/app/types/category'
 import { getVatRateForDate } from '@/app/lib/vat'
-import { YpayDocType } from '@/app/services/ypayService'
+import { YpayDocType, invoiceNetAmount, invoiceVatAmount } from '@/app/services/ypayService'
 import { uploadExpenseDocument } from '@/app/services/googleDriveService'
 import { parseDateFolder } from '@/app/services/receiptMatchService'
 import { normalizeDate } from '@/app/utils/parsers/shared'
@@ -296,18 +296,18 @@ export default function TaxVatSection({
         if (created < cutoff) continue
         if (created < selectedPeriod.start || created > selectedPeriod.end) continue
       }
-      const amount = d.amount || 0
       const vatRate = getVatRateForDate(created)
       rows.push({
         id: d.id!,
         date: created,
         serial: d.serialNumber,
         projectName: d.projectName || '—',
-        amount,
-        // YpayDocument.amount is the NET amount (lines are created with
-        // vatIncluded:false in ypayService). So output VAT is amount × rate,
-        // NOT the gross-inclusive factor.
-        outputVat: amount * vatRate,
+        // amount is NET regardless of docType — invoiceNetAmount strips VAT
+        // out of a 109's stored GROSS amount; a 106's stored amount is
+        // already net (aglamazo#382: a stray `d.amount` here silently
+        // treated every docType's amount as net, which is only true for 106).
+        amount: invoiceNetAmount(d, vatRate),
+        outputVat: invoiceVatAmount(d, vatRate),
         vatRate,
         docType: d.docType,
       })

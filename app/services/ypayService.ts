@@ -94,9 +94,31 @@ function getBillingDocType(business: Business, vatType?: 'exempt' | 'authorized'
 // dealer-status change, and their amount is already the full total.
 // A receipt's allocation toward an invoice is always gross (a slice of the
 // actual bank transfer), so both sides need to be in the same (gross) terms.
-export function invoiceGrossAmount(invoice: YpayDocument): number {
+export function invoiceGrossAmount(invoice: YpayDocument, vatRate: number = VAT_RATE_AUTHORIZED_DEALER): number {
   const amount = invoice.amount || 0
-  return invoice.docType === YpayDocType.TaxInvoice ? amount * (1 + VAT_RATE_AUTHORIZED_DEALER) : amount
+  return invoice.docType === YpayDocType.TaxInvoice ? amount * (1 + vatRate) : amount
+}
+
+// aglamazo#382 (Sheli, 2026-09-14): the docType-aware net/gross split lived
+// only as a comment at each call site ("YpayDocument.amount is the NET
+// amount..."), correct for 106 and silently WRONG for 109 — a receipt's
+// `amount` is the GROSS deposit (see buildYpayDocumentFromImportRow /
+// buildLinkedYpayDocumentStub), not net. Every consumer that needs the net
+// or VAT portion of a document's amount must go through these, never read
+// `.amount` directly and assume a meaning — that per-consumer assumption is
+// exactly what broke the VAT tab. `vatRate` defaults to today's rate (same
+// as invoiceGrossAmount always has) but callers that already resolved the
+// document's OWN date's rate (e.g. TaxVatSection) should pass it explicitly.
+export function invoiceNetAmount(invoice: YpayDocument, vatRate: number = VAT_RATE_AUTHORIZED_DEALER): number {
+  const amount = invoice.amount || 0
+  return invoice.docType === YpayDocType.TaxInvoiceReceipt ? amount / (1 + vatRate) : amount
+}
+
+const VAT_BEARING_DOC_TYPES = new Set<number>([YpayDocType.TaxInvoice, YpayDocType.TaxInvoiceReceipt])
+
+export function invoiceVatAmount(invoice: YpayDocument, vatRate: number = VAT_RATE_AUTHORIZED_DEALER): number {
+  if (!VAT_BEARING_DOC_TYPES.has(invoice.docType)) return 0
+  return invoiceGrossAmount(invoice, vatRate) - invoiceNetAmount(invoice, vatRate)
 }
 
 // Sum of every receipt's allocation toward this invoice, across ALL receipts
