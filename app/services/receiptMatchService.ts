@@ -548,6 +548,20 @@ async function tryCandidate(
       log('  ↳ document download/extract threw — amount/VAT will be unknown:', err?.message || String(err))
     }
 
+    // aglamazo#403 (Sheli): when the real document behind the CTA can't be
+    // downloaded, pageExtracted falls back to the body-level `extracted` —
+    // and unlike the "no data to judge from" case the comment above is
+    // about, Claude sometimes DOES have enough in the body (a document
+    // title, a vendor name) to make a real, informed rejection. Live
+    // incident: a water bill's matchesTransaction:false + a real matchReason
+    // was discarded and the doc attached anyway to an unrelated Arnona
+    // transaction. An explicit false is a decision already made — honor it,
+    // same as the PDF path below already does.
+    if (pageExtracted.matchesTransaction === false) {
+      log(`  ↳ claude rejected: ${pageExtracted.matchReason} — skip`)
+      return null
+    }
+
     const urlMatchSupplier = await findSupplierByAlias(desc)
     if (urlMatchSupplier && bodyResult.from) {
       await addEmailSenderToSupplier(urlMatchSupplier.id!, bodyResult.from)
