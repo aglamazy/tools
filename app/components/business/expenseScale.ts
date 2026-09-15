@@ -1,5 +1,42 @@
 import type { Category } from '@/app/types/category'
-import type { Business, Transaction } from '@/app/db/financeDB'
+import type { Business, ExpenseDocument, Transaction } from '@/app/db/financeDB'
+
+/**
+ * Group expense documents by transaction, keeping every doc rather than
+ * letting a plain Map overwrite silently keep whichever came last — a
+ * transaction can carry more than one ExpenseDocument (Sheli found one
+ * real transaction with 4, split across pin states) and a naive last-wins
+ * map could hide a correctly pinned doc behind an unrelated unpinned one
+ * (aglamazo#402).
+ */
+export function groupExpenseDocsByTransaction(docs: ExpenseDocument[]): Map<string, ExpenseDocument[]> {
+  const byTxId = new Map<string, ExpenseDocument[]>()
+  for (const d of docs) {
+    if (d.transactionId == null) continue
+    const list = byTxId.get(d.transactionId)
+    if (list) list.push(d)
+    else byTxId.set(d.transactionId, [d])
+  }
+  return byTxId
+}
+
+/**
+ * Which of a transaction's documents belongs in the current VAT-period view:
+ * for a closed period, the one actually tagged to that payment (or none —
+ * never a stray unrelated doc); for an open period, an untagged one,
+ * preferring one that actually carries extracted amount/VAT data.
+ */
+export function resolveLinkedExpenseDoc(
+  candidates: ExpenseDocument[] | undefined,
+  opts: { isPeriodClosed: boolean; paymentSyncId?: string },
+): ExpenseDocument | undefined {
+  if (!candidates) return undefined
+  if (opts.isPeriodClosed) {
+    return candidates.find((d) => d.vatPaymentId === opts.paymentSyncId)
+  }
+  const unpinned = candidates.filter((d) => d.vatPaymentId == null)
+  return unpinned.find((d) => d.amount != null || d.vatAmount != null) || unpinned[0]
+}
 
 /**
  * The fraction (0-1) of a transaction's ILS amount that counts toward this

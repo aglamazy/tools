@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { Category } from '@/app/types/category'
-import type { Business, Transaction } from '@/app/db/financeDB'
+import type { Business, ExpenseDocument, Transaction } from '@/app/db/financeDB'
 import {
   resolveBusinessExpenseCategories,
   expenseScaleFraction,
@@ -8,6 +8,8 @@ import {
   householdExpenseNetAmount,
   resolveTopLevelCategoryName,
   resolveExpenseLine,
+  groupExpenseDocsByTransaction,
+  resolveLinkedExpenseDoc,
 } from './expenseScale'
 
 // aglamazo#369, Agla 2026-09-13, live with Sheli: "The household items should
@@ -195,5 +197,53 @@ describe('resolveTopLevelCategoryName', () => {
 
   it('returns the input string unchanged for an unknown category name', () => {
     expect(resolveTopLevelCategoryName('לא קיים', new Map(), new Map())).toBe('לא קיים')
+  })
+})
+
+// aglamazo#402, Sheli 2026-09-15: transaction 1489 had 4 ExpenseDocuments —
+// one correctly pinned to the closed period's payment, three unpinned — and
+// still failed to render in that closed period. A plain Map keyed by
+// transactionId only ever kept whichever doc happened to be last in the
+// array, silently discarding the correctly pinned one.
+describe('groupExpenseDocsByTransaction + resolveLinkedExpenseDoc (aglamazo#402)', () => {
+  const makeDoc = (over: Partial<ExpenseDocument>): ExpenseDocument => ({
+    id: 1, transactionId: 'tx-1', vendor: 'v', amount: undefined, vatAmount: undefined,
+    driveFileId: '', createdAt: '2026-01-01', ...over,
+  } as ExpenseDocument)
+
+  it('keeps every doc for a transaction instead of overwriting', () => {
+    const docs = [makeDoc({ id: 1 }), makeDoc({ id: 2 }), makeDoc({ id: 3 })]
+    const byTx = groupExpenseDocsByTransaction(docs)
+    expect(byTx.get('tx-1')?.map(d => d.id)).toEqual([1, 2, 3])
+  })
+
+  it('closed period: finds the doc actually pinned to this payment, even if it is not the last one', () => {
+    const docs = [
+      makeDoc({ id: 60, vatPaymentId: undefined }),
+      makeDoc({ id: 58, vatPaymentId: 'pay-A' }),
+      makeDoc({ id: 61, vatPaymentId: undefined }),
+      makeDoc({ id: 62, vatPaymentId: undefined }),
+    ]
+    const linked = resolveLinkedExpenseDoc(docs, { isPeriodClosed: true, paymentSyncId: 'pay-A' })
+    expect(linked?.id).toBe(58)
+  })
+
+  it('closed period: returns undefined when no doc is pinned to this specific payment', () => {
+    const docs = [makeDoc({ id: 1, vatPaymentId: 'pay-B' })]
+    expect(resolveLinkedExpenseDoc(docs, { isPeriodClosed: true, paymentSyncId: 'pay-A' })).toBeUndefined()
+  })
+
+  it('open period: prefers an unpinned doc that actually carries extracted data', () => {
+    const docs = [
+      makeDoc({ id: 1, vatPaymentId: undefined, amount: undefined, vatAmount: undefined }),
+      makeDoc({ id: 2, vatPaymentId: undefined, amount: 100, vatAmount: 18 }),
+    ]
+    const linked = resolveLinkedExpenseDoc(docs, { isPeriodClosed: false })
+    expect(linked?.id).toBe(2)
+  })
+
+  it('open period: ignores a doc pinned to a different payment', () => {
+    const docs = [makeDoc({ id: 1, vatPaymentId: 'pay-A' })]
+    expect(resolveLinkedExpenseDoc(docs, { isPeriodClosed: false })).toBeUndefined()
   })
 })

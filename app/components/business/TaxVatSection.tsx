@@ -18,6 +18,7 @@ import Modal from '@/app/components/Modal'
 import YpayIncomeImportPanel from './YpayIncomeImportPanel'
 import { DOCUMENT_UPLOAD_ACCEPT } from '@/app/utils/documentUploadAccept'
 import { resolveOpenPeriodKey, computeClosedPeriodKeys } from '@/app/utils/vatPeriodRollForward'
+import { groupExpenseDocsByTransaction, resolveLinkedExpenseDoc } from './expenseScale'
 
 const ILS = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
 
@@ -332,10 +333,7 @@ export default function TaxVatSection({
     const deductibleCatNames = new Set<string>()
     for (const names of expCategoryMap.values()) names.forEach(n => deductibleCatNames.add(n))
 
-    const docByTxId = new Map<string, ExpenseDocument>()
-    for (const ed of expenseDocs) {
-      if (ed.transactionId != null) docByTxId.set(ed.transactionId, ed)
-    }
+    const docsByTxId = groupExpenseDocsByTransaction(expenseDocs)
 
     const rows: ExpenseRow[] = []
     for (const t of effectiveTransactions) {
@@ -354,14 +352,15 @@ export default function TaxVatSection({
         : cat?.deductibleByMember?.[personUid] ?? (cat?.isDeductible ? 100 : 0)
       if (sharePercent <= 0) continue
       const eligibleAmount = Math.abs(t.amount || 0) * (sharePercent / 100)
-      const linkedDoc = t.syncId ? docByTxId.get(t.syncId) : undefined
+      const linkedDoc = resolveLinkedExpenseDoc(t.syncId ? docsByTxId.get(t.syncId) : undefined, {
+        isPeriodClosed, paymentSyncId: selectedPayment?.syncId,
+      })
       if (isPeriodClosed) {
-        // Closed period: only show docs tagged with this payment.
-        if (linkedDoc?.vatPaymentId !== selectedPayment!.syncId) continue
+        // Closed period: only show transactions with a doc tagged to this payment.
+        if (!linkedDoc) continue
       } else {
         // Open period: untagged docs on/after the cutoff, rolled forward
         // past any closed period so a late doc joins the next open one (#402).
-        if (linkedDoc?.vatPaymentId != null) continue
         if (txDate < cutoff) continue
         if (resolveOpenPeriodKey(txDate, periods, closedPeriodKeys) !== selectedPeriod.key) continue
       }
