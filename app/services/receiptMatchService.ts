@@ -107,7 +107,16 @@ function isUrlOnlyInvoiceSender(fromHeader: string | undefined): boolean {
 // extraction-verification step's matchesTransaction check, both of which
 // already protect the known-sender path, not from narrowing the query.
 const RECEIPT_KEYWORD_QUERY = '(חשבונית OR קבלה OR invoice OR receipt OR "tax invoice")'
-const CONTENT_SEARCH_MAX_RESULTS = 15
+// Confirmed live 2026-09-14 (Agla: a real Cellcom invoice "in the inbox, but
+// not found"): Gmail's own relevance ranking for this OR-of-generic-terms
+// query is NOT date order — the real invoice sat at position 49 of 100 hits
+// in a 201-email window, and an earlier one at position 95. 25 (or even 45)
+// wasn't remotely enough; only fetching Gmail's full one-page max (100)
+// actually reached it. The cheap pick-candidate triage step below is a
+// single batched LLM call over all subjects (not per-candidate), so scaling
+// to 100 is cheap — the expensive per-candidate real extraction only ever
+// runs on the ones that step flags as document-shaped.
+const CONTENT_SEARCH_MAX_RESULTS = 100
 
 /**
  * Extract a "view document" CTA URL from an HTML email body.
@@ -198,15 +207,21 @@ export async function matchReceiptForTransaction(
   // real receipt over wording differences — this is deliberately an
   // OR-of-generic-terms query instead).
   if (candidateMessageIds.length === 0) {
+    // Search the WIDEST window in one shot, not incrementally like the
+    // known-sender loop above. Reproduced live 2026-09-14 (Agla: a real
+    // Celcom invoice sitting in the inbox, ~40 days before the bank charge,
+    // reported "not found"): the incremental version searched ±3d, got 3
+    // unrelated candidates, and stopped widening right there because
+    // "candidates found" was mistaken for "the right candidate found" — the
+    // real invoice 40 days out was never reached. Content search is a single
+    // query per window (not per-sender like the known-sender loop), so
+    // there's no cost reason to start narrow; a wide query still returns
+    // narrower/closer-dated matches too.
     log('no known-sender candidates — falling back to content search')
-    for (const days of SEARCH_WINDOWS_DAYS) {
-      dateRange = buildDateRange(tx.date, days)
-      const contentResult = await searchMessages(`${RECEIPT_KEYWORD_QUERY} ${dateRange}`, { searchAllMail: true, maxResults: CONTENT_SEARCH_MAX_RESULTS })
-      log(`content search →`, `±${days}d`, { count: contentResult.messageIds.length, error: contentResult.error })
-      candidateMessageIds.push(...contentResult.messageIds)
-      if (candidateMessageIds.length > 0) break
-      log(`no candidates within ±${days} days for content search either`)
-    }
+    dateRange = buildDateRange(tx.date, SEARCH_WINDOWS_DAYS[SEARCH_WINDOWS_DAYS.length - 1])
+    const contentResult = await searchMessages(`${RECEIPT_KEYWORD_QUERY} ${dateRange}`, { searchAllMail: true, maxResults: CONTENT_SEARCH_MAX_RESULTS })
+    log('content search →', dateRange, { count: contentResult.messageIds.length, error: contentResult.error })
+    candidateMessageIds.push(...contentResult.messageIds)
   }
 
   const searchInfo: SearchInfo = { senders: knownSenders, dateRange }

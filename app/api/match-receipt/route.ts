@@ -74,7 +74,12 @@ ${transaction.merchant ? `- בית עסק: ${transaction.merchant}` : ''}
 ${candidateList}`,
     }],
     geminiModel: 'gemini-2.5-flash',
-    geminiMaxTokens: 2048,
+    // Raised from 2048 now that content search can hand this step up to 100
+    // candidate subjects at once (was 15-25) — confirmed live both Gemini
+    // and its Claude fallback can fail to produce clean JSON at the smaller
+    // budget once the candidate list gets this long.
+    geminiMaxTokens: 4096,
+    anthropicMaxTokens: 4096,
     geminiTemperature: 0,
     geminiDisableThinking: true,
     anthropicApiKey: claudeApiKey,
