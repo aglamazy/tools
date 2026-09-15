@@ -6,6 +6,7 @@ import { resolveBtlScheduleByMonth, vatTypeForDate, type TaxProfile } from '@/ap
 import { getVatRateForDate } from '@/app/lib/vat'
 import { resolveExpenseLine, type ExpenseLine } from './expenseScale'
 import MonthBreakdownPanel from './MonthBreakdownPanel'
+import { DOCUMENT_UPLOAD_ACCEPT } from '@/app/utils/documentUploadAccept'
 
 export type BTLRates = {
   reduced: { nationalInsurance: number; healthInsurance: number }
@@ -313,7 +314,7 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
         type="file"
         ref={fileInputRef}
         style={{ display: 'none' }}
-        accept=".pdf,.png,.jpg,.jpeg,.webp,.html,.htm"
+        accept={DOCUMENT_UPLOAD_ACCEPT}
         onChange={async (e) => {
           const file = e.target.files?.[0]
           if (file && uploadMonth && onUploadReceipt) {
@@ -751,7 +752,7 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
         type="file"
         ref={fileInputRef}
         style={{ display: 'none' }}
-        accept=".pdf,.png,.jpg,.jpeg,.webp,.html,.htm"
+        accept={DOCUMENT_UPLOAD_ACCEPT}
         onChange={async (e) => {
           const file = e.target.files?.[0]
           if (file && uploadMonth && onUploadReceipt) {

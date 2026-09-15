@@ -16,6 +16,7 @@ import SupplierCardModal from './SupplierCardModal'
 import TransactionEditModal from './TransactionEditModal'
 import Modal from '@/app/components/Modal'
 import YpayIncomeImportPanel from './YpayIncomeImportPanel'
+import { DOCUMENT_UPLOAD_ACCEPT } from '@/app/utils/documentUploadAccept'
 
 const ILS = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
 
@@ -592,7 +593,7 @@ export default function TaxVatSection({
           <input
             ref={fileInputRef}
             type="file"
-            accept=".pdf,image/*"
+            accept={DOCUMENT_UPLOAD_ACCEPT}
             onChange={handleVatFilePick}
             style={{ display: 'none' }}
           />
