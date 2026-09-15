@@ -19,6 +19,7 @@ import YpayIncomeImportPanel from './YpayIncomeImportPanel'
 import { DOCUMENT_UPLOAD_ACCEPT } from '@/app/utils/documentUploadAccept'
 import { resolveOpenPeriodKey, computeClosedPeriodKeys } from '@/app/utils/vatPeriodRollForward'
 import { groupExpenseDocsByTransaction, resolveLinkedExpenseDoc } from './expenseScale'
+import ShaamFilingView from './ShaamFilingView'
 
 const ILS = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
 
@@ -140,6 +141,7 @@ type ExpenseRow = {
   txDateStr: string // DD/MM/YYYY original
   date: Date
   vendor: string
+  category: string
   amount: number
   inputVat: number
   vatRate: number
@@ -283,8 +285,7 @@ export default function TaxVatSection({
   )
   const isPeriodClosed = !!selectedPayment
 
-  // Rolls an untagged late document forward into the next OPEN period
-  // instead of it vanishing when its own natural period has closed (#402).
+  // Rolls an untagged late document into the next OPEN period (#402).
   const closedPeriodKeys = useMemo(() => computeClosedPeriodKeys(periods, vatPayments), [periods, vatPayments])
 
   const incomeRows = useMemo<IncomeRow[]>(() => {
@@ -380,7 +381,7 @@ export default function TaxVatSection({
         txAmount: t.amount || 0,
         txDateStr: t.date,
         date: txDate,
-        vendor: linkedDoc?.vendor || t.merchant || t.description || '—',
+        vendor: linkedDoc?.vendor || t.merchant || t.description || '—', category: t.category!,
         amount: eligibleAmount,
         inputVat,
         vatRate,
@@ -496,23 +497,24 @@ export default function TaxVatSection({
         uploadedAt: now,
       })
 
-      // Tag docs that fall WITHIN this payment's reporting period only —
-      // not everything currently visible. Otherwise next-period invoices
-      // already issued would get swept into this filing.
-      const periodStartDate = new Date(periodStart)
-      const periodEndDate = new Date(periodEnd)
-      periodStartDate.setHours(0, 0, 0, 0)
-      periodEndDate.setHours(23, 59, 59, 999)
-      const inPeriod = (d: Date) => d >= periodStartDate && d <= periodEndDate
+      // Tag every row already shown as belonging to THIS open period —
+      // incomeRows/expenseRows are already scoped exactly right (date +
+      // cutoff + roll-forward past any closed period, aglamazo#402). A
+      // second, literal date-in-range filter here used to re-check that,
+      // but with roll-forward a late document's OWN date can sit in an
+      // earlier, already-closed period even though it correctly belongs
+      // HERE — that stricter re-filter silently dropped exactly those rows
+      // from the filing's own pinned set, even though their VAT was
+      // already counted in the number typed into the government form
+      // (aglamazo#404 follow-up, found live: Jul-Aug's real filing was
+      // ₪167 input, including ₪43 of rolled-forward May/June documents,
+      // but only ₪124 of docs actually got pinned to the payment).
       const paymentRow = await db.vatPayments.get(paymentId as number)
       if (!paymentRow?.syncId) throw new Error('VAT payment row missing syncId after insert')
       const paymentSyncId = paymentRow.syncId
       await Promise.all([
-        ...incomeRows
-          .filter(r => inPeriod(r.date))
-          .map(r => db.ypayDocuments.update(r.id, { vatPaymentId: paymentSyncId })),
+        ...incomeRows.map(r => db.ypayDocuments.update(r.id, { vatPaymentId: paymentSyncId })),
         ...expenseRows
-          .filter(r => inPeriod(r.date))
           .map(r => expenseDocs.find(d => d.transactionId === r.transactionSyncId))
           .filter((d): d is ExpenseDocument => !!d && d.id != null)
           .map(d => db.expenseDocuments.update(d.id!, { vatPaymentId: paymentSyncId })),
@@ -632,6 +634,8 @@ export default function TaxVatSection({
       )}
 
       <SummaryStrip output={totals.output} input={totals.input} net={totals.net} />
+
+      {selectedPeriod && <ShaamFilingView periodLabel={selectedPeriod.label} incomeRows={incomeRows} expenseRows={expenseRows} />}
 
       <SectionBlock title={`חשבוניות הכנסה (${incomeRows.length})`}>
         {incomeRows.length === 0 ? (
