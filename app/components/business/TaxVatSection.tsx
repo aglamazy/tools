@@ -17,6 +17,7 @@ import TransactionEditModal from './TransactionEditModal'
 import Modal from '@/app/components/Modal'
 import YpayIncomeImportPanel from './YpayIncomeImportPanel'
 import { DOCUMENT_UPLOAD_ACCEPT } from '@/app/utils/documentUploadAccept'
+import { resolveOpenPeriodKey, computeClosedPeriodKeys } from '@/app/utils/vatPeriodRollForward'
 
 const ILS = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
 
@@ -281,6 +282,10 @@ export default function TaxVatSection({
   )
   const isPeriodClosed = !!selectedPayment
 
+  // Rolls an untagged late document forward into the next OPEN period
+  // instead of it vanishing when its own natural period has closed (#402).
+  const closedPeriodKeys = useMemo(() => computeClosedPeriodKeys(periods, vatPayments), [periods, vatPayments])
+
   const incomeRows = useMemo<IncomeRow[]>(() => {
     if (!selectedPeriod) return []
     const taxableTypes = new Set<number>([YpayDocType.TaxInvoice, YpayDocType.TaxInvoiceReceipt])
@@ -290,17 +295,16 @@ export default function TaxVatSection({
       if (d.projectName && !userProjectNames.has(d.projectName)) continue
       const created = new Date(d.createdAt)
       if (isPeriodClosed) {
-        // Closed period: show only docs that were tagged with this payment.
-        // vatPaymentId is a FK to VatPayment.syncId (string), never .id (the
-        // numeric primary key) — comparing against .id here always failed,
-        // so every closed period rendered zero income invoices (aglamazo#402).
+        // Closed period: show only docs tagged with this payment. vatPaymentId
+        // is a FK to VatPayment.syncId, never .id — comparing against .id here
+        // always failed, so a closed period always showed 0 invoices (#402).
         if (d.vatPaymentId !== selectedPayment!.syncId) continue
       } else {
-        // Open period: untagged docs whose date falls inside the period
-        // and on/after the dealer-conversion cutoff.
+        // Open period: untagged docs on/after the cutoff, rolled forward
+        // past any closed period so a late doc joins the next open one (#402).
         if (d.vatPaymentId != null) continue
         if (created < cutoff) continue
-        if (created < selectedPeriod.start || created > selectedPeriod.end) continue
+        if (resolveOpenPeriodKey(created, periods, closedPeriodKeys) !== selectedPeriod.key) continue
       }
       const vatRate = getVatRateForDate(created)
       rows.push({
@@ -321,7 +325,7 @@ export default function TaxVatSection({
     }
     rows.sort((a, b) => a.date.getTime() - b.date.getTime())
     return rows
-  }, [ypayDocs, cutoff, userProjectNames, selectedPeriod, isPeriodClosed, selectedPayment])
+  }, [ypayDocs, cutoff, userProjectNames, selectedPeriod, isPeriodClosed, selectedPayment, periods, closedPeriodKeys])
 
   const expenseRows = useMemo<ExpenseRow[]>(() => {
     if (!selectedPeriod) return []
@@ -355,11 +359,11 @@ export default function TaxVatSection({
         // Closed period: only show docs tagged with this payment.
         if (linkedDoc?.vatPaymentId !== selectedPayment!.syncId) continue
       } else {
-        // Open period: untagged docs whose date falls inside the period
-        // and on/after the dealer-conversion cutoff.
+        // Open period: untagged docs on/after the cutoff, rolled forward
+        // past any closed period so a late doc joins the next open one (#402).
         if (linkedDoc?.vatPaymentId != null) continue
         if (txDate < cutoff) continue
-        if (txDate < selectedPeriod.start || txDate > selectedPeriod.end) continue
+        if (resolveOpenPeriodKey(txDate, periods, closedPeriodKeys) !== selectedPeriod.key) continue
       }
       const vatRate = getVatRateForDate(txDate)
       // Input VAT is only what the linked document confirms. Without a doc we
@@ -389,7 +393,7 @@ export default function TaxVatSection({
     }
     rows.sort((a, b) => a.date.getTime() - b.date.getTime())
     return rows
-  }, [effectiveTransactions, expCategoryMap, categoryByName, expenseDocs, cutoff, personUid, selectedPeriod, isPeriodClosed, selectedPayment])
+  }, [effectiveTransactions, expCategoryMap, categoryByName, expenseDocs, cutoff, personUid, selectedPeriod, isPeriodClosed, selectedPayment, periods, closedPeriodKeys])
 
   const totals = useMemo(() => {
     const output = incomeRows.reduce((s, r) => s + r.outputVat, 0)
