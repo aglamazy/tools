@@ -291,7 +291,10 @@ export default function TaxVatSection({
       const created = new Date(d.createdAt)
       if (isPeriodClosed) {
         // Closed period: show only docs that were tagged with this payment.
-        if (d.vatPaymentId !== selectedPayment!.id) continue
+        // vatPaymentId is a FK to VatPayment.syncId (string), never .id (the
+        // numeric primary key) — comparing against .id here always failed,
+        // so every closed period rendered zero income invoices (aglamazo#402).
+        if (d.vatPaymentId !== selectedPayment!.syncId) continue
       } else {
         // Open period: untagged docs whose date falls inside the period
         // and on/after the dealer-conversion cutoff.
