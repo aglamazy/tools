@@ -459,16 +459,24 @@ export default function TaxVatSection({
       if (extracted?.error) throw new Error(extracted.error)
 
       const now = new Date().toISOString()
-      // Period boundaries default to the SELECTED period (the one the user is
-      // closing). Claude's extracted values override when present.
-      const fallbackStart = selectedPeriod?.startISO || cutoff.toISOString().slice(0, 10)
-      const fallbackEnd = selectedPeriod?.endISO || ymd
-      const fallbackLabel = selectedPeriod?.label || 'תקופה לא ידועה'
+      // Period boundaries always come from the SELECTED period (the one the
+      // user chose to close before uploading) — never from Claude's
+      // extraction (aglamazo#399). The gov.il confirmation for a bi-monthly
+      // filer only ever states the closing month ("תקופת הדיווח: 06/2026"),
+      // so an extracted periodStart/periodEnd derived from that reads as a
+      // one-month period and silently split the real bi-monthly period —
+      // pulling its other month's invoices out of the open view and making
+      // a fully paid period look unpaid. The user already told the app
+      // which period this is by selecting it; the confirmation only needs
+      // to supply amounts/date/confirmation number.
+      const periodStart = selectedPeriod?.startISO || cutoff.toISOString().slice(0, 10)
+      const periodEnd = selectedPeriod?.endISO || ymd
+      const periodLabel = selectedPeriod?.label || 'תקופה לא ידועה'
       const paymentId = await db.vatPayments.add({
         userId: personUid,
-        periodLabel: extracted.periodLabel || fallbackLabel,
-        periodStart: extracted.periodStart || fallbackStart,
-        periodEnd: extracted.periodEnd || fallbackEnd,
+        periodLabel,
+        periodStart,
+        periodEnd,
         paymentDate: extracted.paymentDate || ymd,
         output: typeof extracted.output === 'number' ? extracted.output : totals.output,
         input: typeof extracted.input === 'number' ? extracted.input : totals.input,
@@ -484,8 +492,8 @@ export default function TaxVatSection({
       // Tag docs that fall WITHIN this payment's reporting period only —
       // not everything currently visible. Otherwise next-period invoices
       // already issued would get swept into this filing.
-      const periodStartDate = new Date(extracted.periodStart || cutoff.toISOString().slice(0, 10))
-      const periodEndDate = new Date(extracted.periodEnd || ymd)
+      const periodStartDate = new Date(periodStart)
+      const periodEndDate = new Date(periodEnd)
       periodStartDate.setHours(0, 0, 0, 0)
       periodEndDate.setHours(23, 59, 59, 999)
       const inPeriod = (d: Date) => d >= periodStartDate && d <= periodEndDate
