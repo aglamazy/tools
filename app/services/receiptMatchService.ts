@@ -7,6 +7,29 @@ import { searchMessages, fetchMessagesMetadata, fetchMessageBody, fetchFirstPdfA
 import { uploadExpenseDocument } from '@/app/services/googleDriveService'
 import { findSupplierByAlias, addEmailSenderToSupplier } from '@/app/services/supplierService'
 
+// Agla, 2026-09-15: "I want tail -f command to see the dev server log." The
+// matching steps below run client-side (browser console only) — this mirrors
+// each log line to the server so it also lands in the terminal/run.log via
+// the API route's own console.log. Fire-and-forget: never blocks or fails
+// the actual matching flow if the request itself errors.
+function formatLogArg(a: unknown): string {
+  if (typeof a === 'string') return a
+  try {
+    return JSON.stringify(a)
+  } catch {
+    return String(a)
+  }
+}
+
+function logToServer(prefix: string, args: unknown[]) {
+  const line = [prefix, ...args.map(formatLogArg)].join(' ')
+  fetch('/api/match-receipt', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'log', message: line }),
+  }).catch(() => {})
+}
+
 /**
  * Parse a transaction date string in any of the formats we store:
  *   - DD/MM/YYYY or DD.MM.YYYY (Israeli — older imports)
@@ -167,7 +190,10 @@ export async function matchReceiptForTransaction(
   claudeApiKey: string,
 ): Promise<MatchResult> {
   const desc = (tx.merchant || tx.description || '').trim()
-  const log = (...args: unknown[]) => console.log('[match]', `tx#${tx.id}`, desc, '·', ...args)
+  const log = (...args: unknown[]) => {
+    console.log('[match]', `tx#${tx.id}`, desc, '·', ...args)
+    logToServer(`[match] tx#${tx.id} ${desc} ·`, args)
+  }
 
   log('start', { date: tx.date, amount: tx.amount })
 
@@ -682,6 +708,7 @@ export async function manualPickCandidate(
     const text = args.filter((a) => typeof a === 'string').join(' ')
     if (text.includes('  ↳')) lastReason = text.replace('  ↳', '').trim()
     console.log('[ReceiptMatch:manual]', ...args)
+    logToServer('[ReceiptMatch:manual]', args)
   }
   try {
     const doc = await tryCandidate(messageId, tx, desc, claudeApiKey, log, {

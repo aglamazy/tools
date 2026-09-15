@@ -144,6 +144,11 @@ export async function POST(req: NextRequest) {
       return handleDownloadPdf(body.url)
     } else if (action === 'match-supplier') {
       return handleMatchSupplier(body.candidates, body.suppliers)
+    } else if (action === 'log') {
+      // Agla, 2026-09-15: forwards receiptMatchService's client-side step
+      // logs here so `tail -f run.log` shows them, not just the browser console.
+      console.log(String(body.message))
+      return NextResponse.json({ ok: true })
     }
 
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 })
