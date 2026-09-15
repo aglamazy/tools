@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { db } from '@/app/db/financeDB'
-import { buildSupplierAliasMap, renameSupplierAlias, resolveSupplierDisplayName } from './supplierService'
+import { bindSupplierToExisting, buildSupplierAliasMap, renameSupplierAlias, resolveOrCreateSupplier, resolveSupplierDisplayName } from './supplierService'
 
 // Regression coverage for aglamazo#342's rename mechanics — the part of the
 // pen-icon feature that isn't tied to a React render (component tests aren't
@@ -42,5 +42,48 @@ describe('supplierService — alias rename (aglamazo#342)', () => {
     await renameSupplierAlias('VERCEL INC.', 'Vercel Inc.')
     expect(await resolveSupplierDisplayName('VERCEL INC.')).toBe('Vercel Inc.')
     expect(await db.suppliers.count()).toBe(1)
+  })
+
+  it('renaming a bare alias to a name that already exists merges into it instead of creating a same-name duplicate (2026-09-15 Celcom bug)', async () => {
+    const existingId = await db.suppliers.add({
+      name: 'סלקום ישראל בע"מ',
+      bankCardAliases: ['סלקום ישראל בע"מ'],
+      emailSenders: ['cellcom-monthly-invoice@cellcominv.co.il'],
+      createdAt: new Date().toISOString(),
+    })
+    await renameSupplierAlias('סלקום', 'סלקום ישראל בע"מ')
+
+    expect(await db.suppliers.count()).toBe(1)
+    const merged = await db.suppliers.get(existingId)
+    expect(merged?.emailSenders).toEqual(['cellcom-monthly-invoice@cellcominv.co.il'])
+    expect(merged?.bankCardAliases).toEqual(expect.arrayContaining(['סלקום ישראל בע"מ', 'סלקום']))
+  })
+})
+
+describe('supplierService — bindSupplierToExisting (aglamazo, 2026-09-15)', () => {
+  beforeEach(async () => {
+    await db.suppliers.clear()
+  })
+
+  afterEach(async () => {
+    await db.suppliers.clear()
+  })
+
+  it('folds the sender-less supplier into the one with a working email sender and deletes the source', async () => {
+    const target = await resolveOrCreateSupplier('סלקום ישראל בע"מ')
+    await db.suppliers.update(target.id!, { emailSenders: ['cellcom-monthly-invoice@cellcominv.co.il'] })
+    const source = await resolveOrCreateSupplier('סלקום')
+
+    const result = await bindSupplierToExisting(source.id!, target.id!)
+
+    expect(result.emailSenders).toEqual(['cellcom-monthly-invoice@cellcominv.co.il'])
+    expect(result.bankCardAliases).toEqual(expect.arrayContaining(['סלקום ישראל בע"מ', 'סלקום']))
+    expect(await db.suppliers.get(source.id!)).toBeUndefined()
+    expect(await resolveSupplierDisplayName('סלקום')).toBe('סלקום ישראל בע"מ')
+  })
+
+  it('refuses to bind a supplier to itself', async () => {
+    const s = await resolveOrCreateSupplier('Vercel')
+    await expect(bindSupplierToExisting(s.id!, s.id!)).rejects.toThrow()
   })
 })

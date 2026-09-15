@@ -1,8 +1,9 @@
 'use client'
 
-import { forwardRef, useImperativeHandle, useRef, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import Modal from '@/app/components/Modal'
 import { db, type Supplier } from '@/app/db/financeDB'
+import { bindSupplierToExisting } from '@/app/services/supplierService'
 
 type SupplierCardModalProps = {
   supplier: Supplier
@@ -88,6 +89,41 @@ export default function SupplierCardModal({ supplier, onClose, onSaved }: Suppli
   const [saving, setSaving] = useState(false)
   const aliasesRef = useRef<StringListEditorHandle>(null)
   const sendersRef = useRef<StringListEditorHandle>(null)
+  const isUseful = supplier.emailSenders.length > 0
+
+  // Agla, 2026-09-15: a supplier with no email sender yet is often really the
+  // same vendor as one that already has a working sender (e.g. "סלקום" vs
+  // "סלקום ישראל בע"מ") — let the user bind THIS transaction's vendor to the
+  // existing one instead of hand-filling a sender that's already known.
+  const [otherSuppliers, setOtherSuppliers] = useState<Supplier[]>([])
+  const [bindQuery, setBindQuery] = useState('')
+  const [bindTargetId, setBindTargetId] = useState<number | null>(null)
+  const [binding, setBinding] = useState(false)
+
+  useEffect(() => {
+    if (isUseful) return
+    db.suppliers.toArray().then((rows) => {
+      setOtherSuppliers(rows.filter((s) => s.id !== supplier.id && s.emailSenders.length > 0))
+    })
+  }, [isUseful, supplier.id])
+
+  const bindSuggestions = useMemo(() => {
+    const q = bindQuery.trim().toLowerCase()
+    if (!q) return []
+    return otherSuppliers.filter((s) => s.name.toLowerCase().includes(q)).slice(0, 8)
+  }, [otherSuppliers, bindQuery])
+
+  const handleBind = async () => {
+    if (!bindTargetId || !supplier.id) return
+    setBinding(true)
+    try {
+      const merged = await bindSupplierToExisting(supplier.id, bindTargetId)
+      onSaved(merged)
+      onClose()
+    } finally {
+      setBinding(false)
+    }
+  }
 
   const handleSave = async () => {
     const trimmedName = name.trim()
@@ -131,13 +167,74 @@ export default function SupplierCardModal({ supplier, onClose, onSaved }: Suppli
           </div>
 
           <div>
-            <label style={{ display: 'block', marginBottom: '0.4rem', fontWeight: 600, fontSize: '0.875rem' }}>כתובות מייל של שולח החשבונית</label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem', fontWeight: 600, fontSize: '0.875rem' }}>
+              כתובות מייל של שולח החשבונית
+              {isUseful && (
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '0.25rem', padding: '0.1rem 0.5rem',
+                  background: '#dcfce7', color: '#166534', border: '1px solid #86efac', borderRadius: '999px',
+                  fontSize: '0.7rem', fontWeight: 600,
+                }}>
+                  ✓ יעיל לחיפוש קבלות
+                </span>
+              )}
+            </label>
             <p style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: 0, marginBottom: '0.4rem' }}>
               קביעת כתובת ידנית הופכת את חיפוש הקבלות לספק הזה למהיר וממוקד —
               חיפוש ישיר לפי שולח + תאריך, ללא צורך בניחוש.
             </p>
             <StringListEditor ref={sendersRef} values={emailSenders} onChange={setEmailSenders} placeholder="למשל: no-reply@ypay.co.il" />
           </div>
+
+          {!isUseful && otherSuppliers.length > 0 && (
+            <div style={{ padding: '0.75rem', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '0.5rem' }}>
+              <label style={{ display: 'block', marginBottom: '0.4rem', fontWeight: 600, fontSize: '0.875rem' }}>
+                או קשר תנועה זו לספק קיים
+              </label>
+              <p style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: 0, marginBottom: '0.4rem' }}>
+                אם זה בעצם אותו ספק שכבר מוגדר עם כתובת מייל פעילה, קשר במקום למלא ידנית.
+              </p>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type="text"
+                  value={bindQuery}
+                  onChange={(e) => { setBindQuery(e.target.value); setBindTargetId(null) }}
+                  placeholder="חפש ספק קיים לפי שם…"
+                  style={{ width: '100%', padding: '0.5rem 0.75rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', fontSize: '0.875rem', direction: 'rtl' }}
+                />
+                {bindSuggestions.length > 0 && bindTargetId === null && (
+                  <div style={{
+                    position: 'absolute', zIndex: 10, top: '100%', right: 0, left: 0, marginTop: '0.25rem',
+                    background: '#fff', border: '1px solid #d1d5db', borderRadius: '0.375rem',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.1)', maxHeight: '160px', overflowY: 'auto',
+                  }}>
+                    {bindSuggestions.map((s) => (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => { setBindTargetId(s.id!); setBindQuery(s.name) }}
+                        style={{
+                          display: 'block', width: '100%', textAlign: 'right', padding: '0.5rem 0.75rem',
+                          border: 'none', background: 'none', cursor: 'pointer', fontSize: '0.85rem',
+                        }}
+                      >
+                        {s.name} <span style={{ color: '#94a3b8', fontSize: '0.75rem' }}>({s.emailSenders[0]})</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={handleBind}
+                disabled={!bindTargetId || binding}
+                className="file-picker"
+                style={{ marginTop: '0.5rem', padding: '0.3rem 0.8rem', fontSize: '0.8rem' }}
+              >
+                {binding ? 'מקשר…' : 'קשר'}
+              </button>
+            </div>
+          )}
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1.5rem' }}>

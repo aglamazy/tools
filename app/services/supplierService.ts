@@ -68,17 +68,78 @@ export async function buildSupplierAliasMap(): Promise<Map<string, string>> {
   return map
 }
 
+function dedupeCaseInsensitive(values: string[]): string[] {
+  const seen = new Map<string, string>() // lowercased -> first-seen original casing
+  for (const v of values) {
+    const key = v.toLowerCase()
+    if (!seen.has(key)) seen.set(key, v)
+  }
+  return [...seen.values()]
+}
+
+/**
+ * Folds `from` into `to`: unions bankCardAliases + emailSenders (case-
+ * insensitive dedupe) onto `to`, then deletes `from`. Suppliers carry no
+ * foreign keys from other tables (transactions/documents resolve them by
+ * alias-string lookup, not by id — see the `Supplier` interface comment),
+ * so deleting `from` is safe: the next alias lookup for anything it used to
+ * own now finds `to` instead. Returns the updated `to` record.
+ */
+async function mergeSuppliers(from: Supplier, to: Supplier): Promise<Supplier> {
+  const mergedAliases = dedupeCaseInsensitive([...to.bankCardAliases, ...from.bankCardAliases])
+  const mergedSenders = dedupeCaseInsensitive([...to.emailSenders, ...from.emailSenders])
+  await db.suppliers.update(to.id!, {
+    bankCardAliases: mergedAliases,
+    emailSenders: mergedSenders,
+    updatedAt: new Date().toISOString(),
+  })
+  await db.suppliers.delete(from.id!)
+  return { ...to, bankCardAliases: mergedAliases, emailSenders: mergedSenders }
+}
+
 /**
  * Rename a raw bank/card description's group to a new canonical display
  * name (aglamazo#342) — creates the alias's Supplier record if it doesn't
  * exist yet, then renames it. Never touches transaction.merchant itself;
  * this only changes how the raw value is DISPLAYED/GROUPED.
+ *
+ * If another supplier already has that exact name, renaming would leave two
+ * same-named records with different email senders/aliases — invisible
+ * duplicates a lookup could pick either of (the Celcom bug, 2026-09-15).
+ * Merge into the existing one instead of renaming past it.
  */
 export async function renameSupplierAlias(rawValue: string, newName: string): Promise<void> {
   const trimmedName = newName.trim()
   if (!trimmedName) return
   const supplier = await resolveOrCreateSupplier(rawValue)
-  if (supplier.name !== trimmedName) {
-    await db.suppliers.update(supplier.id!, { name: trimmedName, updatedAt: new Date().toISOString() })
+  if (supplier.name === trimmedName) return
+
+  const suppliers = await db.suppliers.toArray()
+  const existingWithName = suppliers.find(
+    (s) => s.id !== supplier.id && s.name.toLowerCase() === trimmedName.toLowerCase(),
+  )
+  if (existingWithName) {
+    await mergeSuppliers(supplier, existingWithName)
+    return
   }
+  await db.suppliers.update(supplier.id!, { name: trimmedName, updatedAt: new Date().toISOString() })
+}
+
+/**
+ * Explicit "bind this transaction's vendor to an existing supplier" action
+ * (Agla, 2026-09-15) — for when a transaction resolved to a bare, sender-
+ * less Supplier record (e.g. "סלקום") that's really the same vendor as an
+ * existing one with a working email sender (e.g. "סלקום ישראל בע"מ").
+ * Framed in the UI as binding the transaction, not "merging profiles" —
+ * under the hood it's the same fold as renameSupplierAlias's collision case.
+ */
+export async function bindSupplierToExisting(sourceSupplierId: number, targetSupplierId: number): Promise<Supplier> {
+  if (sourceSupplierId === targetSupplierId) throw new Error('Cannot bind a supplier to itself')
+  const [source, target] = await Promise.all([
+    db.suppliers.get(sourceSupplierId),
+    db.suppliers.get(targetSupplierId),
+  ])
+  if (!source) throw new Error(`Supplier ${sourceSupplierId} not found`)
+  if (!target) throw new Error(`Supplier ${targetSupplierId} not found`)
+  return mergeSuppliers(source, target)
 }

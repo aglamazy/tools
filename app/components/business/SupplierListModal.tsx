@@ -105,7 +105,13 @@ export default function SupplierListModal({ isOpen, onClose }: SupplierListModal
           supplier={editingSupplier}
           onClose={() => setEditingSupplier(null)}
           onSaved={(updated) => {
-            setSuppliers((prev) => prev.map((s) => (s.id === updated.id ? updated : s)))
+            // A bind/merge can fold editingSupplier into a DIFFERENT record
+            // (its own id no longer exists) — drop the stale row and upsert
+            // the merged one, rather than only patching a matching id.
+            setSuppliers((prev) => {
+              const withoutStale = prev.filter((s) => s.id !== editingSupplier?.id && s.id !== updated.id)
+              return [...withoutStale, updated].sort((a, b) => a.name.localeCompare(b.name, 'he'))
+            })
           }}
         />
       )}
