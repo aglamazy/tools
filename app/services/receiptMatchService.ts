@@ -320,33 +320,61 @@ export async function matchReceiptForTransaction(
     return { status: 'no-match', checkedCandidates: notDocumentCandidates, searchInfo }
   }
 
+  // Agla, live, watching many rows sit in "מחפש…": "It doesn't make sense it
+  // takes so long." Real cause — the content-search widening fix (aglamazo,
+  // 2026-09-15, checking up to 100 candidates) can hand this step 40+
+  // document-shaped candidates for a vendor that genuinely has no matching
+  // email at all (every one of them a real, non-trivial extraction call:
+  // fetch body, sometimes download+vision-extract a PDF). Running them one
+  // at a time made the worst case (e.g. 43 candidates, none of them right)
+  // take minutes for nothing. Verify a bounded number at once instead —
+  // same coverage, no candidate skipped, just not serialized.
+  const CANDIDATE_VERIFY_CONCURRENCY = 4
   const checkedCandidates: CheckedCandidate[] = [...notDocumentCandidates]
-  for (const idx of documentIndices) {
-    const msgId = candidateMessageIds[idx]
-    const meta = metaByMsgId.get(msgId)
-    log('verifying candidate:', meta?.subject || msgId)
-    let lastReason = ''
-    const candidateLog = (...args: unknown[]) => {
-      const text = args.filter((a) => typeof a === 'string').join(' ')
-      if (text.includes('  ↳')) lastReason = text.replace('  ↳', '').trim()
-      log(...args)
+  let matchedDoc: ExpenseDocument | null = null
+  let stop = false
+  let nextPos = 0
+
+  const verifyWorker = async () => {
+    while (!stop) {
+      const pos = nextPos++
+      if (pos >= documentIndices.length) return
+      const idx = documentIndices[pos]
+      const msgId = candidateMessageIds[idx]
+      const meta = metaByMsgId.get(msgId)
+      log('verifying candidate:', meta?.subject || msgId)
+      let lastReason = ''
+      const candidateLog = (...args: unknown[]) => {
+        const text = args.filter((a) => typeof a === 'string').join(' ')
+        if (text.includes('  ↳')) lastReason = text.replace('  ↳', '').trim()
+        log(...args)
+      }
+      const doc = await tryCandidate(msgId, tx, desc, claudeApiKey, candidateLog, {
+        subject: meta?.subject || '',
+        from: meta?.from || '',
+        candidateIndex: pos + 1,
+        totalCandidates: documentIndices.length,
+      })
+      checkedCandidates.push({
+        messageId: msgId,
+        date: meta?.date || '',
+        subject: meta?.subject || '',
+        from: meta?.from || '',
+        outcome: doc ? 'matched' : 'rejected',
+        reason: doc ? '' : lastReason,
+      })
+      if (doc && !matchedDoc) {
+        matchedDoc = doc
+        stop = true
+      }
     }
-    const doc = await tryCandidate(msgId, tx, desc, claudeApiKey, candidateLog, {
-      subject: meta?.subject || '',
-      from: meta?.from || '',
-      candidateIndex: documentIndices.indexOf(idx) + 1,
-      totalCandidates: documentIndices.length,
-    })
-    checkedCandidates.push({
-      messageId: msgId,
-      date: meta?.date || '',
-      subject: meta?.subject || '',
-      from: meta?.from || '',
-      outcome: doc ? 'matched' : 'rejected',
-      reason: doc ? '' : lastReason,
-    })
-    if (doc) return { status: 'matched', doc, checkedCandidates, searchInfo }
   }
+
+  await Promise.all(
+    Array.from({ length: Math.min(CANDIDATE_VERIFY_CONCURRENCY, documentIndices.length) }, () => verifyWorker())
+  )
+
+  if (matchedDoc) return { status: 'matched', doc: matchedDoc, checkedCandidates, searchInfo }
   log('all document candidates exhausted — returning no-match')
   return { status: 'no-match', checkedCandidates, searchInfo }
 }
