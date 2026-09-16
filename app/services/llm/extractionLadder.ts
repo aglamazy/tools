@@ -1,4 +1,5 @@
 import { parseClaudeJson } from '@/app/utils/parseClaudeJson'
+import { ANTHROPIC_MODEL, GEMINI_FLASH_MODEL } from './modelRegistry'
 
 export type ExtractionTextPart = {
   type: 'text'
@@ -70,8 +71,8 @@ export type ExtractionLadderOptions<T> = {
 }
 
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
-const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash'
-const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5'
+const DEFAULT_GEMINI_MODEL = GEMINI_FLASH_MODEL
+const DEFAULT_ANTHROPIC_MODEL = ANTHROPIC_MODEL
 
 // aglamazo#385 (Sheli, 2026-09-14; Agla follow-up, same day: "make sure
 // Aglamazo take the model name from the maker/model name and handle the
@@ -84,7 +85,7 @@ const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5'
 // own error says it no longer accepts the parameter; every extraction route
 // (extract-btl-notice, extract-pdf-statement, extract-xls-statement,
 // extract-expense-doc, extract-tax-doc) shares this one check.
-const MODELS_WITHOUT_TEMPERATURE_SUPPORT = new Set<string>(['claude-sonnet-5'])
+const MODELS_WITHOUT_TEMPERATURE_SUPPORT = new Set<string>([ANTHROPIC_MODEL])
 
 export function modelSupportsTemperature(model: string): boolean {
   return !MODELS_WITHOUT_TEMPERATURE_SUPPORT.has(model)

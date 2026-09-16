@@ -5,11 +5,12 @@
 
 import { createGeminiClient } from 'agents-ai/core'
 import { type GmailFilterCriteria } from './gmailService'
+import { GEMINI_LEGACY_FILTER_MODEL } from './llm/modelRegistry'
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY
 
 function getClient() {
-  return createGeminiClient({ apiKey: GEMINI_API_KEY, model: 'gemini-2.0-flash' })
+  return createGeminiClient({ apiKey: GEMINI_API_KEY, model: GEMINI_LEGACY_FILTER_MODEL })
 }
 
 // agents-ai's client returns English error strings; this UI is Hebrew-only,

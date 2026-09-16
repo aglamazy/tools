@@ -1,6 +1,7 @@
 // CALLER-KEYED ROUTE — authenticated via caller's Claude API key
 import { NextRequest, NextResponse } from 'next/server'
 import { extractJsonWithFallback } from '@/app/services/llm/extractionLadder'
+import { ANTHROPIC_MODEL, GEMINI_FLASH_MODEL } from '@/app/services/llm/modelRegistry'
 import { withServiceCall } from 'agents-observe/next'
 
 async function handler(req: NextRequest) {
@@ -40,9 +41,9 @@ async function handler(req: NextRequest) {
         { type: 'text', text: 'חלץ את הנתונים מתלוש השכר / מסמך המס הזה והחזר JSON בלבד.' },
       ],
       anthropicApiKey: apiKey,
-      geminiModel: 'gemini-2.5-flash',
+      geminiModel: GEMINI_FLASH_MODEL,
       geminiMaxTokens: 1024,
-      anthropicModel: 'claude-sonnet-5',
+      anthropicModel: ANTHROPIC_MODEL,
       anthropicMaxTokens: 1024,
     })
 

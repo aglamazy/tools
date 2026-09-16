@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { LLMClient, LLMChatOptions, LLMResult } from './types'
+import { ANTHROPIC_MODEL } from './modelRegistry'
 
 export class AnthropicClient implements LLMClient {
   async chat(options: LLMChatOptions): Promise<LLMResult> {
@@ -39,7 +40,7 @@ export class AnthropicClient implements LLMClient {
         .filter(m => m.content)
 
       const response = await client.messages.create({
-        model: 'claude-sonnet-5',
+        model: ANTHROPIC_MODEL,
         max_tokens: maxTokens,
         system,
         messages: anthropicMessages,

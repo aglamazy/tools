@@ -7,6 +7,7 @@ import { GeminiClient } from '@/app/services/llm/geminiClient'
 import { ACTION_DECLARATIONS } from './actionDeclarations'
 import type { LLMMessage } from '@/app/services/llm/types'
 import { VARIANT_CONFIG } from '@/app/config/variants'
+import { GEMINI_CHAT_ESCALATION_MODEL } from '@/app/services/llm/modelRegistry'
 
 const gemini = new GeminiClient()
 
@@ -16,7 +17,7 @@ const gemini = new GeminiClient()
  * Pro is substantially more reliable on structured tool use. Cost impact is
  * limited to the small fraction of turns that actually jam.
  */
-const ESCALATION_MODEL = 'gemini-2.5-pro'
+const ESCALATION_MODEL = GEMINI_CHAT_ESCALATION_MODEL
 
 /**
  * Lazy-built regex that matches any line where the model wrote a tool call as

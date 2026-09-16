@@ -1,9 +1,11 @@
 // CALLER-KEYED ROUTE — authenticated via caller's Claude API key
 import { NextRequest, NextResponse } from 'next/server'
 import { withServiceCall } from 'agents-observe/next'
+import Anthropic from '@anthropic-ai/sdk'
 import type { BudgetTransaction } from '@/app/types/transactions'
 import type { Category } from '@/app/types/category'
 import { parseClaudeJson } from '@/app/utils/parseClaudeJson'
+import { ANTHROPIC_MODEL } from '@/app/services/llm/modelRegistry'
 
 type HistoryEntry = { business: string; category: string }
 
@@ -102,30 +104,30 @@ ${JSON.stringify(batch, null, 2)}
 החזר JSON בלבד בפורמט:
 {"confident": [...], "askUser": [...]}`
 
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-6',
+      // aglamazo#406: this used to be a raw fetch() to a hardcoded URL with a
+      // hardcoded model string that had drifted from every other call site's
+      // 'claude-sonnet-5' to a wrong 'claude-sonnet-4-6'. Now uses the SDK
+      // client (already a project dependency) + the shared model registry.
+      // Deliberately NOT routed through anthropicClient.ts's AnthropicClient
+      // wrapper — its LLMResult shape has no stop_reason, and the max_tokens
+      // truncation check below is a real safety net this route relies on;
+      // unifying onto that wrapper would need it to surface stop_reason
+      // first, which is a separate, larger change than this ticket's scope.
+      let response
+      try {
+        response = await new Anthropic({ apiKey }).messages.create({
+          model: ANTHROPIC_MODEL,
           max_tokens: 8192,
           system: systemPrompt,
           messages: [{ role: 'user', content: userMessage }],
-        }),
-      })
-
-      if (!response.ok) {
-        const errorBody = await response.text()
-        console.error('[classify-transactions] Claude API error:', response.status, errorBody)
-        throw new Error(`Claude API ${response.status}: ${errorBody.slice(0, 200)}`)
+        })
+      } catch (err: any) {
+        console.error('[classify-transactions] Claude API error:', err?.status, err?.message)
+        throw new Error(`Claude API ${err?.status ?? 'error'}: ${String(err?.message ?? err).slice(0, 200)}`)
       }
 
-      const data = await response.json()
-      const text: string = data.content?.[0]?.text ?? ''
-      const stopReason: string | undefined = data.stop_reason
+      const text = response.content.map((b) => (b.type === 'text' ? b.text : '')).join('')
+      const stopReason = response.stop_reason
       if (stopReason === 'max_tokens') {
         // Shouldn't happen at CHUNK_SIZE=50, but if it does the chunk is
         // too big for the model — surface as a hard error so we shrink the

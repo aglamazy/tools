@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import * as XLSX from 'xlsx'
 import { extractJsonWithFallback } from '@/app/services/llm/extractionLadder'
+import { ANTHROPIC_MODEL, GEMINI_FLASH_MODEL } from '@/app/services/llm/modelRegistry'
 import { withServiceCall } from 'agents-observe/next'
 import type { XlsExtraction } from '@/app/types/xlsExtraction'
 
@@ -77,7 +78,7 @@ const GEMINI_SCHEMA = {
 
 // Use Flash for XLS text extraction — numbers arrive as plain text (no visual OCR),
 // so Flash accuracy is sufficient. Pro is reserved for PDF where OCR reliability matters.
-const GEMINI_MODEL = 'gemini-2.5-flash'
+const GEMINI_MODEL = GEMINI_FLASH_MODEL
 
 function xlsToText(base64: string): string {
   const buffer = Buffer.from(base64, 'base64')
@@ -129,7 +130,7 @@ async function handler(req: NextRequest) {
       geminiMaxTokens: 32000,
       geminiTemperature: 0,
       geminiResponseSchema: GEMINI_SCHEMA,
-      anthropicModel: 'claude-sonnet-5',
+      anthropicModel: ANTHROPIC_MODEL,
       anthropicMaxTokens: 32000,
       validate: (extraction) => {
         if (extraction.kind !== 'bank' && extraction.kind !== 'credit') {

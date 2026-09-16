@@ -1,6 +1,7 @@
 // CALLER-KEYED ROUTE — authenticated via caller's Claude API key
 import { NextRequest, NextResponse } from 'next/server'
 import { extractJsonWithFallback } from '@/app/services/llm/extractionLadder'
+import { ANTHROPIC_MODEL, GEMINI_FLASH_MODEL } from '@/app/services/llm/modelRegistry'
 import { withServiceCall } from 'agents-observe/next'
 
 async function handler(req: NextRequest) {
@@ -43,13 +44,13 @@ async function handler(req: NextRequest) {
         { type: 'text', text: 'חלץ את לוח התשלומים מהודעת הבל"ל הזו והחזר JSON בלבד.' },
       ],
       anthropicApiKey: apiKey,
-      geminiModel: 'gemini-2.5-flash',
+      geminiModel: GEMINI_FLASH_MODEL,
       // aglamazo#385: reproduced live against Agla's real 20/07/2026 notice —
       // 2048 truncated a 6-row schedule mid-response (finishReason=MAX_TOKENS).
       // A full 12-row schedule with per-row QR paymentUrl strings needs more
       // headroom than a flat monthly-amount notice does.
       geminiMaxTokens: 4096,
-      anthropicModel: 'claude-sonnet-5',
+      anthropicModel: ANTHROPIC_MODEL,
       anthropicMaxTokens: 4096,
     })
 

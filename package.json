@@ -1,6 +1,6 @@
 {
   "name": "finance",
-  "version": "26.9.102",
+  "version": "26.9.103",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3100",
@@ -23,6 +23,7 @@
     "@vercel/analytics": "^1.5.0",
     "agents-ai": "github:aglamazy/agents-ai#v26.9.0",
     "agents-backoffice": "github:aglamazy/agents-backoffice#v26.6.3",
+    "agents-models": "github:aglamazy/agents-models#v26.8.8",
     "agents-observe": "github:aglamazy/agents-observe#v26.8.1",
     "agents-quota": "github:aglamazy/agents-quota#v26.7.7",
     "axios": "^1.14.0",

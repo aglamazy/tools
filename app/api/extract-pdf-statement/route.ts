@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withServiceCall } from 'agents-observe/next'
 import { extractJsonWithFallback } from '@/app/services/llm/extractionLadder'
+import { ANTHROPIC_MODEL, GEMINI_PRO_MODEL } from '@/app/services/llm/modelRegistry'
 import { toSheetRows, findZeroAmountRows, type Extraction } from '@/app/utils/pdfExtractionRows'
 
 const SYSTEM_PROMPT = `אתה מומחה בקריאת דפי בנק וכרטיסי אשראי ישראליים מקובץ PDF.
@@ -68,7 +69,7 @@ const GEMINI_RESPONSE_SCHEMA = {
   required: ['kind', 'rows'],
 }
 
-const GEMINI_PDF_MODEL = 'gemini-2.5-pro'
+const GEMINI_PDF_MODEL = GEMINI_PRO_MODEL
 
 async function handler(req: NextRequest) {
   try {
@@ -111,7 +112,7 @@ ${exampleContext}
       geminiMaxTokens: 16000,
       geminiTemperature: 0,
       geminiResponseSchema: GEMINI_RESPONSE_SCHEMA,
-      anthropicModel: 'claude-sonnet-5',
+      anthropicModel: ANTHROPIC_MODEL,
       anthropicMaxTokens: 16000,
       validate: (extraction) => {
         if (extraction.kind !== 'bank' && extraction.kind !== 'credit') {

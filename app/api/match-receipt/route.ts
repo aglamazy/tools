@@ -1,6 +1,7 @@
 // CALLER-KEYED ROUTE — uses platform Gemini key + caller's Claude API key
 import { NextRequest, NextResponse } from 'next/server'
 import { extractJsonWithFallback, type ExtractionFailure } from '@/app/services/llm/extractionLadder'
+import { GEMINI_FLASH_MODEL, GEMINI_PRO_MODEL } from '@/app/services/llm/modelRegistry'
 import type { GmailInvoiceCandidate, SupplierMatchProposal } from '@/app/types/supplierWizard'
 
 type TransactionInfo = {
@@ -73,7 +74,7 @@ ${transaction.merchant ? `- בית עסק: ${transaction.merchant}` : ''}
 מיילים (נושא בלבד, ללא תוכן מלא):
 ${candidateList}`,
     }],
-    geminiModel: 'gemini-2.5-flash',
+    geminiModel: GEMINI_FLASH_MODEL,
     // Raised from 2048 now that content search can hand this step up to 100
     // candidate subjects at once (was 15-25) — confirmed live both Gemini
     // and its Claude fallback can fail to produce clean JSON at the smaller
@@ -233,7 +234,7 @@ ${supplierList || '(אין ספקים קיימים במערכת)'}
   ...
 ]`,
     userParts: [{ type: 'text', text: `הודעות מייל לסיווג:\n\n${candidateList}` }],
-    geminiModel: 'gemini-2.5-flash',
+    geminiModel: GEMINI_FLASH_MODEL,
     geminiMaxTokens: 8192,
     geminiTemperature: 0,
   })
@@ -336,7 +337,7 @@ async function handleExtract(
 החזר אך ורק JSON תקין.`,
     userParts: [{ type: 'text', text: `חלץ נתוני קבלה מהמייל הבא:\n\n${textContent}` }],
     anthropicApiKey: claudeApiKey,
-    geminiModel: 'gemini-2.5-flash',
+    geminiModel: GEMINI_FLASH_MODEL,
     // Reproduced live 2026-09-14 (Agla, same YPAY row as aglamazo#396): once
     // the pick-candidate step stopped truncating, THIS step (the real
     // body/PDF extraction+verification, a genuinely reasoning-heavy 13-field
@@ -467,7 +468,7 @@ async function handleExtractPdf(pdfBase64: string, transaction: TransactionInfo,
       { type: 'text', text: 'חלץ נתוני קבלה מהמסמך המצורף.' },
     ],
     anthropicApiKey: claudeApiKey,
-    geminiModel: 'gemini-2.5-pro',
+    geminiModel: GEMINI_PRO_MODEL,
     geminiMaxTokens: 4096,
     anthropicMaxTokens: 4096,
     geminiTemperature: 0,
@@ -515,7 +516,7 @@ async function handleExtractImage(imageBase64: string, mediaType: string, transa
       { type: 'text', text: 'חלץ נתוני קבלה מהתמונה המצורפת.' },
     ],
     anthropicApiKey: claudeApiKey,
-    geminiModel: 'gemini-2.5-flash',
+    geminiModel: GEMINI_FLASH_MODEL,
     geminiMaxTokens: 4096,
     anthropicMaxTokens: 4096,
     geminiTemperature: 0,
@@ -561,7 +562,7 @@ async function handleExtractVatPayment(payloadBase64: string, mediaType: string 
       { type: 'text', text: 'חלץ נתוני אישור תשלום מע״מ מהמסמך המצורף.' },
     ],
     anthropicApiKey: claudeApiKey,
-    geminiModel: 'gemini-2.5-flash',
+    geminiModel: GEMINI_FLASH_MODEL,
     geminiMaxTokens: 4096,
     anthropicMaxTokens: 4096,
     geminiTemperature: 0,

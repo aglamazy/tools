@@ -5,6 +5,7 @@
 // "credit balance too low" failure was previously invisible until a receipt
 // match silently failed. This does NOT extract anything; it only probes the key.
 import { NextRequest, NextResponse } from 'next/server'
+import { ANTHROPIC_MODEL } from '@/app/services/llm/modelRegistry'
 
 export type ClaudeKeyReason = 'ok' | 'no-credit' | 'invalid' | 'rate-limit' | 'error'
 
@@ -24,7 +25,7 @@ export async function POST(req: NextRequest) {
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-5',
+        model: ANTHROPIC_MODEL,
         max_tokens: 1,
         messages: [{ role: 'user', content: 'hi' }],
       }),
