@@ -101,7 +101,14 @@ export default function ImportWizard({ isOpen, onClose, dirHandle, onFileSelect 
 
   const handleImport = async (entry: WizardFileEntry) => {
     if (!entry.folderFile) return
-    const file = await entry.folderFile.fileHandle.getFile()
+    let file: File
+    try {
+      file = await entry.folderFile.fileHandle.getFile()
+    } catch (err) {
+      console.error('Wizard import: getFile failed', entry.folderFile.fileName, err)
+      setError(`נכשל לקרוא את "${entry.folderFile.fileName}": ${err instanceof Error ? err.message : String(err)}`)
+      return
+    }
     onClose()
     onFileSelect(file)
   }
@@ -111,10 +118,24 @@ export default function ImportWizard({ isOpen, onClose, dirHandle, onFileSelect 
       (e) => (e.status === 'ready' || (e.status === 'stale' && e.folderFile)) && e.folderFile
     )
     const files: File[] = []
+    const failed: string[] = []
     for (const entry of importable) {
-      files.push(await entry.folderFile!.fileHandle.getFile())
+      try {
+        files.push(await entry.folderFile!.fileHandle.getFile())
+      } catch (err) {
+        console.error('Wizard import-all: getFile failed', entry.folderFile!.fileName, err)
+        failed.push(entry.folderFile!.fileName)
+      }
     }
-    onClose()
+    if (failed.length > 0) {
+      // Keep the wizard open so the error banner (gated on isOpen) is
+      // actually visible — closing here would set the error into a
+      // component about to unmount, silently losing it (the same failure
+      // shape this fix exists to stop).
+      setError(`נכשל לקרוא ${failed.length} קבצים: ${failed.join(', ')}`)
+    } else {
+      onClose()
+    }
     for (const file of files) {
       await onFileSelect(file)
     }
