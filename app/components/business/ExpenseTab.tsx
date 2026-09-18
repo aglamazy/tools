@@ -9,7 +9,7 @@ import { appSettingsStore, type AccountOwners } from '@/app/stores/appSettingsSt
 import { getTransactionAttributedUid } from '@/app/utils/transactionAttribution'
 import { uploadExpenseDocument, downloadDriveFile } from '@/app/services/googleDriveService'
 import { getAccessToken, requestGoogleAccess } from '@/app/services/googleTokenService'
-import { matchReceiptForTransaction, parseDateFolder } from '@/app/services/receiptMatchService'
+import { matchReceiptForTransaction, parseDateFolder, extractReceiptFromFile } from '@/app/services/receiptMatchService'
 import { partnerStore, type Partner as Participant } from '@/app/stores/partnerStore'
 import { getUser } from '@/app/stores/authStore'
 import type { Category } from '@/app/types/category'
@@ -26,42 +26,6 @@ import { effectiveExpenseNetAmount, expenseScaleFraction, resolveBusinessExpense
 
 type ExpenseTabProps = {
   businessId: string
-}
-
-type ExtractedData = {
-  vendor?: string; documentTitle?: string; description?: string
-  date?: string; amount?: number; vatAmount?: number
-  [key: string]: unknown
-}
-
-async function extractFromFile(file: File, transaction: { date: string; description: string; amount: number }, claudeApiKey: string): Promise<ExtractedData> {
-  // No early return on a missing claudeApiKey — /api/match-receipt tries
-  // Gemini first regardless (extractionLadder.ts), same class of bug as the
-  // rest of aglamazo#343: a client-side guard blocking a call that would
-  // have worked via the platform's own default provider.
-  const buffer = await file.arrayBuffer()
-  const bytes = new Uint8Array(buffer)
-  let binary = ''
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
-  const base64 = btoa(binary)
-
-  const isPdf = file.type === 'application/pdf'
-  const isImage = file.type.startsWith('image/')
-  if (!isPdf && !isImage) return {}
-
-  console.log(`[ExpenseTab] Extracting from ${isPdf ? 'PDF' : 'image'}:`, file.name)
-  const extractRes = await fetch('/api/match-receipt', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(isPdf ? {
-      action: 'extract-pdf', pdfBase64: base64, transaction, claudeApiKey,
-    } : {
-      action: 'extract-image', imageBase64: base64, mediaType: file.type, transaction, claudeApiKey,
-    }),
-  })
-  const extracted = await extractRes.json()
-  console.log('[ExpenseTab] Extraction result:', extracted)
-  return extracted.error ? {} : extracted
 }
 
 export default function ExpenseTab({ businessId }: ExpenseTabProps) {
@@ -297,7 +261,7 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
 
       for (const file of files) {
         const uploaded = await uploadExpenseDocument(file, parseDateFolder(t.date))
-        const finalExtracted = await extractFromFile(file, { date: t.date, description: desc, amount: t.amount }, claudeApiKey)
+        const finalExtracted = await extractReceiptFromFile(file, { date: t.date, description: desc, amount: t.amount }, claudeApiKey)
 
         const doc: ExpenseDocument = {
           transactionId: t.syncId,
@@ -321,6 +285,14 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
           extractedData: finalExtracted,
           sourceType: 'upload',
           uploadedAt: new Date().toISOString(),
+          // A manual upload had no mismatch guard, unlike the Gmail-search
+          // path — a wrong document attached here showed no warning anywhere
+          // (the same class of gap as aglamazo#403/ExpenseMatchCell's fix,
+          // just in this file's separate upload path). Both now read the
+          // same matchesTransaction/matchReason fields from the shared
+          // extractReceiptFromFile helper.
+          mismatch: finalExtracted.matchesTransaction === false,
+          mismatchDetails: finalExtracted.matchReason,
         }
         await db.expenseDocuments.add(doc)
         newDocs.push(doc)
@@ -525,7 +497,7 @@ const parseSortableDate = (date?: string) => parseDateMs(date)
       // Extract data from document first
       const today = new Date()
       const todayStr = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`
-      const extracted = await extractFromFile(cashFile, { date: todayStr, description: 'הוצאה במזומן', amount: 0 }, claudeApiKey)
+      const extracted = await extractReceiptFromFile(cashFile, { date: todayStr, description: 'הוצאה במזומן', amount: 0 }, claudeApiKey)
 
       // Use extracted date or today, normalize through the shared parser.
       const canonicalDate = (() => {

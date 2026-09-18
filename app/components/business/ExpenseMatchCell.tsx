@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react'
 import type { ExpenseDocument } from '@/app/db/financeDB'
-import { matchReceiptForTransaction, manualPickCandidate, parseDateFolder, type CheckedCandidate, type SearchInfo } from '@/app/services/receiptMatchService'
+import { matchReceiptForTransaction, manualPickCandidate, parseDateFolder, extractReceiptFromFile, type CheckedCandidate, type SearchInfo } from '@/app/services/receiptMatchService'
 import { uploadExpenseDocument } from '@/app/services/googleDriveService'
 import { getAccessToken, requestGoogleAccess } from '@/app/services/googleTokenService'
 import SearchResultsModal from './SearchResultsModal'
@@ -177,12 +177,6 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
       return
     }
     try {
-      const buffer = await file.arrayBuffer()
-      const bytes = new Uint8Array(buffer)
-      let binary = ''
-      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
-      const base64 = btoa(binary)
-
       const uploaded = await uploadExpenseDocument(file, parseDateFolder(transaction.date))
       if (!uploaded.webViewLink) {
         setErrorMsg('העלאה ל-Drive נכשלה')
@@ -190,20 +184,11 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
         return
       }
 
-      const extractRes = await fetch('/api/match-receipt', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(isPdf ? {
-          action: 'extract-pdf', pdfBase64: base64,
-          transaction: { date: transaction.date, description: transaction.description, amount: transaction.amount },
-          claudeApiKey,
-        } : {
-          action: 'extract-image', imageBase64: base64, mediaType: file.type,
-          transaction: { date: transaction.date, description: transaction.description, amount: transaction.amount },
-          claudeApiKey,
-        }),
-      })
-      const extracted = await extractRes.json()
+      const extracted = await extractReceiptFromFile(
+        file,
+        { date: transaction.date, description: transaction.description, amount: transaction.amount },
+        claudeApiKey,
+      )
       console.log('[ExpenseMatch] manual upload extract →', extracted)
 
       const doc: ExpenseDocument = {
@@ -216,7 +201,7 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
         description: extracted?.documentTitle || extracted?.description,
         driveFileId: uploaded.fileId,
         driveWebViewLink: uploaded.webViewLink,
-        extractedData: extracted?.error ? undefined : extracted,
+        extractedData: Object.keys(extracted).length > 0 ? extracted : undefined,
         sourceType: 'upload',
         uploadedAt: new Date().toISOString(),
         // The auto-search path REJECTS a candidate outright when Claude's own

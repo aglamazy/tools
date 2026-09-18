@@ -58,6 +58,56 @@ function parseDateFolder(dateStr: string): { year: string; month: string } {
   return { year: String(year), month: String(month).padStart(2, '0') }
 }
 
+/** Extraction result shape from /api/match-receipt's extract-pdf/extract-image actions. */
+export type ExtractedReceiptData = {
+  vendor?: string
+  documentTitle?: string
+  description?: string
+  date?: string
+  amount?: number
+  vatAmount?: number
+  matchesTransaction?: boolean
+  matchReason?: string
+  error?: string
+  [key: string]: unknown
+}
+
+/**
+ * Base64-encode a File and send it to /api/match-receipt for extraction.
+ * Shared by ExpenseMatchCell (single-file, per-cell) and ExpenseTab (multi-
+ * file, per-row) — was two independent inline copies (aglamazo#344/#407);
+ * kept as one so a future fix to the encode/extract call only needs to land
+ * once. Returns {} for an unsupported file type or a failed extraction —
+ * callers decide what that means for their own flow.
+ */
+export async function extractReceiptFromFile(
+  file: File,
+  transaction: { date: string; description: string; amount: number },
+  claudeApiKey: string,
+): Promise<ExtractedReceiptData> {
+  const isPdf = file.type === 'application/pdf'
+  const isImage = file.type.startsWith('image/')
+  if (!isPdf && !isImage) return {}
+
+  const buffer = await file.arrayBuffer()
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+  const base64 = btoa(binary)
+
+  const extractRes = await fetch('/api/match-receipt', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(isPdf ? {
+      action: 'extract-pdf', pdfBase64: base64, transaction, claudeApiKey,
+    } : {
+      action: 'extract-image', imageBase64: base64, mediaType: file.type, transaction, claudeApiKey,
+    }),
+  })
+  const extracted = await extractRes.json()
+  return extracted.error ? {} : extracted
+}
+
 function buildDateRange(dateStr: string, days: number = 3): string {
   const { year, month, day } = parseTxDate(dateStr)
   const txDate = new Date(year, month - 1, day)
