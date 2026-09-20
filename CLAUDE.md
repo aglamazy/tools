@@ -77,7 +77,7 @@ Build/ship-breakers a memoryless worker WILL hit unless told. Check each against
 
 ## Cron & Monitoring
 - Grocery cron: `app/api/grocery/cron/route.ts` — every 2 hours (vercel.json)
-- Healthchecks.io: pings `HEALTHCHECK_CRON_URL` after each run, `/fail` on errors
+- Cockpit dead-man check `aglamazo-grocery-cron` (aglamazo#409, was Healthchecks.io): `pingDeadman` after each successful run, nothing on failure (ok-only — a missed ping is the alert); hub URL from `OCTOPUS_DEADMAN_BASE_URL`, default production
 - Schedule: `groceries/{uid}/schedule` — orderDay, preferredSlot, reviewReminderHours
 
 ## Testing & Tools

@@ -38,54 +38,44 @@ import { sendMessage } from '@/app/services/telegram/telegramClient'
 import { withTimeout } from '@/app/services/grocery/timeoutUtil'
 import { CredsCorruptedError } from '@/app/services/security/credEncryption'
 import { withServiceCall } from 'agents-observe/next'
+import { pingDeadman } from 'agents-observe'
 
 // 300 s is the Vercel Pro hard cap. Two stores × ~45 s iteration timeout
 // + the trailing /success ping does NOT fit in 60 s when one iteration
 // hits its belt and Shufersal's background work continues — that was the
 // 2026-05-10 06:00 UTC firing where Vercel killed the function before the
-// healthchecks.io ping went out, immediately DOWNing the probe (504, no
-// ping). Per-iteration 45 s belt stays — this only buys the route headroom
+// dead-man ping went out, immediately DOWNing the probe (504, no ping). Per-iteration 45 s belt stays — this only buys the route headroom
 // to finish the loop and ping success.
 export const maxDuration = 300
 
 // Vercel cron auth
 const CRON_SECRET = process.env.CRON_SECRET
 
+// Cockpit dead-man check (aglamazo#409, replaces the Healthchecks.io probe
+// 'Aglamazo Cron'). The registered values live on the hub: period 7200 s
+// (this cron's 0 */2 schedule) and grace 9000 s. The wide grace is deliberate
+// and carried over from the old probe: on 2026-05-29 Vercel SKIPPED one
+// scheduled invocation (02:00 UTC) and the probe went DOWN although the runs
+// before and after were healthy — one missed/delayed 2 h cycle must be
+// tolerated, two consecutive misses must alert. Do not shrink it.
+const DEADMAN_SLUG = 'aglamazo-grocery-cron'
+
 /**
- * Best-effort healthchecks.io ping with a small retry.
- *
- * The ping must never break the cron, so failures are swallowed — but a single
- * transient blip on the ping `fetch` used to silently drop the success signal
- * and flip the 'Aglamazo Cron' probe DOWN even though the run itself succeeded.
- * Retry a few times (with a short per-attempt timeout) before giving up.
- *
- * NOTE (2026-05-29 incident): the probe also went DOWN after Vercel SKIPPED a
- * single scheduled invocation (02:00 UTC) — the function never ran, so nothing
- * here could fire. The run before (00:00 UTC) and after were healthy 200s. That
- * class of false-positive is handled on the monitor side: the healthchecks
- * grace was widened from 1h to 2.5h so one missed/delayed 2h cycle is tolerated
- * while 2+ consecutive misses still alert. This retry only hardens the ping
- * leg; it can't resurrect an invocation Vercel never delivered.
+ * Tell the hub this run finished. ok-only: a failing run sends NOTHING and the
+ * check goes late — that is how a run that died silently is caught, so there
+ * is no /fail variant. Never throws and never fails the cron (pingDeadman's
+ * contract). It has no retry: a single lost ping is absorbed by the grace
+ * window above, and the next cycle pings again.
  */
-async function pingHealthcheck(url: string | undefined, suffix = ''): Promise<void> {
-  if (!url) return
-  const target = `${url}${suffix}`
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const res = await fetch(target, { signal: AbortSignal.timeout(8000) })
-      if (res.ok) return
-    } catch {
-      // transient — fall through to retry
-    }
-  }
-  console.warn(`[Grocery Cron] healthcheck ping failed after retries: ${target}`)
+async function pingCronAlive(): Promise<void> {
+  await pingDeadman(DEADMAN_SLUG, { await: true })
 }
 
 /**
  * Best-effort Telegram notification. A stale chatId ("chat not found", user
  * blocked bot, etc.) is a per-user state issue, not a cron infrastructure
- * failure — log it, but don't let it propagate into `results` and trip the
- * /fail healthcheck ping for every run until the user relinks.
+ * failure — log it, but don't let it propagate into `results` and make every
+ * run look failed until the user relinks.
  */
 async function notify(chatId: number | null, text: string): Promise<void> {
   if (!chatId) return
@@ -99,7 +89,7 @@ async function notify(chatId: number | null, text: string): Promise<void> {
 
 async function getHandler(request: NextRequest) {
   // Verify cron secret (Vercel sends this header). Auth runs BEFORE any
-  // healthcheck ping so unauthenticated callers can't trip the probe.
+  // dead-man ping so unauthenticated callers cannot keep the check green.
   const authHeader = request.headers.get('authorization')
   if (CRON_SECRET && authHeader !== `Bearer ${CRON_SECRET}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -114,34 +104,32 @@ async function getHandler(request: NextRequest) {
     return NextResponse.json({ ok: true, dryRun: true })
   }
 
-  const hcUrl = process.env.HEALTHCHECK_GROCERY_CRON_URL
-
   // Variant gate: when grocery automation is moved to a sibling deployment
   // (e.g. Saliko), Aglamazo's deployment can disable its grocery cron via
   // env without touching code. Default = enabled. Anything other than the
   // exact string 'false' keeps the cron live.
   //
-  // We still ping success here: the probe monitors "is Vercel firing this
+  // We still ping success here: the check monitors "is Vercel firing this
   // route on schedule," not "did business work happen." Skipping the ping on
   // the disabled path silently DOWNs the probe within one schedule window
   // (root cause of the 2026-05 incident).
   if (process.env.GROCERY_CRON_ENABLED === 'false') {
-    await pingHealthcheck(hcUrl)
+    await pingCronAlive()
     return NextResponse.json({ ok: true, skipped: 'GROCERY_CRON_ENABLED=false' })
   }
 
   try {
-    return await runCron(hcUrl)
+    return await runCron()
   } catch (err) {
     // Infra-level failure: the cron route itself blew up before it could
-    // iterate users. Surface this to healthchecks.io as a real /fail.
+    // iterate users. No ping is sent — the missing success ping is what makes
+    // the dead-man check go late and alert.
     console.error('[Grocery Cron] Infra error:', err)
-    await pingHealthcheck(hcUrl, '/fail')
     throw err
   }
 }
 
-async function runCron(hcUrl: string | undefined) {
+async function runCron() {
   initStores()
 
   const firestore = getAdminFirestore()
@@ -336,16 +324,16 @@ async function runCron(hcUrl: string | undefined) {
 
   console.log(`[Grocery Cron] Processed ${results.length} actions`)
 
-  // Healthchecks.io semantics: a successful ping means the cron ran end-to-end,
-  // not that every per-user action succeeded. Per-iteration failures (slow
-  // store APIs that exceed `withTimeout`, plugin.checkout returning
-  // success:false, stale Telegram chats) are per-user state issues — they're
-  // recorded in `results` and notified to the user, but they MUST NOT trip
-  // /fail, because that buries the signal we actually want from the probe
-  // ("is the cron firing on schedule?") under per-user noise.
-  // Real infra failures (Firestore unreachable, route crash) are caught by
-  // the outer try/catch in GET() and routed to /fail.
-  await pingHealthcheck(hcUrl)
+  // Dead-man semantics: a ping means the cron ran end-to-end, not that every
+  // per-user action succeeded. Per-iteration failures (slow store APIs that
+  // exceed `withTimeout`, plugin.checkout returning success:false, stale
+  // Telegram chats) are per-user state issues — they're recorded in `results`
+  // and notified to the user, but they MUST NOT suppress the ping, because
+  // that buries the signal we actually want from the check ("is the cron
+  // firing on schedule?") under per-user noise. Real infra failures
+  // (Firestore unreachable, route crash) throw before this line, so no ping
+  // is sent and the check goes late.
+  await pingCronAlive()
 
   return NextResponse.json({ ok: true, results })
 }
