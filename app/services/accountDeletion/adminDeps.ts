@@ -12,7 +12,6 @@ export function createAdminDeletionDeps(): DeletionDeps {
   return {
     firestore: getAdminFirestore(),
     variant: VARIANT,
-    deleteBillingRecords: process.env.ACCOUNT_DELETION_DELETE_BILLING_RECORDS === 'true',
     now: () => new Date(),
     deleteStoragePrefix: async (prefix) => {
       await getAdminStorageBucket().deleteFiles({ prefix })

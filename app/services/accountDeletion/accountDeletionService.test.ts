@@ -107,7 +107,6 @@ function makeDeps(overrides: Partial<DeletionDeps> = {}) {
   const deps: DeletionDeps = {
     firestore: fake as never,
     variant: 'aglamazo',
-    deleteBillingRecords: true,
     now: () => NOW,
     deleteStoragePrefix: async (prefix) => void calls.storage.push(prefix),
     getAuthEmail: async (uid) => emails[uid] ?? null,
@@ -241,22 +240,6 @@ describe('runAccountDeletion', () => {
     const audit = [...fake.docs.keys()].filter((k) => k.startsWith('accountDeletionAudit/'))
     expect(audit).toHaveLength(1)
     expect(JSON.stringify(fake.docs.get(audit[0]))).not.toContain('hh1')
-  })
-
-  it('keeps billing, payment and provisions records unless the retention flag is switched on', async () => {
-    seedHousehold()
-    const { deps } = makeDeps({ deleteBillingRecords: false })
-    await runAccountDeletion(deps, await planFor(deps, 'owner1', 'hh1'))
-    for (const kept of [
-      'billingStatus/owner1', 'provisions/owner@example.com',
-      'ypayPaymentLinks/cid1', 'ypayPaymentLinks/cid2', 'upayPaymentLinks/cid2',
-      'ypayPaymentEvents/e1', 'ypayPaymentEvents/e2', 'upayPaymentEvents/e3',
-    ]) {
-      expect(fake.has(kept), `${kept} must be retained`).toBe(true)
-    }
-    for (const gone of ['users/owner1', 'groceries/owner1', 'households/hh1', 'telegramLinks/1_2', 'invitations/inv1']) {
-      expect(fake.has(gone), `${gone} is still deleted`).toBe(false)
-    }
   })
 
   it('writes the markers before it deletes anything', async () => {

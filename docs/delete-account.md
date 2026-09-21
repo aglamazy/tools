@@ -33,9 +33,9 @@ Firestore `deletedAccounts/{kind}_{id}` where kind is `user` (every deleted uid)
 | Where | What | Keyed by |
 |---|---|---|
 | Storage | `backups/{variant}/{uid}/`, `backups/{variant}/households/{hid}/`, `backups/{variant}/shared/{businessSyncId}/` (businesses the deleted owner shares) | uid, household, business |
-| Firestore (recursive) | `users/{uid}` (+ `private`, `agentTasks`, `bots`), `groceries/{uid}` (stores, credentials, session, catalog, mappings, pending searches, checkouts), `userTasks/{uid}`, `appChatHistory/{uid}`, `telegramChatHistory/{uid}` | uid |
-| Firestore (by field) | `telegramLinks.uid`, `telegramLinkCodes.uid`, `chatQueue.uid`, `businessPartners.ownerUid`, `businessAccessGrants.ownerUid` and `.uid`, `businessShareInvitations.ownerUid`, legacy `businessShares.ownerUid` / `.sharedWithUid`, `invitations.inviterUid` | uid |
-| Firestore — **only with the billing flag** | `billingStatus/{uid}`, `provisions.claimedBy`, `ypayPaymentLinks.ownerUserId` and `.billingOwnerId`, `upayPaymentLinks.billingOwnerId`, and their `*PaymentEvents` (by `chargeIdentifier`) | uid |
+| Firestore (recursive) | `users/{uid}` (+ `private`, `agentTasks`, `bots`), `groceries/{uid}` (stores, credentials, session, catalog, mappings, pending searches, checkouts), `userTasks/{uid}`, `billingStatus/{uid}`, `appChatHistory/{uid}`, `telegramChatHistory/{uid}` | uid |
+| Firestore (by field) | `telegramLinks.uid`, `telegramLinkCodes.uid`, `chatQueue.uid`, `businessPartners.ownerUid`, `businessAccessGrants.ownerUid` and `.uid`, `businessShareInvitations.ownerUid`, legacy `businessShares.ownerUid` / `.sharedWithUid`, `invitations.inviterUid`, `provisions.claimedBy`, `ypayPaymentLinks.ownerUserId` and `.billingOwnerId`, `upayPaymentLinks.billingOwnerId` | uid |
+| Firestore (events) | `ypayPaymentEvents` / `upayPaymentEvents` for the deleted payment links (`chargeIdentifier`) | link id |
 | Firestore (by email) | `invitations.inviteeEmail`, `businessShareInvitations.inviteeEmail` | login email |
 | Firestore (household) | `households/{hid}`, `invitations.householdId` | household |
 | Auth custom claims | partners lose the deleted owner's business from their `sharedBusinesses` claim | partner uid |
@@ -66,6 +66,5 @@ Run once per Firebase project (aglamaz-finance and the Saliko project). Firestor
 ## Decisions to confirm (spec is silent)
 - **Solo user with no household** is treated as the owner of their own account.
 - **Shared-business backups** of businesses the deleting owner shares with partners are deleted and blocked (`business_<id>` marker); partners lose cloud sync for those businesses.
-- **Billing status, payment links (+ gateway events) and provisions are RETAINED by default** (General, 2026-09-21): whether platform payment records may be deleted is an open legal-retention question. Set `ACCOUNT_DELETION_DELETE_BILLING_RECORDS=true` to delete them too. Note `ypayPaymentLinks.ownerUserId` also holds the user's own customers' contact details, so retention there is a privacy trade-off to raise with the same answer.
-- Consequence of retaining: those records stay keyed by a uid that no longer exists.
+- **Billing status, payment links (+ gateway events) and provisions are deleted with everything else** (Agla, 2026-09-21: a delete request is completed in full — no partial deletion, no retention flag). Note `ypayPaymentLinks.ownerUserId` links hold the user's own customers' contact details; they go too.
 - **Storage rules precondition:** direct Storage writes are unprotected until the rules and the cross-service Firestore read grant are live; until then the API guard is the only protection.
