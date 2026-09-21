@@ -20,6 +20,7 @@ const callGet = () => (GET as unknown as (req: NextRequest) => Promise<Response>
 
 describe('grocery cron dead-man ping (aglamazo#409)', () => {
   beforeEach(() => {
+    process.env.DEADMAN_SLUG_GROCERY_CRON = 'test-slug-not-a-real-one'
     pingDeadman.mockClear()
     getAdminFirestore.mockReset()
     vi.spyOn(console, 'log').mockImplementation(() => {})
@@ -29,6 +30,7 @@ describe('grocery cron dead-man ping (aglamazo#409)', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     delete process.env.GROCERY_CRON_ENABLED
+    delete process.env.DEADMAN_SLUG_GROCERY_CRON
   })
 
   it('pings once, awaited, after a run that reaches the end', async () => {
@@ -38,7 +40,7 @@ describe('grocery cron dead-man ping (aglamazo#409)', () => {
     const res = await callGet()
     expect(res.status).toBe(200)
     expect(pingDeadman).toHaveBeenCalledTimes(1)
-    expect(pingDeadman).toHaveBeenCalledWith('aglamazo-grocery-cron', { await: true })
+    expect(pingDeadman).toHaveBeenCalledWith('test-slug-not-a-real-one', { await: true })
   })
 
   it('still pings when grocery automation is disabled for this deployment', async () => {
@@ -47,6 +49,16 @@ describe('grocery cron dead-man ping (aglamazo#409)', () => {
     expect(await res.json()).toMatchObject({ ok: true, skipped: 'GROCERY_CRON_ENABLED=false' })
     expect(pingDeadman).toHaveBeenCalledTimes(1)
     expect(getAdminFirestore).not.toHaveBeenCalled()
+  })
+
+  it('skips the ping, and still completes the run, when the slug is not configured', async () => {
+    delete process.env.DEADMAN_SLUG_GROCERY_CRON
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    getAdminFirestore.mockReturnValue({ collection: () => ({ get: async () => ({ docs: [] }) }) })
+    const res = await callGet()
+    expect(res.status).toBe(200)
+    expect(pingDeadman).not.toHaveBeenCalled()
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('DEADMAN_SLUG_GROCERY_CRON is not set'))
   })
 
   it('sends nothing when the route dies before the end — the missing ping is the alert', async () => {

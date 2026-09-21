@@ -1,0 +1,11 @@
+{
+  "owning_lane": "aglamazo",
+  "checks": [
+    {
+      "name": "grocery-cron",
+      "slugEnv": "DEADMAN_SLUG_GROCERY_CRON",
+      "period_seconds": 7200,
+      "grace_seconds": 9000
+    }
+  ]
+}

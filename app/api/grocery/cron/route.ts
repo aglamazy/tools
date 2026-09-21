@@ -52,13 +52,20 @@ export const maxDuration = 300
 const CRON_SECRET = process.env.CRON_SECRET
 
 // Cockpit dead-man check (aglamazo#409, replaces the Healthchecks.io probe
-// 'Aglamazo Cron'). The registered values live on the hub: period 7200 s
-// (this cron's 0 */2 schedule) and grace 9000 s. The wide grace is deliberate
-// and carried over from the old probe: on 2026-05-29 Vercel SKIPPED one
-// scheduled invocation (02:00 UTC) and the probe went DOWN although the runs
-// before and after were healthy — one missed/delayed 2 h cycle must be
-// tolerated, two consecutive misses must alert. Do not shrink it.
-const DEADMAN_SLUG = 'aglamazo-grocery-cron'
+// 'Aglamazo Cron'). Checks are declared in dead-man-checks.json and registered
+// by `npm run pre-deploy`; the registered values are period 7200 s (this cron's
+// 0 */2 schedule) and grace 9000 s. The wide grace is deliberate and carried
+// over from the old probe: on 2026-05-29 Vercel SKIPPED one scheduled
+// invocation (02:00 UTC) and the probe went DOWN although the runs before and
+// after were healthy — one missed/delayed 2 h cycle must be tolerated, two
+// consecutive misses must alert. Do not shrink it.
+//
+// The slug is a credential (whoever holds it can send a green ping for a dead
+// job), so it lives only in the environment — never in source, a message or a
+// log. Unset means "monitoring not configured yet": the ping is skipped and the
+// cron carries on. Setting it is the switch that turns the check on, so a
+// deploy can never ping a slug that is not registered.
+const DEADMAN_SLUG_ENV = 'DEADMAN_SLUG_GROCERY_CRON'
 
 /**
  * Tell the hub this run finished. ok-only: a failing run sends NOTHING and the
@@ -68,7 +75,12 @@ const DEADMAN_SLUG = 'aglamazo-grocery-cron'
  * window above, and the next cycle pings again.
  */
 async function pingCronAlive(): Promise<void> {
-  await pingDeadman(DEADMAN_SLUG, { await: true })
+  const slug = process.env[DEADMAN_SLUG_ENV]
+  if (!slug) {
+    console.warn(`[Grocery Cron] ${DEADMAN_SLUG_ENV} is not set — dead-man ping skipped`)
+    return
+  }
+  await pingDeadman(slug, { await: true })
 }
 
 /**
