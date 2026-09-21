@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyIdToken, getAdminFirestore, isAdminConfigured } from '@/app/lib/firebaseAdmin'
 import { config } from '@/app/config'
+import { findAccountMarker } from '@/app/lib/accountMarker'
 
 type UserTier = 'free' | 'home' | 'pro' | 'owner'
 
@@ -25,10 +26,19 @@ type DecodedClaims = {
 }
 
 type GuardResult =
-  | { uid: string; tier: UserTier; tcAccepted: boolean; claims: DecodedClaims; error?: undefined }
-  | { uid?: undefined; tier?: undefined; tcAccepted?: undefined; claims?: undefined; error: NextResponse }
+  | { uid: string; tier: UserTier; tcAccepted: boolean; claims: DecodedClaims; authTime: number; error?: undefined }
+  | { uid?: undefined; tier?: undefined; tcAccepted?: undefined; claims?: undefined; authTime?: undefined; error: NextResponse }
 
-async function resolveUser(request: NextRequest): Promise<GuardResult> {
+type GuardOptions = {
+  /**
+   * Let a request through for an account that has an account-deleted marker.
+   * Only the delete route sets this: a run that failed midway must be re-runnable
+   * by the same owner. Everything else is refused once the marker exists.
+   */
+  allowDeletedAccount?: boolean
+}
+
+async function resolveUser(request: NextRequest, options: GuardOptions = {}): Promise<GuardResult> {
   if (!isAdminConfigured()) {
     return { error: NextResponse.json({ success: false, error: 'Server not configured' }, { status: 500 }) }
   }
@@ -40,6 +50,20 @@ async function resolveUser(request: NextRequest): Promise<GuardResult> {
 
   try {
     const decoded = await verifyIdToken(authHeader.slice(7))
+
+    // A deleted account's ID token stays cryptographically valid for up to an
+    // hour, so the token alone proves nothing after a deletion. This one check
+    // covers every guarded route (aglamazo#411).
+    if (!options.allowDeletedAccount) {
+      const marker = await findAccountMarker({
+        uid: decoded.uid,
+        householdId: decoded.householdId as string | undefined,
+      })
+      if (marker.deleted) {
+        return { error: NextResponse.json({ success: false, error: 'Account deleted', code: 'account-deleted' }, { status: 403 }) }
+      }
+    }
+
     const firestore = getAdminFirestore()
     const userDoc = await firestore.collection('users').doc(decoded.uid).get()
     const data = userDoc.data() || {}
@@ -62,15 +86,15 @@ async function resolveUser(request: NextRequest): Promise<GuardResult> {
       householdRole: decoded.householdRole as string | undefined,
     }
 
-    return { uid: decoded.uid, tier, tcAccepted, claims }
+    return { uid: decoded.uid, tier, tcAccepted, claims, authTime: decoded.auth_time }
   } catch {
     return { error: NextResponse.json({ success: false, error: 'Invalid token' }, { status: 401 }) }
   }
 }
 
 /** Require authenticated user */
-export async function requireAuth(request: NextRequest): Promise<GuardResult> {
-  return resolveUser(request)
+export async function requireAuth(request: NextRequest, options?: GuardOptions): Promise<GuardResult> {
+  return resolveUser(request, options)
 }
 
 /** Require authenticated user with minimum tier */

@@ -26,6 +26,18 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Account deletion bookkeeping (aglamazo#411) — Admin SDK only, never read by
+    // clients: devices learn about a deletion through /api/account/status.
+    match /deletedAccounts/{key} {
+      allow read, write: if false;
+    }
+    match /accountDeletionJobs/{key} {
+      allow read, write: if false;
+    }
+    match /accountDeletionAudit/{key} {
+      allow read, write: if false;
+    }
+
     // Terms & Conditions versions - public read (T&C text is public content)
     match /tcVersions/{version} {
       allow read: if true;

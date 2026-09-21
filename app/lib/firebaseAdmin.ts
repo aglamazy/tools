@@ -6,6 +6,7 @@
 import { initializeApp, getApps, cert, type App } from 'firebase-admin/app'
 import { getAuth, type Auth } from 'firebase-admin/auth'
 import { getFirestore, type Firestore } from 'firebase-admin/firestore'
+import { getStorage } from 'firebase-admin/storage'
 
 let adminApp: App | null = null
 let adminAuth: Auth | null = null
@@ -104,4 +105,15 @@ export async function getUserClaims(uid: string): Promise<Record<string, unknown
 export async function verifyIdToken(idToken: string) {
   const auth = getAdminAuth()
   return auth.verifyIdToken(idToken)
+}
+
+/**
+ * The Cloud Storage bucket this deployment's backups live in. Throws when the
+ * bucket name is not configured — a delete job that silently skipped Storage
+ * would report success while leaving the encrypted backup behind.
+ */
+export function getAdminStorageBucket() {
+  const name = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+  if (!name) throw new Error('NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET is not configured')
+  return getStorage(getAdminApp()).bucket(name)
 }

@@ -6,16 +6,28 @@ service firebase.storage {
     // other's backups — see app/config/variants.ts VARIANT and
     // app/services/cloudBackupService.ts (#248/#250).
 
+    // Account-deleted markers (aglamazo#411, docs/delete-account.md). The delete
+    // job writes deletedAccounts/{kind}_{id} BEFORE it removes anything. A
+    // deleted user's ID token stays valid for up to an hour and these rules only
+    // verify the token, so without this check a stale device could re-upload its
+    // local copy and undo the deletion. Needs the Storage service agent to be
+    // allowed to read Firestore (cross-service rules) — see the doc.
+    function accountDeleted(key) {
+      return firestore.exists(/databases/(default)/documents/deletedAccounts/$(key));
+    }
+
     // Personal backup files - each user can only access their own backups
     match /backups/{variant}/{userId}/{fileName} {
       // Allow read/write only if:
       // 1. User is authenticated
       // 2. User ID matches the path
       // 3. File size is under 2.5 MB (2621440 bytes)
-      allow read: if request.auth != null && request.auth.uid == userId;
+      allow read: if request.auth != null && request.auth.uid == userId
+                  && !accountDeleted('user_' + userId);
       allow write: if request.auth != null
                    && request.auth.uid == userId
-                   && request.resource.size < 2621440;
+                   && request.resource.size < 2621440
+                   && !accountDeleted('user_' + userId);
     }
 
     // Household backup files - members share access via custom claims
@@ -25,19 +37,23 @@ service firebase.storage {
       // 2. User's householdId custom claim matches the path
       // 3. File size is under 2.5 MB (2621440 bytes)
       allow read: if request.auth != null
-                  && request.auth.token.householdId == householdId;
+                  && request.auth.token.householdId == householdId
+                  && !accountDeleted('household_' + householdId);
       allow write: if request.auth != null
                    && request.auth.token.householdId == householdId
-                   && request.resource.size < 2621440;
+                   && request.resource.size < 2621440
+                   && !accountDeleted('household_' + householdId);
     }
 
     // Shared business backup files - both owner and recipient access via custom claims
     match /backups/{variant}/shared/{businessSyncId}/{fileName} {
       allow read: if request.auth != null
-                  && businessSyncId in request.auth.token.sharedBusinesses;
+                  && businessSyncId in request.auth.token.sharedBusinesses
+                  && !accountDeleted('business_' + businessSyncId);
       allow write: if request.auth != null
                    && businessSyncId in request.auth.token.sharedBusinesses
-                   && request.resource.size < 2621440;
+                   && request.resource.size < 2621440
+                   && !accountDeleted('business_' + businessSyncId);
     }
 
     // Deny all other access
