@@ -442,6 +442,22 @@ export interface ChatMessageRow {
   updatedAt?: string
 }
 
+/**
+ * Device-local, NOT synced (aglamazo#413): what this browser knows about the
+ * account it was signed in with. Deliberately outside SYNCED_DB_TABLES — it
+ * describes this device, and a synced copy would tell another device the wrong
+ * thing. Single row, key 'account'.
+ */
+export interface DeviceAccountRow {
+  key: string
+  /** The uid / household this device last signed in as (cleared by a user-initiated sign-out). */
+  refs?: { uid: string; householdId?: string }
+  /** Set once the server says this account was deleted. Blocks all cloud sync until the user wipes the device. */
+  deletedAt?: string
+  /** A forced sign-out could not be verified (status endpoint unreachable) — re-check at next load before wiping. */
+  pendingSignOutCheck?: boolean
+}
+
 class FinanceDB extends Dexie {
   transactions!: Table<Transaction, number>
   importedFiles!: Table<ImportedFile, number>
@@ -471,6 +487,7 @@ class FinanceDB extends Dexie {
   suppliers!: Table<Supplier, number>
   subjects!: Table<Subject, string>
   subjectClassifications!: Table<SubjectClassification, number>
+  deviceAccount!: Table<DeviceAccountRow, string>
 
   constructor() {
     super('FinanceDB')

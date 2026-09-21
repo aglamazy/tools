@@ -19,6 +19,7 @@ import {
   type Unsubscribe,
 } from 'firebase/auth'
 import { getFirebaseAuth, isFirebaseConfigured } from '@/app/lib/firebase'
+import { markUserInitiatedSignOut } from './signOutIntent'
 
 export type AuthUser = {
   uid: string
@@ -238,6 +239,8 @@ export async function signOut(): Promise<{ success: boolean; error?: string }> {
 
   try {
     const auth = getFirebaseAuth()
+    // Only a real user-initiated sign-out may wipe local data (aglamazo#413).
+    if (auth.currentUser) markUserInitiatedSignOut()
     await firebaseSignOut(auth)
     return { success: true }
   } catch (err: any) {

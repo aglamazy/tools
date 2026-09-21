@@ -6,7 +6,13 @@
 
 import { subscribeToAuthState, type AuthUser } from '@/app/services/firebaseAuthService'
 import { userTierStore, UserTier } from '@/app/stores/userTierStore'
-import { clearLocalUserState } from '@/app/services/clearLocalUserState'
+import {
+  handleSignOutTransition,
+  reconcileStaleSession,
+  rememberSignedInAccount,
+} from '@/app/services/deviceAccountReconciler'
+import { consumeUserInitiatedSignOut } from '@/app/services/signOutIntent'
+import type { DeviceAccountRefs } from '@/app/services/deviceAccountState'
 
 export type { AuthUser }
 
@@ -26,6 +32,13 @@ let state: AuthState = {
 
 const listeners = new Set<Listener>()
 let unsubscribeFirebase: (() => void) | null = null
+// The account this tab is signed in as, kept in memory so a sign-out can still
+// say WHICH account it was after the user object is gone (aglamazo#413).
+let signedInRefs: DeviceAccountRefs | null = null
+
+function logAccountStateError(err: unknown) {
+  console.error('[Auth] device account state update failed:', err)
+}
 
 function notifyListeners() {
   listeners.forEach((listener) => listener(state))
@@ -44,13 +57,27 @@ export function initializeAuth() {
 
     if (user) {
       userTierStore.subscribeFirestore(user.uid)
+      rememberSignedInAccount(user.uid)
+        .then((refs) => {
+          signedInRefs = refs
+        })
+        .catch(logAccountStateError)
     } else {
       userTierStore.unsubscribeFirestore()
       userTierStore.set(UserTier.FREE)
-      // Sign-out transition (was signed in, now isn't) — wipe local caches so
-      // the next user in this browser doesn't see stale data.
+      const previousRefs = signedInRefs
+      signedInRefs = null
       if (wasSignedIn) {
-        void clearLocalUserState()
+        // Sign-out transition (was signed in, now isn't). A user-initiated one
+        // wipes local caches so the next user in this browser doesn't see stale
+        // data; a forced one (e.g. the account was deleted) first finds out
+        // why, and never wipes local data on the account's behalf.
+        void handleSignOutTransition(previousRefs, consumeUserInitiatedSignOut()).catch(logAccountStateError)
+      } else {
+        // Loaded already signed out — if this browser remembers an account,
+        // find out whether it was deleted while the device was away.
+        consumeUserInitiatedSignOut()
+        void reconcileStaleSession().catch(logAccountStateError)
       }
     }
 

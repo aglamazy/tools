@@ -27,7 +27,19 @@ import { exportAllStores, importAllStores, isLocalDataEmpty, type BackupData } f
 import { applyCloudBackup } from './applyMergedBackupService'
 import { classifySyncError } from './syncErrorClassifier'
 import { VARIANT } from '@/app/config/variants'
+import { isDeviceAccountDeleted } from './deviceAccountState'
 // Shared business sync is triggered independently from CloudSyncManager
+
+/**
+ * Once this device knows its account was deleted, nothing may write to the
+ * cloud — a re-upload would undo the deletion (aglamazo#413). Checked at every
+ * entry point that writes, not only in the sync loop, so a manual "upload now"
+ * cannot bypass it.
+ */
+async function refuseIfAccountDeleted(): Promise<CloudBackupResult | null> {
+  if (!(await isDeviceAccountDeleted())) return null
+  return { success: false, error: 'החשבון נמחק — הסנכרון לענן הופסק במכשיר זה', errorCode: 'account-deleted' }
+}
 
 const BACKUP_FILE_NAME = 'backup.enc'
 const VERIFICATION_FILE_NAME = 'verify.enc'
@@ -36,7 +48,7 @@ const MAX_BACKUP_SIZE_BYTES = 2.5 * 1024 * 1024 // 2.5 MB
 export type CloudBackupResult = {
   success: boolean
   error?: string
-  errorCode?: 'not-authenticated' | 'not-configured' | 'size-limit' | 'wrong-password' | 'no-backup' | 'permission-denied' | 'unknown'
+  errorCode?: 'not-authenticated' | 'not-configured' | 'size-limit' | 'wrong-password' | 'no-backup' | 'permission-denied' | 'account-deleted' | 'unknown'
 }
 
 export type CloudBackupInfo = {
@@ -95,6 +107,8 @@ export async function isUsingHouseholdStorage(): Promise<boolean> {
  * from personal path to the shared household path
  */
 export async function migrateToHouseholdStorage(): Promise<CloudBackupResult> {
+  const accountDeleted = await refuseIfAccountDeleted()
+  if (accountDeleted) return accountDeleted
   const user = getCurrentUser()
   if (!user || !isFirebaseConfigured()) {
     return { success: false, error: 'לא מחובר', errorCode: 'not-authenticated' }
@@ -150,6 +164,8 @@ export function isCloudBackupAvailable(): boolean {
  * Creates a verification token to verify password on future decryptions
  */
 export async function setupEncryptionPassword(password: string): Promise<CloudBackupResult> {
+  const accountDeleted = await refuseIfAccountDeleted()
+  if (accountDeleted) return accountDeleted
   const user = getCurrentUser()
   if (!user) {
     return { success: false, error: 'יש להתחבר כדי להשתמש בגיבוי ענן', errorCode: 'not-authenticated' }
@@ -218,6 +234,8 @@ export async function hasEncryptionPasswordSetup(): Promise<boolean> {
  * Upload encrypted backup to cloud
  */
 export async function uploadBackup(password: string): Promise<CloudBackupResult> {
+  const accountDeleted = await refuseIfAccountDeleted()
+  if (accountDeleted) return accountDeleted
   const user = getCurrentUser()
   if (!user) {
     return { success: false, error: 'יש להתחבר כדי להשתמש בגיבוי ענן', errorCode: 'not-authenticated' }
@@ -462,6 +480,8 @@ async function uploadBackupWithGeneration(
  * This is the core concurrent editing flow — replaces simple upload.
  */
 export async function syncMerge(password: string): Promise<CloudBackupResult> {
+  const accountDeleted = await refuseIfAccountDeleted()
+  if (accountDeleted) return accountDeleted
   const user = getCurrentUser()
   if (!user) {
     return { success: false, error: 'יש להתחבר', errorCode: 'not-authenticated' }

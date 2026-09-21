@@ -12,6 +12,7 @@ import MigrationRunner from './components/MigrationRunner'
 import MigrationsRegistry from './components/MigrationsRegistry'
 import AuthInitializer from './components/AuthInitializer'
 import CloudSyncManager from './components/CloudSyncManager'
+import AccountDeletedNotice from './components/AccountDeletedNotice'
 import ClaudeKeyHealthWatcher from './components/ClaudeKeyHealthWatcher'
 import PageHeader from './components/PageHeader'
 import SiteFooter from './components/SiteFooter'
@@ -150,6 +151,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <MigrationsRegistry />
           <AuthInitializer />
           <CloudSyncManager />
+          <AccountDeletedNotice />
           <ClaudeKeyHealthWatcher />
           <PageHeader />
           {children}

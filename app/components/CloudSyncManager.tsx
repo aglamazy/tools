@@ -15,6 +15,8 @@ import { isLocalDataEmpty } from '@/app/services/backupService'
 import { syncAllSharedBusinesses, getSharedPassword } from '@/app/services/sharedBusinessSyncService'
 import { config } from '@/app/config'
 import { DELETION_LEDGER_UPDATED_EVENT } from '@/app/services/deletionLedger'
+import { isDeviceAccountDeleted } from '@/app/services/deviceAccountState'
+import { shouldSyncNow } from '@/app/services/deviceAccountReconciler'
 import EncryptionPasswordModal from './EncryptionPasswordModal'
 import { useToast } from './ToastContainer'
 
@@ -100,6 +102,10 @@ export default function CloudSyncManager() {
     const checkAndPromptPassword = async () => {
       // Only prompt once per session
       if (promptedRef.current) return
+
+      // A device whose account was deleted must not prompt for, or use, the
+      // encryption password — it has nothing to sync (aglamazo#413).
+      if (await isDeviceAccountDeleted()) return
 
       // Only run on app pages, not public pages (landing, pricing, etc.)
       const path = typeof window !== 'undefined' ? window.location.pathname : ''
@@ -198,6 +204,10 @@ export default function CloudSyncManager() {
       if (!userTierStore.hasAccess(UserTier.HOME)) return
       if (!initialCheckDoneRef.current) return
       if (!isCloudBackupAvailable()) return
+      // Before ANY cloud traffic: is this account still alive? An ID token stays
+      // valid for about an hour after a deletion, and a device holding local
+      // data would re-upload it within one sync cycle (aglamazo#413).
+      if (!(await shouldSyncNow())) return
 
       const hasPassword = await hasEncryptionPasswordSetup()
       if (!hasPassword) return
@@ -307,6 +317,7 @@ export default function CloudSyncManager() {
     const runSharedSync = async () => {
       if (isAutoSyncDisabled()) return
       if (isSyncingShared.current) return
+      if (!(await shouldSyncNow())) return
       isSyncingShared.current = true
       try {
         await syncAllSharedBusinesses(getSharedPassword)

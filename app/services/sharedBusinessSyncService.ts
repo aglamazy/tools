@@ -17,6 +17,7 @@ import {
 import { getFirebaseStorage, isFirebaseConfigured } from '@/app/lib/firebase'
 import { getFirebaseAuth } from '@/app/lib/firebase'
 import { getCurrentUser } from './firebaseAuthService'
+import { isDeviceAccountDeleted } from './deviceAccountState'
 import { encrypt, decrypt, generateVerificationToken, verifyPasswordWithToken } from './encryptionService'
 import { db } from '@/app/db/financeDB'
 import type { BackupData } from './backupService'
@@ -50,6 +51,12 @@ function dispatchSharedSyncStatus(detail: SharedSyncStatusDetail): void {
 const BACKUP_FILE_NAME = 'backup.enc'
 const VERIFICATION_FILE_NAME = 'verify.enc'
 const MAX_BACKUP_SIZE_BYTES = 2.5 * 1024 * 1024
+
+/** A device that knows its account was deleted must not write to the cloud (aglamazo#413). */
+async function refuseIfAccountDeleted(): Promise<SyncResult | null> {
+  if (!(await isDeviceAccountDeleted())) return null
+  return { success: false, error: 'החשבון נמחק — הסנכרון לענן הופסק במכשיר זה', errorCode: 'account-deleted' }
+}
 
 type SyncResult = {
   success: boolean
@@ -412,6 +419,8 @@ export async function setupSharedPassword(
   businessSyncId: string,
   password: string,
 ): Promise<SyncResult> {
+  const accountDeleted = await refuseIfAccountDeleted()
+  if (accountDeleted) return accountDeleted
   const user = getCurrentUser()
   if (!user || !isFirebaseConfigured()) {
     return { success: false, error: 'לא מחובר', errorCode: 'not-authenticated' }
@@ -676,6 +685,8 @@ export async function syncSharedBusiness(
   businessSyncId: string,
   password: string,
 ): Promise<SyncResult> {
+  const accountDeleted = await refuseIfAccountDeleted()
+  if (accountDeleted) return accountDeleted
   const user = getCurrentUser()
   if (!user || !isFirebaseConfigured()) {
     return { success: false, error: 'לא מחובר', errorCode: 'not-authenticated' }
@@ -746,6 +757,7 @@ export async function syncSharedBusiness(
  * Called after the main personal/household sync completes.
  */
 export async function syncAllSharedBusinesses(getPassword: (bizSyncId: string) => Promise<string | null>): Promise<void> {
+  if (await isDeviceAccountDeleted()) return
   const sharedIds = await getSharedBusinessIdsFromToken()
   if (sharedIds.length === 0) return
 

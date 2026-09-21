@@ -806,4 +806,11 @@ export function defineSchemaVersions(db: Dexie): void {
   db.version(35).stores({
     businesses: '++id, syncId, &name, slug, type, userId',
   })
+
+  // v36: device-local account state (aglamazo#413) — what this browser knows
+  // about its signed-in account, and whether the server has deleted it. NOT a
+  // synced table (see DeviceAccountRow); no syncId, never uploaded.
+  db.version(36).stores({
+    deviceAccount: 'key',
+  })
 }
