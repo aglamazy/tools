@@ -97,6 +97,7 @@ import {
   type DeletionPlan,
 } from './accountDeletionService'
 import { findAccountMarker } from '@/app/lib/accountMarker'
+import { buildDeletionPreview } from './preview'
 
 const NOW = new Date('2026-09-21T12:00:00.000Z')
 
@@ -355,5 +356,49 @@ describe('findAccountMarker', () => {
   it('answers "not deleted" for ids that cannot be a marker key instead of building a path from them', async () => {
     expect(await findAccountMarker({ uid: '../users/x' })).toEqual({ deleted: false })
     expect(await findAccountMarker({})).toEqual({ deleted: false })
+  })
+})
+
+describe('buildDeletionPreview', () => {
+  it('lists the members and the outside partners who lose access, and not the requester', async () => {
+    seedHousehold()
+    const { deps } = makeDeps({
+      getAuthEmail: async (uid) => ({ owner1: 'owner@example.com', member1: 'member@example.com', partner1: 'partner@example.com' } as Record<string, string>)[uid] ?? null,
+    })
+    expect(await buildDeletionPreview(deps, 'owner1', 'hh1')).toEqual({
+      isOwner: true,
+      kind: 'household',
+      members: [{ uid: 'member1', email: 'member@example.com' }],
+      partners: [{ uid: 'partner1', email: 'partner@example.com' }],
+    })
+  })
+
+  it('does not count a household member as a partner', async () => {
+    seedHousehold()
+    fake.seed('businessAccessGrants/g3', { ownerUid: 'owner1', uid: 'member1', businessSyncId: 'biz1' })
+    const { deps } = makeDeps()
+    const preview = await buildDeletionPreview(deps, 'owner1', 'hh1')
+    expect(preview).toMatchObject({ isOwner: true })
+    if (preview.isOwner) expect(preview.partners.map((p) => p.uid)).toEqual(['partner1'])
+  })
+
+  it('shows a solo account with nobody else on it', async () => {
+    fake.seed('users/solo1', {})
+    const { deps } = makeDeps()
+    expect(await buildDeletionPreview(deps, 'solo1', undefined)).toEqual({ isOwner: true, kind: 'user', members: [], partners: [] })
+  })
+
+  it('tells a non-owner member they cannot delete, without listing anything', async () => {
+    seedHousehold()
+    const { deps } = makeDeps()
+    expect(await buildDeletionPreview(deps, 'member1', 'hh1')).toEqual({ isOwner: false })
+  })
+
+  it('writes nothing', async () => {
+    seedHousehold()
+    const before = new Set(fake.docs.keys())
+    const { deps } = makeDeps()
+    await buildDeletionPreview(deps, 'owner1', 'hh1')
+    expect(new Set(fake.docs.keys())).toEqual(before)
   })
 })

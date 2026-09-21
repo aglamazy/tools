@@ -13,6 +13,7 @@ import {
   sendPasswordResetEmail,
   updatePassword,
   reauthenticateWithCredential,
+  reauthenticateWithPopup,
   EmailAuthProvider,
   updateProfile,
   type User,
@@ -208,6 +209,10 @@ export async function signInWithGoogle(): Promise<AuthResult> {
   try {
     const auth = getFirebaseAuth()
     const provider = new GoogleAuthProvider()
+    // Always show Google's account chooser. Without it Google silently reuses the
+    // one session already in the browser, so a second account (a new email to
+    // register) could never be picked.
+    provider.setCustomParameters({ prompt: 'select_account' })
     const cred = await signInWithPopup(auth, provider)
 
     try {
@@ -274,6 +279,50 @@ export async function changePassword(
   } catch (err: any) {
     console.error('[Auth] Change password failed:', err.code, err.message)
     return { success: false, error: getErrorMessage(err.code) }
+  }
+}
+
+export type ReauthMethod = 'password' | 'google' | 'unsupported'
+
+/** Which way the signed-in user proves who they are again; null when nobody is signed in. */
+export function getReauthMethod(): ReauthMethod | null {
+  if (!isFirebaseConfigured()) return null
+  const user = getFirebaseAuth().currentUser
+  if (!user) return null
+  const providers = user.providerData.map((p) => p.providerId)
+  if (providers.includes('password')) return 'password'
+  if (providers.includes('google.com')) return 'google'
+  return 'unsupported'
+}
+
+/**
+ * Fresh sign-in for a sensitive action (account deletion). Password users
+ * re-enter their password; Google users go through the Google popup again.
+ * Afterwards the ID token is refreshed so its `auth_time` is current — the
+ * server refuses a deletion whose sign-in is older than 5 minutes.
+ */
+export async function reauthenticate(password?: string): Promise<{ success: boolean; error?: string; errorCode?: string }> {
+  if (!isFirebaseConfigured()) return { success: false, error: 'Firebase not configured', errorCode: 'not-configured' }
+  const user = getFirebaseAuth().currentUser
+  if (!user) return { success: false, error: 'לא מחובר', errorCode: 'not-signed-in' }
+
+  try {
+    const method = getReauthMethod()
+    if (method === 'password') {
+      if (!user.email || !password) return { success: false, error: 'נדרשת סיסמה', errorCode: 'password-required' }
+      await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, password))
+    } else if (method === 'google') {
+      const provider = new GoogleAuthProvider()
+      provider.setCustomParameters({ login_hint: user.email ?? '' })
+      await reauthenticateWithPopup(user, provider)
+    } else {
+      return { success: false, error: 'שיטת ההתחברות אינה נתמכת לאימות מחדש', errorCode: 'unsupported-provider' }
+    }
+    await user.getIdToken(true)
+    return { success: true }
+  } catch (err: any) {
+    console.error('[Auth] Re-authentication failed:', err.code, err.message)
+    return { success: false, error: getErrorMessage(err.code), errorCode: err.code }
   }
 }
 

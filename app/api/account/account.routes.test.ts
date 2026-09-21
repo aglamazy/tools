@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { requireAuth, resolveSubject, runAccountDeletion, findAccountMarker } = vi.hoisted(() => ({
+const { requireAuth, resolveSubject, runAccountDeletion, findAccountMarker, buildDeletionPreview } = vi.hoisted(() => ({
+  buildDeletionPreview: vi.fn(),
   requireAuth: vi.fn(),
   resolveSubject: vi.fn(),
   runAccountDeletion: vi.fn(),
@@ -18,6 +19,7 @@ vi.mock('@/app/services/accountDeletion/accountDeletionService', () => {
   }
   return { DeletionStepError, resolveSubject, runAccountDeletion }
 })
+vi.mock('@/app/services/accountDeletion/preview', () => ({ buildDeletionPreview }))
 vi.mock('@/app/lib/accountMarker', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/app/lib/accountMarker')>()),
   findAccountMarker,
@@ -27,6 +29,7 @@ import { NextRequest } from 'next/server'
 import { DeletionStepError } from '@/app/services/accountDeletion/accountDeletionService'
 import { POST as deleteAccount } from './delete/route'
 import { POST as accountStatus } from './status/route'
+import { GET as accountPreview } from './preview/route'
 
 const post = (url: string, body: unknown = {}) =>
   new NextRequest(`http://localhost:3100${url}`, { method: 'POST', body: JSON.stringify(body) })
@@ -120,5 +123,35 @@ describe('POST /api/account/status', () => {
   it('answers 500, not "not deleted", when the lookup itself fails', async () => {
     findAccountMarker.mockRejectedValue(new Error('firestore down'))
     expect((await accountStatus(post('/api/account/status', { uid: 'u1' }))).status).toBe(500)
+  })
+})
+
+describe('GET /api/account/preview', () => {
+  const get = () => new NextRequest('http://localhost:3100/api/account/preview')
+
+  it('returns what would be deleted, uncached', async () => {
+    signedIn()
+    buildDeletionPreview.mockResolvedValue({ isOwner: true, kind: 'household', members: [{ uid: 'm1', email: 'm@example.com' }], partners: [] })
+    const res = await accountPreview(get())
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Cache-Control')).toBe('no-store')
+    expect(await res.json()).toEqual({ success: true, isOwner: true, kind: 'household', members: [{ uid: 'm1', email: 'm@example.com' }], partners: [] })
+    expect(buildDeletionPreview).toHaveBeenCalledWith({}, 'owner1', 'hh1')
+  })
+
+  it('passes an unauthenticated request through unchanged', async () => {
+    const denied = new Response(JSON.stringify({ success: false }), { status: 401 })
+    requireAuth.mockResolvedValue({ error: denied })
+    const res = await accountPreview(get())
+    expect(res.status).toBe(401)
+    expect(buildDeletionPreview).not.toHaveBeenCalled()
+  })
+
+  it('answers 500, not "not the owner", when the lookup fails', async () => {
+    signedIn()
+    buildDeletionPreview.mockRejectedValue(new Error('firestore down'))
+    const res = await accountPreview(get())
+    expect(res.status).toBe(500)
+    expect(await res.json()).toMatchObject({ success: false, errorCode: 'preview-failed' })
   })
 })

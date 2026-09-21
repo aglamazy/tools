@@ -15,6 +15,11 @@ Rows: aglamazo#411 (server), #412 (UI), #413 (sync), #414 (verification).
 - `500 { errorCode: "deletion-failed", step, retryable: true }` — the job stopped at `step`; call the endpoint again with a fresh token, it resumes.
 - `401` unauthenticated; `403 { code: "account-deleted" }` never comes from this route (it is allowed for an account whose marker already exists, so a failed run can be re-run).
 
+### `GET /api/account/preview` — authenticated, read-only
+- Feeds the Settings red zone (aglamazo#412). `200 { success: true, isOwner: false }` for a household member who may not delete; for the owner `{ isOwner: true, kind: "household" | "user", members: [{ uid, email }], partners: [{ uid, email }] }`.
+- `members` = the other logins the job will delete (the requester is not listed); `partners` = outside grantees of `businessAccessGrants` on businesses the account owns, who lose access. Both come from the delete job's own `resolveSubject`, so the screen and the job cannot disagree.
+- `500 { errorCode: "preview-failed" }` on a lookup failure — never "not owner" by default. `Cache-Control: no-store`.
+
 ### `POST /api/account/status` — public (a deleted login cannot authenticate)
 - Body `{ uid?: string, householdId?: string }` (at least one; ids are `[A-Za-z0-9_-]{1,128}`).
 - `200 { deleted: false }` or `200 { deleted: true, deletedAt: <ISO> }`; `400` for a missing/invalid id; `500` if the lookup fails (never "not deleted" on an error). `Cache-Control: no-store`.

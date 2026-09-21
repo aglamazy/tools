@@ -1,12 +1,14 @@
 'use client'
 
 import React, { useState } from 'react'
-import { exportAllStores, importAllStores, type BackupData } from '@/app/services/backupService'
+import { importAllStores, type BackupData } from '@/app/services/backupService'
+import { downloadFullBackup } from '@/app/services/backupDownload'
 import { applyCloudBackup } from '@/app/services/applyMergedBackupService'
 import YesNoModal from '../YesNoModal'
 import Modal from '../Modal'
 import CloudSyncSection from './sync/CloudSyncSection'
 import LocalBackup from './sync/LocalBackup'
+import DeleteAccountSection from './DeleteAccountSection'
 
 export default function SyncTab() {
   const [importConfirm, setImportConfirm] = useState<{ isOpen: boolean; file: File | null }>({ isOpen: false, file: null })
@@ -15,14 +17,7 @@ export default function SyncTab() {
 
   const handleExportAllData = async () => {
     try {
-      const backup = await exportAllStores()
-      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `finance-backup-${new Date().toISOString().split('T')[0]}.json`
-      a.click()
-      URL.revokeObjectURL(url)
+      await downloadFullBackup()
       setAlertModal({ isOpen: true, message: 'הנתונים יוצאו בהצלחה!' })
     } catch (err) {
       console.error('Error exporting all data:', err)
@@ -112,6 +107,8 @@ export default function SyncTab() {
       <CloudSyncSection />
 
       <LocalBackup onExport={handleExportAllData} onImport={handleImportAllData} onMergeImport={handleMergeImportData} />
+
+      <DeleteAccountSection />
 
       <YesNoModal
         isOpen={importConfirm.isOpen}
