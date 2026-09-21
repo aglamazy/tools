@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Modal from './Modal'
-import { signInWithGoogle } from '@/app/services/firebaseAuthService'
+import { signInWithGoogle, signInWithEmail, registerWithEmail } from '@/app/services/firebaseAuthService'
 import { signInLocal } from '@/app/services/localAuthService'
 
 type AuthModalProps = {
@@ -11,7 +11,10 @@ type AuthModalProps = {
   onSuccess?: () => void
 }
 
-type Tab = 'local' | 'google'
+type Tab = 'local' | 'google' | 'email'
+type EmailMode = 'signin' | 'register'
+
+const MIN_PASSWORD_LENGTH = 6 // Firebase's minimum
 
 const isLocalAuthEnabled = process.env.NODE_ENV !== 'production'
 
@@ -21,6 +24,10 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
   const [error, setError] = useState<string | null>(null)
   const [username, setUsername] = useState('root')
   const [password, setPassword] = useState('ABC123')
+  const [emailMode, setEmailMode] = useState<EmailMode>('signin')
+  const [email, setEmail] = useState('')
+  const [emailPassword, setEmailPassword] = useState('')
+  const [emailPasswordRepeat, setEmailPasswordRepeat] = useState('')
 
   const handleGoogleSignIn = async () => {
     setError(null)
@@ -38,6 +45,36 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleEmailSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+    if (emailMode === 'register' && emailPassword !== emailPasswordRepeat) {
+      setError('הסיסמאות אינן זהות')
+      return
+    }
+    setLoading(true)
+    try {
+      const trimmed = email.trim()
+      const result = emailMode === 'register'
+        ? await registerWithEmail(trimmed, emailPassword)
+        : await signInWithEmail(trimmed, emailPassword)
+      if (result.success) {
+        onSuccess?.()
+        onClose()
+      } else {
+        setError(result.error || (emailMode === 'register' ? 'שגיאה בהרשמה' : 'שגיאה בהתחברות'))
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const switchEmailMode = (mode: EmailMode) => {
+    setEmailMode(mode)
+    setError(null)
+    setEmailPasswordRepeat('')
   }
 
   const handleLocalSignIn = async (e: React.FormEvent) => {
@@ -76,17 +113,20 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
           התחברות
         </h2>
 
-        {/* Tab switcher — only needed when there's more than one sign-in method to pick between */}
-        {isLocalAuthEnabled && (
-          <div style={{ display: 'flex', gap: '0.25rem', background: '#f1f5f9', borderRadius: '0.5rem', padding: '0.25rem', marginBottom: '1.25rem' }}>
+        {/* Tab switcher — sign-in methods; the email tab also creates new accounts */}
+        <div style={{ display: 'flex', gap: '0.25rem', background: '#f1f5f9', borderRadius: '0.5rem', padding: '0.25rem', marginBottom: '1.25rem' }}>
+          {isLocalAuthEnabled && (
             <button type="button" style={tabStyle(tab === 'local')} onClick={() => { setTab('local'); setError(null) }}>
               משתמש
             </button>
-            <button type="button" style={tabStyle(tab === 'google')} onClick={() => { setTab('google'); setError(null) }}>
-              Google
-            </button>
-          </div>
-        )}
+          )}
+          <button type="button" style={tabStyle(tab === 'google')} onClick={() => { setTab('google'); setError(null) }}>
+            Google
+          </button>
+          <button type="button" style={tabStyle(tab === 'email')} onClick={() => { setTab('email'); setError(null) }}>
+            אימייל
+          </button>
+        </div>
 
         {error && (
           <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '0.5rem', color: '#dc2626', fontSize: '0.9rem', textAlign: 'center' }}>
@@ -139,6 +179,58 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
             </svg>
             {loading ? 'מתחבר...' : 'המשך עם Google'}
           </button>
+        )}
+
+        {tab === 'email' && (
+          <form onSubmit={handleEmailSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <input
+              type="email"
+              placeholder="אימייל"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              dir="ltr"
+              autoComplete="email"
+              style={{ padding: '0.75rem', border: '1px solid #d1d5db', borderRadius: '0.5rem', fontSize: '1rem', width: '100%', boxSizing: 'border-box' }}
+            />
+            <input
+              type="password"
+              placeholder={emailMode === 'register' ? `סיסמה (לפחות ${MIN_PASSWORD_LENGTH} תווים)` : 'סיסמה'}
+              value={emailPassword}
+              onChange={(e) => setEmailPassword(e.target.value)}
+              required
+              minLength={emailMode === 'register' ? MIN_PASSWORD_LENGTH : undefined}
+              dir="ltr"
+              autoComplete={emailMode === 'register' ? 'new-password' : 'current-password'}
+              style={{ padding: '0.75rem', border: '1px solid #d1d5db', borderRadius: '0.5rem', fontSize: '1rem', width: '100%', boxSizing: 'border-box' }}
+            />
+            {emailMode === 'register' && (
+              <input
+                type="password"
+                placeholder="אימות סיסמה"
+                value={emailPasswordRepeat}
+                onChange={(e) => setEmailPasswordRepeat(e.target.value)}
+                required
+                dir="ltr"
+                autoComplete="new-password"
+                style={{ padding: '0.75rem', border: '1px solid #d1d5db', borderRadius: '0.5rem', fontSize: '1rem', width: '100%', boxSizing: 'border-box' }}
+              />
+            )}
+            <button
+              type="submit"
+              disabled={loading}
+              style={{ padding: '0.875rem', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '0.5rem', fontSize: '1rem', fontWeight: 500, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1 }}
+            >
+              {loading ? 'רגע...' : emailMode === 'register' ? 'יצירת חשבון חדש' : 'התחבר'}
+            </button>
+            <button
+              type="button"
+              onClick={() => switchEmailMode(emailMode === 'register' ? 'signin' : 'register')}
+              style={{ background: 'none', border: 'none', color: '#2563eb', fontSize: '0.9rem', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+            >
+              {emailMode === 'register' ? 'יש כבר חשבון? להתחברות' : 'אין חשבון? להרשמה'}
+            </button>
+          </form>
         )}
       </div>
     </Modal>
