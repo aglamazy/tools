@@ -40,6 +40,13 @@ export type DeletionPlan = {
 export type DeletionDeps = {
   firestore: Firestore
   variant: string
+  /**
+   * Delete billing status, payment links + gateway events and provisions too.
+   * OFF by default: whether platform payment records may be deleted is an open
+   * legal-retention question (General, 2026-09-21), so they are kept until it
+   * is answered. Everything else in the inventory is always deleted.
+   */
+  deleteBillingRecords: boolean
   now: () => Date
   deleteStoragePrefix: (prefix: string) => Promise<void>
   /** null when the login no longer exists. */
@@ -251,7 +258,7 @@ async function deleteAccountRecords(deps: DeletionDeps, uid: string): Promise<vo
   const { firestore } = deps
   for (const path of [
     ['users', uid], ['groceries', uid], ['userTasks', uid],
-    ['billingStatus', uid], ['appChatHistory', uid], ['telegramChatHistory', uid],
+    ['appChatHistory', uid], ['telegramChatHistory', uid],
   ]) {
     await firestore.recursiveDelete(firestore.collection(path[0]).doc(path[1]))
   }
@@ -259,10 +266,13 @@ async function deleteAccountRecords(deps: DeletionDeps, uid: string): Promise<vo
     ['telegramLinks', 'uid'], ['telegramLinkCodes', 'uid'], ['chatQueue', 'uid'],
     ['businessPartners', 'ownerUid'], ['businessAccessGrants', 'ownerUid'], ['businessAccessGrants', 'uid'],
     ['businessShareInvitations', 'ownerUid'], ['businessShares', 'ownerUid'], ['businessShares', 'sharedWithUid'],
-    ['invitations', 'inviterUid'], ['provisions', 'claimedBy'],
+    ['invitations', 'inviterUid'],
   ]) {
     await deleteByQuery(firestore, collection, field, uid)
   }
+  if (!deps.deleteBillingRecords) return
+  await firestore.recursiveDelete(firestore.collection('billingStatus').doc(uid))
+  await deleteByQuery(firestore, 'provisions', 'claimedBy', uid)
   await deleteLinksWithEvents(firestore, 'ypayPaymentLinks', 'ypayPaymentEvents', 'ownerUserId', uid)
   await deleteLinksWithEvents(firestore, 'ypayPaymentLinks', 'ypayPaymentEvents', 'billingOwnerId', uid)
   await deleteLinksWithEvents(firestore, 'upayPaymentLinks', 'upayPaymentEvents', 'billingOwnerId', uid)
