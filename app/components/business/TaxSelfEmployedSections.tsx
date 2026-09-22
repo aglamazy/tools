@@ -370,7 +370,14 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
               )}
               {hasDownpayment && (
                 <td style={{ ...cellStyle, fontSize: '1rem' }} title={
-                  row.status === 'paid' ? `שולם ✓ · סכום שנמצא: ${fmt(row.actualPaid)}`
+                  row.status === 'paid' ? (
+                    // A row can be "paid" with no advancePayments record at all — a matched
+                    // bank transaction, no upload ever attempted, nothing to warn about.
+                    // The warning is only for a record whose upload dropped the file.
+                    row.paymentRecord && !row.paymentRecord.driveWebViewLink
+                      ? `שולם, אך הקובץ לא נשמר (אין גישה ל-Drive?) — יש להעלות שוב · סכום שנמצא: ${fmt(row.actualPaid)}`
+                      : `שולם ✓ · סכום שנמצא: ${fmt(row.actualPaid)}`
+                  )
                   : row.status === 'none' ? 'אין חיוב לחודש זה'
                   : row.status === 'overdue' ? `באיחור — לא נמצא תשלום לאחר ${row.deadline.toLocaleDateString('he-IL')}`
                   : row.status === 'due-soon' ? `פעולה נדרשת — עד ${row.deadline.toLocaleDateString('he-IL')}`
@@ -378,7 +385,9 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
                 }>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
                     {row.status === 'paid' && (
-                      <span style={{ color: '#16a34a', fontWeight: 700 }}>✓</span>
+                      row.paymentRecord && !row.paymentRecord.driveWebViewLink
+                        ? <span style={{ color: '#b45309', fontWeight: 700 }}>⚠️</span>
+                        : <span style={{ color: '#16a34a', fontWeight: 700 }}>✓</span>
                     )}
                     {row.status === 'none' && (
                       <span style={{ color: '#cbd5e1' }}>—</span>
@@ -413,7 +422,16 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
                     {row.status === 'paid' && row.paymentRecord?.driveWebViewLink && (
                       <a href={row.paymentRecord.driveWebViewLink} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', fontSize: '0.75rem' }}>אישור</a>
                     )}
-                    {row.status === 'paid' && onDetachReceipt && (
+                    {row.status === 'paid' && row.paymentRecord && !row.paymentRecord.driveWebViewLink && onUploadReceipt && (
+                      <button
+                        onClick={() => { setUploadMonth(row.monthKey); fileInputRef.current?.click() }}
+                        title="הקובץ לא נשמר — להעלות שוב"
+                        style={{ background: 'none', border: '1px solid #fde68a', borderRadius: '0.25rem', padding: '0.1rem 0.35rem', cursor: 'pointer', fontSize: '0.7rem', color: '#b45309' }}
+                      >
+                        העלה שוב
+                      </button>
+                    )}
+                    {row.status === 'paid' && !(row.paymentRecord && !row.paymentRecord.driveWebViewLink) && onDetachReceipt && (
                       <button
                         onClick={async () => {
                           setUploadError(null)
@@ -823,12 +841,14 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
                 <td style={{ ...cellStyle, direction: 'rtl' }}>
                   {row.isDue ? (
                     row.paymentRecord?.paidAt ? (
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
-                        <span style={{ color: '#16a34a', fontWeight: 500, fontSize: '0.8rem' }}>שולם</span>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }} title={row.paymentRecord.driveWebViewLink ? undefined : 'שולם, אך הקובץ לא נשמר (אין גישה ל-Drive?) — יש להעלות שוב'}>
+                        <span style={{ color: row.paymentRecord.driveWebViewLink ? '#16a34a' : '#b45309', fontWeight: 500, fontSize: '0.8rem' }}>
+                          {row.paymentRecord.driveWebViewLink ? 'שולם' : '⚠️ שולם'}
+                        </span>
                         {row.paymentRecord.driveWebViewLink && (
                           <a href={row.paymentRecord.driveWebViewLink} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', fontSize: '0.75rem' }}>קבלה</a>
                         )}
-                        {onDetachReceipt && (
+                        {row.paymentRecord.driveWebViewLink && onDetachReceipt && (
                           <button
                             onClick={async () => {
                               setUploadError(null)
@@ -838,6 +858,15 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
                             style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', color: '#dc2626', padding: 0 }}
                           >
                             ✕
+                          </button>
+                        )}
+                        {!row.paymentRecord.driveWebViewLink && onUploadReceipt && (
+                          <button
+                            onClick={() => { setUploadMonth(row.monthKey); fileInputRef.current?.click() }}
+                            title="הקובץ לא נשמר — להעלות שוב"
+                            style={{ background: 'none', border: '1px solid #fde68a', borderRadius: '0.25rem', padding: '0.1rem 0.35rem', cursor: 'pointer', fontSize: '0.7rem', color: '#b45309' }}
+                          >
+                            העלה שוב
                           </button>
                         )}
                       </span>
