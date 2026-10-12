@@ -9,7 +9,10 @@ import { withServiceCall } from 'agents-observe/next'
 
 const COLLECTION = 'appChatHistory'
 
-export const maxDuration = 30
+// 120 s (saliko#40): a multi-item turn (several searches + model steps) ran past
+// 30 s, the platform cut it off, and the web client's auto-retry showed
+// "ניסיון 1/8" and resent the turn (92 s replies in Tester's run).
+export const maxDuration = 120
 
 interface ChatRequestBody {
   message?: string

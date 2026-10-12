@@ -519,7 +519,13 @@ export default function AppChat() {
             body: JSON.stringify(requestBody),
             signal: controller.signal,
           })
-          data = await response.json()
+          // A non-JSON answer is the platform's timeout/error page: the server
+          // may already have run part of the turn (items added), so it is NOT
+          // resent automatically — only a JSON `retryable` is (saliko#40).
+          const isJson = response.headers.get('content-type')?.includes('application/json')
+          data = isJson
+            ? await response.json()
+            : { success: false, retryable: false, error: 'timeout' }
         } catch (err) {
           if (controller.signal.aborted) return
           // Network errors are also retryable on the same backoff schedule.
@@ -612,6 +618,13 @@ export default function AppChat() {
             router.push(data.navigateTo.path)
           }
           setRetryStatus(null)
+          return
+        }
+
+        if (data.error === 'timeout') {
+          const timedOut: Message = { role: 'assistant', content: '⚠️ התשובה לקחה יותר מדי זמן ונקטעה. ייתכן שחלק מהבקשה כבר בוצע — כדאי לשאול "מה ברשימה?" לפני ששולחים שוב.' }
+          setMessages(prev => [...prev, timedOut])
+          await chatHistoryStore.appendMessage(uid, activeChatId, timedOut)
           return
         }
 
