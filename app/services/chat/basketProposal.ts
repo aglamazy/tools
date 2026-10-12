@@ -16,6 +16,7 @@ import { addStorePendingItems } from '@/app/services/grocery/groceryStoreMulti'
 import { saveProductMapping } from '@/app/services/grocery/productResolver'
 import { isFreshProduce, nameMatchesQuery } from '@/app/services/grocery/catalogMatch'
 import type { StoreSearchResult } from '@/app/services/grocery/storeTypes'
+import { sellUnitOf } from '@/app/services/grocery/unitLabel'
 
 export interface ProposedItem {
   query: string
@@ -23,6 +24,7 @@ export interface ProposedItem {
   name: string
   price: number
   unitPrice: string
+  sellUnit?: string
   sellingUnitId?: number
 }
 
@@ -47,7 +49,7 @@ export function pickForBasket(
   return {
     item: {
       query, catalogId: best.productId, name: best.name,
-      price: Number(best.price) || 0, unitPrice: best.unitPrice, sellingUnitId: best.sellingUnitId,
+      price: Number(best.price) || 0, unitPrice: best.unitPrice, sellUnit: best.sellUnit, sellingUnitId: best.sellingUnitId,
     },
   }
 }
@@ -95,7 +97,7 @@ export async function approveBasket(uid: string, exclude: string[], validTo?: st
   if (chosen.length === 0) return 'כל הפריטים הוצאו מההצעה — לא הוספתי כלום.'
   await addStorePendingItems(uid, proposal.store, chosen.map(it => ({
     name: it.name, qty: 1, catalogId: it.catalogId,
-    unit: it.unitPrice.split('/').pop()?.trim() || undefined,
+    unit: sellUnitOf(it),
     ...(it.sellingUnitId != null ? { sellingUnitId: it.sellingUnitId } : {}),
   })), { validTo })
   await Promise.all(chosen.map(it => saveProductMapping(uid, it.query, it.catalogId, it.name, proposal.store)))

@@ -80,6 +80,8 @@ export interface StoreSearchResult {
   brand: string
   price: string
   unitPrice: string
+  /** The unit the item is bought in (saliko#39); unitPrice may be per kg. */
+  sellUnit?: string
   sellingUnitId?: number
 }
 

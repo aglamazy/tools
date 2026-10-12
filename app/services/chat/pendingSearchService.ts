@@ -13,6 +13,7 @@ import { randomBytes } from 'crypto'
 import { getAdminFirestore } from '@/app/lib/firebaseAdmin'
 import { getUserStores, clearStorePending, addToStoreStanding, addStorePendingItems } from '@/app/services/grocery/groceryStoreMulti'
 import { saveProductMapping } from '@/app/services/grocery/productResolver'
+import { sellUnitOf } from '@/app/services/grocery/unitLabel'
 
 export interface PendingProductSelection {
   query: string
@@ -21,7 +22,7 @@ export interface PendingProductSelection {
   store?: string  // which store these results came from
   /** ISO date/datetime — only meaningful for target='pending'. Absent = single-shot. */
   validTo?: string
-  results: { catalogId: string; name: string; brand: string; price: string; unitPrice: string; sellingUnitId?: number }[]
+  results: { catalogId: string; name: string; brand: string; price: string; unitPrice: string; sellUnit?: string; sellingUnitId?: number }[]
 }
 
 // --- Pending search storage (for callback_data 64-byte limit) ---
@@ -102,7 +103,7 @@ export async function selectProduct(uid: string, searchKey: string, resultIndex:
 
   const qty = qtyOverride && qtyOverride > 0 ? qtyOverride : pendingSearch.qty
   const selected = pendingSearch.results[resultIndex]
-  const unit = selected.unitPrice?.split('/')?.pop()?.trim()
+  const unit = sellUnitOf(selected)
   const item = {
     name: selected.name, qty, catalogId: selected.catalogId,
     ...(unit ? { unit } : {}),

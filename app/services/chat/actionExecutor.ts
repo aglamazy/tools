@@ -41,6 +41,7 @@ import { TASK_ACTIONS, handleTaskAction } from '@/app/services/chat/taskActionHa
 import { deleteMapping, lookupMapping, saveProductMapping } from '@/app/services/grocery/productResolver'
 import { listOpenPendingSearches, selectProduct, type PendingProductSelection } from './pendingSearchService'
 import { resolvePendingPick } from './pendingPick'
+import { sellUnitOf } from '@/app/services/grocery/unitLabel'
 import { proposeBasket, approveBasket } from './basketProposal'
 import { startShufersalCheckout } from '@/app/services/grocery/shufersalCheckoutFlow'
 
@@ -366,7 +367,7 @@ async function executeOne(
         const results = await store.search(uid, query)
         if (results.length === 0) return `לא נמצאו תוצאות עבור "${query}" בקטלוג של ${store.label}. זה לא מידע על מלאי — אל תכתוב "אזל" או "אין במלאי"; נסה שם אחר או שאל את המשתמש.`
         const allResults = results.slice(0, 12).map(r => ({
-          catalogId: r.productId, name: r.name, brand: r.brand, price: r.price, unitPrice: r.unitPrice,
+          catalogId: r.productId, name: r.name, brand: r.brand, price: r.price, unitPrice: r.unitPrice, sellUnit: r.sellUnit,
           sellingUnitId: r.sellingUnitId,
         }))
         const { filtered, comment } = await filterSearchResults(query, allResults)
@@ -374,7 +375,7 @@ async function executeOne(
         // Auto-select when exactly 1 result
         if (filtered.length === 1) {
           const selected = filtered[0]
-          const unit = selected.unitPrice?.split('/')?.pop()?.trim() || undefined
+          const unit = sellUnitOf(selected)
           const item = { name: selected.name, qty, catalogId: selected.catalogId, unit, sellingUnitId: selected.sellingUnitId }
           if (target === 'standing') await addToStoreStanding(uid, storeId, [item])
           else await addStorePendingItems(uid, storeId, [item], { validTo })
@@ -901,7 +902,7 @@ async function executeOne(
         // Direct search without LLM filter — category browsing returns all matches
         const results = await store.search(uid, category)
         if (results.length === 0) return `לא נמצאו מוצרים בקטגוריה "${category}" ב${store.label}.`
-        const lines = results.map(r => `• ${r.name} — ${r.price}₪/${r.unitPrice.split('/').pop()?.trim() || ''}`)
+        const lines = results.map(r => `• ${r.name} — ${r.unitPrice}`) // unitPrice already says per kg/unit (saliko#39)
         return `${category} ב${store.label} (${results.length}):\n${lines.join('\n')}\n\nמשהו מעניין לרשימה?`
       } catch (err) {
         console.error(`[ActionExecutor] Browse failed for "${category}" (${storeId}):`, err)

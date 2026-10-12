@@ -15,6 +15,7 @@ import { hasCurrentServerCredsConsent } from '@/app/services/consentService'
 import { getRexailStore } from './rexailStores'
 import { getAllStores } from './storeRegistry'
 import { nameMatchesQuery, rankCatalogMatches } from './catalogMatch'
+import { priceLabel } from './unitLabel'
 
 // Default config for Makor Hashefa
 const DEFAULT_CONFIG: RetalixStoreConfig = {
@@ -62,7 +63,7 @@ export interface RetalixProduct {
   unit: string
   unitId: number | null
   sellingUnitId: number | null
-  sellingUnits: { sellingUnitId: number; unitName: string; unitId: number }[]
+  sellingUnits: { sellingUnitId: number; unitName: string; unitId: number; estimatedKg?: number }[]
   soldByWeight: boolean
   image: string
 }
@@ -436,6 +437,7 @@ export async function fetchCatalog(storeId: string, config: RetalixStoreConfig):
       sellingUnitId: su.id,
       unitName: su.sellingUnit?.name || '',
       unitId: su.sellingUnit?.id || 0,
+      ...(typeof su.estimatedUnitWeight === 'number' ? { estimatedKg: su.estimatedUnitWeight } : {}),
     }))
     const defaultUnit = sellingUnits[0] || {}
 
@@ -497,12 +499,15 @@ export async function searchCatalog(storeId: string, config: RetalixStoreConfig,
     // Prefer kg selling unit for weight products
     const kgUnit = p.sellingUnits.find(u => u.unitName === 'ק"ג')
     const bestUnit = p.soldByWeight && kgUnit ? kgUnit : p.sellingUnits[0]
+    // saliko#39: a soldByWeight price is per kg even when bought by pack/unit.
+    const { unitPrice, sellUnit } = priceLabel(p.price, p.soldByWeight, bestUnit ?? { unitName: p.unit })
     return {
       productId: String(p.id),
       name: p.fullName || p.name,
       brand: p.category,
       price: String(p.price || ''),
-      unitPrice: `${p.price} ₪/${bestUnit?.unitName || p.unit}`,
+      unitPrice,
+      sellUnit,
       sellingUnitId: bestUnit?.sellingUnitId || p.sellingUnitId || 0,
     }
   })
