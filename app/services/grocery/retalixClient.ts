@@ -244,6 +244,26 @@ export async function hasRetalixCredentials(uid: string, storeId: string): Promi
 
 // --- Auth (OTP) ---
 
+/**
+ * The store refused to send the SMS code. Carries the store's own code and
+ * Hebrew message so the chat can quote it instead of guessing. `captchaRequired`:
+ * Rexail answers `permissionDenied` to any apply-for-authentication call made
+ * without a reCAPTCHA token (verified 2026-10-12, saliko#33) — the server cannot
+ * produce one, so it is not the user's phone number.
+ */
+export class RexailOtpError extends Error {
+  readonly code: string | null
+  readonly storeMessage: string
+  constructor(resp: { code?: string | null; resolvedMessage?: string; message?: string }) {
+    const storeMessage = resp.resolvedMessage || resp.message || 'unknown'
+    super(`OTP failed: [${resp.code ?? 'no-code'}] ${storeMessage}`)
+    this.name = 'RexailOtpError'
+    this.code = resp.code ?? null
+    this.storeMessage = storeMessage
+  }
+  get captchaRequired(): boolean { return this.code === 'permissionDenied' }
+}
+
 export async function sendOtp(uid: string, storeId: string): Promise<void> {
   const cred = await loadCredentials(uid, storeId)
   if (!cred) throw new Error('Retalix credentials not configured')
@@ -253,7 +273,7 @@ export async function sendOtp(uid: string, storeId: string): Promise<void> {
   })
 
   if (!resp.success) {
-    throw new Error(`OTP failed: ${resp.resolvedMessage || resp.message || 'unknown'}`)
+    throw new RexailOtpError(resp)
   }
 
   await credRef(uid, storeId).update({ otpPending: true })
@@ -354,7 +374,7 @@ export async function sendOtpWithCreds(creds: AnonRetalixCreds): Promise<void> {
     body: JSON.stringify({ cellPhone: creds.phone }),
   })
   if (!resp.success) {
-    throw new Error(`OTP failed: ${resp.resolvedMessage || resp.message || 'unknown'}`)
+    throw new RexailOtpError(resp)
   }
   console.log(`[Retalix:anon] OTP sent to ${creds.phone}`)
 }

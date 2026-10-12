@@ -17,6 +17,7 @@
  */
 
 import { CredsCorruptedError } from '@/app/services/security/credEncryption'
+import { RexailOtpError } from '@/app/services/grocery/retalixClient'
 
 /** Thrown by `assertConsentForTurn`; its message is already user-facing Hebrew. */
 export class SameTurnConsentError extends Error {
@@ -46,4 +47,19 @@ export function credActionErrorMessage(err: unknown): string {
     return 'לא הצלחתי לפענח את פרטי החיבור השמורים בשרת (ייתכן שהמפתח השתנה). תיכנס להגדרות → חיבורים חיצוניים ותכניס את הפרטים שוב; אם זה חיבור Tier 3, ייתכן שצריך גם לאשר שוב.'
   }
   return `error: ${err instanceof Error ? err.message : String(err)}`
+}
+
+/**
+ * User-facing line for a failed SMS-code send (saliko#33). Quotes the store's
+ * own answer, so the agent never has to guess what went wrong, and never blames
+ * the phone number when the store refused the request itself.
+ */
+export function otpSendErrorMessage(err: unknown, label: string): string {
+  if (err instanceof RexailOtpError) {
+    if (err.captchaRequired) {
+      return `${label} דחתה את בקשת קוד ה-SMS (תשובת החנות: "${err.storeMessage}"). זו לא בעיה במספר הטלפון: החנות דורשת כרגע אימות "אני לא רובוט" שאפשר לעבור רק באתר שלה, ולכן כרגע אי אפשר לחבר אותה דרך Saliko. אותה חסימה חלה על כל החנויות שעובדות דרך Rexail (מקור השפע, הירקניה ועוד), כך שאין טעם לנסות חנות Rexail אחרת.`
+    }
+    return `${label} לא שלחה קוד SMS. תשובת החנות: "${err.storeMessage}".`
+  }
+  return `שגיאה בשליחת קוד SMS ל-${label}: ${err instanceof Error ? err.message : String(err)}`
 }

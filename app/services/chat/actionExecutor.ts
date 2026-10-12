@@ -19,7 +19,7 @@ import {
   login as shufersalLogin,
 } from '@/app/services/grocery/shufersalClient'
 import { grantServerCredsConsent, hasCurrentServerCredsConsent, NoTier3ConsentError } from '@/app/services/consentService'
-import { assertConsentForTurn, credActionErrorMessage } from '@/app/services/chat/credGuards'
+import { assertConsentForTurn, credActionErrorMessage, otpSendErrorMessage } from '@/app/services/chat/credGuards'
 // Note: retalixClient functions are no longer imported directly — the OTP
 // flow goes through the resolved plugin (multi-store Rexail support).
 // Exception: the anon Tier-1 path bypasses the plugin contract and calls
@@ -998,7 +998,7 @@ async function executeOne(
           }
         } catch (err) {
           console.error('[ActionExecutor] Anon Send OTP failed:', err)
-          return 'שגיאה בשליחת SMS. בדוק את מספר הטלפון.'
+          return otpSendErrorMessage(err, plugin.label)
         }
       }
 
@@ -1017,7 +1017,7 @@ async function executeOne(
           return `כדי לחבר את ${plugin.label} בחשבון רשום צריך אישור Tier 3 שטרם נתת. תאמר במפורש "אני מאשר Tier 3" / "אני מאשר שמירה בשרת" ואחזור על הפעולה. לחלופין, חיבור Tier 2 דרך הגדרות → חיבורים חיצוניים שומר את הטלפון רק בדפדפן.`
         }
         console.error('[ActionExecutor] Send OTP failed:', err)
-        return 'שגיאה בשליחת SMS. בדוק את מספר הטלפון.'
+        return otpSendErrorMessage(err, plugin.label)
       }
     }
 
