@@ -14,6 +14,7 @@ import { encryptCred, decryptCred, looksEncrypted } from '@/app/services/securit
 import { hasCurrentServerCredsConsent } from '@/app/services/consentService'
 import { getRexailStore } from './rexailStores'
 import { getAllStores } from './storeRegistry'
+import { nameMatchesQuery, rankCatalogMatches } from './catalogMatch'
 
 // Default config for Makor Hashefa
 const DEFAULT_CONFIG: RetalixStoreConfig = {
@@ -478,9 +479,8 @@ export async function searchCatalog(storeId: string, config: RetalixStoreConfig,
   const products = await loadCatalog(storeId, config)
   const q = query.toLowerCase()
 
-  const nameMatch = products.filter(p =>
-    `${p.name} ${p.fullName}`.toLowerCase().includes(q)
-  )
+  // Stem match per word (saliko#34): "עגבניות" must find fresh "עגבניה".
+  const nameMatch = products.filter(p => nameMatchesQuery(`${p.name} ${p.fullName}`, query))
   // Exact category match first, then partial
   const exactCatMatch = products.filter(p => p.category.toLowerCase() === q)
   const partialCatMatch = products.filter(p =>
@@ -489,8 +489,9 @@ export async function searchCatalog(storeId: string, config: RetalixStoreConfig,
   const categoryMatch = exactCatMatch.length > 0 ? exactCatMatch : partialCatMatch
 
   // Use category matches when they significantly outnumber name matches (broad query)
-  const matches = categoryMatch.length > nameMatch.length * 2 ? categoryMatch : nameMatch.length > 0 ? nameMatch : categoryMatch
-  matches.sort((a, b) => (a.price || 999) - (b.price || 999))
+  const picked = categoryMatch.length > nameMatch.length * 2 ? categoryMatch : nameMatch.length > 0 ? nameMatch : categoryMatch
+  // Fresh produce first, then the item itself over "sauce of X", then price.
+  const matches = rankCatalogMatches(picked, query)
 
   return matches.slice(0, 20).map(p => {
     // Prefer kg selling unit for weight products
