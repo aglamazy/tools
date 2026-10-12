@@ -363,7 +363,7 @@ async function executeOne(
 
       try {
         const results = await store.search(uid, query)
-        if (results.length === 0) return `לא נמצאו תוצאות עבור "${query}" ב${store.label}.`
+        if (results.length === 0) return `לא נמצאו תוצאות עבור "${query}" בקטלוג של ${store.label}. זה לא מידע על מלאי — אל תכתוב "אזל" או "אין במלאי"; נסה שם אחר או שאל את המשתמש.`
         const allResults = results.slice(0, 12).map(r => ({
           catalogId: r.productId, name: r.name, brand: r.brand, price: r.price, unitPrice: r.unitPrice,
           sellingUnitId: r.sellingUnitId,
