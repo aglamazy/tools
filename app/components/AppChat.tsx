@@ -710,6 +710,8 @@ export default function AppChat() {
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          // Guest: the pending search is keyed by the anon session (saliko#36).
+          ...(uid?.startsWith(ANON_PREFIX) ? { 'x-anon-session': uid.slice(ANON_PREFIX.length) } : {}),
         },
         body: JSON.stringify({ searchKey, resultIndex }),
       })

@@ -55,29 +55,16 @@ export async function deletePendingSearch(uid: string, key: string): Promise<voi
     .collection('private').doc('pendingSearches').update({ [key]: FieldValue.delete() })
 }
 
-/**
- * The most recently shown picker for this user, so a free-text reply
- * ("2", "השני", "תוסיף 2 מהראשון") can resolve against it without the LLM
- * needing to know the internal searchKey (#276 — text replies used to fall
- * through to a fresh search_product call instead of picking).
- */
-export async function loadLatestPendingSearch(uid: string): Promise<{ key: string; entry: PendingProductSelection } | null> {
+/** Every picker still open for this user (unexpired), oldest first (saliko#36). */
+export async function listOpenPendingSearches(uid: string): Promise<{ key: string; entry: PendingProductSelection }[]> {
   const doc = await getAdminFirestore().collection('groceries').doc(uid)
     .collection('private').doc('pendingSearches').get()
-  if (!doc.exists) return null
-  const data = doc.data() || {}
-  let latestKey: string | null = null
-  let latestAt = ''
-  for (const [key, entry] of Object.entries(data)) {
-    const createdAt = (entry as { createdAt?: string })?.createdAt || ''
-    if (!latestKey || createdAt > latestAt) {
-      latestKey = key
-      latestAt = createdAt
-    }
-  }
-  if (!latestKey) return null
-  const entry = await loadPendingSearch(uid, latestKey)
-  return entry ? { key: latestKey, entry } : null
+  if (!doc.exists) return []
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000
+  return Object.entries(doc.data() || {})
+    .filter(([, e]) => !(e as { createdAt?: string })?.createdAt || new Date((e as { createdAt: string }).createdAt).getTime() > cutoff)
+    .sort(([, a], [, b]) => ((a as { createdAt?: string }).createdAt || '').localeCompare((b as { createdAt?: string }).createdAt || ''))
+    .map(([key, entry]) => ({ key, entry: entry as PendingProductSelection }))
 }
 
 /**

@@ -39,7 +39,8 @@ import { preflightOrderSafety, finalizeOrderSuccess, finalizeOrderFailure, check
 
 import { TASK_ACTIONS, handleTaskAction } from '@/app/services/chat/taskActionHandler'
 import { deleteMapping, lookupMapping, saveProductMapping } from '@/app/services/grocery/productResolver'
-import { loadLatestPendingSearch, selectProduct, type PendingProductSelection } from './pendingSearchService'
+import { listOpenPendingSearches, selectProduct, type PendingProductSelection } from './pendingSearchService'
+import { resolvePendingPick } from './pendingPick'
 import { startShufersalCheckout } from '@/app/services/grocery/shufersalCheckoutFlow'
 
 /**
@@ -400,18 +401,17 @@ async function executeOne(
     // tool for this and fell back to calling search_product again, which
     // re-ran a fresh search instead of picking from what was already shown.
     case 'select_pending_product': {
-      const resultIndex = typeof action.resultIndex === 'number' ? Math.round(action.resultIndex) - 1 : NaN
-      if (!Number.isInteger(resultIndex) || resultIndex < 0) return null
+      // By number, product name and/or the item it is for (saliko#36); a bare
+      // number with several pickers open is asked back, never guessed.
       const qtyOverride = typeof action.qty === 'number' && action.qty > 0 ? action.qty : undefined
-
-      const latest = await loadLatestPendingSearch(uid)
-      if (!latest) return 'אין חיפוש פתוח לבחור ממנו — צריך לחפש שוב.'
-      if (resultIndex >= latest.entry.results.length) {
-        return `יש רק ${latest.entry.results.length} תוצאות — מספר לא תקין.`
-      }
-
+      const pick = resolvePendingPick(await listOpenPendingSearches(uid), {
+        resultIndex: typeof action.resultIndex === 'number' ? Math.round(action.resultIndex) : undefined,
+        productName: typeof action.productName === 'string' ? action.productName : undefined,
+        forItem: typeof action.forItem === 'string' ? action.forItem : undefined,
+      })
+      if (pick.kind === 'ask') return pick.message
       try {
-        const { message } = await selectProduct(uid, latest.key, resultIndex, qtyOverride)
+        const { message } = await selectProduct(uid, pick.key, pick.index, qtyOverride)
         return message
       } catch (err) {
         console.error(`[ActionExecutor] select_pending_product failed:`, err)

@@ -55,14 +55,15 @@ export const ACTION_DECLARATIONS: FunctionDeclaration[] = [
   },
   {
     name: 'select_pending_product',
-    description: 'בחר תוצאה מרשימה ממוספרת שכבר הוצגה (מ-search_product/re_search) לפי מספר. השתמש בזה כשהמשתמש עונה עם מספר / תיאור / כמות על רשימה שכבר נראתה ("2", "השני", "תוסיף 2 מהראשון") — אל תקרא ל-search_product שוב במקרה כזה, גם אם המשתמש הזכיר כמות חדשה.',
+    description: 'בחר מוצר מבחירה שכבר הוצגה (מ-search_product/re_search). השתמש בזה כשהמשתמש עונה על בחירה פתוחה — במספר ("2", "השני"), בשם המוצר ("בננה, 1 ק\"ג"), או בכמות חדשה — אל תקרא ל-search_product שוב במקרה כזה. כשפתוחות כמה בחירות, העבר forItem (המוצר שעליו הבחירה, למשל "פטרוזיליה").',
     parameters: {
       type: 'object',
       properties: {
-        resultIndex: { type: 'integer', description: 'המספר שהמשתמש בחר, לפי הרשימה הממוספרת שהוצגה (1 = הראשון)' },
+        resultIndex: { type: 'integer', description: 'המספר שהמשתמש בחר, לפי הרשימה הממוספרת שהוצגה (1 = הראשון). ללא ערך כשהמשתמש כתב שם מוצר.' },
+        productName: { type: 'string', description: 'שם המוצר כפי שהמשתמש כתב אותו, כשבחר בשם ולא במספר' },
+        forItem: { type: 'string', description: 'על איזו בחירה מדובר (המוצר שחיפשנו), כשפתוחות כמה בחירות' },
         qty: { type: 'integer', description: 'כמות, רק אם המשתמש ציין/שינה כמות בתגובה. ללא ערך = הכמות המקורית מהחיפוש.' },
       },
-      required: ['resultIndex'],
     },
   },
   {
