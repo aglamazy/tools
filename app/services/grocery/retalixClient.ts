@@ -12,7 +12,7 @@ import { gunzipSync } from 'zlib'
 import type { RetalixStoreConfig, OtpStorePlugin, StoreSearchResult, StoreCheckoutResult, StoreOrder, StoreOrderItem, StoreSlotDay, CheckoutItem, CheckoutOptions, OrderModification, OrderModificationResult } from './storeTypes'
 import { encryptCred, decryptCred, looksEncrypted } from '@/app/services/security/credEncryption'
 import { hasCurrentServerCredsConsent } from '@/app/services/consentService'
-import { getRexailStore } from './rexailStores'
+import { getRexailStore, REXAIL_ENABLED } from './rexailStores'
 import { getAllStores } from './storeRegistry'
 import { nameMatchesQuery, rankCatalogMatches } from './catalogMatch'
 import { priceLabel } from './unitLabel'
@@ -356,6 +356,7 @@ export interface AnonRetalixCreds {
 
 /** Resolve a chain id (e.g. 'retalix', 'rexail_basra') to its static config. */
 export function getRetalixConfigForStore(storeId: string): RetalixStoreConfig | null {
+  if (!REXAIL_ENABLED) return null // Rexail stores off (saliko#42)
   // Legacy default — Makor HaShefa keeps the bare 'retalix' id.
   if (storeId === 'retalix') return { ...DEFAULT_CONFIG }
   // Other chains: look up the static REXAIL_STORES entry. No per-user state,

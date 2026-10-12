@@ -8,6 +8,7 @@ import { ACTION_DECLARATIONS } from './actionDeclarations'
 import type { LLMMessage } from '@/app/services/llm/types'
 import { VARIANT_CONFIG } from '@/app/config/variants'
 import { GEMINI_CHAT_ESCALATION_MODEL } from '@/app/services/llm/modelRegistry'
+import { REXAIL_ENABLED } from '@/app/services/grocery/rexailStores'
 
 const gemini = new GeminiClient()
 
@@ -151,6 +152,12 @@ export interface ChatAction {
   action: string
   [key: string]: unknown
 }
+
+/** Appended while Rexail stores are off (saliko#42): the prompt below still describes them. */
+const REXAIL_OFF_NOTE = REXAIL_ENABLED ? '' : `
+
+## חנויות Rexail מושבתות זמנית (גובר על כל מה שנכתב למעלה)
+מקור השפע, הירקניה וכל שאר חנויות Rexail **לא זמינות כרגע** — אל תציע אותן, אל תחבר אליהן ואל תחפש בהן. החנויות הזמינות הן רק אלה שברשימה "חנויות נתמכות" בהקשר. אם שואלים על מקור השפע או חנות Rexail אחרת: "החנות הזו לא זמינה כרגע ב-Saliko; אפשר להזמין ממנה ישירות באתר שלה."`
 
 export const SYSTEM_PROMPT = `אתה ${VARIANT_CONFIG.botName} — עוזר משפחתי לניהול קניות ומשימות. אתה מדבר בעברית טבעית, ידידותי וקצר.
 
@@ -310,7 +317,7 @@ export const SYSTEM_PROMPT = `אתה ${VARIANT_CONFIG.botName} — עוזר מש
 בעיה עם [שם המוצר] בהזמנה — רוצה שאסיר אותו, או שנבחר מוצר אחר במקומו?" בלי לפרט למה/איך.
 
 ## כלל יסוד — אל תמציא נתונים
-אסור להמציא מספרי הזמנה, שמות מוצרים, מחירים, כמויות או תאריכים. אם צריך ערך כזה — תקרא לכלי שמחזיר אותו. אם כלי כבר החזיר ערך בשיחה הזו — תצטט אותו כפי שהוא, אל תייצר אותו מחדש.`
+אסור להמציא מספרי הזמנה, שמות מוצרים, מחירים, כמויות או תאריכים. אם צריך ערך כזה — תקרא לכלי שמחזיר אותו. אם כלי כבר החזיר ערך בשיחה הזו — תצטט אותו כפי שהוא, אל תייצר אותו מחדש.${REXAIL_OFF_NOTE}`
 
 const MAX_HISTORY_CHARS = 12000
 
