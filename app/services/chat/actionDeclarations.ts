@@ -54,6 +54,30 @@ export const ACTION_DECLARATIONS: FunctionDeclaration[] = [
     },
   },
   {
+    name: 'propose_basket',
+    description: 'הצע סל לאישור ("תציע לי סל של 10 ירקות ופירות בסיסיים בזול", "מה יעלה לי סל של..."). מחזיר לכל פריט את הגרסה הטרייה הזולה ביותר עם מחיר ויחידה, וסה"כ משוער — בלי להוסיף כלום לרשימה. בחר בעצמך את הפריטים הבסיסיים אם המשתמש לא פירט. הצג את התוצאה כמו שהיא ושאל אם לאשר.',
+    parameters: {
+      type: 'object',
+      properties: {
+        items: { type: 'array', items: { type: 'string' }, description: 'שמות הפריטים בסל, ביחיד ("בננה", "עגבניה")' },
+        store: { type: 'string' },
+        freshOnly: { type: 'boolean', description: 'רק פירות/ירקות טריים (ברירת מחדל true). false רק כשהמשתמש ביקש גם מוצרי מכולת.' },
+      },
+      required: ['items'],
+    },
+  },
+  {
+    name: 'approve_basket',
+    description: 'המשתמש אישר את הצעת הסל שהוצגה (propose_basket) — מוסיף את הפריטים לרשימה. אם ביקש להוריד פריטים מההצעה, העבר אותם ב-exclude.',
+    parameters: {
+      type: 'object',
+      properties: {
+        exclude: { type: 'array', items: { type: 'string' }, description: 'פריטים מההצעה שהמשתמש לא רוצה' },
+        validTo: { type: 'string', description: 'תוקף ב-YYYY-MM-DD, כמו ב-search_product. ללא ערך = להזמנה הקרובה.' },
+      },
+    },
+  },
+  {
     name: 'select_pending_product',
     description: 'בחר מוצר מבחירה שכבר הוצגה (מ-search_product/re_search). השתמש בזה כשהמשתמש עונה על בחירה פתוחה — במספר ("2", "השני"), בשם המוצר ("בננה, 1 ק\"ג"), או בכמות חדשה — אל תקרא ל-search_product שוב במקרה כזה. כשפתוחות כמה בחירות, העבר forItem (המוצר שעליו הבחירה, למשל "פטרוזיליה").',
     parameters: {

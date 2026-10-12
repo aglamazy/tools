@@ -41,6 +41,7 @@ import { TASK_ACTIONS, handleTaskAction } from '@/app/services/chat/taskActionHa
 import { deleteMapping, lookupMapping, saveProductMapping } from '@/app/services/grocery/productResolver'
 import { listOpenPendingSearches, selectProduct, type PendingProductSelection } from './pendingSearchService'
 import { resolvePendingPick } from './pendingPick'
+import { proposeBasket, approveBasket } from './basketProposal'
 import { startShufersalCheckout } from '@/app/services/grocery/shufersalCheckoutFlow'
 
 /**
@@ -400,6 +401,11 @@ async function executeOne(
     // (e.g. "2", "השני", "תוסיף 2 מהראשון") — #276: previously the LLM had no
     // tool for this and fell back to calling search_product again, which
     // re-ran a fresh search instead of picking from what was already shown.
+    case 'propose_basket': // saliko#38: priced, fresh-only, cheapest-per-item proposal; adds nothing
+      return proposeBasket(uid, await resolveActionStore(uid, action, sessionStore), normalizeNames(action.items), action.freshOnly !== false)
+    case 'approve_basket':
+      return approveBasket(uid, normalizeNames(action.exclude), normalizeValidTo(action.validTo))
+
     case 'select_pending_product': {
       // By number, product name and/or the item it is for (saliko#36); a bare
       // number with several pickers open is asked back, never guessed.
