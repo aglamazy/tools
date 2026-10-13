@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useToast } from '@/app/components/ToastContainer'
 import { subscribeToAuth } from '@/app/stores/authStore'
-import { REXAIL_STORES } from '@/app/services/grocery/rexailStores'
+import { ACTIVE_REXAIL_STORES } from '@/app/services/grocery/rexailStores'
 import {
   fetchStores,
   addStanding,
@@ -234,6 +234,7 @@ export default function StoresPage() {
           <p style={{ color: '#6b7280' }}>אין חנויות מוגדרות.</p>
         </div>
 
+        {ACTIVE_REXAIL_STORES.length > 0 && (
         <div className="card" style={{ marginTop: '1rem' }}>
           <h2 style={{ margin: 0, marginBottom: '0.5rem' }}>חנויות זמינות</h2>
           <p style={{ color: '#6b7280', fontSize: '0.9rem', marginTop: 0 }}>
@@ -248,7 +249,7 @@ export default function StoresPage() {
               marginTop: '1rem',
             }}
           >
-            {REXAIL_STORES.map(s => (
+            {ACTIVE_REXAIL_STORES.map(s => (
               <a
                 key={s.id}
                 href={s.siteOrigin}
@@ -270,6 +271,7 @@ export default function StoresPage() {
             ))}
           </div>
         </div>
+        )}
       </main>
     )
   }

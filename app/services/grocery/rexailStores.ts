@@ -21,6 +21,14 @@ export interface RexailStoreEntry {
   /** deliveryAreaId is per-user (chosen at connect time), not in static config */
 }
 
+/**
+ * Rexail stores on/off (saliko#42, Agla 2026-10-12, Cockpit 75955): off until
+ * Rexail answers about the reCAPTCHA now required on SMS login (general#63) —
+ * no Rexail store can be connected meanwhile. Every consumer reads
+ * ACTIVE_REXAIL_STORES / getRexailStore, so this ONE line turns them back on.
+ */
+export const REXAIL_ENABLED = false
+
 export const REXAIL_STORES: RexailStoreEntry[] = [
   {
     // Makor HaShefa keeps the legacy 'retalix' plugin id for back-compat
@@ -123,6 +131,9 @@ export const REXAIL_STORES: RexailStoreEntry[] = [
 ]
 
 /** Look up a Rexail store entry by id. */
+/** The Rexail stores in service: all of them, or none while REXAIL_ENABLED is false. */
+export const ACTIVE_REXAIL_STORES: RexailStoreEntry[] = REXAIL_ENABLED ? REXAIL_STORES : []
+
 export function getRexailStore(id: string): RexailStoreEntry | undefined {
-  return REXAIL_STORES.find(s => s.id === id)
+  return ACTIVE_REXAIL_STORES.find(s => s.id === id)
 }

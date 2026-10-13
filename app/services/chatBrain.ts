@@ -138,7 +138,7 @@ import { getAllStores } from '@/app/services/grocery/storeRegistry'
 import { initStores } from '@/app/services/grocery/initStores'
 import { isCredentialsVerified } from '@/app/services/grocery/shufersalClient'
 import { getAnyStoredOtpPhone } from '@/app/services/grocery/retalixClient'
-import { REXAIL_STORES } from '@/app/services/grocery/rexailStores'
+import { ACTIVE_REXAIL_STORES } from '@/app/services/grocery/rexailStores'
 import { listTasks } from '@/app/services/taskFirestoreService'
 import { getServerCredsConsent, hasCurrentServerCredsConsent } from '@/app/services/consentService'
 import {
@@ -187,7 +187,7 @@ export interface ChatBrainResult {
 async function buildContext(uid: string, displayName?: string, includeTasks = false, session?: SessionState): Promise<UserContext> {
   const siteByStoreId = new Map<string, string>()
   const descByStoreId = new Map<string, string>()
-  for (const e of REXAIL_STORES) {
+  for (const e of ACTIVE_REXAIL_STORES) {
     siteByStoreId.set(e.id, e.siteOrigin)
     descByStoreId.set(e.id, e.description)
   }

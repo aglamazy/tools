@@ -90,17 +90,28 @@ export function createAglamazoToolRegistry(): {
         context.navigateTo = out.navigateTo;
       }
 
-      let stop = false;
+      // A picker no longer ends the turn (saliko#35). Stopping here dropped the
+      // results of the other calls in the same step ("added", "not found",
+      // removals) and every instruction the model would have handled next, so
+      // multi-item requests lost items silently. The cards still reach the
+      // client from context.pendingSelections; the model is told they are
+      // shown, so it reports the rest and neither re-lists nor picks for the user.
       if (out.pendingSelections?.length) {
         context.pendingSelections.push(...out.pendingSelections);
-        stop = true;
+        const shown = out.pendingSelections
+          .map((sel) => `"${sel.query}" (${sel.results.length} אפשרויות)`)
+          .join(", ");
+        const comment = out.results[0]?.result;
+        return {
+          result:
+            `הוצגה למשתמש בחירת מוצר עבור ${shown}. האפשרויות כבר מוצגות לו: אל תפרט אותן שוב, אל תבחר בשבילו ואל תחפש שוב את אותו מוצר. ` +
+            `המשך לטפל בשאר הבקשות שלו, ובתשובה ציין שמחכה לבחירה שלו.` +
+            (comment && comment !== "ok" ? ` הערת חיפוש: ${comment}` : ""),
+        };
       }
 
       const first = out.results[0];
-      return {
-        result: first?.result ?? "",
-        stop,
-      };
+      return { result: first?.result ?? "" };
     },
   }));
 

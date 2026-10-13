@@ -19,7 +19,7 @@ import {
   login as shufersalLogin,
 } from '@/app/services/grocery/shufersalClient'
 import { grantServerCredsConsent, hasCurrentServerCredsConsent, NoTier3ConsentError } from '@/app/services/consentService'
-import { assertConsentForTurn, credActionErrorMessage } from '@/app/services/chat/credGuards'
+import { assertConsentForTurn, credActionErrorMessage, otpSendErrorMessage } from '@/app/services/chat/credGuards'
 // Note: retalixClient functions are no longer imported directly — the OTP
 // flow goes through the resolved plugin (multi-store Rexail support).
 // Exception: the anon Tier-1 path bypasses the plugin contract and calls
@@ -39,7 +39,10 @@ import { preflightOrderSafety, finalizeOrderSuccess, finalizeOrderFailure, check
 
 import { TASK_ACTIONS, handleTaskAction } from '@/app/services/chat/taskActionHandler'
 import { deleteMapping, lookupMapping, saveProductMapping } from '@/app/services/grocery/productResolver'
-import { loadLatestPendingSearch, selectProduct, type PendingProductSelection } from './pendingSearchService'
+import { listOpenPendingSearches, selectProduct, type PendingProductSelection } from './pendingSearchService'
+import { resolvePendingPick } from './pendingPick'
+import { sellUnitOf } from '@/app/services/grocery/unitLabel'
+import { proposeBasket, approveBasket } from './basketProposal'
 import { startShufersalCheckout } from '@/app/services/grocery/shufersalCheckoutFlow'
 
 /**
@@ -362,9 +365,9 @@ async function executeOne(
 
       try {
         const results = await store.search(uid, query)
-        if (results.length === 0) return `לא נמצאו תוצאות עבור "${query}" ב${store.label}.`
+        if (results.length === 0) return `לא נמצאו תוצאות עבור "${query}" בקטלוג של ${store.label}. זה לא מידע על מלאי — אל תכתוב "אזל" או "אין במלאי"; נסה שם אחר או שאל את המשתמש.`
         const allResults = results.slice(0, 12).map(r => ({
-          catalogId: r.productId, name: r.name, brand: r.brand, price: r.price, unitPrice: r.unitPrice,
+          catalogId: r.productId, name: r.name, brand: r.brand, price: r.price, unitPrice: r.unitPrice, sellUnit: r.sellUnit,
           sellingUnitId: r.sellingUnitId,
         }))
         const { filtered, comment } = await filterSearchResults(query, allResults)
@@ -372,7 +375,7 @@ async function executeOne(
         // Auto-select when exactly 1 result
         if (filtered.length === 1) {
           const selected = filtered[0]
-          const unit = selected.unitPrice?.split('/')?.pop()?.trim() || undefined
+          const unit = sellUnitOf(selected)
           const item = { name: selected.name, qty, catalogId: selected.catalogId, unit, sellingUnitId: selected.sellingUnitId }
           if (target === 'standing') await addToStoreStanding(uid, storeId, [item])
           else await addStorePendingItems(uid, storeId, [item], { validTo })
@@ -399,19 +402,23 @@ async function executeOne(
     // (e.g. "2", "השני", "תוסיף 2 מהראשון") — #276: previously the LLM had no
     // tool for this and fell back to calling search_product again, which
     // re-ran a fresh search instead of picking from what was already shown.
+    case 'propose_basket': // saliko#38: priced, fresh-only, cheapest-per-item proposal; adds nothing
+      return proposeBasket(uid, await resolveActionStore(uid, action, sessionStore), normalizeNames(action.items), action.freshOnly !== false)
+    case 'approve_basket':
+      return approveBasket(uid, normalizeNames(action.exclude), normalizeValidTo(action.validTo))
+
     case 'select_pending_product': {
-      const resultIndex = typeof action.resultIndex === 'number' ? Math.round(action.resultIndex) - 1 : NaN
-      if (!Number.isInteger(resultIndex) || resultIndex < 0) return null
+      // By number, product name and/or the item it is for (saliko#36); a bare
+      // number with several pickers open is asked back, never guessed.
       const qtyOverride = typeof action.qty === 'number' && action.qty > 0 ? action.qty : undefined
-
-      const latest = await loadLatestPendingSearch(uid)
-      if (!latest) return 'אין חיפוש פתוח לבחור ממנו — צריך לחפש שוב.'
-      if (resultIndex >= latest.entry.results.length) {
-        return `יש רק ${latest.entry.results.length} תוצאות — מספר לא תקין.`
-      }
-
+      const pick = resolvePendingPick(await listOpenPendingSearches(uid), {
+        resultIndex: typeof action.resultIndex === 'number' ? Math.round(action.resultIndex) : undefined,
+        productName: typeof action.productName === 'string' ? action.productName : undefined,
+        forItem: typeof action.forItem === 'string' ? action.forItem : undefined,
+      })
+      if (pick.kind === 'ask') return pick.message
       try {
-        const { message } = await selectProduct(uid, latest.key, resultIndex, qtyOverride)
+        const { message } = await selectProduct(uid, pick.key, pick.index, qtyOverride)
         return message
       } catch (err) {
         console.error(`[ActionExecutor] select_pending_product failed:`, err)
@@ -895,7 +902,7 @@ async function executeOne(
         // Direct search without LLM filter — category browsing returns all matches
         const results = await store.search(uid, category)
         if (results.length === 0) return `לא נמצאו מוצרים בקטגוריה "${category}" ב${store.label}.`
-        const lines = results.map(r => `• ${r.name} — ${r.price}₪/${r.unitPrice.split('/').pop()?.trim() || ''}`)
+        const lines = results.map(r => `• ${r.name} — ${r.unitPrice}`) // unitPrice already says per kg/unit (saliko#39)
         return `${category} ב${store.label} (${results.length}):\n${lines.join('\n')}\n\nמשהו מעניין לרשימה?`
       } catch (err) {
         console.error(`[ActionExecutor] Browse failed for "${category}" (${storeId}):`, err)
@@ -998,7 +1005,7 @@ async function executeOne(
           }
         } catch (err) {
           console.error('[ActionExecutor] Anon Send OTP failed:', err)
-          return 'שגיאה בשליחת SMS. בדוק את מספר הטלפון.'
+          return otpSendErrorMessage(err, plugin.label)
         }
       }
 
@@ -1017,7 +1024,7 @@ async function executeOne(
           return `כדי לחבר את ${plugin.label} בחשבון רשום צריך אישור Tier 3 שטרם נתת. תאמר במפורש "אני מאשר Tier 3" / "אני מאשר שמירה בשרת" ואחזור על הפעולה. לחלופין, חיבור Tier 2 דרך הגדרות → חיבורים חיצוניים שומר את הטלפון רק בדפדפן.`
         }
         console.error('[ActionExecutor] Send OTP failed:', err)
-        return 'שגיאה בשליחת SMS. בדוק את מספר הטלפון.'
+        return otpSendErrorMessage(err, plugin.label)
       }
     }
 

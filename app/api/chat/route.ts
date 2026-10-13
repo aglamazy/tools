@@ -1,36 +1,18 @@
+// CALLER-KEYED ROUTE — identity from resolveChatIdentity: the signed-in uid (requireAuth), else the
+// caller's anon chat session; guests may chat and pick by design (Saliko), T&C gate is client-side TcGate.
 import { NextRequest, NextResponse, after } from 'next/server'
-import { requireAuth } from '@/app/lib/apiGuard'
-import { processChatMessage, handleReset, handleClear, isAnonUid, ANON_PREFIX, refreshOpenOrderCaches } from '@/app/services/chatBrain'
+import { resolveChatIdentity } from '@/app/services/chat/chatIdentity'
+import { processChatMessage, handleReset, handleClear, isAnonUid, refreshOpenOrderCaches } from '@/app/services/chatBrain'
 import { clearAllPendingState } from '@/app/services/chat/pendingSearchService'
 import { panicAdmin } from '@/app/services/adminPanic'
 import { withServiceCall } from 'agents-observe/next'
 
 const COLLECTION = 'appChatHistory'
 
-export const maxDuration = 30
-
-/**
- * Resolve the user identity for a chat request.
- * Authed → real Firebase uid. Anon → `anon:<sessionId>` from the request
- * (header X-Anon-Session, or auto-generated). The chatBrain treats anon ids
- * specially: no Firestore writes, no auth-requiring tools.
- *
- * Per Saliko's product model, Gemini chat is open to all visitors —
- * Saliko T&C accepted client-side via TcGate is the only gate, and that
- * runs on the client surface that hits this route.
- */
-async function resolveChatIdentity(request: NextRequest): Promise<{ uid: string; displayName?: string }> {
-  const guard = await requireAuth(request)
-  if (!guard.error) {
-    return { uid: guard.uid, displayName: guard.claims.email?.split('@')[0] }
-  }
-  // Anon path. Use a stable per-tab id from the client; generate one if absent.
-  const headerSession = request.headers.get('x-anon-session')?.trim()
-  const session = headerSession && /^[\w-]{8,64}$/.test(headerSession)
-    ? headerSession
-    : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
-  return { uid: `${ANON_PREFIX}${session}` }
-}
+// 120 s (saliko#40): a multi-item turn (several searches + model steps) ran past
+// 30 s, the platform cut it off, and the web client's auto-retry showed
+// "ניסיון 1/8" and resent the turn (92 s replies in Tester's run).
+export const maxDuration = 120
 
 interface ChatRequestBody {
   message?: string

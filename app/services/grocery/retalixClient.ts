@@ -12,8 +12,10 @@ import { gunzipSync } from 'zlib'
 import type { RetalixStoreConfig, OtpStorePlugin, StoreSearchResult, StoreCheckoutResult, StoreOrder, StoreOrderItem, StoreSlotDay, CheckoutItem, CheckoutOptions, OrderModification, OrderModificationResult } from './storeTypes'
 import { encryptCred, decryptCred, looksEncrypted } from '@/app/services/security/credEncryption'
 import { hasCurrentServerCredsConsent } from '@/app/services/consentService'
-import { getRexailStore } from './rexailStores'
+import { getRexailStore, REXAIL_ENABLED } from './rexailStores'
 import { getAllStores } from './storeRegistry'
+import { nameMatchesQuery, rankCatalogMatches } from './catalogMatch'
+import { priceLabel } from './unitLabel'
 
 // Default config for Makor Hashefa
 const DEFAULT_CONFIG: RetalixStoreConfig = {
@@ -61,7 +63,7 @@ export interface RetalixProduct {
   unit: string
   unitId: number | null
   sellingUnitId: number | null
-  sellingUnits: { sellingUnitId: number; unitName: string; unitId: number }[]
+  sellingUnits: { sellingUnitId: number; unitName: string; unitId: number; estimatedKg?: number }[]
   soldByWeight: boolean
   image: string
 }
@@ -244,6 +246,26 @@ export async function hasRetalixCredentials(uid: string, storeId: string): Promi
 
 // --- Auth (OTP) ---
 
+/**
+ * The store refused to send the SMS code. Carries the store's own code and
+ * Hebrew message so the chat can quote it instead of guessing. `captchaRequired`:
+ * Rexail answers `permissionDenied` to any apply-for-authentication call made
+ * without a reCAPTCHA token (verified 2026-10-12, saliko#33) — the server cannot
+ * produce one, so it is not the user's phone number.
+ */
+export class RexailOtpError extends Error {
+  readonly code: string | null
+  readonly storeMessage: string
+  constructor(resp: { code?: string | null; resolvedMessage?: string; message?: string }) {
+    const storeMessage = resp.resolvedMessage || resp.message || 'unknown'
+    super(`OTP failed: [${resp.code ?? 'no-code'}] ${storeMessage}`)
+    this.name = 'RexailOtpError'
+    this.code = resp.code ?? null
+    this.storeMessage = storeMessage
+  }
+  get captchaRequired(): boolean { return this.code === 'permissionDenied' }
+}
+
 export async function sendOtp(uid: string, storeId: string): Promise<void> {
   const cred = await loadCredentials(uid, storeId)
   if (!cred) throw new Error('Retalix credentials not configured')
@@ -253,7 +275,7 @@ export async function sendOtp(uid: string, storeId: string): Promise<void> {
   })
 
   if (!resp.success) {
-    throw new Error(`OTP failed: ${resp.resolvedMessage || resp.message || 'unknown'}`)
+    throw new RexailOtpError(resp)
   }
 
   await credRef(uid, storeId).update({ otpPending: true })
@@ -334,6 +356,7 @@ export interface AnonRetalixCreds {
 
 /** Resolve a chain id (e.g. 'retalix', 'rexail_basra') to its static config. */
 export function getRetalixConfigForStore(storeId: string): RetalixStoreConfig | null {
+  if (!REXAIL_ENABLED) return null // Rexail stores off (saliko#42)
   // Legacy default — Makor HaShefa keeps the bare 'retalix' id.
   if (storeId === 'retalix') return { ...DEFAULT_CONFIG }
   // Other chains: look up the static REXAIL_STORES entry. No per-user state,
@@ -354,7 +377,7 @@ export async function sendOtpWithCreds(creds: AnonRetalixCreds): Promise<void> {
     body: JSON.stringify({ cellPhone: creds.phone }),
   })
   if (!resp.success) {
-    throw new Error(`OTP failed: ${resp.resolvedMessage || resp.message || 'unknown'}`)
+    throw new RexailOtpError(resp)
   }
   console.log(`[Retalix:anon] OTP sent to ${creds.phone}`)
 }
@@ -415,6 +438,7 @@ export async function fetchCatalog(storeId: string, config: RetalixStoreConfig):
       sellingUnitId: su.id,
       unitName: su.sellingUnit?.name || '',
       unitId: su.sellingUnit?.id || 0,
+      ...(typeof su.estimatedUnitWeight === 'number' ? { estimatedKg: su.estimatedUnitWeight } : {}),
     }))
     const defaultUnit = sellingUnits[0] || {}
 
@@ -458,9 +482,8 @@ export async function searchCatalog(storeId: string, config: RetalixStoreConfig,
   const products = await loadCatalog(storeId, config)
   const q = query.toLowerCase()
 
-  const nameMatch = products.filter(p =>
-    `${p.name} ${p.fullName}`.toLowerCase().includes(q)
-  )
+  // Stem match per word (saliko#34): "עגבניות" must find fresh "עגבניה".
+  const nameMatch = products.filter(p => nameMatchesQuery(`${p.name} ${p.fullName}`, query))
   // Exact category match first, then partial
   const exactCatMatch = products.filter(p => p.category.toLowerCase() === q)
   const partialCatMatch = products.filter(p =>
@@ -469,19 +492,23 @@ export async function searchCatalog(storeId: string, config: RetalixStoreConfig,
   const categoryMatch = exactCatMatch.length > 0 ? exactCatMatch : partialCatMatch
 
   // Use category matches when they significantly outnumber name matches (broad query)
-  const matches = categoryMatch.length > nameMatch.length * 2 ? categoryMatch : nameMatch.length > 0 ? nameMatch : categoryMatch
-  matches.sort((a, b) => (a.price || 999) - (b.price || 999))
+  const picked = categoryMatch.length > nameMatch.length * 2 ? categoryMatch : nameMatch.length > 0 ? nameMatch : categoryMatch
+  // Fresh produce first, then the item itself over "sauce of X", then price.
+  const matches = rankCatalogMatches(picked, query)
 
   return matches.slice(0, 20).map(p => {
     // Prefer kg selling unit for weight products
     const kgUnit = p.sellingUnits.find(u => u.unitName === 'ק"ג')
     const bestUnit = p.soldByWeight && kgUnit ? kgUnit : p.sellingUnits[0]
+    // saliko#39: a soldByWeight price is per kg even when bought by pack/unit.
+    const { unitPrice, sellUnit } = priceLabel(p.price, p.soldByWeight, bestUnit ?? { unitName: p.unit })
     return {
       productId: String(p.id),
       name: p.fullName || p.name,
       brand: p.category,
       price: String(p.price || ''),
-      unitPrice: `${p.price} ₪/${bestUnit?.unitName || p.unit}`,
+      unitPrice,
+      sellUnit,
       sellingUnitId: bestUnit?.sellingUnitId || p.sellingUnitId || 0,
     }
   })

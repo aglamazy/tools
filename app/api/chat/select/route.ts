@@ -1,11 +1,14 @@
+// CALLER-KEYED ROUTE — identity from resolveChatIdentity: the signed-in uid (requireAuth), else the
+// caller's anon chat session; guests may chat and pick by design (Saliko), T&C gate is client-side TcGate.
 import { NextRequest, NextResponse } from 'next/server'
-import { requireTc } from '@/app/lib/apiGuard'
+import { resolveChatIdentity } from '@/app/services/chat/chatIdentity'
 import { selectProduct } from '@/app/services/chat/pendingSearchService'
 import { initStores } from '@/app/services/grocery/initStores'
 
 export async function POST(request: NextRequest) {
-  const guard = await requireTc(request)
-  if (guard.error) return guard.error
+  // Same identity as /api/chat (saliko#36): requireTc here refused guests (401)
+  // and so the picker cards the chat showed them did nothing when clicked.
+  const { uid } = await resolveChatIdentity(request)
 
   initStores()
 
@@ -22,7 +25,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const result = await selectProduct(guard.uid, searchKey, resultIndex)
+    const result = await selectProduct(uid, searchKey, resultIndex)
     return NextResponse.json({ success: true, message: result.message })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Server error'
