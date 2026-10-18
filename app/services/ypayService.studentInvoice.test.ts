@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { db, type Business } from '@/app/db/financeDB'
 import { ypayService, YpayDocType } from './ypayService'
 
-// aglamazo#432: the student (calendar-billing) invoice goes through the existing
+// aglamazo#432 / #437: the student (calendar-billing) invoice goes through the existing
 // createItemBasedInvoice flow. `fetch` is stubbed — no request ever leaves the
 // test — and the issued document lands in fake-indexeddb.
 
@@ -20,7 +20,7 @@ const params = {
   ],
   date: '2026-10-01',
   contact: { email: 'parent@example.com', name: 'משה לוי' },
-  studentBilling: { customerEmail: 'parent@example.com', billingMonth: '2026-09', businessId: 'biz-1', studentSyncIds: ['s-moshe', 's-dana'] },
+  customerMonth: { businessId: 'biz-1', customer: 'parent@example.com', monthName: 'ספטמבר 2026' },
 }
 
 beforeEach(async () => {
@@ -56,23 +56,36 @@ describe('createItemBasedInvoice — student invoice (aglamazo#432)', () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).docType).toBe(YpayDocType.TaxInvoice)
   })
 
-  it('records the issued document with the customer email + billing month, and no projectName key', async () => {
+  it('records the issued document like a project invoice + businessId, with none of the #432 fields', async () => {
     await ypayService.createItemBasedInvoice(business('exempt'), { ...params })
     const rows = await db.ypayDocuments.toArray()
     expect(rows).toHaveLength(1)
     const row = rows[0]
     expect(row).toMatchObject({
-      transactionId: 'invoice-items:5001',
+      transactionId: 'invoice:parent@example.com:ספטמבר 2026',
       serialNumber: '5001',
       url: 'https://ypay.test/doc.pdf',
       docType: YpayDocType.BusinessInvoice,
       amount: 960,
-      customerEmail: 'parent@example.com',
-      billingMonth: '2026-09',
-      billingBusinessId: 'biz-1',
-      studentSyncIds: ['s-moshe', 's-dana'],
+      monthName: 'ספטמבר 2026',
+      businessId: 'biz-1',
     })
-    expect('projectName' in row).toBe(false)
+    // id / syncId / updatedAt are stamped by the DB layer, not by this writer.
+    const written = Object.keys(row).filter(k => !['id', 'syncId', 'updatedAt'].includes(k)).sort()
+    expect(written).toEqual(['amount', 'businessId', 'createdAt', 'docType', 'monthName', 'serialNumber', 'transactionId', 'url'])
+    for (const gone of ['projectName', 'customerEmail', 'billingMonth', 'billingBusinessId', 'studentSyncIds']) {
+      expect(gone in row).toBe(false)
+    }
+  })
+
+  it('a project item invoice (no customerMonth) is recorded exactly as before: invoice-items:<serial>, no businessId/monthName', async () => {
+    const { customerMonth: _cm, ...projectParams } = params
+    void _cm
+    await ypayService.createItemBasedInvoice(business('exempt'), { ...projectParams, projectName: 'אתר' })
+    const [row] = await db.ypayDocuments.toArray()
+    expect(row).toMatchObject({ transactionId: 'invoice-items:5001', projectName: 'אתר', amount: 960 })
+    expect('businessId' in row).toBe(false)
+    expect('monthName' in row).toBe(false)
   })
 
   it('a YPAY refusal throws and records nothing', async () => {

@@ -27,6 +27,7 @@ import { getTaxProfile } from '@/app/components/TaxProfileSection'
 import { classifySyncError } from './syncErrorClassifier'
 import { VARIANT } from '@/app/config/variants'
 import { entrySyncId, type DeletionLedgerEntry } from './deletionLedger'
+import { isBusinessInvoice } from './billing/businessInvoice'
 
 /**
  * Status of a background shared-business sync, broadcast as a DOM CustomEvent so
@@ -193,13 +194,14 @@ async function exportBusinessData(businessSyncId: string): Promise<BackupData | 
     db.expenseDocuments.toArray(),
   ])
   // ypayDocuments belong to the business via either a linked transaction (paid)
-  // OR via their `projectName` matching one of the business's projects (open /
-  // unpaid invoice). OpenDocumentsTab + InvoicesTab read by projectName, so
-  // sharee needs both shapes.
+  // OR as one of the business's invoices — by `projectName` matching one of
+  // its projects, or by `businessId` (a student invoice, no project;
+  // aglamazo#437). InvoicesTab + IncomeTab read by the same isBusinessInvoice,
+  // so the sharee needs every shape.
   const projectNameSet = new Set(projects.map(p => p.name).filter(Boolean))
   const ypayDocuments = allYpayDocs.filter(d =>
     (d.transactionId && transactionSyncIdSet.has(d.transactionId)) ||
-    (d.projectName && projectNameSet.has(d.projectName))
+    isBusinessInvoice(d, businessId, projectNameSet)
   )
   // Include two flavors of expenseDocument:
   //   (a) linked to one of our transactions (standard receipt-on-bank-charge)

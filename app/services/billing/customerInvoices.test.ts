@@ -8,7 +8,7 @@ import type { Student } from '@/app/types/student'
 import type { Business } from '@/app/db/financeDB'
 import type { ScanLesson, StudentLessons } from './monthScan'
 import {
-  groupCustomers, buildCustomerInvoiceItems, issueCustomerInvoice, lessonKey, normalizeEmail, billingMonthKey,
+  groupCustomers, buildCustomerInvoiceItems, issueCustomerInvoice, lessonKey, normalizeEmail, billingMonthName, customerInvoiceTransactionId,
 } from './customerInvoices'
 import { STUDENT_EMAIL_REQUIRED_MESSAGE } from './studentBillingContact'
 
@@ -120,11 +120,10 @@ describe('issueCustomerInvoice — approve path, ypayService mocked', () => {
       vatType: 'authorized',
       // buildStudentYpayContact(first student): cleaned email, name, phone
       contact: { email: 'Parent@Example.com', name: 'משה לוי', phone: '050-1234567' },
-      studentBilling: {
-        customerEmail: 'parent@example.com',
-        billingMonth: '2026-09',
+      customerMonth: {
         businessId: 'biz-1',
-        studentSyncIds: ['s-moshe', 's-dana'],
+        customer: 'parent@example.com',
+        monthName: 'ספטמבר 2026',
       },
     })
     expect(createItemBasedInvoice.mock.calls[1][1].contact.email).toBe('ron.family@example.com')
@@ -143,7 +142,19 @@ describe('issueCustomerInvoice — approve path, ypayService mocked', () => {
     await expect(issueCustomerInvoice(business, levi, { year: 2026, month: 9, date: '2026-10-01' })).rejects.toThrow('שגיאה ביצירת חשבונית')
   })
 
-  it('billingMonthKey pads the month', () => {
-    expect(billingMonthKey(2026, 3)).toBe('2026-03')
+  it('refuses a business with no syncId, without calling YPAY', async () => {
+    const levi = groupCustomers(matched).customers[0]
+    const noSync = { ...business, syncId: undefined } as typeof business
+    await expect(issueCustomerInvoice(noSync, levi, { year: 2026, month: 9, date: '2026-10-01' })).rejects.toThrow()
+    expect(createItemBasedInvoice).not.toHaveBeenCalled()
+  })
+
+  it('billingMonthName is the project-invoice monthName format (getMonthDates)', () => {
+    expect(billingMonthName(2026, 9)).toBe('ספטמבר 2026')
+    expect(billingMonthName(2027, 1)).toBe('ינואר 2027')
+  })
+
+  it('customerInvoiceTransactionId is the project-invoice form with the normalized email', () => {
+    expect(customerInvoiceTransactionId(' Parent@Example.com ', 'ספטמבר 2026')).toBe('invoice:parent@example.com:ספטמבר 2026')
   })
 })

@@ -1,6 +1,7 @@
 import type { Student } from '@/app/types/student'
 import type { Business } from '@/app/db/financeDB'
 import { ypayService } from '@/app/services/ypayService'
+import { MONTH_NAMES_HE } from '@/app/lib/dateUtils'
 import type { ScanLesson, StudentLessons } from './monthScan'
 import { buildStudentYpayContact, studentInvoiceBlocker } from './studentBillingContact'
 
@@ -104,9 +105,21 @@ export function buildCustomerInvoiceItems(customer: Customer): CustomerInvoiceIt
     .map(line => ({ description: studentLineDescription(line), quantity: 1, price: line.amount }))
 }
 
-/** YYYY-MM of a billing month (month is 1-based). */
-export function billingMonthKey(year: number, month: number): string {
-  return `${year}-${String(month).padStart(2, '0')}`
+/**
+ * The billing month in the format project invoices record as `monthName`
+ * ("ספטמבר 2026" — same as getMonthDates). month is 1-based.
+ */
+export function billingMonthName(year: number, month: number): string {
+  return `${MONTH_NAMES_HE[month - 1]} ${year}`
+}
+
+/**
+ * The transactionId a customer's invoice for a month is recorded under —
+ * the project-invoice form `invoice:<project>:<monthName>`, with the
+ * customer's normalized email in the project's place (aglamazo#437).
+ */
+export function customerInvoiceTransactionId(email: string, monthName: string): string {
+  return `invoice:${normalizeEmail(email)}:${monthName}`
 }
 
 /**
@@ -115,8 +128,8 @@ export function billingMonthKey(year: number, month: number): string {
  * authorized → חשבונית מס). The contact is built by buildStudentYpayContact —
  * the email-required gate — from the customer's first student; siblings share
  * the email, which is what YPAY matches the customer on. The issued document
- * is recorded with the customer email + billing month so a later slice can
- * tell this customer+month was already billed.
+ * is recorded in the business the way a project invoice is (aglamazo#437):
+ * transactionId `invoice:<email>:<monthName>`, monthName, and businessId.
  */
 export async function issueCustomerInvoice(business: Business, customer: Customer, params: {
   year: number
@@ -126,17 +139,17 @@ export async function issueCustomerInvoice(business: Business, customer: Custome
 }): Promise<{ url: string; serialNumber: string }> {
   const items = buildCustomerInvoiceItems(customer)
   if (items.length === 0) throw new Error('אין שיעורים לחיוב עבור לקוח זה')
+  if (!business.syncId) throw new Error('לעסק אין מזהה סנכרון — לא ניתן להפיק חשבונית')
   const contact = buildStudentYpayContact(customer.students[0].student)
   return ypayService.createItemBasedInvoice(business, {
     items,
     date: params.date,
     vatType: params.vatType,
     contact,
-    studentBilling: {
-      customerEmail: customer.email,
-      billingMonth: billingMonthKey(params.year, params.month),
+    customerMonth: {
       businessId: business.syncId,
-      studentSyncIds: customer.students.filter(l => l.count > 0).map(l => l.student.syncId).filter((id): id is string => !!id),
+      customer: normalizeEmail(customer.email),
+      monthName: billingMonthName(params.year, params.month),
     },
   })
 }

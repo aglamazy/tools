@@ -5,7 +5,7 @@ import type { Business } from '@/app/db/financeDB'
 import { businessStore } from '@/app/stores/businessStore'
 import { getTaxProfile } from '@/app/components/TaxProfileSection'
 import type { StudentLessons } from '@/app/services/billing/monthScan'
-import { billingMonthKey, groupCustomers, issueCustomerInvoice, lessonKey, normalizeEmail, type Customer } from '@/app/services/billing/customerInvoices'
+import { billingMonthName, groupCustomers, issueCustomerInvoice, lessonKey, normalizeEmail, type Customer } from '@/app/services/billing/customerInvoices'
 import { approvableCustomers, isCustomerBilled, loadBilledCustomers, markCustomerBilled, type BilledCustomers } from '@/app/services/billing/billedCustomers'
 
 type CustomerInvoicesProps = {
@@ -83,7 +83,7 @@ export default function CustomerInvoices({ businessId, matched, year, month }: C
     let cancelled = false
     setBilled(null)
     setBilledError('')
-    loadBilledCustomers(businessId, billingMonthKey(year, month))
+    loadBilledCustomers(businessId, billingMonthName(year, month))
       .then(result => { if (!cancelled) setBilled(result) })
       .catch(err => {
         console.error('CustomerInvoices: failed to load billed customers', err)

@@ -23,6 +23,7 @@ import Modal from '@/app/components/Modal'
 import YesNoModal from '@/app/components/YesNoModal'
 import type { Category } from '@/app/types/category'
 import { getTaxProfile } from '@/app/components/TaxProfileSection'
+import { isBusinessInvoice } from '@/app/services/billing/businessInvoice'
 
 type IncomeTabProps = {
   businessId: string
@@ -338,7 +339,7 @@ export default function IncomeTab({ businessId }: IncomeTabProps) {
     // allocations — computeInvoicePaidAmount scans every receipt's
     // closesAllocations, not just the ones for this business's projects.
     const allDocs = await db.ypayDocuments.toArray()
-    const allInvoices = allDocs.filter(d => billingDocTypes.has(d.docType) && !!d.projectName && projectNames.has(d.projectName))
+    const allInvoices = allDocs.filter(d => billingDocTypes.has(d.docType) && isBusinessInvoice(d, businessId, projectNames))
     const open = allInvoices
       .filter(inv => !inv.paidAt)
       .map((inv): OpenInvoice => {

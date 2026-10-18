@@ -162,23 +162,6 @@ export async function closeFullyPaidInvoices(closesAllocations: { docId: string;
   )
 }
 
-export type StudentBillingRecord = {
-  customerEmail: string // normalized (trimmed, lower-cased)
-  billingMonth: string // YYYY-MM
-  businessId?: string // Business.syncId
-  studentSyncIds: string[]
-}
-
-// Only defined values reach the row — never an explicit undefined key.
-function studentBillingFields(r: StudentBillingRecord): Pick<YpayDocument, 'customerEmail' | 'billingMonth' | 'billingBusinessId' | 'studentSyncIds'> {
-  return {
-    customerEmail: r.customerEmail,
-    billingMonth: r.billingMonth,
-    ...(r.businessId ? { billingBusinessId: r.businessId } : {}),
-    studentSyncIds: r.studentSyncIds,
-  }
-}
-
 export const ypayService = {
   testConnection: async (credentials: YpayCredentials): Promise<{ success: boolean; message: string }> => {
     const response = await fetch('/api/ypay', {
@@ -473,15 +456,22 @@ export const ypayService = {
   },
 
   createItemBasedInvoice: async (business: Business, params: {
-    /** The freelancer project billed. Absent on a student (calendar-billing) invoice, which carries studentBilling instead. */
+    /** The freelancer project billed. Absent on a student (calendar-billing) invoice, which carries customerMonth instead. */
     projectName?: string
     items: Array<{ description: string; quantity: number; price: number }>
     date: string
     contact?: YpayContact
     vatType?: 'exempt' | 'authorized'
     partnerSplitOverride?: { uid: string; sharePercent: number }[]
-    /** Calendar billing (aglamazo#432): the customer (normalized email) + month this invoice bills — recorded on the document. */
-    studentBilling?: StudentBillingRecord
+    /**
+     * Student (calendar-billing) invoice (aglamazo#437): recorded the way a
+     * project invoice is — transactionId `invoice:<customer>:<monthName>` +
+     * monthName — plus `businessId`, its one link to the business it was
+     * issued in (it has no project). `customer` is the paying customer's
+     * normalized email; `monthName` is in the project-invoice format
+     * ("ספטמבר 2026", see getMonthDates). Absent → the record is unchanged.
+     */
+    customerMonth?: { businessId: string; customer: string; monthName: string }
   }): Promise<{ url: string; serialNumber: string }> => {
     const credentials = getCredentials(business)
     const docType = getBillingDocType(business, params.vatType)
@@ -511,15 +501,16 @@ export const ypayService = {
       throw new Error(data.message || 'שגיאה ביצירת חשבונית')
     }
 
+    const cm = params.customerMonth
     await db.ypayDocuments.add({
-      transactionId: `invoice-items:${data.serialNumber}`,
+      transactionId: cm ? `invoice:${cm.customer}:${cm.monthName}` : `invoice-items:${data.serialNumber}`,
       url: data.url,
       serialNumber: data.serialNumber,
       docType,
       amount,
       ...(params.projectName ? { projectName: params.projectName } : {}),
       ...(params.partnerSplitOverride ? { partnerSplitOverride: params.partnerSplitOverride } : {}),
-      ...(params.studentBilling ? studentBillingFields(params.studentBilling) : {}),
+      ...(cm ? { monthName: cm.monthName, businessId: cm.businessId } : {}),
       createdAt: new Date().toISOString(),
     })
 

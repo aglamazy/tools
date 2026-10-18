@@ -9,6 +9,7 @@ import { YpayDocType, computeInvoicePaidAmount, invoiceGrossAmount } from '@/app
 import { getTaxProfile } from '@/app/components/TaxProfileSection'
 import Modal from '@/app/components/Modal'
 import ItemInvoiceModal from './ItemInvoiceModal'
+import { isBusinessInvoice } from '@/app/services/billing/businessInvoice'
 
 type InvoicesTabProps = {
   businessId: string
@@ -75,7 +76,7 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
     // All docs (not just invoices) are needed to sum each invoice's receipt
     // allocations toward it (computeInvoicePaidAmount scans every receipt).
     const allDocs = await db.ypayDocuments.toArray()
-    const invoices = allDocs.filter(d => billingDocTypes.has(d.docType) && !!d.projectName && projectNames.has(d.projectName))
+    const invoices = allDocs.filter(d => billingDocTypes.has(d.docType) && isBusinessInvoice(d, businessId, projectNames))
     const withBalance: InvoiceWithBalance[] = invoices.map((inv) => {
       const paidSoFar = inv.syncId != null ? computeInvoicePaidAmount(inv.syncId, allDocs) : 0
       return { ...inv, paidSoFar, remainingAmount: invoiceGrossAmount(inv) - paidSoFar }
