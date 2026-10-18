@@ -161,6 +161,7 @@ export interface Business {
   userId?: string // Firebase UID of the owning user
   ownerSharePercent?: number // partnership share % for the owner (0-100). Sum across owner + all shares should = 100
   defaultLessonRate?: number // Teacher billing: rate prefilled on a newly created student (aglamazo#428). 0/unset = no default
+  billingCalendarId?: string // Teacher billing: Google Calendar id the monthly lesson scan reads (aglamazo#430). ''/unset = 'primary'
   createdAt: string
   updatedAt: string
 }

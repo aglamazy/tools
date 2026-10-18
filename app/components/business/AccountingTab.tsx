@@ -2,7 +2,8 @@
 
 import React, { useEffect, useState, useCallback } from 'react'
 import { studentStore } from '@/app/stores/studentStore'
-import { hasCalendarAccess, requestCalendarAccess, fetchCalendarEvents, type CalendarEvent } from '@/app/services/googleCalendarService'
+import { hasCalendarAccess, requestCalendarAccess, fetchMonthEvents, type CalendarEvent } from '@/app/services/googleCalendarService'
+import { businessStore } from '@/app/stores/businessStore'
 import type { Student } from '@/app/types/student'
 import { studentInvoiceBlocker } from '@/app/services/billing/studentBillingContact'
 import { getPrefilledLessonRate } from '@/app/utils/studentDefaults'
@@ -35,14 +36,10 @@ function getPreviousMonth(): { year: number; month: number } {
   return { year, month } // month is 1-based now
 }
 
-function getDaysInMonth(year: number, month: number): string[] {
-  const days: string[] = []
-  const daysCount = new Date(year, month, 0).getDate()
-  for (let d = 1; d <= daysCount; d++) {
-    const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-    days.push(dateStr)
-  }
-  return days
+/** YYYY-MM-DD of a timed event's start, in local time (the day the lesson shows on). */
+function localDateOf(isoDateTime: string): string {
+  const d = new Date(isoDateTime)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 function formatMonthLabel(year: number, month: number): string {
@@ -101,26 +98,23 @@ export default function AccountingTab({ businessId }: AccountingTabProps) {
       const activeStudents = await loadStudents()
       setStudents(activeStudents)
 
-      const days = getDaysInMonth(year, month)
+      // One ranged read of the business's chosen billing calendar ('primary' when unset) — aglamazo#430
+      const business = await businessStore.getBySyncId(businessId)
+      const result = await fetchMonthEvents(year, month, business?.billingCalendarId)
+      if (result.error) {
+        setError(result.error)
+        setLoading(false)
+        return
+      }
       const allEvents: MatchedEvent[] = []
-
-      // Fetch events for each day of the month
-      for (const day of days) {
-        const result = await fetchCalendarEvents(day)
-        if (result.error) {
-          setError(result.error)
-          setLoading(false)
-          return
-        }
-        for (const event of result.events) {
-          if (event.isAllDay) continue // Skip all-day events
-          const student = activeStudents.find(s => {
-            const eventName = event.summary.trim().toLowerCase()
-            const studentName = s.name.trim().toLowerCase()
-            return eventName.includes(studentName) || studentName.includes(eventName)
-          })
-          allEvents.push({ ...event, date: day, student })
-        }
+      for (const event of result.events) {
+        if (event.isAllDay) continue // Skip all-day events
+        const student = activeStudents.find(s => {
+          const eventName = event.summary.trim().toLowerCase()
+          const studentName = s.name.trim().toLowerCase()
+          return eventName.includes(studentName) || studentName.includes(eventName)
+        })
+        allEvents.push({ ...event, date: localDateOf(event.start), student })
       }
 
       setEvents(allEvents)
@@ -129,7 +123,7 @@ export default function AccountingTab({ businessId }: AccountingTabProps) {
       setError('שגיאה בטעינת אירועים מלוח שנה')
     }
     setLoading(false)
-  }, [year, month, loadStudents])
+  }, [year, month, loadStudents, businessId])
 
   useEffect(() => {
     if (calendarConnected) {
