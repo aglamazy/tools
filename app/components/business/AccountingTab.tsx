@@ -9,6 +9,7 @@ import { studentInvoiceBlocker } from '@/app/services/billing/studentBillingCont
 import { scanMonth, type UnknownName } from '@/app/services/billing/monthScan'
 import { getPrefilledLessonRate } from '@/app/utils/studentDefaults'
 import UnmatchedLessons, { emptyStudentForm, type StudentForm } from './UnmatchedLessons'
+import CustomerInvoices from './CustomerInvoices'
 
 type AccountingTabProps = {
   businessId: string
@@ -316,6 +317,9 @@ export default function AccountingTab({ businessId }: AccountingTabProps) {
               )}
             </div>
           )}
+
+          {/* One invoice per paying customer (email), one line per student — aglamazo#432 */}
+          <CustomerInvoices businessId={businessId} matched={scan.matched} year={year} month={month} />
         </>
       )}
     </div>
