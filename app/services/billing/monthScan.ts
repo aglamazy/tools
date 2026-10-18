@@ -8,8 +8,9 @@ import type { CalendarEvent } from '@/app/services/googleCalendarService'
  *
  * Rule: a lesson belongs to a student when the normalized event title CONTAINS
  * the student's normalized name. When several students match, the longest name
- * wins ("משה לוי" beats "משה"). Archived students never match. All-day events
- * are not lessons and are skipped.
+ * wins ("משה לוי" beats "משה"). Failing that, a student whose name contains the
+ * title matches only when exactly one does (see matchStudent). Archived students
+ * never match. All-day events are not lessons and are skipped.
  */
 
 export type ScanLesson = {
@@ -55,22 +56,34 @@ export function localDateOf(isoDateTime: string): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-/** The student a title belongs to, or undefined. Longest matching name wins. */
+/**
+ * The student a title belongs to, or undefined.
+ * 1. Forward: the title contains the student's name — longest name wins.
+ * 2. Only when nothing matches forward, reverse: the student's name contains the
+ *    title (e.g. title "משה", student "משה לוי"). Taken only when EXACTLY ONE
+ *    student qualifies; an ambiguous title ("כהן" vs "דנה כהן"/"רון כהן") stays
+ *    unmatched so it surfaces as an unknown name instead of billing the wrong child.
+ */
 export function matchStudent(title: string, students: Student[]): Student | undefined {
   const normTitle = normalizeName(title)
   if (!normTitle) return undefined
+  const candidates = students
+    .filter(s => !s.archived)
+    .map(s => ({ s, normName: normalizeName(s.name) }))
+    .filter(c => c.normName)
+
   let best: Student | undefined
   let bestLen = 0
-  for (const s of students) {
-    if (s.archived) continue
-    const normName = normalizeName(s.name)
-    if (!normName || !normTitle.includes(normName)) continue
-    if (normName.length > bestLen) {
+  for (const { s, normName } of candidates) {
+    if (normTitle.includes(normName) && normName.length > bestLen) {
       best = s
       bestLen = normName.length
     }
   }
-  return best
+  if (best) return best
+
+  const reverse = candidates.filter(c => c.normName.includes(normTitle))
+  return reverse.length === 1 ? reverse[0].s : undefined
 }
 
 export function scanMonth(events: CalendarEvent[], students: Student[]): MonthScan {

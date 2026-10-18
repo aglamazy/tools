@@ -59,6 +59,37 @@ describe('scanMonth', () => {
     expect(matchStudent('שיעור משה לוי', [mosheLevi, moshe])).toBe(mosheLevi)
   })
 
+  it('reverse: matches the single student whose name contains the title', () => {
+    const mosheLevi = student('משה לוי')
+    const dana = student('דנה')
+    const scan = scanMonth([lesson('e1', ' משה ', 16)], [mosheLevi, dana])
+    expect(scan.lessons[0].student).toBe(mosheLevi)
+    expect(scan.unknown).toEqual([])
+  })
+
+  it('reverse: an ambiguous title stays unmatched and surfaces as an unknown name', () => {
+    const scan = scanMonth([lesson('e1', 'כהן', 17)], [student('דנה כהן'), student('רון כהן')])
+    expect(scan.lessons[0].student).toBeUndefined()
+    expect(scan.matched).toEqual([])
+    expect(scan.unknown).toHaveLength(1)
+    expect(scan.unknown[0]).toMatchObject({ key: 'כהן', name: 'כהן' })
+  })
+
+  it('reverse: an archived student does not make a title ambiguous or match', () => {
+    const dana = student('דנה כהן')
+    const ron = student('רון כהן', { archived: true })
+    expect(matchStudent('כהן', [dana, ron])).toBe(dana)
+    expect(matchStudent('כהן', [ron])).toBeUndefined()
+  })
+
+  it('forward beats reverse', () => {
+    const moshe = student('משה')
+    const mosheLevi = student('משה לוי')
+    // "משה" is contained in the title (forward) and the title is contained in "משה לוי" (reverse): forward wins
+    expect(matchStudent('משה', [mosheLevi, moshe])).toBe(moshe)
+    expect(matchStudent('משה', [moshe, mosheLevi])).toBe(moshe)
+  })
+
   it('never matches an archived student', () => {
     const gone = student('יוסי', { archived: true })
     const scan = scanMonth([lesson('e1', 'יוסי', 7)], [gone])
