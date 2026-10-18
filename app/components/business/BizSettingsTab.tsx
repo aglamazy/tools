@@ -8,6 +8,8 @@ import { subscribeToAuthState } from '@/app/services/firebaseAuthService'
 import { partnerStore, type Partner } from '@/app/stores/partnerStore'
 import Modal from '@/app/components/Modal'
 import BusinessSharingSection from './BusinessSharingSection'
+import TeacherBillingSettings from './TeacherBillingSettings'
+import { BusinessType } from '@/app/types/business'
 
 type BizSettingsTabProps = {
   businessId: string
@@ -197,6 +199,10 @@ export default function BizSettingsTab({ businessId }: BizSettingsTabProps) {
           />
         )
       })()}
+
+      {business.type === BusinessType.Teacher && (
+        <TeacherBillingSettings business={business} onSaved={loadBusiness} />
+      )}
 
       <section style={{
         padding: '1rem', borderRadius: '0.75rem',

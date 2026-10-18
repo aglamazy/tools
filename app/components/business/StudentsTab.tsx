@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react'
 import { studentStore } from '@/app/stores/studentStore'
 import type { Student } from '@/app/types/student'
 import { studentInvoiceBlocker } from '@/app/services/billing/studentBillingContact'
+import { getPrefilledLessonRate } from '@/app/utils/studentDefaults'
 
 type StudentsTabProps = {
   businessId: string
@@ -40,11 +41,14 @@ export default function StudentsTab({ businessId }: StudentsTabProps) {
     setLoading(false)
   }
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     setForm(emptyForm)
     setEditingId(null)
     setShowForm(true)
     setError('')
+    const lessonRate = await getPrefilledLessonRate(businessId)
+    // Only fill the rate if the teacher has not started typing one meanwhile.
+    setForm(f => (f.lessonRate === '' ? { ...f, lessonRate } : f))
   }
 
   const handleEdit = (student: Student) => {
@@ -120,7 +124,7 @@ export default function StudentsTab({ businessId }: StudentsTabProps) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h2 style={{ margin: 0, fontSize: '1.1rem' }}>תלמידים</h2>
-        <button onClick={handleAdd} className="file-picker">
+        <button onClick={() => void handleAdd()} className="file-picker">
           + הוסף תלמיד
         </button>
       </div>

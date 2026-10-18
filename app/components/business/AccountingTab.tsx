@@ -5,6 +5,7 @@ import { studentStore } from '@/app/stores/studentStore'
 import { hasCalendarAccess, requestCalendarAccess, fetchCalendarEvents, type CalendarEvent } from '@/app/services/googleCalendarService'
 import type { Student } from '@/app/types/student'
 import { studentInvoiceBlocker } from '@/app/services/billing/studentBillingContact'
+import { getPrefilledLessonRate } from '@/app/utils/studentDefaults'
 
 type AccountingTabProps = {
   businessId: string
@@ -163,10 +164,13 @@ export default function AccountingTab({ businessId }: AccountingTabProps) {
     }
   }
 
-  const handleCreateStudent = (eventSummary: string, eventId: string) => {
+  const handleCreateStudent = async (eventSummary: string, eventId: string) => {
     setForm({ name: eventSummary, email: '', lessonRate: '' })
     setCreatingForEvent(eventId)
     setFormError('')
+    const lessonRate = await getPrefilledLessonRate(businessId)
+    // Only fill the rate if the teacher has not started typing one meanwhile.
+    setForm(f => (f.lessonRate === '' ? { ...f, lessonRate } : f))
   }
 
   const handleSaveStudent = async () => {
@@ -341,7 +345,7 @@ export default function AccountingTab({ businessId }: AccountingTabProps) {
                       </div>
                     ) : (
                       <button
-                        onClick={() => handleCreateStudent(event.summary, event.id)}
+                        onClick={() => void handleCreateStudent(event.summary, event.id)}
                         style={{
                           padding: '0.3rem 0.6rem',
                           fontSize: '0.8rem',

@@ -160,6 +160,7 @@ export interface Business {
   sharedWithMe?: boolean // true for businesses shared by another user
   userId?: string // Firebase UID of the owning user
   ownerSharePercent?: number // partnership share % for the owner (0-100). Sum across owner + all shares should = 100
+  defaultLessonRate?: number // Teacher billing: rate prefilled on a newly created student (aglamazo#428). 0/unset = no default
   createdAt: string
   updatedAt: string
 }
