@@ -1,29 +1,18 @@
 'use client'
 
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import { studentStore } from '@/app/stores/studentStore'
 import { hasCalendarAccess, requestCalendarAccess, fetchMonthEvents, type CalendarEvent } from '@/app/services/googleCalendarService'
 import { businessStore } from '@/app/stores/businessStore'
 import type { Student } from '@/app/types/student'
 import { studentInvoiceBlocker } from '@/app/services/billing/studentBillingContact'
+import { scanMonth, type UnknownName } from '@/app/services/billing/monthScan'
 import { getPrefilledLessonRate } from '@/app/utils/studentDefaults'
+import UnmatchedLessons, { emptyStudentForm, type StudentForm } from './UnmatchedLessons'
 
 type AccountingTabProps = {
   businessId: string
 }
-
-type MatchedEvent = CalendarEvent & {
-  date: string // YYYY-MM-DD
-  student?: Student
-}
-
-type StudentForm = {
-  name: string
-  email: string
-  lessonRate: string
-}
-
-const emptyForm: StudentForm = { name: '', email: '', lessonRate: '' }
 
 function getPreviousMonth(): { year: number; month: number } {
   const now = new Date()
@@ -36,12 +25,6 @@ function getPreviousMonth(): { year: number; month: number } {
   return { year, month } // month is 1-based now
 }
 
-/** YYYY-MM-DD of a timed event's start, in local time (the day the lesson shows on). */
-function localDateOf(isoDateTime: string): string {
-  const d = new Date(isoDateTime)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-
 function formatMonthLabel(year: number, month: number): string {
   const months = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר']
   return `${months[month - 1]} ${year}`
@@ -51,14 +34,15 @@ export default function AccountingTab({ businessId }: AccountingTabProps) {
   const prev = getPreviousMonth()
   const [year, setYear] = useState(prev.year)
   const [month, setMonth] = useState(prev.month)
-  const [events, setEvents] = useState<MatchedEvent[]>([])
+  const [monthEvents, setMonthEvents] = useState<CalendarEvent[]>([])
   const [students, setStudents] = useState<Student[]>([])
   const [loading, setLoading] = useState(false)
   const [calendarConnected, setCalendarConnected] = useState(false)
   const [error, setError] = useState('')
-  const [creatingForEvent, setCreatingForEvent] = useState<string | null>(null)
-  const [form, setForm] = useState<StudentForm>(emptyForm)
+  const [creatingKey, setCreatingKey] = useState<string | null>(null)
+  const [form, setForm] = useState<StudentForm>(emptyStudentForm)
   const [formError, setFormError] = useState('')
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     hasCalendarAccess().then(setCalendarConnected)
@@ -68,26 +52,9 @@ export default function AccountingTab({ businessId }: AccountingTabProps) {
     return await studentStore.getActiveByBusinessId(businessId)
   }, [businessId])
 
-  const matchEvents = useCallback((allEvents: CalendarEvent[], allStudents: Student[], days: string[]): MatchedEvent[] => {
-    const matched: MatchedEvent[] = []
-    // Group events by day
-    for (let i = 0; i < days.length; i++) {
-      const dayEvents = allEvents.filter((_, idx) => {
-        // Events are batched per day in order
-        return true // We pass them already tagged
-      })
-    }
-    // Actually we receive events already tagged with date
-    return allEvents.map(event => {
-      const eventDate = event.start.split('T')[0]
-      const student = allStudents.find(s => {
-        const eventName = event.summary.trim().toLowerCase()
-        const studentName = s.name.trim().toLowerCase()
-        return eventName.includes(studentName) || studentName.includes(eventName)
-      })
-      return { ...event, date: eventDate, student }
-    })
-  }, [])
+  // The month's lessons matched to students by name. Re-runs whenever the students change,
+  // so a student created from an unknown name takes its lessons in place — aglamazo#431
+  const scan = useMemo(() => scanMonth(monthEvents, students), [monthEvents, students])
 
   const loadEvents = useCallback(async () => {
     if (!(await hasCalendarAccess())) return
@@ -106,18 +73,7 @@ export default function AccountingTab({ businessId }: AccountingTabProps) {
         setLoading(false)
         return
       }
-      const allEvents: MatchedEvent[] = []
-      for (const event of result.events) {
-        if (event.isAllDay) continue // Skip all-day events
-        const student = activeStudents.find(s => {
-          const eventName = event.summary.trim().toLowerCase()
-          const studentName = s.name.trim().toLowerCase()
-          return eventName.includes(studentName) || studentName.includes(eventName)
-        })
-        allEvents.push({ ...event, date: localDateOf(event.start), student })
-      }
-
-      setEvents(allEvents)
+      setMonthEvents(result.events)
     } catch (err) {
       console.error('Error loading calendar events:', err)
       setError('שגיאה בטעינת אירועים מלוח שנה')
@@ -158,9 +114,9 @@ export default function AccountingTab({ businessId }: AccountingTabProps) {
     }
   }
 
-  const handleCreateStudent = async (eventSummary: string, eventId: string) => {
-    setForm({ name: eventSummary, email: '', lessonRate: '' })
-    setCreatingForEvent(eventId)
+  const handleStartCreate = async (group: UnknownName) => {
+    setForm({ name: group.name, email: '', lessonRate: '' })
+    setCreatingKey(group.key)
     setFormError('')
     const lessonRate = await getPrefilledLessonRate(businessId)
     // Only fill the rate if the teacher has not started typing one meanwhile.
@@ -178,38 +134,44 @@ export default function AccountingTab({ businessId }: AccountingTabProps) {
       return
     }
 
+    setSaving(true)
     try {
-      await studentStore.add({
+      const email = form.email.trim()
+      const newId = await studentStore.add({
         businessId,
         name: form.name.trim(),
-        email: form.email.trim() || undefined,
+        ...(email ? { email } : {}),
         lessonRate: rate,
       })
-      setCreatingForEvent(null)
-      setForm(emptyForm)
+      // studentStore.add logs and returns null on a failed write — show it, never treat it as saved.
+      if (newId === null) throw new Error('studentStore.add returned null')
+      setCreatingKey(null)
+      setForm(emptyStudentForm)
       setFormError('')
-      // Refresh to re-match events
-      await loadEvents()
+      // Re-match the month already in hand: the new student's lessons move onto it in place.
+      setStudents(await loadStudents())
     } catch (err) {
       console.error('Error creating student:', err)
       setFormError('שגיאה ביצירת תלמיד')
     }
+    setSaving(false)
   }
 
-  // Calculate summary per student
-  const summary = events.reduce((acc, event) => {
-    if (!event.student) return acc
-    const id = event.student.id!
-    if (!acc[id]) {
-      acc[id] = { student: event.student, lessons: 0, total: 0 }
-    }
-    acc[id].lessons += 1
-    acc[id].total = acc[id].lessons * event.student.lessonRate
-    return acc
-  }, {} as Record<number, { student: Student; lessons: number; total: number }>)
+  const handleCancelCreate = () => {
+    setCreatingKey(null)
+    setFormError('')
+  }
 
-  const grandTotal = Object.values(summary).reduce((sum, s) => sum + s.total, 0)
-  const unmatchedCount = events.filter(e => !e.student).length
+  // Summary per student: lesson count × the student's rate
+  const summary = scan.matched.map(({ student, lessons }) => ({
+    student,
+    lessons: lessons.length,
+    total: lessons.length * student.lessonRate,
+  }))
+
+  const grandTotal = summary.reduce((sum, s) => sum + s.total, 0)
+  const matchedCount = summary.reduce((sum, s) => sum + s.lessons, 0)
+  const unmatchedCount = scan.lessons.length - matchedCount
 
   if (!calendarConnected) {
     return (
@@ -257,111 +219,57 @@ export default function AccountingTab({ businessId }: AccountingTabProps) {
       ) : (
         <>
           {/* Events list */}
-          {events.length === 0 ? (
+          {scan.lessons.length === 0 ? (
             <div style={{ padding: '2rem', textAlign: 'center', color: '#64748b', background: '#f8fafc', borderRadius: '0.75rem', border: '1px dashed #cbd5e1' }}>
               <p>אין אירועים בחודש זה</p>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              {events.map((event) => (
+              {scan.lessons.map((lesson) => (
                 <div
-                  key={`${event.id}-${event.date}`}
+                  key={`${lesson.eventId}-${lesson.date}`}
                   style={{
                     padding: '0.6rem 1rem',
-                    background: event.student ? '#f0fdf4' : '#fffbeb',
-                    border: `1px solid ${event.student ? '#bbf7d0' : '#fde68a'}`,
+                    background: lesson.student ? '#f0fdf4' : '#fffbeb',
+                    border: `1px solid ${lesson.student ? '#bbf7d0' : '#fde68a'}`,
                     borderRadius: '0.5rem',
                     display: 'flex',
-                    justifyContent: 'space-between',
                     alignItems: 'center',
+                    gap: '0.75rem',
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                    <span style={{ color: '#64748b', fontSize: '0.85rem', minWidth: '80px' }}>
-                      {event.date.split('-').reverse().join('/')}
+                  <span style={{ color: '#64748b', fontSize: '0.85rem', minWidth: '80px' }}>
+                    {lesson.date.split('-').reverse().join('/')}
+                  </span>
+                  <span style={{ color: '#64748b', fontSize: '0.85rem', minWidth: '50px' }}>
+                    {lesson.startTime}
+                  </span>
+                  <span style={{ fontWeight: 500 }}>{lesson.title}</span>
+                  {lesson.student && (
+                    <span style={{ color: '#059669', fontSize: '0.85rem' }}>
+                      ← {lesson.student.name} (₪{lesson.student.lessonRate})
                     </span>
-                    <span style={{ color: '#64748b', fontSize: '0.85rem', minWidth: '50px' }}>
-                      {event.startTime}
-                    </span>
-                    <span style={{ fontWeight: 500 }}>{event.summary}</span>
-                    {event.student && (
-                      <span style={{ color: '#059669', fontSize: '0.85rem' }}>
-                        ← {event.student.name} (₪{event.student.lessonRate})
-                      </span>
-                    )}
-                  </div>
-                  {!event.student && (
-                    creatingForEvent === event.id ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', minWidth: '250px' }}>
-                        <input
-                          type="text"
-                          value={form.name}
-                          onChange={(e) => setForm({ ...form, name: e.target.value })}
-                          style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', border: '1px solid #e2e8f0', borderRadius: '0.25rem', direction: 'rtl' }}
-                          placeholder="שם התלמיד"
-                          autoFocus
-                        />
-                        <div style={{ display: 'flex', gap: '0.4rem' }}>
-                          <input
-                            type="number"
-                            value={form.lessonRate}
-                            onChange={(e) => setForm({ ...form, lessonRate: e.target.value })}
-                            style={{ width: '80px', padding: '0.3rem 0.5rem', fontSize: '0.8rem', border: '1px solid #e2e8f0', borderRadius: '0.25rem' }}
-                            placeholder="מחיר"
-                            min="0"
-                          />
-                          <input
-                            type="email"
-                            value={form.email}
-                            onChange={(e) => setForm({ ...form, email: e.target.value })}
-                            style={{ flex: 1, padding: '0.3rem 0.5rem', fontSize: '0.8rem', border: '1px solid #e2e8f0', borderRadius: '0.25rem' }}
-                            placeholder="אימייל (אופציונלי)"
-                            dir="ltr"
-                          />
-                        </div>
-                        {formError && (
-                          <span style={{ color: '#dc2626', fontSize: '0.75rem' }}>{formError}</span>
-                        )}
-                        <div style={{ display: 'flex', gap: '0.3rem', justifyContent: 'flex-end' }}>
-                          <button
-                            onClick={() => { setCreatingForEvent(null); setFormError('') }}
-                            style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '0.25rem', cursor: 'pointer', color: '#64748b' }}
-                          >
-                            ביטול
-                          </button>
-                          <button
-                            onClick={handleSaveStudent}
-                            style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#f0fdf4', border: '1px solid #10b981', borderRadius: '0.25rem', cursor: 'pointer', color: '#059669' }}
-                          >
-                            שמור
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => void handleCreateStudent(event.summary, event.id)}
-                        style={{
-                          padding: '0.3rem 0.6rem',
-                          fontSize: '0.8rem',
-                          background: '#fffbeb',
-                          border: '1px solid #f59e0b',
-                          borderRadius: '0.375rem',
-                          cursor: 'pointer',
-                          color: '#92400e',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        צור תלמיד
-                      </button>
-                    )
                   )}
                 </div>
               ))}
             </div>
           )}
 
+          {/* Unknown names → one-click create-student (aglamazo#431) */}
+          <UnmatchedLessons
+            unknown={scan.unknown}
+            creatingKey={creatingKey}
+            form={form}
+            formError={formError}
+            saving={saving}
+            onFormChange={setForm}
+            onStartCreate={(group) => void handleStartCreate(group)}
+            onCancel={handleCancelCreate}
+            onSave={() => void handleSaveStudent()}
+          />
+
           {/* Monthly summary */}
-          {Object.keys(summary).length > 0 && (
+          {summary.length > 0 && (
             <div style={{ marginTop: '1rem', padding: '1rem', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '0.75rem' }}>
               <h3 style={{ margin: '0 0 0.75rem 0', fontSize: '1rem' }}>סיכום חודשי</h3>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
@@ -374,10 +282,10 @@ export default function AccountingTab({ businessId }: AccountingTabProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {Object.values(summary)
+                  {[...summary]
                     .sort((a, b) => a.student.name.localeCompare(b.student.name, 'he'))
                     .map(({ student, lessons, total }) => (
-                      <tr key={student.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <tr key={student.syncId ?? student.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                         <td style={{ padding: '0.5rem', fontWeight: 500 }}>
                           {student.name}
                           {studentInvoiceBlocker(student) && (
@@ -395,7 +303,7 @@ export default function AccountingTab({ businessId }: AccountingTabProps) {
                 <tfoot>
                   <tr style={{ borderTop: '2px solid #e2e8f0' }}>
                     <td style={{ padding: '0.5rem', fontWeight: 700 }}>סה"כ</td>
-                    <td style={{ padding: '0.5rem', textAlign: 'center', fontWeight: 600 }}>{events.filter(e => e.student).length}</td>
+                    <td style={{ padding: '0.5rem', textAlign: 'center', fontWeight: 600 }}>{matchedCount}</td>
                     <td></td>
                     <td style={{ padding: '0.5rem', textAlign: 'left', fontWeight: 700, color: '#059669' }}>₪{grandTotal.toLocaleString()}</td>
                   </tr>
