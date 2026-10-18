@@ -1,11 +1,12 @@
 'use client'
 
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import type { Business } from '@/app/db/financeDB'
 import { businessStore } from '@/app/stores/businessStore'
 import { getTaxProfile } from '@/app/components/TaxProfileSection'
 import type { StudentLessons } from '@/app/services/billing/monthScan'
-import { groupCustomers, issueCustomerInvoice, lessonKey, type Customer } from '@/app/services/billing/customerInvoices'
+import { billingMonthKey, groupCustomers, issueCustomerInvoice, lessonKey, normalizeEmail, type Customer } from '@/app/services/billing/customerInvoices'
+import { approvableCustomers, isCustomerBilled, loadBilledCustomers, markCustomerBilled, type BilledCustomers } from '@/app/services/billing/billedCustomers'
 
 type CustomerInvoicesProps = {
   businessId: string
@@ -13,8 +14,6 @@ type CustomerInvoicesProps = {
   year: number
   month: number // 1-based
 }
-
-type Issued = { url: string; serialNumber: string }
 
 function todayLocal(): string {
   const d = new Date()
@@ -30,6 +29,11 @@ const cellStyle: React.CSSProperties = { padding: '0.4rem 0.5rem' }
  * students with their lessons (untick a lesson that did not happen), and an
  * approve button that issues ONE invoice for the customer, one line per student.
  * Students with no email are listed as blocked and are not billed.
+ *
+ * Slice 6 (aglamazo#433): a customer that already has an invoice for the
+ * month (read from ypayDocuments by business + month + normalized email) is
+ * shown as billed and is never approvable; an approve that succeeds marks the
+ * customer billed at once, so a second click or re-render cannot issue again.
  */
 export default function CustomerInvoices({ businessId, matched, year, month }: CustomerInvoicesProps) {
   const [business, setBusiness] = useState<Business | null>(null)
@@ -38,7 +42,11 @@ export default function CustomerInvoices({ businessId, matched, year, month }: C
   const [excluded, setExcluded] = useState<Set<string>>(new Set())
   const [expanded, setExpanded] = useState<string | null>(null)
   const [issuing, setIssuing] = useState<string | null>(null)
-  const [issued, setIssued] = useState<Record<string, Issued>>({})
+  // null = not loaded yet — nothing is approvable until the month's billed customers are known.
+  const [billed, setBilled] = useState<BilledCustomers | null>(null)
+  const [billedError, setBilledError] = useState('')
+  // Synchronous guard against a double click landing before the `issuing` state re-renders.
+  const inFlight = useRef(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
 
   useEffect(() => {
@@ -63,15 +71,32 @@ export default function CustomerInvoices({ businessId, matched, year, month }: C
     return () => { cancelled = true }
   }, [businessId])
 
-  // A new month starts with every lesson ticked and nothing issued.
+  // A new month starts with every lesson ticked.
   useEffect(() => {
     setExcluded(new Set())
-    setIssued({})
     setErrors({})
     setExpanded(null)
   }, [year, month])
 
+  // The month's already-billed customers (aglamazo#433).
+  useEffect(() => {
+    let cancelled = false
+    setBilled(null)
+    setBilledError('')
+    loadBilledCustomers(businessId, billingMonthKey(year, month))
+      .then(result => { if (!cancelled) setBilled(result) })
+      .catch(err => {
+        console.error('CustomerInvoices: failed to load billed customers', err)
+        if (!cancelled) setBilledError('שגיאה בטעינת החשבוניות שהופקו — לא ניתן להפיק חשבוניות')
+      })
+    return () => { cancelled = true }
+  }, [businessId, year, month])
+
   const { customers, blocked } = useMemo(() => groupCustomers(matched, excluded), [matched, excluded])
+  const approvable = useMemo(
+    () => new Set((billed ? approvableCustomers(customers, billed) : []).map(c => c.email)),
+    [customers, billed],
+  )
 
   const hasYpay = business?.ypayUseSandbox
     ? !!(business?.ypaySandboxClientId && business?.ypaySandboxClientSecret)
@@ -87,19 +112,22 @@ export default function CustomerInvoices({ businessId, matched, year, month }: C
   }
 
   const handleApprove = async (customer: Customer) => {
-    if (!business || issuing) return
+    if (!business || issuing || inFlight.current) return
+    if (!billed || isCustomerBilled(billed, customer.email)) return
+    inFlight.current = true
     setIssuing(customer.email)
     setErrors(prev => ({ ...prev, [customer.email]: '' }))
     try {
       const result = await issueCustomerInvoice(business, customer, { year, month, date: todayLocal(), vatType })
       console.log('[aglamazo#432] customer invoice issued', customer.email, result.serialNumber)
-      setIssued(prev => ({ ...prev, [customer.email]: result }))
+      setBilled(prev => markCustomerBilled(prev ?? new Map(), customer.email, { serialNumber: result.serialNumber, url: result.url }))
       window.open(result.url, '_blank')
     } catch (err) {
       console.error('[aglamazo#432] customer invoice failed', customer.email, err)
       const message = err instanceof Error && err.message ? err.message : 'שגיאה בהפקת חשבונית'
       setErrors(prev => ({ ...prev, [customer.email]: message }))
     } finally {
+      inFlight.current = false
       setIssuing(null)
     }
   }
@@ -113,9 +141,10 @@ export default function CustomerInvoices({ businessId, matched, year, month }: C
       {business && !hasYpay && (
         <p style={{ margin: 0, color: '#92400e', fontSize: '0.85rem' }}>יש להגדיר חיבור YPAY בהגדרות העסק לפני הפקת חשבוניות</p>
       )}
+      {billedError && <p style={{ margin: 0, color: '#dc2626', fontSize: '0.85rem' }}>{billedError}</p>}
 
       {customers.map((customer) => {
-        const done = issued[customer.email]
+        const done = billed?.get(normalizeEmail(customer.email))
         const error = errors[customer.email]
         const isOpen = expanded === customer.email
         const busy = issuing === customer.email
@@ -151,7 +180,7 @@ export default function CustomerInvoices({ businessId, matched, year, month }: C
                   const key = lessonKey(lesson)
                   return (
                     <label key={key} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.8rem', color: '#475569' }}>
-                      <input type="checkbox" checked={!excluded.has(key)} disabled={busy || !!done} onChange={() => toggleLesson(key)} />
+                      <input type="checkbox" checked={!excluded.has(key)} disabled={busy || !!done?.length} onChange={() => toggleLesson(key)} />
                       <span>{lesson.date.split('-').reverse().join('/')}</span>
                       <span>{lesson.startTime}</span>
                       <span>{line.student.name}</span>
@@ -162,15 +191,20 @@ export default function CustomerInvoices({ businessId, matched, year, month }: C
             )}
 
             <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-              {done ? (
-                <span style={{ color: '#059669', fontSize: '0.85rem' }}>
-                  ✓ הופקה חשבונית #{done.serialNumber}{' '}
-                  <a href={done.url} target="_blank" rel="noreferrer" style={{ color: '#2563eb' }}>פתיחה</a>
+              {done && done.length > 0 ? (
+                <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', fontSize: '0.85rem' }}>
+                  <span style={{ padding: '0.1rem 0.5rem', borderRadius: '999px', background: '#dcfce7', color: '#166534', fontWeight: 600 }}>✓ חשבונית הופקה</span>
+                  {done.map(doc => (
+                    <span key={doc.serialNumber} style={{ color: '#059669' }}>
+                      #{doc.serialNumber}{' '}
+                      <a href={doc.url} target="_blank" rel="noreferrer" style={{ color: '#2563eb' }}>פתיחה</a>
+                    </span>
+                  ))}
                 </span>
               ) : (
                 <button
                   onClick={() => void handleApprove(customer)}
-                  disabled={!business || !hasYpay || !!issuing || customer.total <= 0}
+                  disabled={!business || !hasYpay || !!issuing || !approvable.has(customer.email)}
                   className="file-picker"
                 >
                   {busy ? 'הפקת חשבונית...' : 'אישור והפקת חשבונית'}
