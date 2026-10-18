@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback } from 'react'
 import { studentStore } from '@/app/stores/studentStore'
 import { hasCalendarAccess, requestCalendarAccess, fetchCalendarEvents, type CalendarEvent } from '@/app/services/googleCalendarService'
 import type { Student } from '@/app/types/student'
+import { studentInvoiceBlocker } from '@/app/services/billing/studentBillingContact'
 
 type AccountingTabProps = {
   businessId: string
@@ -379,7 +380,14 @@ export default function AccountingTab({ businessId }: AccountingTabProps) {
                     .sort((a, b) => a.student.name.localeCompare(b.student.name, 'he'))
                     .map(({ student, lessons, total }) => (
                       <tr key={student.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                        <td style={{ padding: '0.5rem', fontWeight: 500 }}>{student.name}</td>
+                        <td style={{ padding: '0.5rem', fontWeight: 500 }}>
+                          {student.name}
+                          {studentInvoiceBlocker(student) && (
+                            <div style={{ fontSize: '0.8rem', fontWeight: 400, color: '#92400e' }}>
+                              ⚠ {studentInvoiceBlocker(student)} (בלשונית תלמידים)
+                            </div>
+                          )}
+                        </td>
                         <td style={{ padding: '0.5rem', textAlign: 'center' }}>{lessons}</td>
                         <td style={{ padding: '0.5rem', textAlign: 'center' }}>₪{student.lessonRate}</td>
                         <td style={{ padding: '0.5rem', textAlign: 'left', fontWeight: 600 }}>₪{total.toLocaleString()}</td>

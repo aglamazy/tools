@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react'
 import { studentStore } from '@/app/stores/studentStore'
 import type { Student } from '@/app/types/student'
+import { studentInvoiceBlocker } from '@/app/services/billing/studentBillingContact'
 
 type StudentsTabProps = {
   businessId: string
@@ -12,9 +13,14 @@ type StudentForm = {
   name: string
   email: string
   lessonRate: string
+  contactBusinessID: string
+  contactPhone: string
 }
 
-const emptyForm: StudentForm = { name: '', email: '', lessonRate: '' }
+const emptyForm: StudentForm = { name: '', email: '', lessonRate: '', contactBusinessID: '', contactPhone: '' }
+
+const inputStyle: React.CSSProperties = { width: '100%', padding: '0.5rem', borderRadius: '0.375rem', border: '1px solid #e2e8f0', fontSize: '0.95rem' }
+const labelStyle: React.CSSProperties = { display: 'block', marginBottom: '0.25rem', fontWeight: 600, fontSize: '0.9rem' }
 
 export default function StudentsTab({ businessId }: StudentsTabProps) {
   const [students, setStudents] = useState<Student[]>([])
@@ -46,6 +52,8 @@ export default function StudentsTab({ businessId }: StudentsTabProps) {
       name: student.name,
       email: student.email || '',
       lessonRate: String(student.lessonRate),
+      contactBusinessID: student.contactBusinessID || '',
+      contactPhone: student.contactPhone || '',
     })
     setEditingId(student.id!)
     setShowForm(true)
@@ -63,19 +71,29 @@ export default function StudentsTab({ businessId }: StudentsTabProps) {
       return
     }
 
+    const email = form.email.trim()
+    const contactBusinessID = form.contactBusinessID.trim()
+    const contactPhone = form.contactPhone.trim()
+
     try {
       if (editingId) {
+        // Strings only — never undefined: Dexie update({k: undefined}) deletes k.
+        // A cleared field is saved as '' (same as a Project's contact fields).
         await studentStore.update(editingId, {
           name: form.name.trim(),
-          email: form.email.trim() || undefined,
+          email,
           lessonRate: rate,
+          contactBusinessID,
+          contactPhone,
         })
       } else {
         await studentStore.add({
           businessId,
           name: form.name.trim(),
-          email: form.email.trim() || undefined,
           lessonRate: rate,
+          ...(email ? { email } : {}),
+          ...(contactBusinessID ? { contactBusinessID } : {}),
+          ...(contactPhone ? { contactPhone } : {}),
         })
       }
       setShowForm(false)
@@ -140,13 +158,37 @@ export default function StudentsTab({ businessId }: StudentsTabProps) {
                 />
               </div>
               <div style={{ flex: 1 }}>
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600, fontSize: '0.9rem' }}>אימייל (אופציונלי)</label>
+                <label style={labelStyle}>אימייל המשלם (נדרש להפקת חשבונית)</label>
                 <input
                   type="email"
                   value={form.email}
                   onChange={(e) => setForm({ ...form, email: e.target.value })}
                   style={{ width: '100%', padding: '0.5rem', borderRadius: '0.375rem', border: '1px solid #e2e8f0', fontSize: '0.95rem' }}
                   placeholder="email@example.com"
+                  dir="ltr"
+                />
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '1rem' }}>
+              <div style={{ flex: 1 }}>
+                <label style={labelStyle}>ח.פ / ת.ז (אופציונלי)</label>
+                <input
+                  type="text"
+                  value={form.contactBusinessID}
+                  onChange={(e) => setForm({ ...form, contactBusinessID: e.target.value })}
+                  style={inputStyle}
+                  placeholder="123456789"
+                  dir="ltr"
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={labelStyle}>טלפון (אופציונלי)</label>
+                <input
+                  type="tel"
+                  value={form.contactPhone}
+                  onChange={(e) => setForm({ ...form, contactPhone: e.target.value })}
+                  style={inputStyle}
+                  placeholder="050-1234567"
                   dir="ltr"
                 />
               </div>
@@ -182,6 +224,20 @@ export default function StudentsTab({ businessId }: StudentsTabProps) {
             <span style={{ color: '#059669', fontSize: '0.9rem' }}>₪{student.lessonRate}</span>
             {student.email && (
               <span style={{ color: '#64748b', fontSize: '0.85rem' }}>{student.email}</span>
+            )}
+            {student.contactPhone && (
+              <span style={{ color: '#64748b', fontSize: '0.85rem' }} dir="ltr">{student.contactPhone}</span>
+            )}
+            {student.contactBusinessID && (
+              <span style={{ color: '#64748b', fontSize: '0.85rem' }}>ח.פ {student.contactBusinessID}</span>
+            )}
+            {studentInvoiceBlocker(student) && (
+              <button
+                onClick={() => handleEdit(student)}
+                style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '0.375rem', cursor: 'pointer', color: '#92400e' }}
+              >
+                ⚠ {studentInvoiceBlocker(student)} — הוספת אימייל
+              </button>
             )}
           </div>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
