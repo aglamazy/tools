@@ -24,6 +24,8 @@ export type CalendarEvent = {
   startTime: string // HH:MM format
   endTime: string // HH:MM format
   isAllDay: boolean
+  /** Google event colorId ("1".."11"); absent = the calendar's own color (aglamazo#439). */
+  colorId?: string
 }
 
 export type CalendarListEntry = {
@@ -260,5 +262,6 @@ function toCalendarEvent(item: any): CalendarEvent {
     startTime,
     endTime,
     isAllDay,
+    ...(item.colorId ? { colorId: String(item.colorId) } : {}),
   }
 }

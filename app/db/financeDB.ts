@@ -162,6 +162,7 @@ export interface Business {
   ownerSharePercent?: number // partnership share % for the owner (0-100). Sum across owner + all shares should = 100
   defaultLessonRate?: number // Teacher billing: rate prefilled on a newly created student (aglamazo#428). 0/unset = no default
   billingCalendarId?: string // Teacher billing: Google Calendar id the monthly lesson scan reads (aglamazo#430). ''/unset = 'primary'
+  billingEventColorId?: string // Teacher billing: only events of this Google event colorId are lessons (aglamazo#439). ''/unset = every event
   createdAt: string
   updatedAt: string
 }

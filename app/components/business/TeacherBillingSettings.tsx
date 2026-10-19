@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react'
 import { businessStore } from '@/app/stores/businessStore'
 import type { Business } from '@/app/db/financeDB'
 import BillingCalendarPicker from './BillingCalendarPicker'
+import BillingEventColorPicker from './BillingEventColorPicker'
 
 type TeacherBillingSettingsProps = {
   business: Business
@@ -15,7 +16,8 @@ type Status = { type: 'idle' | 'success' | 'error'; message: string }
 /**
  * Teacher billing settings (calendar-billing epic): the business-level default
  * lesson rate, prefilled into every newly created student (aglamazo#428), and
- * the Google Calendar the monthly lesson scan reads (aglamazo#430).
+ * the Google Calendar the monthly lesson scan reads (aglamazo#430), and an
+ * optional event color that marks the billable lessons (aglamazo#439).
  */
 export default function TeacherBillingSettings({ business, onSaved }: TeacherBillingSettingsProps) {
   const [rate, setRate] = useState('')
@@ -73,6 +75,7 @@ export default function TeacherBillingSettings({ business, onSaved }: TeacherBil
         )}
       </div>
       <BillingCalendarPicker business={business} onSaved={onSaved} />
+      <BillingEventColorPicker business={business} onSaved={onSaved} />
     </section>
   )
 }

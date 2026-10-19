@@ -57,6 +57,13 @@ describe('googleCalendarService month read (aglamazo#430)', () => {
     expect(second.searchParams.get('pageToken')).toBe('p2')
   })
 
+  it('carries the event colorId through, absent when the event has none (aglamazo#439)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ items: [{ ...timed('y'), colorId: '5' }, timed('n')] }))
+    const { events } = await fetchMonthEvents(2026, 9)
+    expect(events.find(e => e.id === 'y')?.colorId).toBe('5')
+    expect('colorId' in events.find(e => e.id === 'n')!).toBe(false)
+  })
+
   it('uses primary when the business has no billing calendar', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ items: [] }))
     await fetchMonthEvents(2026, 12, undefined)

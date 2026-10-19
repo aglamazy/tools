@@ -10,6 +10,7 @@ import { scanMonth, type UnknownName } from '@/app/services/billing/monthScan'
 import { getPrefilledLessonRate } from '@/app/utils/studentDefaults'
 import UnmatchedLessons, { emptyStudentForm, type StudentForm } from './UnmatchedLessons'
 import CustomerInvoices from './CustomerInvoices'
+import { filterEventsByColor } from '@/app/services/billing/eventColors'
 
 type AccountingTabProps = {
   businessId: string
@@ -74,7 +75,8 @@ export default function AccountingTab({ businessId }: AccountingTabProps) {
         setLoading(false)
         return
       }
-      setMonthEvents(result.events)
+      // Optional color filter: only events of the chosen color are lessons — aglamazo#439
+      setMonthEvents(filterEventsByColor(result.events, business?.billingEventColorId))
     } catch (err) {
       console.error('Error loading calendar events:', err)
       setError('שגיאה בטעינת אירועים מלוח שנה')
