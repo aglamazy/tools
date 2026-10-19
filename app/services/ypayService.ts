@@ -5,6 +5,8 @@ import { VAT_RATE_AUTHORIZED_DEALER } from '@/app/lib/vat'
 export type YpayCredentials = {
   clientId: string
   clientSecret: string
+  /** Sandbox pair in use — /api/ypay then never lets YPAY email the customer (aglamazo#441). */
+  sandbox?: true
 }
 
 export type YpayContact = {
@@ -68,7 +70,7 @@ function getCredentials(business: Business): YpayCredentials {
     if (!business.ypaySandboxClientId || !business.ypaySandboxClientSecret) {
       throw new Error('מצב Sandbox פעיל אך פרטי ההתחברות לסביבת ה-Sandbox לא הוגדרו')
     }
-    return { clientId: business.ypaySandboxClientId, clientSecret: business.ypaySandboxClientSecret }
+    return { clientId: business.ypaySandboxClientId, clientSecret: business.ypaySandboxClientSecret, sandbox: true }
   }
   if (!business.ypayClientId || !business.ypayClientSecret) {
     throw new Error('פרטי התחברות YPAY לא הוגדרו לעסק')
@@ -86,6 +88,14 @@ function getBillingDocType(business: Business, vatType?: 'exempt' | 'authorized'
     throw new Error('סוג עוסק לא הוגדר — הגדר בפרופיל')
   }
   return effective === 'exempt' ? YpayDocType.BusinessInvoice : YpayDocType.TaxInvoice
+}
+
+// Per-line VAT flag for a pre-payment billing document (aglamazo#440). A 106
+// line is net, so `vatIncluded: false` makes YPAY add VAT on top. A 104 line
+// (exempt dealer) must carry NO flag: YPAY treats an unflagged line as
+// VAT-exempt, while `false` adds VAT even on a חשבונית עסקה.
+function billingLineVat(docType: YpayDocType): { vatIncluded?: false } {
+  return docType === YpayDocType.TaxInvoice ? { vatIncluded: false } : {}
 }
 
 // Tax invoices (106, authorized dealer) carry a net pre-VAT amount, so the
@@ -363,7 +373,7 @@ export const ypayService = {
       description: `${params.projectName} - ${params.monthName} (${params.totalHours.toFixed(2)} שעות × ${params.hourlyRate} ₪)`,
       quantity: 1,
       price: amount,
-      vatIncluded: false,
+      ...billingLineVat(docType),
     }]
 
     const response = await fetch('/api/ypay', {
@@ -417,7 +427,7 @@ export const ypayService = {
       description: `${params.projectName} - ${m.monthName} (${m.totalHours.toFixed(2)} שעות × ${params.hourlyRate} ₪)`,
       quantity: 1,
       price: m.totalHours * params.hourlyRate,
-      vatIncluded: false,
+      ...billingLineVat(docType),
     }))
 
     const response = await fetch('/api/ypay', {
@@ -456,22 +466,31 @@ export const ypayService = {
   },
 
   createItemBasedInvoice: async (business: Business, params: {
-    projectName: string
+    /** The freelancer project billed. Absent on a student (calendar-billing) invoice, which carries customerMonth instead. */
+    projectName?: string
     items: Array<{ description: string; quantity: number; price: number }>
     date: string
     contact?: YpayContact
     vatType?: 'exempt' | 'authorized'
     partnerSplitOverride?: { uid: string; sharePercent: number }[]
+    /**
+     * Student (calendar-billing) invoice (aglamazo#437): recorded the way a
+     * project invoice is — transactionId `invoice:<customer>:<monthName>` +
+     * monthName — plus `businessId`, its one link to the business it was
+     * issued in (it has no project). `customer` is the paying customer's
+     * normalized email; `monthName` is in the project-invoice format
+     * ("ספטמבר 2026", see getMonthDates). Absent → the record is unchanged.
+     */
+    customerMonth?: { businessId: string; customer: string; monthName: string }
   }): Promise<{ url: string; serialNumber: string }> => {
     const credentials = getCredentials(business)
     const docType = getBillingDocType(business, params.vatType)
 
     const amount = params.items.reduce((sum, it) => sum + it.quantity * it.price, 0)
 
-    // Each line gets `vatIncluded: false` (price is net, YPAY adds VAT for
-    // authorized dealers — docType 106). Without this field YPAY treats the
-    // line as VAT-exempt regardless of docType.
-    const items = params.items.map(it => ({ ...it, vatIncluded: false }))
+    // Prices are net; billingLineVat flags a 106 line so YPAY adds VAT and
+    // leaves a 104 (exempt) line unflagged so it doesn't (aglamazo#440).
+    const items = params.items.map(it => ({ ...it, ...billingLineVat(docType) }))
 
     const response = await fetch('/api/ypay', {
       method: 'POST',
@@ -491,14 +510,16 @@ export const ypayService = {
       throw new Error(data.message || 'שגיאה ביצירת חשבונית')
     }
 
+    const cm = params.customerMonth
     await db.ypayDocuments.add({
-      transactionId: `invoice-items:${data.serialNumber}`,
+      transactionId: cm ? `invoice:${cm.customer}:${cm.monthName}` : `invoice-items:${data.serialNumber}`,
       url: data.url,
       serialNumber: data.serialNumber,
       docType,
       amount,
-      projectName: params.projectName,
+      ...(params.projectName ? { projectName: params.projectName } : {}),
       ...(params.partnerSplitOverride ? { partnerSplitOverride: params.partnerSplitOverride } : {}),
+      ...(cm ? { monthName: cm.monthName, businessId: cm.businessId } : {}),
       createdAt: new Date().toISOString(),
     })
 

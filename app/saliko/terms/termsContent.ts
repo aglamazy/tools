@@ -11,10 +11,9 @@
  * DRAFT STATUS (2026-08-03): this text was drafted by reading the actual
  * app flows (grocery ordering, store credential tiers, cancellation), not
  * copied from a template. It replaces the placeholder that was live in
- * production ("טיוטה לבדיקות פנימיות") — see Saliko #16. Sections marked
- * OPEN below are real legal decisions (jurisdiction, liability limits,
- * minimum age) that were deliberately left unfilled rather than invented —
- * they need Agla's or a lawyer's call, not a guess.
+ * production ("טיוטה לבדיקות פנימיות") — see Saliko #16. Section 8
+ * (liability, minimum age, jurisdiction) was left open until Agla approved
+ * its wording on 2026-10-14 (Cockpit 78161, saliko#45).
  *
  * This file must be reviewed and approved (Agla) BEFORE re-running
  * scripts/seed-saliko-tc.ts against production Firestore. Editing this
@@ -106,12 +105,10 @@ export const SALIKO_TC_HTML = `<div dir="rtl" style="line-height: 1.8; font-size
   שלנו — היא חלק בלתי נפרד מתנאי שימוש אלה.
 </p>
 
-<h3>8. הגבלת אחריות ותחום שיפוט <span style="color:#b45309; font-weight:600;">[פתוח — טרם הוחלט]</span></h3>
-<p style="color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:0.5rem; padding:0.75rem;">
-  סעיפים משפטיים כמו הגבלת אחריות כספית, תחום שיפוט, וגיל מינימלי
-  לשימוש בשירות — טרם הוחלטו וטעונים אישור (של יעקב ו/או עורך דין) לפני
-  פרסום סופי. במקום להמציא ניסוח, השארנו את הסעיף הזה פתוח במפורש.
-</p>
+<h3>8. אחריות ובדיקת ההזמנה ותחום שיפוט</h3>
+<p>סאליקו הוא עוזר טכנולוגי בלבד. ההזמנה והתשלום נעשים ישירות בין המשתמש לבין החנות; סאליקו אינו צד לעסקה, ואינו אחראי לתשלום, למחירים, למלאי או לאספקה.</p>
+<p>סוכני בינה מלאכותית עלולים לטעות. באחריות המשתמש לבדוק את תוכן הסל ולוודא שההזמנה נקלטה בחנות — לרבות קבלת אישור הזמנה מהחנות — בטרם יסתמך עליה. סאליקו לא יישא באחריות לנזק הנובע מהסתמכות על פעולת הסוכן ללא בדיקה כאמור.</p>
+<p>השימוש בשירות מותר מגיל 18. על תנאים אלה יחול הדין הישראלי, וסמכות השיפוט הבלעדית נתונה לבתי המשפט המוסמכים בישראל.</p>
 
 <h3>9. יצירת קשר</h3>
 <p>

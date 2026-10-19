@@ -160,6 +160,9 @@ export interface Business {
   sharedWithMe?: boolean // true for businesses shared by another user
   userId?: string // Firebase UID of the owning user
   ownerSharePercent?: number // partnership share % for the owner (0-100). Sum across owner + all shares should = 100
+  defaultLessonRate?: number // Teacher billing: rate prefilled on a newly created student (aglamazo#428). 0/unset = no default
+  billingCalendarId?: string // Teacher billing: Google Calendar id the monthly lesson scan reads (aglamazo#430). ''/unset = 'primary'
+  billingEventColorId?: string // Teacher billing: only events of this Google event colorId are lessons (aglamazo#439). ''/unset = every event
   createdAt: string
   updatedAt: string
 }
@@ -238,6 +241,7 @@ export interface YpayDocument {
   vatPaymentId?: string // FK → VatPayment.syncId once reported to the tax authority
   closesAllocations?: { docId: string; amount: number }[] // For a receipt: how much of it (gross ₪) goes toward each open invoice (B2B split flow). A receipt can fully cover several invoices and partially cover one more — an invoice is only "closed" (paidAt stamped) once its allocations across ALL receipts sum to its full gross amount; see computeInvoicePaidAmount in ypayService.ts. docId is the closed invoice's own syncId (self-referential FK into this same table).
   partnerSplitOverride?: { uid: string; sharePercent: number }[] // Per-invoice partner-split override (aglamazo#338, spec 3.1) — one row per business partner (owner + sharees), percentages summing to 100. Set at invoice creation when a specific deal isn't split at the business's default ratio; undefined = use the business default (see resolveDefaultPartnerShares in utils/partnerSplit.ts). SettlementSummary.tsx traces an income transaction -> its receipt -> the invoice(s) that receipt's closesAllocations point at -> this field, to split that transaction's fair-share contribution accordingly instead of the default. Superseded a single ownerSharePercentOverride number design (2026-09-08) once the real spec (percent per partner, not just the owner) came to light.
+  businessId?: string // Business.syncId of the business a student (calendar-billing) invoice was issued in (aglamazo#437) — its link to the business, since it has no project. Project invoices belong via projectName and don't carry it. Unindexed, additive — no schema bump.
   createdAt: string // ISO timestamp
   updatedAt?: string
 }

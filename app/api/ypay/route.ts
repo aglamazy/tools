@@ -28,6 +28,10 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
     const { action, clientId, clientSecret } = body
+    // Sandbox documents are test documents: YPAY must never email them to the
+    // real contact on them (aglamazo#441). `mail` is optional in YPAY's spec
+    // with no stated default, so sandbox sends an explicit false.
+    const sandbox = body.sandbox === true
 
     if (!clientId || !clientSecret) {
       return NextResponse.json({ success: false, message: 'חסרים פרטי התחברות' })
@@ -65,6 +69,7 @@ export async function POST(request: NextRequest) {
           ...(methods ? { methods } : {}),
           ...(contact ? { contact } : {}),
           ...(details ? { details } : {}),
+          ...(sandbox ? { mail: false } : {}),
         }),
       })
 
@@ -146,7 +151,7 @@ export async function POST(request: NextRequest) {
           ...(contact ? { contact } : {}),
           ...(docType !== undefined ? { docType } : {}),
           ...(payments !== undefined ? { payments } : {}),
-          ...(mail !== undefined ? { mail } : {}),
+          ...(sandbox ? { mail: false } : mail !== undefined ? { mail } : {}),
           lang: lang || 'he',
           currency: currency || 'ILS',
           ...(notifyUrl ? { notifyUrl } : {}),
