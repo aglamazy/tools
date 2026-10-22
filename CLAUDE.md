@@ -59,31 +59,11 @@ Build/ship-breakers a memoryless worker WILL hit unless told. Check each against
 - **DoD = merged AND runs on localhost:3100** (`tsc --noEmit` clean, the real UI action works). "Pushed to origin" is a separate deploy step — don't call it shipped when it's only committed. Keep console.logs until verified.
 - **This directory is shared by multiple Vercel projects** — use `scripts/vercel-deploy-scoped.sh <project-name> [args...]`, never a bare `vercel deploy`. → `harness/03-shared-vercel-directory.md`
 
-## Telegram Bot (AglamazoBot)
-- Webhook: `app/api/telegram/webhook/route.ts`
-- Chat LLM: `app/services/telegram/chatProcessor.ts` (Gemini, action blocks)
-- Action executor: `app/services/telegram/actionExecutor.ts`
-- Test CLI: `scripts/telegram-test.sh` (supports product picker callbacks)
-- Bot works in private chats and groups (admin, privacy mode off)
-- Users resolved by Telegram user ID — no `/link` needed if private chat is linked
-
-## Shufersal Integration
-- HTTP client: `app/services/grocery/shufersalClient.ts` (direct in dev, Cloud Run proxy in prod)
-- Proxy: `shu-test` on Cloud Run (me-west1), Python, source in GCS
-- Grocery store: `app/services/grocery/groceryStore.ts` (Firestore: `groceries/{uid}`)
-- Product resolver: `app/services/grocery/productResolver.ts` (name → catalogId cache)
-- Smart search filter: LLM ranks/filters Shufersal results by user intent
-- Checkout flow: auth → SSO token → set slot (with CSRF) → Payme JWT → placeOrder
-
-## Cron & Monitoring
-- Grocery cron: `app/api/grocery/cron/route.ts` — every 2 hours (vercel.json)
-- Cockpit dead-man check for the grocery cron (aglamazo#409, was Healthchecks.io): `pingDeadman` after each successful run, nothing on failure (ok-only — a missed ping is the alert). Declared in `dead-man-checks.json`, registered by `npm run pre-deploy` (refuses to run without an explicit `OCTOPUS_DEADMAN_BASE_URL`); the slug is a credential and lives only in env (`DEADMAN_SLUG_GROCERY_CRON`) — unset = ping skipped
-- Schedule: `groceries/{uid}/schedule` — orderDay, preferredSlot, reviewReminderHours
+## Integrations
+- Telegram bot, Shufersal/grocery, grocery cron + dead-man check: `docs/integrations.md` (read before touching them)
 
 ## Testing & Tools
 - MCP Chrome DevTools: use for browsing any web service (Gmail, Telegram Web, Shufersal, healthchecks.io) — don't ask user to do it manually
-- Telegram test CLI: `scripts/telegram-test.sh` — supports product picker callbacks, type a number to pick
-- Cloud Run proxy source: `gcloud run deploy shu-test --source . --region me-west1` (source in GCS)
 - Always test locally before deploying to prod
 - When testing, go end-to-end (20 questions, not 3)
 
