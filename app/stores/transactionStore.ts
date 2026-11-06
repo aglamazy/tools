@@ -367,7 +367,9 @@ export const transactionStore = {
   },
 
   /**
-   * Save credit card transactions for a specific card and month
+   * Save credit card transactions for a specific card and month.
+   * `payments[i].amount` follows the statement sign: positive = charge,
+   * negative = credit (refund). Stored amount = -amount (aglamazo#452).
    */
   saveCreditCardData: async (
     cardNumber: string,
@@ -402,7 +404,10 @@ export const transactionStore = {
 
       const newPayments = payments.filter((p) => {
         const pMerchant = p.merchant || ''
-        const pAmount = -Math.abs(p.amount)
+        // aglamazo#452: payments follow the statement sign (positive = charge,
+        // negative = credit/refund). Stored sign is the inverse: a charge is an
+        // expense (negative), a credit reduces expenses (positive).
+        const pAmount = -p.amount
         const sameFeedDup = existingTransactions.some((t) =>
           t.date === p.transactionDate &&
           t.amount === pAmount &&
@@ -428,7 +433,7 @@ export const transactionStore = {
       const transactionsToInsert: Transaction[] = newPayments.map((p) => ({
         type: 'credit',
         date: p.transactionDate,
-        amount: -Math.abs(p.amount), // Ensure negative
+        amount: -p.amount, // charge → negative, credit (refund) → positive (aglamazo#452)
         description: p.merchant || '',
         merchant: p.merchant,
         category: p.category,
@@ -496,10 +501,10 @@ export const transactionStore = {
         if (!paidCardNumbers.has(cardNum) && charge.chargingDate) {
           const existing = chargesByCard.get(cardNum)
           if (existing) {
-            existing.totalAmount += Math.abs(charge.amount)
+            existing.totalAmount += -charge.amount // signed: a credit reduces the card total
           } else {
             chargesByCard.set(cardNum, {
-              totalAmount: Math.abs(charge.amount),
+              totalAmount: -charge.amount,
               chargingDate: charge.chargingDate,
             })
           }

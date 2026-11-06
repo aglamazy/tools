@@ -5,6 +5,28 @@ import { parseBankWithRegistry } from '@/app/utils/bankParser'
 import { transactionStore } from '@/app/stores/transactionStore'
 import { getCardTypeIndicators } from '@/app/services/appSettingsService'
 import { normalizeDate } from '@/app/utils/parsers/shared'
+import type { XlsNormalizedTransaction } from '@/app/utils/xlsLlmReader'
+
+/**
+ * Map one LLM-extracted card row → saveCreditCardData payment shape.
+ * The xls LLM returns amount NEGATIVE for a charge and POSITIVE for a credit
+ * (refund); saveCreditCardData takes the statement sign (positive = charge,
+ * negative = credit), so negate — never Math.abs, which turned every refund
+ * into an expense (aglamazo#452).
+ * normalizeDate defends against the LLM ever drifting off its prompted
+ * YYYY-MM-DD format — every other producer (FIBI/credit parsers) already
+ * canonicalizes through it, so this keeps the whole app on one format.
+ */
+export function llmCardTransactionToPayment(t: XlsNormalizedTransaction) {
+  return {
+    transactionDate: normalizeDate(t.date) || t.date,
+    merchant: t.merchant || t.description || '',
+    amount: -(t.amount ?? 0),
+    currentStep: t.currentStep ?? 1,
+    totalSteps: t.totalSteps ?? 1,
+    totalAmount: -(t.totalAmount ?? t.amount ?? 0),
+  }
+}
 
 export const fileImportService = {
   // Import credit card file
@@ -35,19 +57,7 @@ export const fileImportService = {
 
         const effectiveFileId = fileId || `credit-${cardNum}-${processingMonth}`
 
-        // Map LLM transactions → saveCreditCardData shape.
-        // saveCreditCardData negates amount via -Math.abs(), so pass the raw LLM value.
-        // normalizeDate defends against the LLM ever drifting off its prompted
-        // YYYY-MM-DD format — every other producer (FIBI/credit parsers) already
-        // canonicalizes through it, so this keeps the whole app on one format.
-        const payments = llmResult.transactions.map((t) => ({
-          transactionDate: normalizeDate(t.date) || t.date,
-          merchant: t.merchant || t.description || '',
-          amount: Math.abs(t.amount ?? 0),
-          currentStep: t.currentStep ?? 1,
-          totalSteps: t.totalSteps ?? 1,
-          totalAmount: t.totalAmount != null ? Math.abs(t.totalAmount) : Math.abs(t.amount ?? 0),
-        }))
+        const payments = llmResult.transactions.map(llmCardTransactionToPayment)
 
         await transactionStore.saveCreditCardData(cardNum, payments, effectiveBillingDate, processingMonth, effectiveFileId)
         return { count: payments.length, processingMonth }
