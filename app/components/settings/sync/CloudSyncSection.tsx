@@ -5,8 +5,6 @@ import { subscribeToAuth, type AuthUser } from '@/app/stores/authStore'
 import {
   isCloudBackupAvailable,
   hasEncryptionPasswordSetup,
-  syncMerge,
-  restoreFromCloud,
   uploadBackup,
   getBackupInfo,
   isUsingHouseholdStorage,
@@ -16,6 +14,10 @@ import {
 import { exportAllStores } from '@/app/services/backupService'
 import { SYNCED_DB_TABLES } from '@/app/services/syncedTables'
 import { signOut } from '@/app/services/firebaseAuthService'
+import { getFirebaseAuth, isFirebaseConfigured } from '@/app/lib/firebase'
+import { getTierFromUser } from '@/app/services/backupSizeLimit'
+import { startUpload, runSyncAction, type SyncAction, type SyncActionUi } from './cloudSyncActions'
+import { backupSizeLimitSuffix, storageLimitNote } from './backupLimitText'
 import { getSyncPassword, setSyncPassword } from '../../CloudSyncManager'
 import AuthModal from '../../AuthModal'
 import EncryptionPasswordModal from '../../EncryptionPasswordModal'
@@ -29,12 +31,17 @@ export default function CloudSyncSection() {
   const [showAuthModal, setShowAuthModal] = useState(false)
   const [showPasswordModal, setShowPasswordModal] = useState(false)
   const [passwordMode, setPasswordMode] = useState<'setup' | 'enter'>('setup')
-  const [pendingAction, setPendingAction] = useState<'upload' | 'download' | null>(null)
+  const [pendingAction, setPendingAction] = useState<SyncAction | null>(null)
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle')
   const [message, setMessage] = useState<string | null>(null)
   const [backupInfo, setBackupInfo] = useState<CloudBackupInfo | null>(null)
   const [hasSessionPassword, setHasSessionPassword] = useState(false)
   const [hasEncryption, setHasEncryption] = useState(false)
+  // Set when verify.enc could not be read (403/network): the backup is
+  // unreachable, NOT "no password" — never offer setup then (aglamazo#461).
+  const [backupAccessError, setBackupAccessError] = useState<string | null>(null)
+  // Uploader tier claim; null while loading (aglamazo#461 size-limit text).
+  const [tier, setTier] = useState<string | undefined | null>(null)
   const [isHousehold, setIsHousehold] = useState(false)
   const [showForceUploadConfirm, setShowForceUploadConfirm] = useState(false)
   const [forceUploading, setForceUploading] = useState(false)
@@ -60,19 +67,27 @@ export default function CloudSyncSection() {
   useEffect(() => {
     const checkEncryption = async () => {
       if (user) {
-        const [has, household] = await Promise.all([
+        const [setup, household] = await Promise.all([
           hasEncryptionPasswordSetup(),
           isUsingHouseholdStorage(),
         ])
-        setHasEncryption(has)
+        applyEncryptionState(setup)
         setIsHousehold(household)
+        setTier(isFirebaseConfigured() ? await getTierFromUser(getFirebaseAuth().currentUser) : undefined)
       } else {
         setHasEncryption(false)
+        setBackupAccessError(null)
         setIsHousehold(false)
+        setTier(null)
       }
     }
     checkEncryption()
   }, [user])
+
+  const applyEncryptionState = (setup: Awaited<ReturnType<typeof hasEncryptionPasswordSetup>>) => {
+    setHasEncryption(setup.state === 'present')
+    setBackupAccessError(setup.state === 'error' ? setup.error : null)
+  }
 
   useEffect(() => {
     if (user) {
@@ -92,34 +107,44 @@ export default function CloudSyncSection() {
     setMessage(null)
   }
 
+  const actionUi: SyncActionUi = {
+    setMessage,
+    setSyncStatus,
+    openPasswordModal: (mode, action) => {
+      setPasswordMode(mode)
+      setPendingAction(action)
+      setShowPasswordModal(true)
+    },
+    onUploadSuccess: async (password) => {
+      setSyncPassword(password) // Store in session for auto-sync
+      setHasSessionPassword(true)
+      setHasEncryption(true)
+      setBackupAccessError(null)
+      // Show record counts
+      const backup = await exportAllStores()
+      const counts = SYNCED_DB_TABLES
+        .map(name => ({ name, count: ((backup.stores as any)[name] || []).length }))
+        .filter(t => t.count > 0)
+        .map(t => `${t.name}: ${t.count}`)
+        .join(', ')
+      setMessage(`סנכרון הושלם! סנכרון אוטומטי מופעל.\n${counts}`)
+      loadBackupInfo()
+    },
+    onDownloadSuccess: (password) => {
+      setSyncPassword(password) // Store in session for auto-sync
+      setHasSessionPassword(true)
+      setMessage('הנתונים שוחזרו בהצלחה! הדף יטען מחדש.')
+      setTimeout(() => window.location.reload(), 2000)
+    },
+  }
+
   const handleUpload = async () => {
     if (!user) {
       setShowAuthModal(true)
       return
     }
-
-    // Check if encryption password is set up
-    const hasPassword = await hasEncryptionPasswordSetup()
-    if (!hasPassword) {
-      setPasswordMode('setup')
-      setPendingAction('upload')
-      setShowPasswordModal(true)
-      return
-    }
-
-    // Check if password already stored in session
-    const storedPassword = getSyncPassword()
-    if (storedPassword) {
-      // Use stored password directly
-      setPendingAction('upload')
-      await handlePasswordSuccess(storedPassword)
-      return
-    }
-
-    // Ask for password
-    setPasswordMode('enter')
-    setPendingAction('upload')
-    setShowPasswordModal(true)
+    setMessage(null)
+    await startUpload(actionUi, getSyncPassword())
   }
 
   const handleDownload = async () => {
@@ -128,54 +153,18 @@ export default function CloudSyncSection() {
       return
     }
 
-    setPasswordMode('enter')
-    setPendingAction('download')
-    setShowPasswordModal(true)
+    actionUi.openPasswordModal('enter', 'download')
   }
 
+  // Password modal success: the action was captured when the modal opened.
   const handlePasswordSuccess = async (password: string) => {
-    const action = pendingAction // Capture before it gets cleared
-    if (!action) return
-
-    setMessage(null)
-
-    if (action === 'upload') {
-      setSyncStatus('uploading')
-      const result = await syncMerge(password)
-      setSyncStatus('idle')
-
-      if (result.success) {
-        setSyncPassword(password) // Store in session for auto-sync
-        setHasSessionPassword(true)
-        setHasEncryption(true)
-        // Show record counts
-        const backup = await exportAllStores()
-        const counts = SYNCED_DB_TABLES
-          .map(name => ({ name, count: ((backup.stores as any)[name] || []).length }))
-          .filter(t => t.count > 0)
-          .map(t => `${t.name}: ${t.count}`)
-          .join(', ')
-        setMessage(`סנכרון הושלם! סנכרון אוטומטי מופעל.\n${counts}`)
-        loadBackupInfo()
-      } else {
-        setMessage(result.error || 'שגיאה בסנכרון')
-      }
-    } else if (action === 'download') {
-      setSyncStatus('downloading')
-      const result = await restoreFromCloud(password)
-      setSyncStatus('idle')
-
-      if (result.success) {
-        setSyncPassword(password) // Store in session for auto-sync
-        setHasSessionPassword(true)
-        setMessage('הנתונים שוחזרו בהצלחה! הדף יטען מחדש.')
-        setTimeout(() => window.location.reload(), 2000)
-      } else {
-        setMessage(result.error || 'שגיאה בשחזור הנתונים')
-      }
-    }
-
+    const action = pendingAction
     setPendingAction(null)
+    if (!action) {
+      console.error('[CloudSyncSection] Password entered with no pending action')
+      return
+    }
+    await runSyncAction(action, password, actionUi)
   }
 
   const handleForceUpload = async () => {
@@ -199,6 +188,10 @@ export default function CloudSyncSection() {
       setForceUploading(false)
     }
   }
+
+  // Success messages are the known few; anything else (access refused, wrong
+  // password, size limit) is an error even without the word 'שגיאה'.
+  const messageIsError = !!message && !/^(סנכרון הושלם|הנתונים שוחזרו|הגיבוי בענן נדרס|הגיבוי הועבר)/.test(message)
 
   const formatSize = (bytes: number): string => {
     if (bytes < 1024) return `${bytes} B`
@@ -294,7 +287,7 @@ export default function CloudSyncSection() {
               <span>🏠</span>
               <span>
                 <strong>משק בית משותף</strong> — הגיבוי משותף עם בן/בת הזוג.
-                {!hasEncryption && !hasSessionPassword && ' יש לקבל את סיסמת ההצפנה מהשותף/ה ולשחזר מהענן.'}
+                {!hasEncryption && !backupAccessError && !hasSessionPassword && ' יש לקבל את סיסמת ההצפנה מהשותף/ה ולשחזר מהענן.'}
                 {hasEncryption && !hasSessionPassword && ' הזן את סיסמת ההצפנה המשותפת כדי לסנכרן.'}
               </span>
             </div>
@@ -310,9 +303,9 @@ export default function CloudSyncSection() {
               display: 'flex',
               alignItems: 'center',
               gap: '0.5rem',
-              ...(hasSessionPassword
+              ...(hasSessionPassword && !backupAccessError
                 ? { background: '#dcfce7', border: '1px solid #86efac', color: '#166534' }
-                : !hasEncryption
+                : backupAccessError || !hasEncryption
                   ? { background: '#fef2f2', border: '1px solid #fecaca', color: '#dc2626' }
                   : { background: '#fff7ed', border: '1px solid #fed7aa', color: '#c2410c' }),
             }}
@@ -323,25 +316,23 @@ export default function CloudSyncSection() {
                 height: '10px',
                 borderRadius: '50%',
                 flexShrink: 0,
-                background: hasSessionPassword
+                background: hasSessionPassword && !backupAccessError
                   ? '#22c55e'
                   : '#ef4444',
               }}
             />
             <span style={{ fontWeight: 500 }}>
-              {!hasEncryption
+              {backupAccessError
+                ? backupAccessError
+                : !hasEncryption
                 ? 'נדרשת הגדרת סיסמת הצפנה'
                 : !hasSessionPassword
                   ? 'נדרשת הזנת סיסמה לסנכרון'
                   : 'סנכרון אוטומטי פעיל'}
             </span>
-            {!hasEncryption && (
+            {!hasEncryption && !backupAccessError && (
               <button
-                onClick={() => {
-                  setPasswordMode('setup')
-                  setPendingAction('upload')
-                  setShowPasswordModal(true)
-                }}
+                onClick={() => actionUi.openPasswordModal('setup', 'upload')}
                 style={{
                   marginRight: 'auto',
                   padding: '0.25rem 0.75rem',
@@ -358,11 +349,7 @@ export default function CloudSyncSection() {
             )}
             {hasEncryption && !hasSessionPassword && (
               <button
-                onClick={() => {
-                  setPasswordMode('enter')
-                  setPendingAction('upload')
-                  setShowPasswordModal(true)
-                }}
+                onClick={() => actionUi.openPasswordModal('enter', 'upload')}
                 style={{
                   marginRight: 'auto',
                   padding: '0.25rem 0.75rem',
@@ -398,7 +385,7 @@ export default function CloudSyncSection() {
                 <strong>גודל:</strong>{' '}
                 <span dir="ltr" style={{ display: 'inline-block' }}>
                   {backupInfo.sizeBytes ? formatSize(backupInfo.sizeBytes) : 'לא ידוע'}
-                  <span style={{ color: '#64748b' }}> / 2.5 MB</span>
+                  <span style={{ color: '#64748b' }}>{backupSizeLimitSuffix(tier)}</span>
                 </span>
               </div>
             </div>
@@ -479,8 +466,7 @@ export default function CloudSyncSection() {
                   if (result.success) {
                     setMessage('הגיבוי הועבר לאחסון המשותף!')
                     loadBackupInfo()
-                    const has = await hasEncryptionPasswordSetup()
-                    setHasEncryption(has)
+                    applyEncryptionState(await hasEncryptionPasswordSetup())
                   } else {
                     setMessage(result.error || 'לא נמצא גיבוי אישי להעברה')
                   }
@@ -509,10 +495,10 @@ export default function CloudSyncSection() {
               style={{
                 marginTop: '1rem',
                 padding: '0.75rem',
-                background: message.includes('שגיאה') ? '#fef2f2' : '#f0fdf4',
-                border: `1px solid ${message.includes('שגיאה') ? '#fecaca' : '#86efac'}`,
+                background: messageIsError ? '#fef2f2' : '#f0fdf4',
+                border: `1px solid ${messageIsError ? '#fecaca' : '#86efac'}`,
                 borderRadius: '0.5rem',
-                color: message.includes('שגיאה') ? '#dc2626' : '#166534',
+                color: messageIsError ? '#dc2626' : '#166534',
                 fontSize: '0.9rem',
               }}
             >
@@ -534,9 +520,7 @@ export default function CloudSyncSection() {
               color: '#92400e',
             }}
           >
-            {isHousehold
-              ? 'מגבלת אחסון בחינם: 2.5 MB. הנתונים מוצפנים בסיסמה משותפת למשק הבית.'
-              : 'מגבלת אחסון בחינם: 2.5 MB. הנתונים מוצפנים בסיסמה שרק אתה יודע.'}
+            {storageLimitNote(tier, isHousehold)}
           </div>
         </>
       )}

@@ -10,6 +10,7 @@ import {
   verifyEncryptionPassword,
   restoreFromCloud,
   getBackupInfo,
+  WRONG_PASSWORD_MESSAGE,
 } from '@/app/services/cloudBackupService'
 import { isLocalDataEmpty } from '@/app/services/backupService'
 import { syncAllSharedBusinesses, getSharedPassword } from '@/app/services/sharedBusinessSyncService'
@@ -125,8 +126,16 @@ export default function CloudSyncManager() {
         return
       }
 
-      const hasEncryption = await hasEncryptionPasswordSetup()
-      if (hasEncryption) {
+      const setup = await hasEncryptionPasswordSetup()
+      if (setup.state === 'error') {
+        // The backup could not be read (403/network) — that is NOT "no
+        // password": never offer setup, say so once, and look again later
+        // (aglamazo#461).
+        announceSyncError(setup.errorCode, setup.error)
+        setTimeout(() => void checkAndPromptPassword(), config.syncIntervalMinutes * 60 * 1000)
+        return
+      }
+      if (setup.state === 'present') {
         // Has encryption but no session password - prompt to enter
         promptedRef.current = true
         setPasswordMode('enter')
@@ -187,9 +196,25 @@ export default function CloudSyncManager() {
     initialCheckDoneRef.current = true
   }
 
+  // Toast a persistent sync failure once per distinct error code (#104).
+  const announceSyncError = (code: string, message: string) => {
+    if (lastSyncErrorRef.current === code) return
+    lastSyncErrorRef.current = code
+    showToast('error', message, undefined, 7000)
+  }
+
   const handlePasswordSuccess = async (password: string) => {
-    const isValid = await verifyEncryptionPassword(password)
-    if (!isValid) return
+    const check = await verifyEncryptionPassword(password)
+    if (check.status === 'wrong-password') {
+      showToast('error', WRONG_PASSWORD_MESSAGE, undefined, 7000)
+      setShowPasswordModal(true) // the modal closed itself on submit — ask again
+      return
+    }
+    if (check.status === 'read-failed') {
+      // Not a wrong password — the token could not be read (aglamazo#461)
+      showToast('error', check.error, undefined, 7000)
+      return
+    }
 
     setSyncPassword(password)
     setShowPasswordModal(false)
@@ -209,15 +234,24 @@ export default function CloudSyncManager() {
       // data would re-upload it within one sync cycle (aglamazo#413).
       if (!(await shouldSyncNow())) return
 
-      const hasPassword = await hasEncryptionPasswordSetup()
-      if (!hasPassword) return
+      const setup = await hasEncryptionPasswordSetup()
+      if (setup.state === 'error') {
+        announceSyncError(setup.errorCode, setup.error)
+        return
+      }
+      if (setup.state === 'absent') return
 
       const password = getSyncPassword()
       if (!password) return
 
-      const isValid = await verifyEncryptionPassword(password)
-      if (!isValid) {
+      const check = await verifyEncryptionPassword(password)
+      if (check.status === 'wrong-password') {
         clearSyncPassword()
+        return
+      }
+      if (check.status === 'read-failed') {
+        // Keep the session password — it was not proven wrong (aglamazo#461)
+        announceSyncError(check.errorCode, check.error)
         return
       }
 
@@ -234,11 +268,9 @@ export default function CloudSyncManager() {
           // 'unknown' (network blips) stays console-only. (#104)
           const code = result.errorCode || 'unknown'
           const actionable =
-            code === 'permission-denied' || code === 'wrong-password' || code === 'size-limit'
-          if (actionable && lastSyncErrorRef.current !== code) {
-            lastSyncErrorRef.current = code
-            showToast('error', result.error || 'שגיאה בסנכרון הנתונים', undefined, 7000)
-          }
+            code === 'permission-denied' || code === 'not-authenticated' ||
+            code === 'wrong-password' || code === 'size-limit'
+          if (actionable) announceSyncError(code, result.error || 'שגיאה בסנכרון הנתונים')
         }
       } finally {
         isSyncingRef.current = false
