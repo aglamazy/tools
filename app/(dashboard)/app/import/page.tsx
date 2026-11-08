@@ -10,6 +10,7 @@ import MessageModal from '@/app/components/MessageModal'
 import YesNoModal from '@/app/components/YesNoModal'
 import { useToast } from '@/app/components/ToastContainer'
 import { loadDirectoryHandle, persistDirectoryHandle } from '@/app/utils/directoryStorage'
+import { deleteImportedFileRows } from '@/app/stores/importedFileDeletion'
 import { transactionStore } from '@/app/stores/transactionStore'
 import { config } from '@/app/config'
 import { extractFileMetadata } from '@/app/utils/filePreview'
@@ -229,21 +230,11 @@ const handleDeleteFile = (file: ImportedFile) => {
           fileToDelete.fileName
         )
 
-        // Remove from imported files list
-        if (fileId) {
-          const data = await transactionStore.getImportedFiles()
-          if (data) {
-            data.files = data.files.filter((f: ImportedFile) => f.id !== fileId)
-            data.lastUpdated = new Date().toISOString()
-            await transactionStore.saveImportedFiles(data)
-
-            // Update state
-            setFiles(data.files)
-          }
-        } else {
-          // Remove from state only (inferred file)
-          setFiles((prev) => prev.filter((f) => f !== fileToDelete))
-        }
+        // Remove this file's importedFiles row(s) with a hooked delete so the
+        // ledger tombstones them (aglamazo#463), then refresh from the source.
+        await deleteImportedFileRows(fileToDelete)
+        const refreshed = await transactionStore.getImportedFiles()
+        setFiles(refreshed ? refreshed.files : [])
 
         // Clear month filter if no files for selected month
         if (selectedMonth) {
