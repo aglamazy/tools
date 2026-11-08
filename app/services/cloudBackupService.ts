@@ -28,7 +28,7 @@ import { applyCloudBackup } from './applyMergedBackupService'
 import { classifySyncError, classifyBackupReadError, type SyncErrorCode } from './syncErrorClassifier'
 import { VARIANT } from '@/app/config/variants'
 import { isDeviceAccountDeleted } from './deviceAccountState'
-import { backupSizeError, getTierFromUser } from './backupSizeLimit'
+import { backupSizeError, encodedByteLength, getTierFromUser } from './backupSizeLimit'
 // Shared business sync is triggered independently from CloudSyncManager
 
 /**
@@ -319,13 +319,18 @@ export async function uploadBackup(password: string): Promise<CloudBackupResult>
     const backup = await exportAllStores()
     const backupJson = JSON.stringify(backup)
 
-    // Check size before encryption (encrypted will be slightly larger)
-    const sizeError = backupSizeError(backupJson.length, await getTierFromUser(getFirebaseAuth().currentUser))
+    // Early exit on the plaintext size; the encrypted-bytes check below decides (aglamazo#453)
+    const tier = await getTierFromUser(getFirebaseAuth().currentUser)
+    const sizeError = backupSizeError(backupJson.length, tier)
     if (sizeError) {
       return { success: false, error: sizeError, errorCode: 'size-limit' }
     }
 
     const encryptedBackup = await encrypt(backupJson, password)
+    const encryptedSizeError = backupSizeError(encodedByteLength(encryptedBackup), tier)
+    if (encryptedSizeError) {
+      return { success: false, error: encryptedSizeError, errorCode: 'size-limit' }
+    }
 
     // Upload to Firebase Storage
     const storage = getFirebaseStorage()
@@ -515,12 +520,18 @@ async function uploadBackupWithGeneration(
     }
 
     const backupJson = JSON.stringify(backup)
-    const sizeError = backupSizeError(backupJson.length, await getTierFromUser(getFirebaseAuth().currentUser))
+    // Early exit on the plaintext size; the encrypted-bytes check below decides (aglamazo#453)
+    const tier = await getTierFromUser(getFirebaseAuth().currentUser)
+    const sizeError = backupSizeError(backupJson.length, tier)
     if (sizeError) {
       return { success: false, error: sizeError, errorCode: 'size-limit' }
     }
 
     const encryptedBackup = await encrypt(backupJson, password)
+    const encryptedSizeError = backupSizeError(encodedByteLength(encryptedBackup), tier)
+    if (encryptedSizeError) {
+      return { success: false, error: encryptedSizeError, errorCode: 'size-limit' }
+    }
     await uploadString(backupRef, encryptedBackup)
 
     const newMetadata = await getMetadata(backupRef)
