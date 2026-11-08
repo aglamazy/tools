@@ -17,6 +17,7 @@ import SubjectSelect from '@/app/components/budget/SubjectSelect'
 import SmartClassifierAgent from '@/app/components/budget/SmartClassifierAgent'
 import BudgetCategoryChart from '@/app/components/budget/BudgetCategoryChart'
 import SupplierHistoryModal from '@/app/components/budget/SupplierHistoryModal'
+import TransactionSourceLink from '@/app/components/budget/TransactionSourceLink'
 import { useTransactionSort, type SortKey } from '@/app/components/budget/useTransactionSort'
 import { matchesTransactionSearch } from '@/app/components/budget/transactionSearch'
 import TransactionSearchTab from '@/app/components/budget/TransactionSearchTab'
@@ -749,6 +750,7 @@ function BudgetPageContent() {
                             {isAutoClassified && (
                               <span style={{ marginLeft: '0.5rem', fontSize: '0.875rem' }}>✨</span>
                             )}
+                            <TransactionSourceLink fileId={transaction.fileId} />
                           </td>
                         <td>
                           <SubjectSelect

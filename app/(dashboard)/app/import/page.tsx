@@ -19,6 +19,8 @@ import { parseCreditWithRegistry } from '@/app/utils/creditCardParser'
 import type { FilePreview } from '@/app/types/file-preview'
 import { parseXlsTables } from '@/app/utils/xlsTableParser'
 import { runImportSerially, pendingImports, subscribeImportQueue } from '@/app/utils/importQueue'
+import { findFileByParam } from '@/app/components/budget/sourceFileLink'
+import { useFocusFileParam, fileRowId } from '@/app/components/budget/useFocusFileParam'
 
 export default function ImportPage() {
   return (
@@ -104,7 +106,8 @@ function ImportPageContent() {
           })
           if (months.length > 0) {
             // Check URL parameter first
-            const monthParam = searchParams.get('month')
+            // ?file= (budget row's source-file link, #464) shows that file's month
+            const monthParam = findFileByParam(loadedFiles, searchParams.get('file'))?.processingMonth || searchParams.get('month')
             if (monthParam && months.includes(monthParam)) {
               setSelectedMonth(monthParam)
             } else {
@@ -205,6 +208,8 @@ const handleViewFile = async (fileId: number | null, fileKey?: string) => {
     transactions,
   })
 }
+
+const focusedFileKey = useFocusFileParam(files, selectedMonth, searchParams.get('file'), (f) => handleViewFile(f.id ?? null, f.fileKey))
 
 const handleDeleteFile = (file: ImportedFile) => {
   const fileId = file.id
@@ -648,7 +653,11 @@ const handleDeleteFile = (file: ImportedFile) => {
               </thead>
               <tbody>
                 {filteredFiles.map((file, index) => (
-                  <tr key={file.id || file.fileKey || `${file.fileName}-${index}`}>
+                  <tr
+                    key={file.id || file.fileKey || `${file.fileName}-${index}`}
+                    id={file.fileKey ? fileRowId(file.fileKey) : undefined}
+                    style={file.fileKey && file.fileKey === focusedFileKey ? { backgroundColor: '#fde68a', outline: '2px solid #f59e0b' } : undefined}
+                  >
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <span>{file.fileType === 'credit-card' ? '💳' : '📄'}</span>

@@ -56,6 +56,7 @@ export type BudgetTransaction = {
   installmentInfo?: string
   totalAmount?: number
   isCreditCardCharge?: boolean
+  fileId?: string // import key of the source file (aglamazo#464)
 }
 
 export type TransactionUpdate = {
