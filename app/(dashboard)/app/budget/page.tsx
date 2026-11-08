@@ -20,6 +20,7 @@ import SupplierHistoryModal from '@/app/components/budget/SupplierHistoryModal'
 import { useTransactionSort, type SortKey } from '@/app/components/budget/useTransactionSort'
 import { matchesTransactionSearch } from '@/app/components/budget/transactionSearch'
 import TransactionSearchTab from '@/app/components/budget/TransactionSearchTab'
+import { expandSelectedCategories, matchesSelectedCategories } from '@/app/components/budget/expandSelectedCategories'
 
 const SORTABLE_COLS: [SortKey, string][] = [
   ['date', 'תאריך'],
@@ -203,6 +204,8 @@ function BudgetPageContent() {
     categories.filter((c) => c.isExternal).map((c) => c.name)
   )
   const nonDailyNames = new Set([...capitalNames, ...externalNames])
+  // A selected parent topic also selects its sub-topics' rows (aglamazo#456)
+  const expandedSelectedCategories = expandSelectedCategories(selectedCategories, categories)
   const dailyTransactions = transactions.filter((t) => !nonDailyNames.has(t.category || ''))
   const capitalTransactions = transactions.filter((t) => capitalNames.has(t.category || '') && !t.isCreditCardCharge)
   const externalTransactions = transactions.filter((t) => externalNames.has(t.category || '') && !t.isCreditCardCharge)
@@ -353,7 +356,7 @@ function BudgetPageContent() {
     // other (the toggle button disables itself once a category is selected —
     // see the UI below), but both must still compose with typeFilter above.
     if (selectedCategories.size > 0) {
-      return !!t.category && selectedCategories.has(t.category)
+      return matchesSelectedCategories(t.category, expandedSelectedCategories)
     }
     if (hideClassified) {
       return !t.category || t.category.trim() === ''

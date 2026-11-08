@@ -18,6 +18,7 @@ import { parseBankWithRegistry } from '@/app/utils/bankParser'
 import { parseCreditWithRegistry } from '@/app/utils/creditCardParser'
 import type { FilePreview } from '@/app/types/file-preview'
 import { parseXlsTables } from '@/app/utils/xlsTableParser'
+import { runImportSerially, pendingImports, subscribeImportQueue } from '@/app/utils/importQueue'
 
 export default function ImportPage() {
   return (
@@ -40,6 +41,9 @@ function ImportPageContent() {
   const [importing, setImporting] = useState<string | null>(null)
   // Chunk progress for large PDFs split into page-range extraction calls (#251).
   const [pdfProgress, setPdfProgress] = useState<{ current: number; total: number } | null>(null)
+  // Imports queued or running (aglamazo#451: imports run one at a time).
+  const [queuedImports, setQueuedImports] = useState(pendingImports())
+  useEffect(() => subscribeImportQueue(setQueuedImports), [])
 
   // Modal states
   const [messageModal, setMessageModal] = useState<{ isOpen: boolean; emoji?: string; message: string }>({
@@ -50,6 +54,7 @@ function ImportPageContent() {
     isOpen: boolean
     question: string
     onConfirm: () => void
+    onCancel?: () => void
   }>({
     isOpen: false,
     question: '',
@@ -250,7 +255,11 @@ const handleDeleteFile = (file: ImportedFile) => {
     })
   }
 
-  const handleFileSelect = async (file: File) => {
+  // aglamazo#451: every import runs through the serial queue, so the
+  // existing-file check and dedup of file 2 see what file 1 stored.
+  const handleFileSelect = (file: File) => runImportSerially(() => importOneFile(file))
+
+  const importOneFile = async (file: File) => {
     console.log(`[TEMP#358] handleFileSelect start: ${file.name} (${file.size}b, type=${file.type})`)
     setImporting(file.name)
     setPdfProgress(null)
@@ -323,16 +332,22 @@ const handleDeleteFile = (file: ImportedFile) => {
       }
 
       if (existingFile) {
-        setYesNoModal({
-          isOpen: true,
-          question: existingFile.fileName === file.name
-            ? `הקובץ "${file.name}" כבר קיים. האם להחליף אותו?`
-            : `כבר קיים קובץ "${existingFile.fileName}" לאותו חשבון וחודש. האם להחליף אותו?`,
-          onConfirm: async () => {
+        // This file's turn holds the queue until the user answers.
+        const replace = await new Promise<boolean>((resolve) => {
+          const close = (answer: boolean) => {
             setYesNoModal({ isOpen: false, question: '', onConfirm: () => {} })
-            await doImport()
-          },
+            resolve(answer)
+          }
+          setYesNoModal({
+            isOpen: true,
+            question: existingFile.fileName === file.name
+              ? `הקובץ "${file.name}" כבר קיים. האם להחליף אותו?`
+              : `כבר קיים קובץ "${existingFile.fileName}" לאותו חשבון וחודש. האם להחליף אותו?`,
+            onConfirm: () => close(true),
+            onCancel: () => close(false),
+          })
         })
+        if (replace) await doImport()
         return
       }
 
@@ -413,6 +428,11 @@ const handleDeleteFile = (file: ImportedFile) => {
             <div style={{ fontSize: '0.78rem', color: '#64748b' }}>
               {importing} — אפשר להמשיך לעבוד, נודיע כשמוכן.
             </div>
+            {queuedImports > 1 && (
+              <div style={{ fontSize: '0.78rem', color: '#64748b' }}>
+                {`ממתינים בתור: ${queuedImports - 1} קבצים`}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -691,7 +711,7 @@ const handleDeleteFile = (file: ImportedFile) => {
         isOpen={yesNoModal.isOpen}
         question={yesNoModal.question}
         onYes={yesNoModal.onConfirm}
-        onNo={() => setYesNoModal({ isOpen: false, question: '', onConfirm: () => {} })}
+        onNo={yesNoModal.onCancel ?? (() => setYesNoModal({ isOpen: false, question: '', onConfirm: () => {} }))}
       />
 
       {/* View Transactions Modal */}
