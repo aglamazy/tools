@@ -16,6 +16,8 @@ import SubjectsOverlay from '@/app/components/budget/SubjectsOverlay'
 import SubjectSelect from '@/app/components/budget/SubjectSelect'
 import SmartClassifierAgent from '@/app/components/budget/SmartClassifierAgent'
 import BudgetCategoryChart from '@/app/components/budget/BudgetCategoryChart'
+import SubjectYearlyGraph from '@/app/components/budget/SubjectYearlyGraph'
+import { expenseSubject } from '@/app/components/budget/monthlySeries'
 import SupplierHistoryModal from '@/app/components/budget/SupplierHistoryModal'
 import TransactionSourceLink from '@/app/components/budget/TransactionSourceLink'
 import { useTransactionSort, type SortKey } from '@/app/components/budget/useTransactionSort'
@@ -66,6 +68,7 @@ function BudgetPageContent() {
   const [smartAgentOpen, setSmartAgentOpen] = useState(false)
   const [focusedTxId, setFocusedTxId] = useState<string | null>(null)
   const [supplierModal, setSupplierModal] = useState<string | null>(null)
+  const [graphSubject, setGraphSubject] = useState<string | null>(null)
   const [supplierDisplayNames, setSupplierDisplayNames] = useState<Map<string, string>>(new Map())
   const { sortKey, sortDir, toggleSort, sortTransactions } = useTransactionSort()
 
@@ -213,34 +216,23 @@ function BudgetPageContent() {
 
   // Calculate category totals for pie chart with hierarchical structure
   const getCategoryData = () => {
-    const expenses = dailyTransactions.filter((t) => t.amount < 0 && !t.isCreditCardCharge)
     const parentTotals = new Map<string, { total: number; color: string; subCategories: Map<string, { total: number; color: string }> }>()
 
-    expenses.forEach((t) => {
-      if (!t.category) return // Skip uncategorized
-
-      const category = categories.find((c) => c.name === t.category)
-      if (!category) return
-
-      // If this is a sub-category, add to parent
-      if (category.parentId) {
-        const parent = categories.find((c) => c.id === category.parentId)
-        if (!parent) return
-
-        const parentData = parentTotals.get(parent.name) || { total: 0, color: parent.color, subCategories: new Map() }
-        const subData = parentData.subCategories.get(t.category) || { total: 0, color: category.color }
-
+    // Same row rule as the yearly subject graph (expenseSubject, aglamazo#465)
+    transactions.forEach((t) => {
+      const subject = expenseSubject(t, categories)
+      if (!subject) return
+      const { parent, sub } = subject
+      const parentData = parentTotals.get(parent.name) || { total: 0, color: parent.color, subCategories: new Map() }
+      parentData.total += Math.abs(t.amount)
+      if (sub) {
+        const subData = parentData.subCategories.get(sub.name) || { total: 0, color: sub.color }
         subData.total += Math.abs(t.amount)
-        parentData.total += Math.abs(t.amount)
-        parentData.subCategories.set(t.category, subData)
-        parentTotals.set(parent.name, parentData)
+        parentData.subCategories.set(sub.name, subData)
       } else {
-        // This is a parent category
-        const parentData = parentTotals.get(t.category) || { total: 0, color: category.color, subCategories: new Map() }
-        parentData.total += Math.abs(t.amount)
-        parentData.color = category.color
-        parentTotals.set(t.category, parentData)
+        parentData.color = parent.color
       }
+      parentTotals.set(parent.name, parentData)
     })
 
     // Sort parent categories by total (descending)
@@ -701,6 +693,7 @@ function BudgetPageContent() {
               onToggleCollapsed={() => setIsPieChartCollapsed(!isPieChartCollapsed)}
               onPieClick={handlePieClick}
               onCategoryClick={handleCategoryClick}
+              onSubjectGraphClick={setGraphSubject}
             />
 
             {/* Transactions Table */}
@@ -842,6 +835,13 @@ function BudgetPageContent() {
         </>
         )}
       </div>
+      <SubjectYearlyGraph
+        subjectName={graphSubject}
+        onClose={() => setGraphSubject(null)}
+        selectedMonth={selectedMonth}
+        availableMonths={availableMonths}
+        categories={categories}
+      />
       {supplierModal && (
         <SupplierHistoryModal
           business={supplierModal}

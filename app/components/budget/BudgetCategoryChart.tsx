@@ -14,11 +14,13 @@ type BudgetCategoryChartProps = {
   onToggleCollapsed: () => void
   onPieClick: (categoryName: string, event: React.MouseEvent) => void
   onCategoryClick: (categoryName: string, event: React.MouseEvent) => void
+  /** The row's 📈 button: open that subject's yearly graph (aglamazo#465). */
+  onSubjectGraphClick: (categoryName: string) => void
 }
 
 export default function BudgetCategoryChart({
   categoryData, drillDownCategory, onBackFromDrillDown, selectedCategories,
-  isCollapsed, onToggleCollapsed, onPieClick, onCategoryClick,
+  isCollapsed, onToggleCollapsed, onPieClick, onCategoryClick, onSubjectGraphClick,
 }: BudgetCategoryChartProps) {
   return (
     <section style={{ marginTop: '2rem' }}>
@@ -216,6 +218,27 @@ export default function BudgetCategoryChart({
                       currency: 'ILS',
                     }).format(cat.value)}
                   </span>
+                  <button
+                    type="button"
+                    title="גרף שנתי"
+                    aria-label={`גרף שנתי: ${cat.name}`}
+                    data-subject-graph={cat.name}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onSubjectGraphClick(cat.name)
+                    }}
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '0.375rem',
+                      padding: '0.125rem 0.375rem',
+                      cursor: 'pointer',
+                      fontSize: '0.9rem',
+                      lineHeight: 1.2,
+                    }}
+                  >
+                    📈
+                  </button>
                 </div>
               </div>
             ))}
