@@ -18,6 +18,7 @@ import { getFirebaseStorage, isFirebaseConfigured } from '@/app/lib/firebase'
 import { getFirebaseAuth } from '@/app/lib/firebase'
 import { getCurrentUser } from './firebaseAuthService'
 import { isDeviceAccountDeleted } from './deviceAccountState'
+import { backupSizeError, getTierFromUser } from './backupSizeLimit'
 import { encrypt, decrypt, generateVerificationToken, verifyPasswordWithToken } from './encryptionService'
 import { db } from '@/app/db/financeDB'
 import type { BackupData } from './backupService'
@@ -51,7 +52,6 @@ function dispatchSharedSyncStatus(detail: SharedSyncStatusDetail): void {
 
 const BACKUP_FILE_NAME = 'backup.enc'
 const VERIFICATION_FILE_NAME = 'verify.enc'
-const MAX_BACKUP_SIZE_BYTES = 2.5 * 1024 * 1024
 
 /** A device that knows its account was deleted must not write to the cloud (aglamazo#413). */
 async function refuseIfAccountDeleted(): Promise<SyncResult | null> {
@@ -653,9 +653,9 @@ async function uploadSharedBackup(
     }
 
     const backupJson = JSON.stringify(backup)
-    if (backupJson.length > MAX_BACKUP_SIZE_BYTES) {
-      const sizeMB = (backupJson.length / 1024 / 1024).toFixed(2)
-      return { success: false, error: `הגיבוי גדול מדי (${sizeMB} MB)`, errorCode: 'size-limit' }
+    const sizeError = backupSizeError(backupJson.length, await getTierFromUser(getFirebaseAuth().currentUser))
+    if (sizeError) {
+      return { success: false, error: sizeError, errorCode: 'size-limit' }
     }
 
     const encryptedBackup = await encrypt(backupJson, password)

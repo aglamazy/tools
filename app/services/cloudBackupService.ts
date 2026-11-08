@@ -28,6 +28,7 @@ import { applyCloudBackup } from './applyMergedBackupService'
 import { classifySyncError } from './syncErrorClassifier'
 import { VARIANT } from '@/app/config/variants'
 import { isDeviceAccountDeleted } from './deviceAccountState'
+import { backupSizeError, getTierFromUser } from './backupSizeLimit'
 // Shared business sync is triggered independently from CloudSyncManager
 
 /**
@@ -43,7 +44,6 @@ async function refuseIfAccountDeleted(): Promise<CloudBackupResult | null> {
 
 const BACKUP_FILE_NAME = 'backup.enc'
 const VERIFICATION_FILE_NAME = 'verify.enc'
-const MAX_BACKUP_SIZE_BYTES = 2.5 * 1024 * 1024 // 2.5 MB
 
 export type CloudBackupResult = {
   success: boolean
@@ -264,13 +264,9 @@ export async function uploadBackup(password: string): Promise<CloudBackupResult>
     const backupJson = JSON.stringify(backup)
 
     // Check size before encryption (encrypted will be slightly larger)
-    if (backupJson.length > MAX_BACKUP_SIZE_BYTES) {
-      const sizeMB = (backupJson.length / 1024 / 1024).toFixed(2)
-      return {
-        success: false,
-        error: `הגיבוי גדול מדי (${sizeMB} MB). המגבלה היא 2.5 MB.`,
-        errorCode: 'size-limit',
-      }
+    const sizeError = backupSizeError(backupJson.length, await getTierFromUser(getFirebaseAuth().currentUser))
+    if (sizeError) {
+      return { success: false, error: sizeError, errorCode: 'size-limit' }
     }
 
     const encryptedBackup = await encrypt(backupJson, password)
@@ -459,9 +455,9 @@ async function uploadBackupWithGeneration(
     }
 
     const backupJson = JSON.stringify(backup)
-    if (backupJson.length > MAX_BACKUP_SIZE_BYTES) {
-      const sizeMB = (backupJson.length / 1024 / 1024).toFixed(2)
-      return { success: false, error: `הגיבוי גדול מדי (${sizeMB} MB)`, errorCode: 'size-limit' }
+    const sizeError = backupSizeError(backupJson.length, await getTierFromUser(getFirebaseAuth().currentUser))
+    if (sizeError) {
+      return { success: false, error: sizeError, errorCode: 'size-limit' }
     }
 
     const encryptedBackup = await encrypt(backupJson, password)

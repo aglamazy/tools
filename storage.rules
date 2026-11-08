@@ -16,17 +16,25 @@ service firebase.storage {
       return firestore.exists(/databases/(default)/documents/deletedAccounts/$(key));
     }
 
+    // Backup size limit by the uploader's tier (aglamazo#458): tier 'owner' is
+    // not held to a size limit; every other tier (or no tier claim) must stay
+    // under 2.5 MB (2621440 bytes). Mirrored client-side in
+    // app/services/backupSizeLimit.ts.
+    function sizeAllowed() {
+      return request.auth.token.get('tier', 'free') == 'owner' || request.resource.size < 2621440;
+    }
+
     // Personal backup files - each user can only access their own backups
     match /backups/{variant}/{userId}/{fileName} {
       // Allow read/write only if:
       // 1. User is authenticated
       // 2. User ID matches the path
-      // 3. File size is under 2.5 MB (2621440 bytes)
+      // 3. sizeAllowed(): under 2.5 MB unless the uploader's tier is 'owner'
       allow read: if request.auth != null && request.auth.uid == userId
                   && !accountDeleted('user_' + userId);
       allow write: if request.auth != null
                    && request.auth.uid == userId
-                   && request.resource.size < 2621440
+                   && sizeAllowed()
                    && !accountDeleted('user_' + userId);
     }
 
@@ -35,13 +43,13 @@ service firebase.storage {
       // Allow read/write only if:
       // 1. User is authenticated
       // 2. User's householdId custom claim matches the path
-      // 3. File size is under 2.5 MB (2621440 bytes)
+      // 3. sizeAllowed(): under 2.5 MB unless the uploader's tier is 'owner'
       allow read: if request.auth != null
                   && request.auth.token.householdId == householdId
                   && !accountDeleted('household_' + householdId);
       allow write: if request.auth != null
                    && request.auth.token.householdId == householdId
-                   && request.resource.size < 2621440
+                   && sizeAllowed()
                    && !accountDeleted('household_' + householdId);
     }
 
@@ -52,7 +60,7 @@ service firebase.storage {
                   && !accountDeleted('business_' + businessSyncId);
       allow write: if request.auth != null
                    && businessSyncId in request.auth.token.sharedBusinesses
-                   && request.resource.size < 2621440
+                   && sizeAllowed()
                    && !accountDeleted('business_' + businessSyncId);
     }
 
