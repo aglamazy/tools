@@ -59,3 +59,13 @@ describe('expandSelectedCategories', () => {
     expect(sum).toBeCloseTo(10052.17, 2)
   })
 })
+
+describe('selecting the Other line (aglamazo#467)', () => {
+  const sel = new Set(['ללא נושא'])
+  it('shows rows with no subject or an unknown subject, not known ones', () => {
+    expect(matchesSelectedCategories('', sel, categories)).toBe(true)
+    expect(matchesSelectedCategories(undefined, sel, categories)).toBe(true)
+    expect(matchesSelectedCategories('לא קיים', sel, categories)).toBe(true)
+    expect(matchesSelectedCategories('הלוואה/מימון', sel, categories)).toBe(false)
+  })
+})

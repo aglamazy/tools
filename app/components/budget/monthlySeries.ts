@@ -2,6 +2,19 @@ import type { BudgetTransaction } from '@/app/types/transactions'
 import type { Category } from '@/app/types/category'
 
 /**
+ * The catch-all subject of the breakdown (aglamazo#467): a daily expense row
+ * with no subject, or with a subject name not in the list, counts here so the
+ * breakdown adds up to the expenses card. Not a stored category.
+ */
+export const OTHER_SUBJECT: Category = {
+  id: '__other__',
+  name: 'ללא נושא',
+  type: 'expense',
+  color: '#94a3b8',
+  createdAt: '',
+}
+
+/**
  * The one rule for "which subject does this row count toward" in the
  * "פילוח הוצאות לפי נושא" breakdown (aglamazo#465). The budget page's
  * getCategoryData and the yearly graph both use it, so the page total and the
@@ -9,21 +22,23 @@ import type { Category } from '@/app/types/category'
  *
  * A row counts when it is a daily expense: amount < 0, not a credit-card
  * charge, and the row's own subject is not capital/external. It is attributed to its
- * subject; a sub-subject's row also rolls into its parent.
+ * subject; a sub-subject's row also rolls into its parent. A row with no
+ * subject, an unknown subject, or a sub-subject whose parent is gone counts
+ * toward OTHER_SUBJECT (aglamazo#467).
  * Returns null for a row that is not counted at all.
  */
 export function expenseSubject(
   t: BudgetTransaction,
   categories: Category[],
 ): { parent: Category; sub: Category | null } | null {
-  if (t.amount >= 0 || t.isCreditCardCharge || !t.category) return null
-  const category = categories.find((c) => c.name === t.category)
-  if (!category) return null
+  if (t.amount >= 0 || t.isCreditCardCharge) return null
+  const category = t.category ? categories.find((c) => c.name === t.category) : undefined
+  if (!category) return { parent: OTHER_SUBJECT, sub: null }
   // Excluded by name, like the page's nonDailyNames: any capital/external subject of that name
   if (categories.some((c) => c.name === t.category && (c.isCapital || c.isExternal))) return null
   if (category.parentId) {
     const parent = categories.find((c) => c.id === category.parentId)
-    if (!parent) return null
+    if (!parent) return { parent: OTHER_SUBJECT, sub: null }
     return { parent, sub: category }
   }
   return { parent: category, sub: null }

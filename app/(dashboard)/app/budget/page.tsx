@@ -350,7 +350,7 @@ function BudgetPageContent() {
     // other (the toggle button disables itself once a category is selected —
     // see the UI below), but both must still compose with typeFilter above.
     if (selectedCategories.size > 0) {
-      return matchesSelectedCategories(t.category, expandedSelectedCategories)
+      return matchesSelectedCategories(t.category, expandedSelectedCategories, categories)
     }
     if (hideClassified) {
       return !t.category || t.category.trim() === ''

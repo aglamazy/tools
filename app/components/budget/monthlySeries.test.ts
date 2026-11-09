@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { subjectMonthlyTotals, yAxisDomain, expenseSubject } from './monthlySeries'
+import { subjectMonthlyTotals, yAxisDomain, expenseSubject, OTHER_SUBJECT } from './monthlySeries'
 import type { BudgetTransaction } from '@/app/types/transactions'
 import type { Category } from '@/app/types/category'
 
@@ -62,5 +62,22 @@ describe('yAxisDomain (aglamazo#465)', () => {
     expect(yAxisDomain([0, 0])).toEqual([0, 1])
     expect(yAxisDomain([null, null])).toEqual([0, 1])
     expect(yAxisDomain([null, 120])).toEqual([0, 200])
+  })
+})
+
+describe('OTHER_SUBJECT — uncategorised expenses (aglamazo#467)', () => {
+  it('no subject, unknown subject, orphan sub-subject all count toward Other', () => {
+    const orphan = [...categories, cat('x', 'יתום', { parentId: 'gone' })]
+    expect(expenseSubject(tx('', -10), orphan)?.parent).toBe(OTHER_SUBJECT)
+    expect(expenseSubject(tx('לא קיים', -10), orphan)?.parent).toBe(OTHER_SUBJECT)
+    expect(expenseSubject(tx('יתום', -10), orphan)?.parent).toBe(OTHER_SUBJECT)
+  })
+  it('incomes, card charges and capital rows still do not count', () => {
+    expect(expenseSubject(tx('', 10), categories)).toBeNull()
+    expect(expenseSubject(tx('', -10, { isCreditCardCharge: true }), categories)).toBeNull()
+    expect(expenseSubject(tx('חיסכון', -10), categories)).toBeNull()
+  })
+  it('the yearly graph has an Other series', () => {
+    expect(subjectMonthlyTotals({ 9: [tx('', -7), tx('מזון', -1), tx('לא קיים', -3)] }, OTHER_SUBJECT.name, categories)[8]).toBe(10)
   })
 })
