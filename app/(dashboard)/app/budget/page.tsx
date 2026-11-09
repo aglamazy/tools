@@ -15,7 +15,8 @@ import { useToast } from '@/app/components/ToastContainer'
 import SubjectsOverlay from '@/app/components/budget/SubjectsOverlay'
 import SubjectSelect from '@/app/components/budget/SubjectSelect'
 import SmartClassifierAgent from '@/app/components/budget/SmartClassifierAgent'
-import BudgetCategoryChart from '@/app/components/budget/BudgetCategoryChart'
+import BudgetCategoryChart, { CSV_BUTTON_STYLE } from '@/app/components/budget/BudgetCategoryChart'
+import { subjectsCsv, transactionsCsv, downloadCsv, monthForFilename } from '@/app/components/budget/budgetCsv'
 import SubjectYearlyGraph from '@/app/components/budget/SubjectYearlyGraph'
 import { expenseSubject } from '@/app/components/budget/monthlySeries'
 import SupplierHistoryModal from '@/app/components/budget/SupplierHistoryModal'
@@ -694,11 +695,26 @@ function BudgetPageContent() {
               onPieClick={handlePieClick}
               onCategoryClick={handleCategoryClick}
               onSubjectGraphClick={setGraphSubject}
+              onExportCsv={() => downloadCsv(`aglamazo-subjects-${monthForFilename(selectedMonth)}.csv`, subjectsCsv(transactions, categories))}
             />
 
             {/* Transactions Table */}
             <section style={{ marginTop: '2rem' }}>
-              <h2 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '1rem' }}>עסקאות</h2>
+              <h2 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '1rem', display: 'flex', alignItems: 'center' }}>
+                עסקאות
+                <button
+                  type="button"
+                  onClick={() => downloadCsv(
+                    `aglamazo-transactions-${monthForFilename(selectedMonth)}.csv`,
+                    transactionsCsv(transactions, (b) => supplierDisplayNames.get(b) ?? b),
+                  )}
+                  title="הורדת CSV של כל העסקאות בחודש"
+                  aria-label="הורדת CSV של כל העסקאות בחודש"
+                  style={CSV_BUTTON_STYLE}
+                >
+                  ⬇ CSV
+                </button>
+              </h2>
               <div className="table-wrapper">
                 <table>
                   <thead>
