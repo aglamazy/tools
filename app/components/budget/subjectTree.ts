@@ -182,10 +182,15 @@ export function visibleRows(
 }
 
 /** Index of the row the keyboard cursor starts on: the first real match when searching. */
-export function initialActive(rows: PickerRow[], query: string): number {
+export function initialActive(rows: PickerRow[], query: string, current = ''): number {
   const q = normalize(query)
-  const idx = rows.findIndex((r) => r.kind === 'option' && (!q || !r.context))
-  return idx
+  // With nothing typed, start on the current value (as the native select kept it on Enter).
+  if (!q && current) {
+    const cur = rows.findIndex((r) => r.kind === 'option' && r.value === current)
+    if (cur >= 0) return cur
+  }
+  // Never start on the clear row: open + Enter must not wipe the subject.
+  return rows.findIndex((r) => r.kind === 'option' && r.value !== '' && (!q || !r.context))
 }
 
 /** Next selectable (option) row from `from`, moving by `step` (+1/-1); stays put at the ends. */

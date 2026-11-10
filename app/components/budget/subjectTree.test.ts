@@ -110,9 +110,19 @@ describe('visible rows (aglamazo#469)', () => {
   it('clearable: a first row with value "" clears the subject, hidden while typing (old select empty option)', () => {
     const rows = visibleRows(tree, '', new Set(), [], true)
     expect(rows[0]).toMatchObject({ kind: 'option', value: '', parent: null })
-    expect(initialActive(rows, '')).toBe(0)
+    expect(initialActive(rows, '')).not.toBe(0) // never starts on the clear row
+    expect(rows[initialActive(rows, '')]).toMatchObject({ value: 'רכב' })
     expect(visibleRows(tree, 'דל', new Set(), [], true).some((r) => r.kind === 'option' && r.value === '')).toBe(false)
     expect(visibleRows(tree, '', new Set(), []).some((r) => r.kind === 'option' && r.value === '')).toBe(false)
     expect(CLEAR_LABEL).toBe('ללא נושא')
+  })
+
+  it('opening a filled picker starts on the current value, so Enter keeps it (113540)', () => {
+    const rows = visibleRows(tree, '', new Set(['רכב']), ['מזון'], true)
+    expect(rows[initialActive(rows, '', 'דלק')]).toMatchObject({ value: 'דלק', parent: 'רכב' })
+    // current value inside a folded group: falls back to the first real option, never the clear row
+    const folded = visibleRows(tree, '', new Set(), [], true)
+    expect(rows[0]).toMatchObject({ value: '' })
+    expect(folded[initialActive(folded, '', 'דלק')]).toMatchObject({ value: 'רכב' })
   })
 })

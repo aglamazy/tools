@@ -138,7 +138,7 @@ export default function SubjectSelect({
 
   // The cursor starts on the first real match whenever the picker opens or the search changes.
   useEffect(() => {
-    if (open) setActive(initialActive(rows, query))
+    if (open) setActive(initialActive(rows, query, value))
   }, [open, query]) // not on `rows`: folding a group must not move the cursor
 
   useLayoutEffect(() => {
@@ -175,7 +175,7 @@ export default function SubjectSelect({
     const r = rows[active]
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      setActive(active < 0 ? initialActive(rows, '') : stepActive(rows, active, 1))
+      setActive(active < 0 ? initialActive(rows, '', value) : stepActive(rows, active, 1))
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       setActive(stepActive(rows, active, -1))
