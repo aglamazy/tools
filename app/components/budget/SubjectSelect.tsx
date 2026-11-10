@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import type { Category } from '@/app/types/category'
 import {
   buildSubjectTree,
+  CLEAR_LABEL,
   initialActive,
   parentOf,
   pushRecent,
@@ -83,8 +84,8 @@ export default function SubjectSelect({
   const listRef = useRef<HTMLDivElement>(null)
 
   const rows: PickerRow[] = useMemo(
-    () => (open ? visibleRows(tree, query, openGroups, recent) : []),
-    [open, tree, query, openGroups, recent]
+    () => (open ? visibleRows(tree, query, openGroups, recent, !!value) : []),
+    [open, tree, query, openGroups, recent, value]
   )
 
   const place = useCallback(() => {
@@ -117,9 +118,11 @@ export default function SubjectSelect({
   }, [])
 
   const choose = (v: string) => {
-    const next = pushRecent(readRecent(), v)
-    writeRecent(next)
-    setRecent(next)
+    if (v) {
+      const next = pushRecent(readRecent(), v)
+      writeRecent(next)
+      setRecent(next)
+    }
     close(true)
     if (v !== value) onChange(v)
   }
@@ -327,7 +330,11 @@ export default function SubjectSelect({
                     )}
                     <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {r.parent && r.level === 0 && <span style={{ color: '#64748b', fontWeight: 400 }}>{r.parent} › </span>}
-                      <Highlight text={r.value} query={query} />
+                      {r.value === '' ? (
+                        <span style={{ color: '#64748b', fontWeight: 400 }}>{CLEAR_LABEL}</span>
+                      ) : (
+                        <Highlight text={r.value} query={query} />
+                      )}
                       {r.foldable && !r.expanded && (
                         <span style={{ color: '#94a3b8', fontWeight: 400, fontSize: '0.75rem' }}> ({r.childCount})</span>
                       )}

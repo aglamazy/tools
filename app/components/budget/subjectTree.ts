@@ -37,6 +37,9 @@ export const HEADING_RECENT = 'אחרונים'
 export const HEADING_ALL = 'כל הנושאים'
 export const HEADING_TAX = 'מסים'
 
+/** Label of the row that clears the subject (emits ""), as the old select's empty option did. */
+export const CLEAR_LABEL = 'ללא נושא'
+
 /**
  * Same resolution as the old dropdown: children are the union of `parentId` and
  * `parent.subCategories[]` (the two link directions drift), plus an orphan fallback for
@@ -126,10 +129,15 @@ export function visibleRows(
   tree: SubjectTree,
   query: string,
   openGroups: ReadonlySet<string>,
-  recent: string[]
+  recent: string[],
+  /** Offer a first row that clears the subject (value ""), shown only while nothing is typed. */
+  clearable = false
 ): PickerRow[] {
   const q = normalize(query)
   const rows: PickerRow[] = []
+  if (!q && clearable) {
+    rows.push({ kind: 'option', value: '', parent: null, level: 0, foldable: false, expanded: false, childCount: 0, context: false })
+  }
   if (!q) {
     const known = allValues(tree)
     const rec = recent.filter((v) => known.has(v)).slice(0, RECENT_LIMIT)

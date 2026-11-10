@@ -10,6 +10,7 @@ import {
   HEADING_ALL,
   HEADING_RECENT,
   HEADING_TAX,
+  CLEAR_LABEL,
   type PickerRow,
 } from './subjectTree'
 
@@ -104,5 +105,14 @@ describe('visible rows (aglamazo#469)', () => {
   it('pushRecent moves a value to the front and keeps 5', () => {
     expect(pushRecent(['a', 'b', 'c', 'd', 'e'], 'c')).toEqual(['c', 'a', 'b', 'd', 'e'])
     expect(pushRecent(['a', 'b', 'c', 'd', 'e'], 'f')).toEqual(['f', 'a', 'b', 'c', 'd'])
+  })
+
+  it('clearable: a first row with value "" clears the subject, hidden while typing (old select empty option)', () => {
+    const rows = visibleRows(tree, '', new Set(), [], true)
+    expect(rows[0]).toMatchObject({ kind: 'option', value: '', parent: null })
+    expect(initialActive(rows, '')).toBe(0)
+    expect(visibleRows(tree, 'דל', new Set(), [], true).some((r) => r.kind === 'option' && r.value === '')).toBe(false)
+    expect(visibleRows(tree, '', new Set(), []).some((r) => r.kind === 'option' && r.value === '')).toBe(false)
+    expect(CLEAR_LABEL).toBe('ללא נושא')
   })
 })
