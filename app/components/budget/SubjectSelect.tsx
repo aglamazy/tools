@@ -28,24 +28,13 @@ type Props = {
   skipTaxOptions?: boolean
 }
 
-const RECENT_KEY = 'aglamazo.subjectPicker.recent'
-
-function readRecent(): string[] {
-  try {
-    const raw = window.localStorage.getItem(RECENT_KEY)
-    const v = raw ? JSON.parse(raw) : []
-    return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []
-  } catch {
-    return []
-  }
-}
-
-function writeRecent(list: string[]) {
-  try {
-    window.localStorage.setItem(RECENT_KEY, JSON.stringify(list))
-  } catch {
-    /* per-browser convenience only */
-  }
+// Recent picks live in memory for the page session, shared by every picker on the page.
+// Never localStorage: the project keeps no app state there (CLAUDE.md), and a per-browser
+// list would show one person's picks to the next on a shared device.
+let sessionRecent: string[] = []
+const readRecent = (): string[] => sessionRecent
+const writeRecent = (list: string[]) => {
+  sessionRecent = list
 }
 
 function Highlight({ text, query }: { text: string; query: string }) {
@@ -64,7 +53,7 @@ function Highlight({ text, query }: { text: string; query: string }) {
 /**
  * Subject picker shared by the budget transactions table, the smart-classifier chat and the
  * supplier history modal (aglamazo#469): type to search, sub-subjects shown as an indented
- * tree under their parent, groups that fold, and a "Recent" group. The value is the subject
+ * tree under their parent, groups that fold, and a "Recent" group (page session only). The value is the subject
  * name, as before. Data rules live in ./subjectTree.ts.
  */
 export default function SubjectSelect({
