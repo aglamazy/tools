@@ -127,4 +127,13 @@ describe('visible rows (aglamazo#469)', () => {
     // and the first ArrowDown lands on the first real option, never the clear row
     expect(folded[initialActive(folded, '')]).toMatchObject({ value: 'רכב' })
   })
+
+  it('a value with no row (legacy or other-sign subject) gets no cursor, so open + Enter keeps it (113549)', () => {
+    const rows = visibleRows(tree, '', new Set(), ['דלק'], true)
+    expect(initialActive(rows, '', 'נושא ישן')).toBe(-1)
+    expect(initialActive(rows, '', 'משכורת')).toBe(-1) // an income subject on an expense row
+    // ArrowDown from no cursor uses initialActive(rows, query): first real option, not the clear row
+    expect(rows[initialActive(rows, '')]).toMatchObject({ kind: 'option', value: 'דלק' })
+    expect(rows[initialActive(rows, '')]).not.toMatchObject({ value: '' })
+  })
 })
