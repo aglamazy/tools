@@ -13,6 +13,15 @@ export function maxBackupBytes(tier: string | undefined): number {
   return tier === 'owner' ? Infinity : FREE_BACKUP_LIMIT_BYTES
 }
 
+/**
+ * The number of bytes uploadString sends for s (UTF-8), which is what the
+ * Storage rule measures — not s.length, which counts UTF-16 code units
+ * (aglamazo#453).
+ */
+export function encodedByteLength(s: string): number {
+  return new TextEncoder().encode(s).length
+}
+
 /** Read the uploader's tier claim from an auth user (undefined if none or on error). */
 export async function getTierFromUser(
   user: { getIdTokenResult: () => Promise<{ claims: Record<string, unknown> }> } | null | undefined,

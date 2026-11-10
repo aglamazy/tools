@@ -25,10 +25,10 @@ import { getCurrentUser } from './firebaseAuthService'
 import { encrypt, decrypt, generateVerificationToken, verifyPasswordWithToken } from './encryptionService'
 import { exportAllStores, importAllStores, isLocalDataEmpty, type BackupData } from './backupService'
 import { applyCloudBackup } from './applyMergedBackupService'
-import { classifySyncError } from './syncErrorClassifier'
+import { classifySyncError, classifyBackupReadError, type SyncErrorCode } from './syncErrorClassifier'
 import { VARIANT } from '@/app/config/variants'
 import { isDeviceAccountDeleted } from './deviceAccountState'
-import { backupSizeError, getTierFromUser } from './backupSizeLimit'
+import { backupSizeError, encodedByteLength, getTierFromUser } from './backupSizeLimit'
 // Shared business sync is triggered independently from CloudSyncManager
 
 /**
@@ -48,8 +48,34 @@ const VERIFICATION_FILE_NAME = 'verify.enc'
 export type CloudBackupResult = {
   success: boolean
   error?: string
-  errorCode?: 'not-authenticated' | 'not-configured' | 'size-limit' | 'wrong-password' | 'no-backup' | 'permission-denied' | 'account-deleted' | 'unknown'
+  errorCode?: 'not-authenticated' | 'not-configured' | 'size-limit' | 'wrong-password' | 'no-backup' | 'permission-denied' | 'account-deleted' | 'password-exists' | 'unknown'
 }
+
+/**
+ * Is an encryption password set up for this account? Only a missing
+ * verify.enc (storage/object-not-found) means 'absent'. Any other failure
+ * (403 from storage rules, network) is 'error': the backup could not be read,
+ * and the UI must NOT offer to set a new password — that would overwrite
+ * verify.enc and orphan backup.enc, which is encrypted with the old one
+ * (aglamazo#461).
+ */
+export type EncryptionSetupState =
+  | { state: 'present' }
+  | { state: 'absent' }
+  | { state: 'error'; error: string; errorCode: SyncErrorCode }
+
+/**
+ * Result of checking a password against verify.enc. 'wrong-password' only when
+ * the token was read and the password does not match it; 'read-failed' when
+ * the token itself could not be read (aglamazo#461).
+ */
+export type PasswordCheckResult =
+  | { status: 'valid' }
+  | { status: 'wrong-password' }
+  | { status: 'read-failed'; error: string; errorCode: SyncErrorCode | 'no-backup' }
+
+export const WRONG_PASSWORD_MESSAGE = 'סיסמת הצפנה שגויה'
+const NO_PASSWORD_SET_UP_MESSAGE = 'לא הוגדרה סיסמת הצפנה לגיבוי'
 
 export type CloudBackupInfo = {
   exists: boolean
@@ -175,6 +201,16 @@ export async function setupEncryptionPassword(password: string): Promise<CloudBa
     return { success: false, error: 'Firebase לא מוגדר', errorCode: 'not-configured' }
   }
 
+  // Never overwrite an existing (or unreadable) verify.enc: backup.enc is
+  // encrypted with that password, a new one would orphan it (aglamazo#461).
+  const setupState = await hasEncryptionPasswordSetup()
+  if (setupState.state === 'error') {
+    return { success: false, error: setupState.error, errorCode: setupState.errorCode }
+  }
+  if (setupState.state === 'present') {
+    return { success: false, error: 'כבר הוגדרה סיסמת הצפנה — יש להזין אותה', errorCode: 'password-exists' }
+  }
+
   try {
     const storage = getFirebaseStorage()
     const backupPath = await getBackupPath(user.uid, VERIFICATION_FILE_NAME)
@@ -187,6 +223,8 @@ export async function setupEncryptionPassword(password: string): Promise<CloudBa
     return { success: true }
   } catch (err: any) {
     console.error('[CloudBackup] Setup password failed:', err)
+    const classified = classifySyncError(err)
+    if (classified.errorCode !== 'unknown') return { success: false, ...classified }
     return { success: false, error: 'שגיאה בהגדרת סיסמת הצפנה', errorCode: 'unknown' }
   }
 }
@@ -194,39 +232,59 @@ export async function setupEncryptionPassword(password: string): Promise<CloudBa
 /**
  * Verify encryption password
  */
-export async function verifyEncryptionPassword(password: string): Promise<boolean> {
+export async function verifyEncryptionPassword(password: string): Promise<PasswordCheckResult> {
   const user = getCurrentUser()
-  if (!user || !isFirebaseConfigured()) return false
+  if (!user || !isFirebaseConfigured()) {
+    return { status: 'read-failed', error: 'יש להתחבר כדי להשתמש בגיבוי ענן', errorCode: 'not-authenticated' }
+  }
 
+  let verificationToken: string
   try {
     const storage = getFirebaseStorage()
     const backupPath = await getBackupPath(user.uid, VERIFICATION_FILE_NAME)
     const verifyRef = ref(storage, backupPath)
-
     const bytes = await getBytes(verifyRef)
-    const verificationToken = new TextDecoder().decode(bytes)
-
-    return await verifyPasswordWithToken(verificationToken, password)
-  } catch {
-    return false
+    verificationToken = new TextDecoder().decode(bytes)
+  } catch (err: any) {
+    if (err?.code === 'storage/object-not-found') {
+      return { status: 'read-failed', error: NO_PASSWORD_SET_UP_MESSAGE, errorCode: 'no-backup' }
+    }
+    console.error('[CloudBackup] Reading verification token failed:', err)
+    return { status: 'read-failed', ...classifyBackupReadError(err) }
   }
+
+  // verifyPasswordWithToken catches decrypt failures itself and returns false
+  return (await verifyPasswordWithToken(verificationToken, password))
+    ? { status: 'valid' }
+    : { status: 'wrong-password' }
+}
+
+/** Map a non-valid password check to the CloudBackupResult the callers return. */
+function passwordCheckFailure(check: PasswordCheckResult): CloudBackupResult | null {
+  if (check.status === 'valid') return null
+  if (check.status === 'wrong-password') {
+    return { success: false, error: WRONG_PASSWORD_MESSAGE, errorCode: 'wrong-password' }
+  }
+  return { success: false, error: check.error, errorCode: check.errorCode }
 }
 
 /**
  * Check if user has encryption password set up
  */
-export async function hasEncryptionPasswordSetup(): Promise<boolean> {
+export async function hasEncryptionPasswordSetup(): Promise<EncryptionSetupState> {
   const user = getCurrentUser()
-  if (!user || !isFirebaseConfigured()) return false
+  if (!user || !isFirebaseConfigured()) return { state: 'absent' }
 
   try {
     const storage = getFirebaseStorage()
     const backupPath = await getBackupPath(user.uid, VERIFICATION_FILE_NAME)
     const verifyRef = ref(storage, backupPath)
     await getMetadata(verifyRef)
-    return true
-  } catch {
-    return false
+    return { state: 'present' }
+  } catch (err: any) {
+    if (err?.code === 'storage/object-not-found') return { state: 'absent' }
+    console.error('[CloudBackup] Checking encryption setup failed:', err)
+    return { state: 'error', ...classifyBackupReadError(err) }
   }
 }
 
@@ -254,22 +312,25 @@ export async function uploadBackup(password: string): Promise<CloudBackupResult>
     }
 
     // Verify password first
-    const isValidPassword = await verifyEncryptionPassword(password)
-    if (!isValidPassword) {
-      return { success: false, error: 'סיסמת הצפנה שגויה', errorCode: 'wrong-password' }
-    }
+    const passwordFailure = passwordCheckFailure(await verifyEncryptionPassword(password))
+    if (passwordFailure) return passwordFailure
 
     // Export and encrypt backup
     const backup = await exportAllStores()
     const backupJson = JSON.stringify(backup)
 
-    // Check size before encryption (encrypted will be slightly larger)
-    const sizeError = backupSizeError(backupJson.length, await getTierFromUser(getFirebaseAuth().currentUser))
+    // Early exit on the plaintext size; the encrypted-bytes check below decides (aglamazo#453)
+    const tier = await getTierFromUser(getFirebaseAuth().currentUser)
+    const sizeError = backupSizeError(backupJson.length, tier)
     if (sizeError) {
       return { success: false, error: sizeError, errorCode: 'size-limit' }
     }
 
     const encryptedBackup = await encrypt(backupJson, password)
+    const encryptedSizeError = backupSizeError(encodedByteLength(encryptedBackup), tier)
+    if (encryptedSizeError) {
+      return { success: false, error: encryptedSizeError, errorCode: 'size-limit' }
+    }
 
     // Upload to Firebase Storage
     const storage = getFirebaseStorage()
@@ -322,6 +383,8 @@ export async function downloadBackup(password: string): Promise<CloudBackupResul
       return { success: false, error: 'לא נמצא גיבוי בענן', errorCode: 'no-backup' }
     }
     console.error('[CloudBackup] Download failed:', err)
+    const classified = classifySyncError(err)
+    if (classified.errorCode !== 'unknown') return { success: false, ...classified }
     return { success: false, error: 'שגיאה בהורדת הגיבוי', errorCode: 'unknown' }
   }
 }
@@ -418,6 +481,8 @@ async function downloadBackupWithGeneration(password: string): Promise<{
     return { success: true, data: backup, generation: metadata.generation }
   } catch (err: any) {
     console.error('[CloudBackup] Download with generation failed:', err)
+    const classified = classifySyncError(err)
+    if (classified.errorCode !== 'unknown') return { success: false, ...classified }
     return { success: false, error: 'שגיאה בהורדת הגיבוי', errorCode: 'unknown' }
   }
 }
@@ -455,12 +520,18 @@ async function uploadBackupWithGeneration(
     }
 
     const backupJson = JSON.stringify(backup)
-    const sizeError = backupSizeError(backupJson.length, await getTierFromUser(getFirebaseAuth().currentUser))
+    // Early exit on the plaintext size; the encrypted-bytes check below decides (aglamazo#453)
+    const tier = await getTierFromUser(getFirebaseAuth().currentUser)
+    const sizeError = backupSizeError(backupJson.length, tier)
     if (sizeError) {
       return { success: false, error: sizeError, errorCode: 'size-limit' }
     }
 
     const encryptedBackup = await encrypt(backupJson, password)
+    const encryptedSizeError = backupSizeError(encodedByteLength(encryptedBackup), tier)
+    if (encryptedSizeError) {
+      return { success: false, error: encryptedSizeError, errorCode: 'size-limit' }
+    }
     await uploadString(backupRef, encryptedBackup)
 
     const newMetadata = await getMetadata(backupRef)
@@ -491,10 +562,8 @@ export async function syncMerge(password: string): Promise<CloudBackupResult> {
     return { success: false, error: 'אין נתונים מקומיים', errorCode: 'no-backup' }
   }
 
-  const isValidPassword = await verifyEncryptionPassword(password)
-  if (!isValidPassword) {
-    return { success: false, error: 'סיסמת הצפנה שגויה', errorCode: 'wrong-password' }
-  }
+  const passwordFailure = passwordCheckFailure(await verifyEncryptionPassword(password))
+  if (passwordFailure) return passwordFailure
 
   const MAX_RETRIES = 3
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
@@ -510,7 +579,11 @@ export async function syncMerge(password: string): Promise<CloudBackupResult> {
       } else if (cloudResult.errorCode === 'no-backup') {
         // No cloud backup yet — just upload local
       } else {
-        return { success: false, error: cloudResult.error || 'שגיאה בהורדת הגיבוי', errorCode: 'unknown' }
+        return {
+          success: false,
+          error: cloudResult.error || 'שגיאה בהורדת הגיבוי',
+          errorCode: (cloudResult.errorCode as CloudBackupResult['errorCode']) || 'unknown',
+        }
       }
 
       // 3. Export local (now includes cloud records) and upload
@@ -527,10 +600,10 @@ export async function syncMerge(password: string): Promise<CloudBackupResult> {
       return { success: true }
     } catch (err: any) {
       console.error(`[CloudSync] Sync-merge attempt ${attempt + 1} failed:`, err)
-      // Permission-denied is not transient — fail fast so the user is told to
-      // re-authenticate instead of silently retrying a doomed sync. (#104)
+      // A server refusal or an expired login is not transient — fail fast and
+      // say which it is instead of silently retrying a doomed sync. (#104, #461)
       const classified = classifySyncError(err)
-      if (classified.errorCode === 'permission-denied') {
+      if (classified.errorCode !== 'unknown') {
         return { success: false, ...classified }
       }
       if (attempt === MAX_RETRIES - 1) {

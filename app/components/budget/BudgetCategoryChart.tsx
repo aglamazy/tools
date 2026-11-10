@@ -3,6 +3,18 @@
 import React from 'react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts'
 
+export const CSV_BUTTON_STYLE: React.CSSProperties = {
+  marginInlineStart: '0.5rem',
+  padding: '0.15rem 0.5rem',
+  fontSize: '0.75rem',
+  fontWeight: 500,
+  background: 'transparent',
+  color: '#3b82f6',
+  border: '1px solid #3b82f6',
+  borderRadius: '0.375rem',
+  cursor: 'pointer',
+}
+
 type CategorySlice = { name: string; value: number; color: string }
 
 type BudgetCategoryChartProps = {
@@ -14,11 +26,15 @@ type BudgetCategoryChartProps = {
   onToggleCollapsed: () => void
   onPieClick: (categoryName: string, event: React.MouseEvent) => void
   onCategoryClick: (categoryName: string, event: React.MouseEvent) => void
+  /** The row's 📈 button: open that subject's yearly graph (aglamazo#465). */
+  onSubjectGraphClick: (categoryName: string) => void
+  /** Header ⬇ icon: download every subject of the month as CSV (aglamazo#466). */
+  onExportCsv?: () => void
 }
 
 export default function BudgetCategoryChart({
   categoryData, drillDownCategory, onBackFromDrillDown, selectedCategories,
-  isCollapsed, onToggleCollapsed, onPieClick, onCategoryClick,
+  isCollapsed, onToggleCollapsed, onPieClick, onCategoryClick, onSubjectGraphClick, onExportCsv,
 }: BudgetCategoryChartProps) {
   return (
     <section style={{ marginTop: '2rem' }}>
@@ -42,6 +58,17 @@ export default function BudgetCategoryChart({
           ▼
         </span>
         פילוח הוצאות לפי נושא
+        {onExportCsv && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onExportCsv() }}
+            title="הורדת CSV של כל הנושאים"
+            aria-label="הורדת CSV של כל הנושאים"
+            style={CSV_BUTTON_STYLE}
+          >
+            ⬇ CSV
+          </button>
+        )}
       </h2>
       {!isCollapsed && categoryData.length === 0 && (
         <p style={{ color: '#64748b', fontSize: '0.9rem', padding: '1rem 0' }}>
@@ -216,6 +243,27 @@ export default function BudgetCategoryChart({
                       currency: 'ILS',
                     }).format(cat.value)}
                   </span>
+                  <button
+                    type="button"
+                    title="גרף שנתי"
+                    aria-label={`גרף שנתי: ${cat.name}`}
+                    data-subject-graph={cat.name}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onSubjectGraphClick(cat.name)
+                    }}
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '0.375rem',
+                      padding: '0.125rem 0.375rem',
+                      cursor: 'pointer',
+                      fontSize: '0.9rem',
+                      lineHeight: 1.2,
+                    }}
+                  >
+                    📈
+                  </button>
                 </div>
               </div>
             ))}

@@ -1,43 +1,16 @@
 /**
  * Single source of truth for all IndexedDB tables included in backup/sync.
  *
- * IMPORTANT: When adding a new table to the database that should be synced,
- * add it here. All sync services (backup, merge, apply, dedup) read from this list.
- * An ESLint rule (no-inline-table-lists) guards against creating separate lists.
+ * Sync helpers over SYNCED_DB_TABLES. The list itself is in syncedTableNames.ts: a new
+ * FinanceDB table goes there, in SYNCED_DB_TABLES or DEVICE_LOCAL_DB_TABLES.
  */
 
 import { db } from '@/app/db/financeDB'
 
-/**
- * All IndexedDB tables that participate in backup/sync.
- * Order: parents before children (FK-safe for insert).
- */
-export const SYNCED_DB_TABLES = [
-  'businesses',
-  'categories',
-  'appSettings',
-  'businessCategories',
-  'importedFiles',
-  'transactions',
-  'tasks',
-  'financialInstitutions',
-  'capitalEntries',
-  'ypayDocuments',
-  'expenseDocuments',
-  'projects',
-  'harvestTasks',
-  'timeEntries',
-  'taxDocuments',
-  'advancePayments',
-  'businessTasks',
-  'chats',
-  'chatMessages',
-  'credentials',
-  'vatPayments',
-  'suppliers',
-  'subjects',
-  'subjectClassifications',
-] as const
+// The list itself lives in syncedTableNames.ts (no imports) so financeDB.ts can use it for
+// its deletion-ledger hooks without an import cycle (aglamazo#472).
+export { SYNCED_DB_TABLES, DEVICE_LOCAL_DB_TABLES } from './syncedTableNames'
+import { SYNCED_DB_TABLES } from './syncedTableNames'
 
 export type SyncedTableName = (typeof SYNCED_DB_TABLES)[number]
 

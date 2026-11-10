@@ -10,6 +10,7 @@ import MessageModal from '@/app/components/MessageModal'
 import YesNoModal from '@/app/components/YesNoModal'
 import { useToast } from '@/app/components/ToastContainer'
 import { loadDirectoryHandle, persistDirectoryHandle } from '@/app/utils/directoryStorage'
+import { deleteImportedFileRows } from '@/app/stores/importedFileDeletion'
 import { transactionStore } from '@/app/stores/transactionStore'
 import { config } from '@/app/config'
 import { extractFileMetadata } from '@/app/utils/filePreview'
@@ -19,6 +20,8 @@ import { parseCreditWithRegistry } from '@/app/utils/creditCardParser'
 import type { FilePreview } from '@/app/types/file-preview'
 import { parseXlsTables } from '@/app/utils/xlsTableParser'
 import { runImportSerially, pendingImports, subscribeImportQueue } from '@/app/utils/importQueue'
+import { findFileByParam } from '@/app/components/budget/sourceFileLink'
+import { useFocusFileParam, fileRowId } from '@/app/components/budget/useFocusFileParam'
 
 export default function ImportPage() {
   return (
@@ -104,7 +107,8 @@ function ImportPageContent() {
           })
           if (months.length > 0) {
             // Check URL parameter first
-            const monthParam = searchParams.get('month')
+            // ?file= (budget row's source-file link, #464) shows that file's month
+            const monthParam = findFileByParam(loadedFiles, searchParams.get('file'))?.processingMonth || searchParams.get('month')
             if (monthParam && months.includes(monthParam)) {
               setSelectedMonth(monthParam)
             } else {
@@ -206,6 +210,8 @@ const handleViewFile = async (fileId: number | null, fileKey?: string) => {
   })
 }
 
+const focusedFileKey = useFocusFileParam(files, selectedMonth, searchParams.get('file'), (f) => handleViewFile(f.id ?? null, f.fileKey))
+
 const handleDeleteFile = (file: ImportedFile) => {
   const fileId = file.id
   const fileToDelete = file
@@ -224,21 +230,11 @@ const handleDeleteFile = (file: ImportedFile) => {
           fileToDelete.fileName
         )
 
-        // Remove from imported files list
-        if (fileId) {
-          const data = await transactionStore.getImportedFiles()
-          if (data) {
-            data.files = data.files.filter((f: ImportedFile) => f.id !== fileId)
-            data.lastUpdated = new Date().toISOString()
-            await transactionStore.saveImportedFiles(data)
-
-            // Update state
-            setFiles(data.files)
-          }
-        } else {
-          // Remove from state only (inferred file)
-          setFiles((prev) => prev.filter((f) => f !== fileToDelete))
-        }
+        // Remove this file's importedFiles row(s) with a hooked delete so the
+        // ledger tombstones them (aglamazo#463), then refresh from the source.
+        await deleteImportedFileRows(fileToDelete)
+        const refreshed = await transactionStore.getImportedFiles()
+        setFiles(refreshed ? refreshed.files : [])
 
         // Clear month filter if no files for selected month
         if (selectedMonth) {
@@ -648,7 +644,11 @@ const handleDeleteFile = (file: ImportedFile) => {
               </thead>
               <tbody>
                 {filteredFiles.map((file, index) => (
-                  <tr key={file.id || file.fileKey || `${file.fileName}-${index}`}>
+                  <tr
+                    key={file.id || file.fileKey || `${file.fileName}-${index}`}
+                    id={file.fileKey ? fileRowId(file.fileKey) : undefined}
+                    style={file.fileKey && file.fileKey === focusedFileKey ? { backgroundColor: '#fde68a', outline: '2px solid #f59e0b' } : undefined}
+                  >
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <span>{file.fileType === 'credit-card' ? '💳' : '📄'}</span>

@@ -572,6 +572,7 @@ export const transactionStore = {
           paymentMethod: t.accountNumber || 'Bank',
           installmentInfo: '',
           totalAmount: t.amount,
+          fileId: t.fileId, // aglamazo#464: row links to its source file
         })),
         ...creditTransactions.map((t) => ({
           id: String(t.id),
@@ -583,6 +584,7 @@ export const transactionStore = {
           paymentMethod: `💳 ${t.cardNumber}`,
           installmentInfo: t.totalSteps && t.totalSteps > 1 ? `${t.currentStep}/${t.totalSteps}` : '',
           totalAmount: t.totalAmount || t.amount,
+          fileId: t.fileId, // aglamazo#464: row links to its source file
         })),
       ]
 

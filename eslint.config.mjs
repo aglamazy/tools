@@ -81,9 +81,10 @@ export default [
       "no-restricted-syntax": "off"
     }
   },
-  // Allow inline table lists in DB migrations (frozen historical lists)
+  // Allow inline table lists in DB migrations (frozen historical lists). Not financeDB.ts:
+  // its live sync set hid there as a second list (aglamazo#472).
   {
-    files: ["app/db/**/*.ts"],
+    files: ["app/db/schemaVersions.ts", "app/db/migration.ts", "app/db/businessCategoryMigration.ts"],
     rules: {
       "local/no-inline-table-lists": "off"
     }

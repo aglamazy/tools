@@ -1,4 +1,5 @@
 import Dexie, { Table } from 'dexie'
+import { SYNCED_DB_TABLES } from '@/app/services/syncedTableNames'
 import { defineSchemaVersions } from './schemaVersions'
 import type { CapitalEntry } from '@/app/types/capital'
 import type { FinancialInstitution } from '@/app/types/financialInstitution'
@@ -499,14 +500,7 @@ class FinanceDB extends Dexie {
     defineSchemaVersions(this)
 
     // Tables that participate in sync (auto-track deletions for these)
-    const syncedTables = new Set([
-      'businesses', 'categories', 'appSettings', 'businessCategories',
-      'importedFiles', 'transactions', 'tasks', 'financialInstitutions',
-      'capitalEntries', 'ypayDocuments', 'expenseDocuments', 'projects', 'harvestTasks',
-      'timeEntries', 'taxDocuments', 'advancePayments', 'businessTasks',
-      'chats', 'chatMessages', 'credentials', 'vatPayments', 'suppliers',
-      'subjects', 'subjectClassifications',
-    ])
+    const syncedTables = new Set<string>(SYNCED_DB_TABLES)
 
     // Auto-inject syncId/updatedAt on create/update, and record deletions.
     // Deletion ledger updates are a read-modify-write on a single appSettings
