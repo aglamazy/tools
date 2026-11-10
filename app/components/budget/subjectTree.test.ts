@@ -120,7 +120,6 @@ describe('visible rows (aglamazo#469)', () => {
   it('opening a filled picker starts on the current value, so Enter keeps it (113540)', () => {
     const rows = visibleRows(tree, '', new Set(['רכב']), ['מזון'], true)
     expect(rows[initialActive(rows, '', 'דלק')]).toMatchObject({ value: 'דלק', parent: 'רכב' })
-    // current value inside a folded group: falls back to the first real option, never the clear row
     expect(rows[0]).toMatchObject({ value: '' })
     // a value with no row (legacy / other sign): no cursor, so Enter does nothing (113549)
     const folded = visibleRows(tree, '', new Set(), [], true)
