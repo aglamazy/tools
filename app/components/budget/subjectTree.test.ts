@@ -121,8 +121,11 @@ describe('visible rows (aglamazo#469)', () => {
     const rows = visibleRows(tree, '', new Set(['רכב']), ['מזון'], true)
     expect(rows[initialActive(rows, '', 'דלק')]).toMatchObject({ value: 'דלק', parent: 'רכב' })
     // current value inside a folded group: falls back to the first real option, never the clear row
-    const folded = visibleRows(tree, '', new Set(), [], true)
     expect(rows[0]).toMatchObject({ value: '' })
-    expect(folded[initialActive(folded, '', 'דלק')]).toMatchObject({ value: 'רכב' })
+    // a value with no row (legacy / other sign): no cursor, so Enter does nothing (113549)
+    const folded = visibleRows(tree, '', new Set(), [], true)
+    expect(initialActive(folded, '', 'ישן')).toBe(-1)
+    // and the first ArrowDown lands on the first real option, never the clear row
+    expect(folded[initialActive(folded, '')]).toMatchObject({ value: 'רכב' })
   })
 })

@@ -175,7 +175,7 @@ export default function SubjectSelect({
     const r = rows[active]
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      setActive(active < 0 ? initialActive(rows, '', value) : stepActive(rows, active, 1))
+      setActive(active < 0 ? initialActive(rows, query) : stepActive(rows, active, 1))
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       setActive(stepActive(rows, active, -1))

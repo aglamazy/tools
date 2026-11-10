@@ -187,7 +187,9 @@ export function initialActive(rows: PickerRow[], query: string, current = ''): n
   // With nothing typed, start on the current value (as the native select kept it on Enter).
   if (!q && current) {
     const cur = rows.findIndex((r) => r.kind === 'option' && r.value === current)
-    if (cur >= 0) return cur
+    // A value with no row (legacy, or the other sign's subject): no cursor, so Enter can't
+    // overwrite it until an arrow key picks a row.
+    return cur
   }
   // Never start on the clear row: open + Enter must not wipe the subject.
   return rows.findIndex((r) => r.kind === 'option' && r.value !== '' && (!q || !r.context))
