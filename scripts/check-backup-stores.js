@@ -11,7 +11,7 @@
 const fs = require('fs')
 const path = require('path')
 
-const SYNCED_TABLES_PATH = path.join(__dirname, '../app/services/syncedTables.ts')
+const SYNCED_TABLES_PATH = path.join(__dirname, '../app/services/syncedTableNames.ts')
 const BACKUP_SERVICE_PATH = path.join(__dirname, '../app/services/backupService.ts')
 const MERGE_SERVICE_PATH = path.join(__dirname, '../app/services/mergeService.ts')
 const APPLY_SERVICE_PATH = path.join(__dirname, '../app/services/applyMergedBackupService.ts')
@@ -24,7 +24,7 @@ const applyServiceContent = fs.readFileSync(APPLY_SERVICE_PATH, 'utf-8')
 // Extract table names from SYNCED_DB_TABLES array in syncedTables.ts
 const tableMatches = syncedTablesContent.match(/SYNCED_DB_TABLES\s*=\s*\[([\s\S]*?)\]\s*as\s*const/)
 if (!tableMatches) {
-  console.error('❌ Could not parse SYNCED_DB_TABLES from syncedTables.ts')
+  console.error('❌ Could not parse SYNCED_DB_TABLES from syncedTableNames.ts')
   process.exit(1)
 }
 const syncedTables = [...tableMatches[1].matchAll(/'(\w+)'/g)].map(m => m[1])

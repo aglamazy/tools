@@ -58,6 +58,10 @@ export interface BackupData {
     vatPayments?: any[]
     subjects?: any[]
     subjectClassifications?: any[]
+    students?: any[] // aglamazo#472
+    profileQAs?: any[]
+    scoutConfigs?: any[]
+    scoutResults?: any[]
     // Legacy shape, kept optional so an OLD backup file (from before the
     // subjectStore/timerStore → Dexie migration) can still be restored —
     // see importAllStores' backward-compat block. Never written anymore.

@@ -6,14 +6,13 @@
  * This guards against the bug where a new table is added to one list but not others.
  */
 
-// These are the table names that appear in SYNCED_DB_TABLES.
-// If a new table is added there, add it here too so the lint catches stale lists.
-const KNOWN_TABLE_NAMES = new Set([
-  'businesses', 'categories', 'appSettings', 'businessCategories',
-  'importedFiles', 'transactions', 'tasks', 'financialInstitutions',
-  'capitalEntries', 'ypayDocuments', 'projects', 'harvestTasks',
-  'timeEntries', 'taxDocuments', 'chats', 'chatMessages',
-])
+// Read from the source of truth so this list can't go stale (it had: 16 of 24 names,
+// aglamazo#472).
+const fs = require('fs')
+const path = require('path')
+const namesSrc = fs.readFileSync(path.join(__dirname, '../app/services/syncedTableNames.ts'), 'utf-8')
+const KNOWN_TABLE_NAMES = new Set([...namesSrc.matchAll(/^\s*'(\w+)',/gm)].map((m) => m[1]))
+if (KNOWN_TABLE_NAMES.size < 10) throw new Error('no-inline-table-lists: could not read table names from syncedTableNames.ts')
 
 const THRESHOLD = 3 // flag arrays with 3+ known table names
 
@@ -32,7 +31,7 @@ module.exports = {
   create(context) {
     // Skip the source-of-truth file itself
     const filename = context.getFilename()
-    if (filename.endsWith('syncedTables.ts')) return {}
+    if (filename.endsWith('syncedTables.ts') || filename.endsWith('syncedTableNames.ts')) return {}
 
     return {
       ArrayExpression(node) {
