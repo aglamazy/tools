@@ -120,6 +120,7 @@ export interface Task {
   autoTaskId?: string // For auto-task snooze records (e.g. "missing-bank-123-01/2026")
   delegatedTo?: string // Firebase UID of partner
   delegatedBy?: string // Firebase UID of delegator
+  ownerUid?: string // Firebase UID of the member whose list this task is on (aglamazo#474)
   botId?: string // Bot ID when delegated to a bot
   agentTaskId?: string // Firestore agent task doc ID
   agentStatus?: AgentTaskStatus // Bot task status

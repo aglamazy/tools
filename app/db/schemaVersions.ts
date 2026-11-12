@@ -813,4 +813,12 @@ export function defineSchemaVersions(db: Dexie): void {
   db.version(36).stores({
     deviceAccount: 'key',
   })
+
+  // v37: per-member task lists (aglamazo#474) — index tasks.ownerUid. No
+  // .upgrade(): the owner of an existing task is the household owner, which
+  // needs the household from the server, so taskOwnership.assignTaskOwners
+  // backfills it after open (the todo page calls it once the household loads).
+  db.version(37).stores({
+    tasks: '++id, syncId, createdAt, priority, quadrant, deadline, delegatedTo, autoTaskId, botId, taskType, subject, ownerUid',
+  })
 }

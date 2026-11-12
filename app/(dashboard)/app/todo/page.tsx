@@ -5,6 +5,7 @@ import { useToast } from '@/app/components/ToastContainer'
 import { todoStore, type UserTask, type AutoTask, type EisenhowerQuadrant } from '@/app/stores/todoStore'
 import { getUser } from '@/app/stores/authStore'
 import { getHouseholdInfo } from '@/app/services/householdService'
+import { assignTaskOwners, resolvePrimaryUid, isOnList } from '@/app/services/taskOwnership'
 import { listBots, createAgentTask, subscribeToAgentTasks, markWebhookTaskClaimed, type BotSummary } from '@/app/services/botService'
 import TaskCard, { type CombinedTask } from '@/app/components/todo/TaskCard'
 import DelegatePickerModal, { type DelegateTarget } from '@/app/components/todo/DelegatePickerModal'
@@ -53,6 +54,9 @@ export default function TodoPage() {
   const [partnerUid, setPartnerUid] = useState<string | null>(null)
   const [partnerEmail, setPartnerEmail] = useState<string | null>(null)
   const [currentUid, setCurrentUid] = useState<string | null>(null)
+  // aglamazo#474: whose list the matrix shows (own by default) and who owns ownerless tasks
+  const [listUid, setListUid] = useState<string | null>(null)
+  const [primaryUid, setPrimaryUid] = useState<string | null>(null)
 
   // Bot delegation state
   const [bots, setBots] = useState<BotSummary[]>([])
@@ -149,8 +153,14 @@ export default function TodoPage() {
     const user = getUser()
     if (!user) return
     setCurrentUid(user.uid)
+    setListUid(user.uid)
+    let household: { ownerId: string } | null = null
+    let householdKnown = false
     try {
       const info = await getHouseholdInfo()
+      householdKnown = info.success // success with no household = solo user
+      if (info.success && info.household) household = info.household
+      if (!info.success) console.warn('[todo] household info failed; task owner backfill skipped', info.errorCode)
       if (info.success && info.household && info.household.members.length === 2) {
         const partner = info.household.members.find(m => m !== user.uid)
         if (partner) {
@@ -159,9 +169,17 @@ export default function TodoPage() {
           setPartnerEmail(householdWithEmails.memberEmails?.[partner] || 'שותף/ה')
         }
       }
-    } catch {
-      // No household or error
+    } catch (err) {
+      console.warn('[todo] household info failed; task owner backfill skipped', err)
     }
+    // aglamazo#474: backfill only on a known household answer — a transient
+    // failure must not hand the household owner's old tasks to the partner.
+    if (!householdKnown) return
+    const primary = resolvePrimaryUid(user.uid, household)
+    setPrimaryUid(primary)
+    const changed = await assignTaskOwners(primary)
+    console.log('[todo] assignTaskOwners', { primary, changed })
+    if (changed > 0) loadTasks()
   }
 
   const loadBots = async () => {
@@ -264,7 +282,7 @@ export default function TodoPage() {
     if (!partnerUid) return
     await todoStore.delegateTask(taskId, partnerUid)
     setUserTasks(userTasks.map(t =>
-      t.id === taskId ? { ...t, delegatedTo: partnerUid, delegatedBy: currentUid || undefined, quadrant: 'delegate' } : t
+      t.id === taskId ? { ...t, delegatedTo: partnerUid, delegatedBy: currentUid || undefined, ownerUid: partnerUid, quadrant: 'delegate' } : t
     ))
     showToast('success', `משימה הואצלה ל${partnerEmail}`, '👥')
   }
@@ -413,13 +431,13 @@ export default function TodoPage() {
 
   // Combine user + auto tasks into a single list (memoized)
   const combinedTasks = useMemo((): CombinedTask[] => [
-    ...userTasks.map(t => ({ ...t, id: t.id, taskType: 'user' as const, dataType: t.taskType, subject: t.subject, tags: t.tags, ext: t.ext })),
+    ...userTasks.filter(t => !listUid || isOnList(t, listUid, primaryUid ?? listUid)).map(t => ({ ...t, id: t.id, taskType: 'user' as const, dataType: t.taskType, subject: t.subject, tags: t.tags, ext: t.ext })),
     ...autoTasks.map(t => ({
       id: t.id, title: t.title, completed: false, priority: t.priority,
       quadrant: t.quadrant, deadline: t.deadline, createdAt: t.createdAt,
       taskType: 'auto' as const, autoType: t.type, link: t.link, month: t.month,
     })),
-  ], [userTasks, autoTasks])
+  ], [userTasks, autoTasks, listUid, primaryUid])
 
   // Cache "now" per render for snooze comparisons
   const nowISO = useMemo(() => new Date().toISOString(), [userTasks, autoTasks, showSnoozed, showCompleted])
@@ -583,10 +601,15 @@ export default function TodoPage() {
               😴 {snoozedCount} מוסתרות
             </button>
           )}
-          {partnerUid && (
-            <span style={{ fontSize: '0.8rem', color: '#059669', background: '#ecfdf5', padding: '0.25rem 0.5rem', borderRadius: '0.25rem' }}>
-              👥 שותף/ה: {partnerEmail}
-            </span>
+          {partnerUid && currentUid && (
+            <select
+              value={listUid ?? currentUid}
+              onChange={(e) => setListUid(e.target.value)}
+              style={{ fontSize: '0.8rem', color: '#059669', background: '#ecfdf5', padding: '0.25rem 0.5rem', borderRadius: '0.25rem', border: '1px solid #a7f3d0' }}
+            >
+              <option value={currentUid}>👥 הרשימה שלי</option>
+              <option value={partnerUid}>👥 הרשימה של {partnerEmail}</option>
+            </select>
           )}
           {bots.length > 0 && (
             <span style={{ fontSize: '0.8rem', color: '#1e40af', background: '#eff6ff', padding: '0.25rem 0.5rem', borderRadius: '0.25rem' }}>
