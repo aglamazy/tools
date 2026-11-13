@@ -31,6 +31,14 @@ const AGLAMAZO_MODEL_OVERRIDES: Record<string, ModelEntry> = {
     model: 'claude-sonnet-5',
     label: 'Aglamazo default Anthropic model — chat + every extraction route',
   },
+  // aglamazo#475: smart classify ("סיווג חכם") only. Benchmarked against
+  // claude-sonnet-5 on the same 18 rows: 8.9 s vs 46.6 s median, fewer
+  // confidently-wrong rows, a tenth of the cost (classifyBatching.ts).
+  'aglamazo-classify': {
+    make: 'anthropic',
+    model: 'claude-haiku-5-5',
+    label: 'Aglamazo smart-classify (transactions → subject)',
+  },
   // Distinct from the floor's `extraction` alias on purpose (same value
   // today, different role — agents-models' own rule against repurposing an
   // alias's meaning): this is chatProcessor's escalation when the default
@@ -57,6 +65,7 @@ export function aglamazoModel(alias: string): string {
 
 // The exact strings every call site should import instead of a literal.
 export const ANTHROPIC_MODEL = aglamazoModel('aglamazo-anthropic')
+export const CLASSIFY_MODEL = aglamazoModel('aglamazo-classify')
 export const GEMINI_FLASH_MODEL = aglamazoModel('fallback') // floor alias — value already matches, no override needed
 export const GEMINI_PRO_MODEL = aglamazoModel('extraction') // floor alias — structured extraction, exact numeric OCR
 export const GEMINI_CHAT_ESCALATION_MODEL = aglamazoModel('aglamazo-gemini-chat-escalation')
