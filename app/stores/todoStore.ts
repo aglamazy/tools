@@ -21,6 +21,7 @@ export type UserTask = {
   snoozedUntil?: string
   delegatedTo?: string
   delegatedBy?: string
+  ownerUid?: string
   botId?: string
   agentTaskId?: string
   agentStatus?: AgentTaskStatus
@@ -81,6 +82,7 @@ export const todoStore = {
       priority,
       quadrant,
       ...(deadline ? { deadline } : {}),
+      ...(getUser()?.uid ? { ownerUid: getUser()!.uid } : {}),
       createdAt: new Date().toISOString(),
     }
     const id = await db.tasks.add(task)
@@ -148,6 +150,7 @@ export const todoStore = {
       snoozedUntil: t.snoozedUntil,
       delegatedTo: t.delegatedTo,
       delegatedBy: t.delegatedBy,
+      ownerUid: t.ownerUid,
       botId: t.botId,
       agentTaskId: t.agentTaskId,
       agentStatus: t.agentStatus,
@@ -250,6 +253,7 @@ export const todoStore = {
     await db.tasks.update(id, {
       delegatedTo: toUid,
       delegatedBy: currentUid,
+      ownerUid: toUid, // delegation moves the task to the partner's list (aglamazo#474)
       quadrant: 'delegate' as EisenhowerQuadrant,
     })
   },
@@ -260,6 +264,7 @@ export const todoStore = {
       await db.tasks.update(id, {
         delegatedTo: undefined,
         delegatedBy: undefined,
+        ...(task.delegatedBy ? { ownerUid: task.delegatedBy } : {}),
         quadrant: 'do' as EisenhowerQuadrant,
       })
     }
