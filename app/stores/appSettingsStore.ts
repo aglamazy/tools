@@ -237,6 +237,36 @@ export const appSettingsStore = {
   },
 
   /**
+   * Per-member "hide automatic reminders" flag on the Eisenhower matrix (aglamazo#473).
+   * The reminders stay shared; the key carries the member's uid so one member's
+   * choice never changes the other's view (same device or after sync).
+   */
+  getHideAutoTasks: async (uid: string): Promise<boolean> => {
+    try {
+      const setting = await db.appSettings.where('key').equals(`todoHideAutoTasks:${uid}`).first()
+      return setting?.value === true
+    } catch (error) {
+      console.error('Error getting todoHideAutoTasks:', error)
+      return false
+    }
+  },
+
+  setHideAutoTasks: async (uid: string, hide: boolean): Promise<void> => {
+    const key = `todoHideAutoTasks:${uid}`
+    try {
+      const existing = await db.appSettings.where('key').equals(key).first()
+      if (existing) {
+        await db.appSettings.update(existing.id!, { value: hide, updatedAt: new Date().toISOString() })
+      } else {
+        await db.appSettings.add({ key, value: hide, updatedAt: new Date().toISOString() })
+      }
+    } catch (error) {
+      console.error('Error setting todoHideAutoTasks:', error)
+      throw error
+    }
+  },
+
+  /**
    * Cards/accounts the import wizard should stop expecting files for
    * (aglamazo#353) — e.g. a personal card that isn't relevant to this
    * business's books. Keys match AccountOwners' format: "card:1234" or
