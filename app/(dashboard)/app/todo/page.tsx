@@ -14,6 +14,8 @@ import TaskDetailModal from '@/app/components/todo/TaskDetailModal'
 import SubjectEditorModal from '@/app/components/todo/SubjectEditorModal'
 import YesNoModal from '@/app/components/YesNoModal'
 import { taskSubjectStore } from '@/app/stores/taskSubjectStore'
+import { appSettingsStore } from '@/app/stores/appSettingsStore'
+import { visibleTasks } from '@/app/services/autoTaskVisibility'
 
 type Priority = 'low' | 'medium' | 'high'
 
@@ -43,6 +45,7 @@ export default function TodoPage() {
   const [newTaskQuadrant, setNewTaskQuadrant] = useState<EisenhowerQuadrant>('do')
   const [loading, setLoading] = useState(true)
   const [showCompleted, setShowCompleted] = useState(false)
+  const [hideAutoTasks, setHideAutoTasks] = useState(false) // aglamazo#473, per member in appSettings
   const [draggedTask, setDraggedTask] = useState<CombinedTask | null>(null)
   const [dragOverQuadrant, setDragOverQuadrant] = useState<EisenhowerQuadrant | null>(null)
   const [dragOverTaskId, setDragOverTaskId] = useState<string | number | null>(null)
@@ -154,6 +157,7 @@ export default function TodoPage() {
     if (!user) return
     setCurrentUid(user.uid)
     setListUid(user.uid)
+    appSettingsStore.getHideAutoTasks(user.uid).then(setHideAutoTasks)
     let household: { ownerId: string } | null = null
     let householdKnown = false
     try {
@@ -430,14 +434,14 @@ export default function TodoPage() {
   }
 
   // Combine user + auto tasks into a single list (memoized)
-  const combinedTasks = useMemo((): CombinedTask[] => [
+  const combinedTasks = useMemo((): CombinedTask[] => visibleTasks<CombinedTask>([
     ...userTasks.filter(t => !listUid || isOnList(t, listUid, primaryUid ?? listUid)).map(t => ({ ...t, id: t.id, taskType: 'user' as const, dataType: t.taskType, subject: t.subject, tags: t.tags, ext: t.ext })),
     ...autoTasks.map(t => ({
       id: t.id, title: t.title, completed: false, priority: t.priority,
       quadrant: t.quadrant, deadline: t.deadline, createdAt: t.createdAt,
       taskType: 'auto' as const, autoType: t.type, link: t.link, month: t.month,
     })),
-  ], [userTasks, autoTasks, listUid, primaryUid])
+  ], hideAutoTasks), [userTasks, autoTasks, listUid, primaryUid, hideAutoTasks])
 
   // Cache "now" per render for snooze comparisons
   const nowISO = useMemo(() => new Date().toISOString(), [userTasks, autoTasks, showSnoozed, showCompleted])
@@ -587,6 +591,12 @@ export default function TodoPage() {
             <input type="checkbox" checked={showCompleted} onChange={(e) => setShowCompleted(e.target.checked)} style={{ width: '1rem', height: '1rem' }} />
             הצג הושלמו
           </label>
+          {currentUid && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#6b7280', cursor: 'pointer' }}>
+              <input type="checkbox" checked={hideAutoTasks} onChange={(e) => { setHideAutoTasks(e.target.checked); appSettingsStore.setHideAutoTasks(currentUid, e.target.checked).catch(err => { console.error('[todo] hideAutoTasks save failed', err); showToast('error', 'שמירת ההגדרה נכשלה') }) }} style={{ width: '1rem', height: '1rem' }} />
+              הסתר תזכורות אוטומטיות
+            </label>
+          )}
           {snoozedCount > 0 && (
             <button
               onClick={() => setShowSnoozed(!showSnoozed)}

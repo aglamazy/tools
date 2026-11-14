@@ -7,6 +7,7 @@ import { subjectStore } from '@/app/stores/subjectStore'
 import SubjectSelect from '@/app/components/budget/SubjectSelect'
 import { llmPrefsStore } from '@/app/stores/llmPrefsStore'
 import { db } from '@/app/db/financeDB'
+import { CLASSIFY_BATCH_SIZE, CLASSIFY_PARALLEL, chunkList, runPool } from '@/app/services/classify/classifyBatching'
 
 async function getClaudeKey(): Promise<string> {
   // Primary: appSettings row key='claudeApiKey' (where the Tax-files / Profile UI write it)
@@ -179,26 +180,24 @@ export default function SmartClassifierAgent({ month, onClose, onApplied }: Prop
           txByTxIdRef.current.set(t.id, t)
         }
 
-        // Client-side chunking so the UI can report real "סבב X מתוך Y" progress
-        // between Claude calls. The server-side route still accepts any size and
-        // chunks internally as a safety net for other callers — keeping chunks
-        // here at 50 means the server-side path is a no-op in practice.
-        const CHUNK_SIZE = 50
-        const totalChunks = Math.max(1, Math.ceil(unclassified.length / CHUNK_SIZE))
+        // aglamazo#475: batches of CLASSIFY_BATCH_SIZE, CLASSIFY_PARALLEL at once
+        // (benchmark: 18 rows 46.6 s -> 8.9 s). One request per batch so the UI
+        // reports real progress; the route sees one chunk per request.
+        const chunks = chunkList(unclassified, CLASSIFY_BATCH_SIZE)
+        const totalChunks = chunks.length
         const allConfident: ConfidentItem[] = []
         const allAskUser: AskUserItem[] = []
+        const t0 = Date.now()
+        if (!cancelled) {
+          setLoadingStep(
+            totalChunks === 1
+              ? `שולח ל-Claude (${unclassified.length} עסקאות)...`
+              : `שולח ל-Claude (${unclassified.length} עסקאות ב-${totalChunks} סבבים)...`,
+          )
+        }
 
-        for (let i = 0; i < totalChunks; i++) {
-          if (cancelled) return
-          const chunk = unclassified.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE)
-          if (!cancelled) {
-            setLoadingStep(
-              totalChunks === 1
-                ? `שולח ל-Claude (${chunk.length} עסקאות)...`
-                : `שולח ל-Claude (סבב ${i + 1} מתוך ${totalChunks}, ${chunk.length} עסקאות)...`,
-            )
-          }
-
+        const partials = await runPool(chunks, CLASSIFY_PARALLEL, async (chunk) => {
+          if (cancelled) return null
           const res = await fetch('/api/classify-transactions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -216,9 +215,15 @@ export default function SmartClassifierAgent({ month, onClose, onApplied }: Prop
             throw new Error(`Claude error ${res.status}: ${body.slice(0, 200)}`)
           }
 
-          const data = (await res.json()) as ClassifyResponse
-          if (cancelled) return
+          return (await res.json()) as ClassifyResponse
+        }, (done, total) => {
+          if (!cancelled && total > 1) setLoadingStep(`שולח ל-Claude (סבב ${done} מתוך ${total} הסתיים)...`)
+        })
+        if (cancelled) return
+        console.log(`[SmartClassifier] ${unclassified.length} txs in ${totalChunks} batches: ${((Date.now() - t0) / 1000).toFixed(1)} s`)
 
+        for (const data of partials) {
+          if (!data) continue
           if (Array.isArray(data.confident)) allConfident.push(...data.confident)
           if (Array.isArray(data.askUser)) allAskUser.push(...data.askUser)
         }

@@ -28,6 +28,7 @@ const AGLAMAZO_ROOT = 'Aglamazo'
 const TAX_FOLDER_NAME = 'Tax Documents'
 const EXPENSE_FOLDER_NAME = 'Expense Documents'
 const ADVANCE_FOLDER_NAME = 'Advance Payments'
+const INCOME_FOLDER_NAME = 'Income Documents'
 // Legacy folder names (for migration)
 const LEGACY_TAX_FOLDER = 'Aglamazo Tax Documents'
 const LEGACY_EXPENSE_FOLDER = 'Aglamazo Expense Documents'
@@ -448,6 +449,21 @@ export async function uploadExpenseDocument(
     folderId = await getOrCreateFolder(date.year, folderId)
     folderId = await getOrCreateFolder(date.month, folderId)
   }
+  return uploadToFolder(file, folderId)
+}
+
+/**
+ * Upload an income document issued outside Aglamazo (aglamazo#481) to Drive.
+ * Folder: Aglamazo / Income Documents / <year> / <month>
+ */
+export async function uploadIncomeDocument(
+  file: File,
+  date: { year: string; month: string },
+): Promise<{ fileId: string; webViewLink: string }> {
+  const rootId = await ensureRootFolder()
+  let folderId = await getOrCreateFolder(INCOME_FOLDER_NAME, rootId)
+  folderId = await getOrCreateFolder(date.year, folderId)
+  folderId = await getOrCreateFolder(date.month, folderId)
   return uploadToFolder(file, folderId)
 }
 

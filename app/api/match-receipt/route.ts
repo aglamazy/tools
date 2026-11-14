@@ -141,6 +141,8 @@ export async function POST(req: NextRequest) {
       return handleExtractImage(body.imageBase64, body.mediaType, body.transaction, body.claudeApiKey)
     } else if (action === 'extract-vat-payment') {
       return handleExtractVatPayment(body.pdfBase64, body.mediaType, body.claudeApiKey)
+    } else if (action === 'extract-income-invoice') {
+      return handleExtractIncomeInvoice(body.pdfBase64, body.mediaType, body.claudeApiKey)
     } else if (action === 'download-pdf') {
       return handleDownloadPdf(body.url)
     } else if (action === 'match-supplier') {
@@ -560,6 +562,50 @@ async function handleExtractVatPayment(payloadBase64: string, mediaType: string 
         ? { type: 'document', data: payloadBase64 }
         : { type: 'image', data: payloadBase64, mimeType: mediaType as 'image/png' | 'image/jpeg' | 'image/webp' },
       { type: 'text', text: 'חלץ נתוני אישור תשלום מע״מ מהמסמך המצורף.' },
+    ],
+    anthropicApiKey: claudeApiKey,
+    geminiModel: GEMINI_FLASH_MODEL,
+    geminiMaxTokens: 4096,
+    anthropicMaxTokens: 4096,
+    geminiTemperature: 0,
+  })
+
+  if (!result.ok) {
+    return extractionFailureResponse(result, result.status ?? 502)
+  }
+
+  return NextResponse.json(result.data)
+}
+
+// aglamazo#481: an income invoice / invoice-receipt issued OUTSIDE Aglamazo
+// (e.g. GROW at card clearance), uploaded on the business Invoices tab. The
+// user reviews and can correct every field before it is saved.
+async function handleExtractIncomeInvoice(payloadBase64: string, mediaType: string | undefined, claudeApiKey?: string) {
+  if (!payloadBase64) {
+    return NextResponse.json({ error: 'Missing pdfBase64' }, { status: 400 })
+  }
+  const isPdf = !mediaType || mediaType === 'application/pdf'
+  const result = await extractJsonWithFallback<Record<string, unknown>>({
+    routeName: 'match-receipt',
+    systemPrompt: `אתה מומחה לחילוץ נתונים מחשבונית מס / חשבונית מס קבלה ישראלית שהעסק הנפיק ללקוח שלו.
+חלץ את השדות הבאים והחזר JSON בלבד, ללא markdown, ללא הסברים.
+
+השדות:
+- docType: 109 אם כותרת המסמך היא "חשבונית מס קבלה" (או "חשבונית מס/קבלה"), 106 אם היא "חשבונית מס" בלבד, אחרת null
+- serialNumber: מספר המסמך (מחרוזת)
+- date: תאריך הפקת המסמך בפורמט YYYY-MM-DD
+- customerName: שם הלקוח שאליו הונפק המסמך (לא שם העסק המנפיק)
+- netAmount: סכום לפני מע״מ (מספר)
+- vatAmount: סכום המע״מ (מספר, 0 אם אין)
+- grossAmount: סה״כ כולל מע״מ (מספר)
+
+אם שדה לא מופיע במסמך החזר null — אל תנחש.
+החזר אך ורק JSON תקין.`,
+    userParts: [
+      isPdf
+        ? { type: 'document', data: payloadBase64 }
+        : { type: 'image', data: payloadBase64, mimeType: mediaType as 'image/png' | 'image/jpeg' | 'image/webp' },
+      { type: 'text', text: 'חלץ את נתוני החשבונית מהמסמך המצורף.' },
     ],
     anthropicApiKey: claudeApiKey,
     geminiModel: GEMINI_FLASH_MODEL,

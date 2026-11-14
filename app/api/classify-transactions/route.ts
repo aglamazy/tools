@@ -5,7 +5,14 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { BudgetTransaction } from '@/app/types/transactions'
 import type { Category } from '@/app/types/category'
 import { parseClaudeJson } from '@/app/utils/parseClaudeJson'
-import { ANTHROPIC_MODEL } from '@/app/services/llm/modelRegistry'
+import { CLASSIFY_MODEL } from '@/app/services/llm/modelRegistry'
+import {
+  CLASSIFY_BATCH_SIZE,
+  CLASSIFY_EFFORT,
+  CLASSIFY_PARALLEL,
+  chunkList,
+  runPool,
+} from '@/app/services/classify/classifyBatching'
 
 type HistoryEntry = { business: string; category: string }
 
@@ -81,12 +88,6 @@ askUser: עסקאות אמביוולנטיות שצריך לשאול את המש
 - הקפד שכל txId שאתה מחזיר מופיע ב-confident או ב-askUser, לא בשניהם.
 - כל עסקה חייבת להיות מסווגת באחת משתי הרשימות. אל תשמיט עסקאות.`
 
-    // Cap how many txs go in one Claude call. The 8k output-token budget
-    // comfortably fits ~50 txs with the verbose Hebrew "reasoning"/"why"
-    // fields; larger batches truncated mid-JSON. We chunk server-side so
-    // the client passes the full list as one request.
-    const CHUNK_SIZE = 50
-
     const callClaude = async (
       batch: typeof slimTransactions,
     ): Promise<{ confident: unknown[]; askUser: unknown[] }> => {
@@ -115,9 +116,13 @@ ${JSON.stringify(batch, null, 2)}
       // first, which is a separate, larger change than this ticket's scope.
       let response
       try {
+        // aglamazo#475: model, effort and batch shape come from the benchmark
+        // (classifyBatching.ts); effort low keeps thinking short, which was
+        // most of the old 46 s.
         response = await new Anthropic({ apiKey }).messages.create({
-          model: ANTHROPIC_MODEL,
+          model: CLASSIFY_MODEL,
           max_tokens: 8192,
+          output_config: { effort: CLASSIFY_EFFORT },
           system: systemPrompt,
           messages: [{ role: 'user', content: userMessage }],
         })
@@ -129,10 +134,10 @@ ${JSON.stringify(batch, null, 2)}
       const text = response.content.map((b) => (b.type === 'text' ? b.text : '')).join('')
       const stopReason = response.stop_reason
       if (stopReason === 'max_tokens') {
-        // Shouldn't happen at CHUNK_SIZE=50, but if it does the chunk is
-        // too big for the model — surface as a hard error so we shrink the
-        // cap rather than silently dropping txs.
-        throw new Error(`Claude response truncated (max_tokens) on a ${batch.length}-tx chunk; shrink CHUNK_SIZE`)
+        // Shouldn't happen at CLASSIFY_BATCH_SIZE, but if it does the chunk
+        // is too big for the model — surface as a hard error so we shrink
+        // the cap rather than silently dropping txs.
+        throw new Error(`Claude response truncated (max_tokens) on a ${batch.length}-tx chunk; shrink CLASSIFY_BATCH_SIZE`)
       }
 
       const parsed = parseClaudeJson<{ confident?: unknown; askUser?: unknown }>(text)
@@ -142,24 +147,26 @@ ${JSON.stringify(batch, null, 2)}
       }
     }
 
-    // Chunk the txs and classify each chunk. Sequential keeps it predictable
-    // under Anthropic rate limits; parallelize later only if measured slow.
-    const chunks: (typeof slimTransactions)[] = []
-    for (let i = 0; i < slimTransactions.length; i += CHUNK_SIZE) {
-      chunks.push(slimTransactions.slice(i, i + CHUNK_SIZE))
-    }
+    // The page already sends CLASSIFY_BATCH_SIZE rows per request; this
+    // chunking is the same shape for any other caller that sends more.
+    // Measured slow when sequential (aglamazo#475), so chunks run CLASSIFY_PARALLEL at once.
+    const chunks = chunkList(slimTransactions, CLASSIFY_BATCH_SIZE)
 
     try {
       const merged = { confident: [] as unknown[], askUser: [] as unknown[] }
-      for (let i = 0; i < chunks.length; i++) {
-        const partial = await callClaude(chunks[i])
-        merged.confident.push(...partial.confident)
-        merged.askUser.push(...partial.askUser)
+      const partials = await runPool(chunks, CLASSIFY_PARALLEL, async (chunk, i) => {
+        const t0 = Date.now()
+        const partial = await callClaude(chunk)
         console.log(
           `[classify-transactions] chunk ${i + 1}/${chunks.length} ` +
-          `(${chunks[i].length} txs) → confident=${partial.confident.length} ` +
+          `(${chunk.length} txs, ${Date.now() - t0} ms) → confident=${partial.confident.length} ` +
           `askUser=${partial.askUser.length}`,
         )
+        return partial
+      })
+      for (const partial of partials) {
+        merged.confident.push(...partial.confident)
+        merged.askUser.push(...partial.askUser)
       }
       return NextResponse.json(merged)
     } catch (chunkErr: unknown) {
