@@ -9,6 +9,7 @@ import { YpayDocType, computeInvoicePaidAmount, invoiceGrossAmount } from '@/app
 import { getTaxProfile } from '@/app/components/TaxProfileSection'
 import Modal from '@/app/components/Modal'
 import ItemInvoiceModal from './ItemInvoiceModal'
+import ExternalInvoiceUploadModal from './ExternalInvoiceUploadModal'
 import { isBusinessInvoice } from '@/app/services/billing/businessInvoice'
 
 type InvoicesTabProps = {
@@ -36,6 +37,7 @@ function docTypeLabel(docType: number): string {
   switch (docType) {
     case YpayDocType.BusinessInvoice: return 'חשבונית עסקה'
     case YpayDocType.TaxInvoice: return 'חשבונית מס'
+    case YpayDocType.TaxInvoiceReceipt: return 'חשבונית מס קבלה'
     default: return `סוג ${docType}`
   }
 }
@@ -50,6 +52,7 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
   const [docs, setDocs] = useState<InvoiceWithBalance[]>([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
+  const [showExternalModal, setShowExternalModal] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [profileVatType, setProfileVatType] = useState<'exempt' | 'authorized' | undefined>(undefined)
   const [projectFilter, setProjectFilter] = useState<string>('all')
@@ -76,7 +79,11 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
     // All docs (not just invoices) are needed to sum each invoice's receipt
     // allocations toward it (computeInvoicePaidAmount scans every receipt).
     const allDocs = await db.ypayDocuments.toArray()
-    const invoices = allDocs.filter(d => billingDocTypes.has(d.docType) && isBusinessInvoice(d, businessId, projectNames))
+    // aglamazo#481: an uploaded external document (any of 106/109) belongs to
+    // the tab too; YPAY-issued 109s stay on the Incomes tab as receipts.
+    const invoices = allDocs.filter(d =>
+      (billingDocTypes.has(d.docType) || d.source === 'external')
+      && isBusinessInvoice(d, businessId, projectNames))
     const withBalance: InvoiceWithBalance[] = invoices.map((inv) => {
       const paidSoFar = inv.syncId != null ? computeInvoicePaidAmount(inv.syncId, allDocs) : 0
       return { ...inv, paidSoFar, remainingAmount: invoiceGrossAmount(inv) - paidSoFar }
@@ -98,8 +105,12 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
   // so a customer/project with invoices but no longer active still shows up
   // — a filter that can silently produce zero results is worse than one that
   // includes an inactive project.
-  const projectOptions = [...new Set(docs.map(d => d.projectName).filter((n): n is string => !!n))].sort((a, b) => a.localeCompare(b, 'he'))
-  const visibleDocs = projectFilter === 'all' ? docs : docs.filter(d => d.projectName === projectFilter)
+  // aglamazo#481: an external document's customer may match no project, so
+  // the filter keys on what the column shows (project, else customer) — a
+  // filter on projectName alone hid a just-uploaded document (Agla 119543).
+  const customerOf = (d: YpayDocument) => d.projectName || d.customerName
+  const projectOptions = [...new Set(docs.map(customerOf).filter((n): n is string => !!n))].sort((a, b) => a.localeCompare(b, 'he'))
+  const visibleDocs = projectFilter === 'all' ? docs : docs.filter(d => customerOf(d) === projectFilter)
   // For the split-override tooltip (aglamazo#339) — uid -> display label.
   const partnerLabelByUid = new Map(
     (business ? partnerStore.getCached(business.syncId) : []).map(p => [p.uid, p.label]),
@@ -131,6 +142,17 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
             </select>
           )}
         </div>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <button
+          onClick={() => setShowExternalModal(true)}
+          title="חשבונית או חשבונית מס קבלה שהופקה מחוץ לאגלמזו (למשל GROW)"
+          style={{
+            padding: '0.5rem 1rem', background: 'white', color: '#6366f1',
+            border: '1px solid #6366f1', borderRadius: '0.375rem', cursor: 'pointer', fontWeight: 600,
+          }}
+        >
+          ⬆ העלאת חשבונית חיצונית
+        </button>
         <button
           disabled={!hasYpay}
           onClick={() => setShowModal(true)}
@@ -144,6 +166,7 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
         >
           + חשבונית חדשה
         </button>
+        </div>
       </div>
 
       {!hasYpay && (
@@ -203,7 +226,7 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
                         </span>
                       )}
                     </td>
-                    <td style={{ padding: '0.75rem' }}>{doc.projectName || '—'}</td>
+                    <td style={{ padding: '0.75rem' }}>{customerOf(doc) || '—'}</td>
                     <td style={{ padding: '0.75rem' }}>
                       {displayDate.primary}
                       {displayDate.serviceMonth && (
@@ -211,7 +234,7 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
                       )}
                     </td>
                     <td style={{ padding: '0.75rem', color: '#64748b', fontSize: '0.85rem' }}>
-                      {docTypeLabel(doc.docType)} · {isItemBased ? 'פריטים' : 'שעתי'}
+                      {docTypeLabel(doc.docType)} · {doc.source === 'external' ? 'חיצוני' : isItemBased ? 'פריטים' : 'שעתי'}
                     </td>
                     <td style={{ padding: '0.75rem', textAlign: 'left', fontWeight: 600 }}>
                       {doc.amount != null ? `${doc.amount.toFixed(2)} ₪` : '—'}
@@ -254,6 +277,14 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
             </tbody>
           </table>
         </div>
+      )}
+
+      {showExternalModal && (
+        <ExternalInvoiceUploadModal
+          businessId={businessId}
+          onClose={() => setShowExternalModal(false)}
+          onSaved={() => void load()}
+        />
       )}
 
       {showModal && business && (
