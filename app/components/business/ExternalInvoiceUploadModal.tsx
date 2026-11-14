@@ -4,7 +4,8 @@ import React, { useState } from 'react'
 import { db } from '@/app/db/financeDB'
 import Modal from '@/app/components/Modal'
 import { YpayDocType } from '@/app/services/ypayService'
-import { uploadIncomeDocument } from '@/app/services/googleDriveService'
+import { uploadIncomeDocument, requestGoogleAccess } from '@/app/services/googleDriveService'
+import { getAccessToken } from '@/app/services/googleTokenService'
 import {
   precheckExternalIncomeDocument,
   saveExternalIncomeDocument,
@@ -114,6 +115,17 @@ export default function ExternalInvoiceUploadModal({ businessId, onClose, onSave
     setSaving(true)
     setError(null)
     try {
+      // Drive access is granted per feature, at the click (googleTokenService,
+      // #39) — the same as gmailService. Asked first, while the click's user
+      // activation is still fresh, so the consent popup is not blocked.
+      // Agla 119534 hit "No Google access token available" here.
+      if (!(await getAccessToken())) {
+        const granted = await requestGoogleAccess()
+        if (!granted.success) {
+          setError(`נדרש חיבור ל-Google Drive כדי לשמור את הקובץ${granted.error ? ` (${granted.error})` : ''}`)
+          return
+        }
+      }
       const refused = await precheckExternalIncomeDocument(input)
       if (refused) { setError(refused); return }
       const [year, month] = form.date.split('-')
