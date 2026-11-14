@@ -53,10 +53,13 @@ export function validateExternalIncomeInput(input: ExternalIncomeDocInput): stri
 }
 
 async function matchBusinessProjectName(businessId: string, customerName: string): Promise<string | undefined> {
-  const trimmed = customerName.trim()
-  if (!trimmed) return undefined
+  // Whitespace-normalized: a PDF read can carry a double or non-breaking
+  // space that an exact compare misses (Agla 119543).
+  const norm = (v: string) => v.replace(/\s+/g, ' ').trim()
+  const wanted = norm(customerName)
+  if (!wanted) return undefined
   const projects = await projectStore.getByBusinessId(businessId)
-  const matches = projects.filter(p => p.name.trim() === trimmed)
+  const matches = projects.filter(p => norm(p.name) === wanted)
   return matches.length === 1 ? matches[0].name : undefined
 }
 

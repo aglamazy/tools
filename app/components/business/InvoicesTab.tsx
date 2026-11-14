@@ -89,6 +89,10 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
       return { ...inv, paidSoFar, remainingAmount: invoiceGrossAmount(inv) - paidSoFar }
     })
     withBalance.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+    console.log('[InvoicesTab] external docs', allDocs.filter(d => d.source === 'external').map(d => ({
+      serial: d.serialNumber, businessId: d.businessId, projectName: d.projectName, customerName: d.customerName,
+      listed: withBalance.some(w => w.id === d.id),
+    })), 'tab businessId', businessId)
     setDocs(withBalance)
     setLoading(false)
   }, [businessId])
@@ -105,8 +109,12 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
   // so a customer/project with invoices but no longer active still shows up
   // — a filter that can silently produce zero results is worse than one that
   // includes an inactive project.
-  const projectOptions = [...new Set(docs.map(d => d.projectName).filter((n): n is string => !!n))].sort((a, b) => a.localeCompare(b, 'he'))
-  const visibleDocs = projectFilter === 'all' ? docs : docs.filter(d => d.projectName === projectFilter)
+  // aglamazo#481: an external document's customer may match no project, so
+  // the filter keys on what the column shows (project, else customer) — a
+  // filter on projectName alone hid a just-uploaded document (Agla 119543).
+  const customerOf = (d: YpayDocument) => d.projectName || d.customerName
+  const projectOptions = [...new Set(docs.map(customerOf).filter((n): n is string => !!n))].sort((a, b) => a.localeCompare(b, 'he'))
+  const visibleDocs = projectFilter === 'all' ? docs : docs.filter(d => customerOf(d) === projectFilter)
   // For the split-override tooltip (aglamazo#339) — uid -> display label.
   const partnerLabelByUid = new Map(
     (business ? partnerStore.getCached(business.syncId) : []).map(p => [p.uid, p.label]),
@@ -222,7 +230,7 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
                         </span>
                       )}
                     </td>
-                    <td style={{ padding: '0.75rem' }}>{doc.projectName || doc.customerName || '—'}</td>
+                    <td style={{ padding: '0.75rem' }}>{customerOf(doc) || '—'}</td>
                     <td style={{ padding: '0.75rem' }}>
                       {displayDate.primary}
                       {displayDate.serviceMonth && (

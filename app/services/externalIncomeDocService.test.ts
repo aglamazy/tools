@@ -89,4 +89,11 @@ describe('saveExternalIncomeDocument (aglamazo#481)', () => {
     const [doc] = await db.ypayDocuments.toArray()
     expect(doc.projectName).toBe('לקוח בדיקה')
   })
+
+  it('matches the project despite a double or non-breaking space in the read customer name', async () => {
+    await db.projects.add({ name: 'לקוח בדיקה', businessId: BIZ } as unknown as Project)
+    await saveExternalIncomeDocument(receipt({ customerName: 'לקוח\u00a0 בדיקה ' }))
+    const [doc] = await db.ypayDocuments.toArray()
+    expect(doc.projectName).toBe('לקוח בדיקה')
+  })
 })
