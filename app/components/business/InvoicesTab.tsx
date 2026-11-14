@@ -89,10 +89,6 @@ export default function InvoicesTab({ businessId }: InvoicesTabProps) {
       return { ...inv, paidSoFar, remainingAmount: invoiceGrossAmount(inv) - paidSoFar }
     })
     withBalance.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
-    console.log('[InvoicesTab] external docs', allDocs.filter(d => d.source === 'external').map(d => ({
-      serial: d.serialNumber, businessId: d.businessId, projectName: d.projectName, customerName: d.customerName,
-      listed: withBalance.some(w => w.id === d.id),
-    })), 'tab businessId', businessId)
     setDocs(withBalance)
     setLoading(false)
   }, [businessId])
