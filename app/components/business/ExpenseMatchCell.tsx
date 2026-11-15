@@ -6,6 +6,7 @@ import { matchReceiptForTransaction, manualPickCandidate, parseDateFolder, extra
 import { uploadExpenseDocument } from '@/app/services/googleDriveService'
 import { getAccessToken, requestGoogleAccess } from '@/app/services/googleTokenService'
 import SearchResultsModal from './SearchResultsModal'
+import { buildUploadedExpenseDoc } from './uploadedExpenseDoc'
 
 type MatchStatus = 'idle' | 'searching' | 'uploading' | 'matched' | 'no-match' | 'error'
 
@@ -191,33 +192,12 @@ export default function ExpenseMatchCell({ transaction, linkedDoc, claudeApiKey,
       )
       console.log('[ExpenseMatch] manual upload extract →', extracted)
 
-      const doc: ExpenseDocument = {
-        transactionId: transaction.syncId,
+      const doc = buildUploadedExpenseDoc({
+        transactionSyncId: transaction.syncId,
         fileName: file.name,
-        vendor: extracted?.vendor,
-        amount: extracted?.amount,
-        vatAmount: extracted?.vatAmount,
-        date: extracted?.date,
-        description: extracted?.documentTitle || extracted?.description,
-        driveFileId: uploaded.fileId,
-        driveWebViewLink: uploaded.webViewLink,
-        extractedData: Object.keys(extracted).length > 0 ? extracted : undefined,
-        sourceType: 'upload',
-        uploadedAt: new Date().toISOString(),
-        // The auto-search path REJECTS a candidate outright when Claude's own
-        // matchesTransaction check fails; a manual upload had no such guard —
-        // it silently accepted whatever was uploaded, vendor/amount mismatch
-        // or not. Confirmed live 2026-09-15 (Agla, correctly): a water bill
-        // got manually attached to an Arnona transaction with no warning
-        // anywhere — "I don't want the fixes to be from behind the scenes.
-        // It should be UI solvable." A manual upload is often deliberately an
-        // override (the user knows better than the extraction), so this
-        // still accepts the doc — but now flags it visibly instead of hiding
-        // the mismatch, using the existing (previously unused) mismatch/
-        // mismatchDetails fields.
-        mismatch: extracted?.matchesTransaction === false,
-        mismatchDetails: extracted?.matchReason,
-      }
+        uploaded: { fileId: uploaded.fileId, webViewLink: uploaded.webViewLink },
+        extracted,
+      })
       onMatched(doc)
       setStatus('matched')
     } catch (err: any) {
