@@ -1,5 +1,6 @@
 // CALLER-KEYED ROUTE — uses platform Gemini key + caller's Claude API key
 import { classifyDocumentLinkFailure, type LinkAttempt } from '@/app/services/documentLinkFailure'
+import { withForeignVatZero } from '@/app/services/foreignVat'
 import { NextRequest, NextResponse } from 'next/server'
 import { extractJsonWithFallback, type ExtractionFailure } from '@/app/services/llm/extractionLadder'
 import { GEMINI_FLASH_MODEL, GEMINI_PRO_MODEL } from '@/app/services/llm/modelRegistry'
@@ -360,7 +361,7 @@ async function handleExtract(
   }
 
   console.log(`[match-receipt] extract · ${result.provider} raw result →\n${result.text}`)
-  return NextResponse.json(result.data)
+  return NextResponse.json(withForeignVatZero(result.data))
 }
 
 async function handleDownloadPdf(url: string) {
@@ -494,7 +495,7 @@ async function handleExtractPdf(pdfBase64: string, transaction: TransactionInfo,
     return extractionFailureResponse(result, result.status ?? 502)
   }
 
-  return NextResponse.json(result.data)
+  return NextResponse.json(withForeignVatZero(result.data))
 }
 
 async function handleExtractImage(imageBase64: string, mediaType: string, transaction: TransactionInfo, claudeApiKey?: string) {
@@ -537,7 +538,7 @@ async function handleExtractImage(imageBase64: string, mediaType: string, transa
     return extractionFailureResponse(result, result.status ?? 502)
   }
 
-  return NextResponse.json(result.data)
+  return NextResponse.json(withForeignVatZero(result.data))
 }
 
 /**
