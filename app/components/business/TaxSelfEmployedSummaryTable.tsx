@@ -10,6 +10,8 @@ import type { BusinessUI } from '@/app/types/business'
 import { businessStore } from '@/app/stores/businessStore'
 import { HEBREW_MONTHS, cellStyle, tHeaderStyle, fmt } from './taxSharedStyles'
 import ExpenseMatchCell from './ExpenseMatchCell'
+import IncomeDocsList from './IncomeDocsList'
+import type { InvoiceIncomeResult, MonthIncome } from './invoiceIncome'
 
 type SelfEmployedTableProps = {
   businesses: Business[]
@@ -19,9 +21,11 @@ type SelfEmployedTableProps = {
   categoryByName: Map<string, Category>
   currentYear: number
   currentMonth: number
+  /** aglamazo#485: income = ypay tax documents + unpapered deposits */
+  invoiceIncome: InvoiceIncomeResult
 }
 
-export default function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, expCategoryMap, categoryByName, currentYear, currentMonth }: SelfEmployedTableProps) {
+export default function SelfEmployedSummaryTable({ businesses, transactions, bizCategoryMap, expCategoryMap, categoryByName, currentYear, currentMonth, invoiceIncome }: SelfEmployedTableProps) {
   // Household-scope deductible expense category names: any category with no
   // businessId but deductibleByMember set. Each appears under "משק בית" in
   // the table, NOT under a business column, even though tax math still folds
@@ -40,12 +44,13 @@ export default function SelfEmployedSummaryTable({ businesses, transactions, biz
     const monthStr = `${String(i + 1).padStart(2, '0')}/${currentYear}`
 
     const bizIncome: Record<number, number> = {}
+    const bizIncomeDetail: Record<number, MonthIncome | undefined> = {}
     const bizExpense: Record<number, number> = {}
     let householdExpense = 0
     for (const biz of businesses) {
-      const catNames = (biz.syncId && bizCategoryMap.get(biz.syncId)) || []
-      const bizTx = transactions.filter(t => t.month === monthStr && t.category && catNames.includes(t.category))
-      bizIncome[biz.id!] = bizTx.reduce((s, t) => s + (t.amount || 0), 0)
+      const detail = biz.syncId ? invoiceIncome.byBusiness.get(biz.syncId)?.get(monthStr) : undefined
+      bizIncomeDetail[biz.id!] = detail
+      bizIncome[biz.id!] = detail?.total || 0
 
       // Per-business expense column: only business-scoped categories
       // (cat.businessId === biz.syncId). Household-deductible categories go to
@@ -80,7 +85,7 @@ export default function SelfEmployedSummaryTable({ businesses, transactions, biz
       householdExpense = hhTx.reduce((s, t) => s + effectiveExpenseAmount(t, hostBiz, categoryByName), 0)
     }
 
-    return { month: i, label: HEBREW_MONTHS[i], bizIncome, bizExpense, householdExpense }
+    return { month: i, label: HEBREW_MONTHS[i], bizIncome, bizIncomeDetail, bizExpense, householdExpense }
   })
 
   const totals = {
@@ -250,6 +255,7 @@ export default function SelfEmployedSummaryTable({ businesses, transactions, biz
               <td style={{ ...cellStyle, textAlign: 'right', direction: 'rtl', fontWeight: 500 }}>{row.label}</td>
               {businesses.map(biz => {
                 const income = row.bizIncome[biz.id!] || 0
+                const hasUnpapered = (row.bizIncomeDetail[biz.id!]?.unpapered.length || 0) > 0
                 const expense = row.bizExpense[biz.id!] || 0
                 return (
                   <React.Fragment key={biz.id}>
@@ -263,6 +269,7 @@ export default function SelfEmployedSummaryTable({ businesses, transactions, biz
                       }}
                     >
                       {income ? fmt(income) : '—'}
+                      {hasUnpapered && <span title="יש הפקדה ללא חשבונית" style={{ marginInlineStart: '0.3rem', color: '#b45309' }}>⚠</span>}
                     </td>
                     <td
                       onClick={() => expense ? setDrillDown(isCellOpen(row.month, biz.id!, 'expense') ? null : { monthIdx: row.month, bizId: biz.id!, kind: 'expense' }) : undefined}
@@ -334,6 +341,9 @@ export default function SelfEmployedSummaryTable({ businesses, transactions, biz
         }
         const total = txList.reduce((s, t) => s + effectiveAmount(t), 0)
         const panelTitle = isHousehold ? 'משק בית' : biz?.name
+        const incomeDetail = !isExpense && biz?.syncId
+          ? invoiceIncome.byBusiness.get(biz.syncId)?.get(`${String(drillDown.monthIdx + 1).padStart(2, '0')}/${currentYear}`)
+          : undefined
         return (
           <div style={{
             marginTop: '1rem',
@@ -353,7 +363,9 @@ export default function SelfEmployedSummaryTable({ businesses, transactions, biz
                 ✕
               </button>
             </div>
-            {txList.length === 0 ? (
+            {!isExpense ? (
+              <IncomeDocsList income={incomeDetail || { total: 0, docs: [], unpapered: [] }} />
+            ) : txList.length === 0 ? (
               <p style={{ color: '#94a3b8', fontSize: '0.85rem' }}>אין תנועות</p>
             ) : (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
