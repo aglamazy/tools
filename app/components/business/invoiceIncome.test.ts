@@ -27,8 +27,10 @@ const doc = (p: Partial<YpayDocument>): YpayDocument =>
 const tx = (p: Partial<Transaction>): Transaction =>
   ({ id: ++n, syncId: `tx-${n}`, type: 'bank', description: 'deposit', isFixed: false, ...p }) as Transaction
 
-const run = (docs: YpayDocument[], transactions: Transaction[], depositNet = authorizedNet) =>
-  computeInvoiceIncome({ businessSyncIds: [AH, BL], docs, projects, transactions, bizCategoryMap, depositNet })
+const run = (docs: YpayDocument[], transactions: Transaction[], depositNet = authorizedNet, isExemptAt?: (date: string) => boolean) =>
+  computeInvoiceIncome({ businessSyncIds: [AH, BL], docs, projects, transactions, bizCategoryMap, depositNet, isExemptAt })
+// the real 2026 profile: exempt until the 2026-04-14 conversion
+const exemptBefore0414 = (date: string) => date < '2026-04-14'
 
 describe('computeInvoiceIncome (aglamazo#485)', () => {
   it('a: one invoice + its linked deposit -> invoice net once, deposit zero times, panel lists the invoice', () => {
@@ -126,5 +128,43 @@ describe('computeInvoiceIncome (aglamazo#485)', () => {
     const r = run([a, b], [])
     expect(monthIncomeFor(r, [AH, BL], '06/2026')).toBe(1500)
     expect(monthIncomeFor(r, [AH], '06/2026')).toBe(1000)
+  })
+
+  describe('aglamazo#486: exempt dates', () => {
+    it('1: exempt at the deposit date + linked receipt = papered, counts the receipt amount, no warning', () => {
+      const d1 = tx({ category: 'BL income', month: '01/2026', date: '2026-01-02', amount: 3500 })
+      const d2 = tx({ category: 'BL income', month: '01/2026', date: '2026-01-11', amount: 36740 })
+      const r1 = doc({ docType: 108, serialNumber: '800003', transactionId: d1.syncId! })
+      const r2 = doc({ docType: 108, serialNumber: '800004', transactionId: d2.syncId! })
+      const jan = run([r1, r2], [d1, d2], exemptNet, exemptBefore0414).byBusiness.get(BL)!.get('01/2026')!
+      expect(jan.total).toBe(40240)
+      expect(jan.unpapered).toHaveLength(0)
+      expect(jan.docs.map(d => [d.serial, d.docType, d.net])).toEqual([['800003', 108, 3500], ['800004', 108, 36740]])
+    })
+
+    it('1: an old manual-link stub with an 8xxxxx serial (stored as 109, no amount) is a receipt on an exempt date', () => {
+      const dep = tx({ category: 'BL income', month: '02/2026', date: '2026-02-17', amount: 1260 })
+      const stub = doc({ docType: 109, serialNumber: '800008', transactionId: dep.syncId!, createdAt: '2026-09-07T18:36:18.540Z' })
+      const feb = run([stub], [dep], exemptNet, exemptBefore0414).byBusiness.get(BL)!.get('02/2026')!
+      expect(feb.total).toBe(1260)
+      expect(feb.unpapered).toHaveLength(0)
+    })
+
+    it('2: exempt with neither receipt nor invoice still warns', () => {
+      const dep = tx({ category: 'BL income', month: '03/2026', date: '2026-03-20', amount: 2000 })
+      const mar = run([], [dep], exemptNet, exemptBefore0414).byBusiness.get(BL)!.get('03/2026')!
+      expect(mar.unpapered).toHaveLength(1)
+      expect(mar.total).toBe(2000)
+    })
+
+    it('3: authorized at the deposit date = #485 unchanged (receipt with no invoice still warns)', () => {
+      const dep = tx({ category: 'BL income', month: '04/2026', date: '2026-04-13', amount: 5040 })
+      const late = tx({ category: 'BL income', month: '04/2026', date: '2026-04-20', amount: 1180 })
+      const r1 = doc({ docType: 108, serialNumber: '800012', transactionId: dep.syncId! })
+      const r2 = doc({ docType: 108, serialNumber: '800099', transactionId: late.syncId! })
+      const apr = run([r1, r2], [dep, late], exemptNet, exemptBefore0414).byBusiness.get(BL)!.get('04/2026')!
+      expect(apr.docs.map(d => d.serial)).toEqual(['800012']) // 04-13: still exempt
+      expect(apr.unpapered.map(u => u.receiptSerial)).toEqual(['800099']) // 04-20: authorized
+    })
   })
 })

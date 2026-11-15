@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { db, type Business, type Project, type Transaction, type YpayDocument } from '@/app/db/financeDB'
-import type { TaxProfile } from '@/app/components/TaxProfileSection'
+import { vatTypeForDate, type TaxProfile } from '@/app/components/TaxProfileSection'
 import { turnoverExVat } from './TaxSelfEmployedSections'
 import { computeInvoiceIncome, type InvoiceIncomeResult } from './invoiceIncome'
 
@@ -39,6 +39,7 @@ export function useInvoiceIncome(params: {
       transactions,
       bizCategoryMap,
       depositNet: (t, gross) => turnoverExVat([{ ...t, amount: gross }], taxProfile),
+      isExemptAt: (date) => !!taxProfile && vatTypeForDate(taxProfile, date) === 'exempt',
     })
   }, [loaded, businesses, transactions, bizCategoryMap, taxProfile])
 

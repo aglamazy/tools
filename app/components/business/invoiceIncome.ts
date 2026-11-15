@@ -61,6 +61,12 @@ export type InvoiceIncomeInput = {
   bizCategoryMap: Map<string, string[]>
   /** a deposit's gross amount excl. VAT (exempt dealer: unchanged) */
   depositNet: (tx: Transaction, gross: number) => number
+  /**
+   * aglamazo#486: was the person VAT-exempt at this date (vatTypeForDate on
+   * the tax profile)? An exempt dealer's tax document is the receipt
+   * (8xxxxx), so a deposit linked to one is papered income, not a warning.
+   */
+  isExemptAt?: (date: string) => boolean
 }
 
 export type InvoiceIncomeResult = {
@@ -81,7 +87,7 @@ function docLocalDate(createdAt: string): { iso: string; month: string } {
 export const emptyMonthIncome = (): MonthIncome => ({ total: 0, docs: [], unpapered: [] })
 
 export function computeInvoiceIncome(input: InvoiceIncomeInput): InvoiceIncomeResult {
-  const { businessSyncIds, docs, projects, transactions, bizCategoryMap, depositNet } = input
+  const { businessSyncIds, docs, projects, transactions, bizCategoryMap, depositNet, isExemptAt } = input
   const bizSet = new Set(businessSyncIds)
 
   const catToBiz = new Map<string, string>()
@@ -188,6 +194,15 @@ export function computeInvoiceIncome(input: InvoiceIncomeInput): InvoiceIncomeRe
     if (remainder < 1) continue
     const net = depositNet(t, remainder)
     const s = slot(biz, t.month)
+    // aglamazo#486: exempt at the deposit date + linked to a receipt (by type,
+    // or an 8xxxxx serial on an old manual-link stub) = papered: the receipt
+    // is the exempt dealer's tax document. Listed as a document, no warning.
+    const isReceipt = !!linked && (linked.docType === YpayDocType.Receipt || /^8\d{5}$/.test(linked.serialNumber || ''))
+    if (isReceipt && isExemptAt?.(t.date)) {
+      s.docs.push({ docId: linked!.id, serial: linked!.serialNumber, docType: YpayDocType.Receipt, date: t.date, customer: t.description || '', net })
+      s.total += net
+      continue
+    }
     s.unpapered.push({
       txId: t.id,
       date: t.date,

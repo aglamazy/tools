@@ -7,6 +7,7 @@ import { fmt } from './taxSharedStyles'
 const DOC_TYPE_LABEL: Record<number, string> = {
   106: 'חשבונית מס',
   107: 'חשבונית מס זיכוי',
+  108: 'קבלה',
   109: 'חשבונית מס קבלה',
 }
 
