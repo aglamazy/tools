@@ -6,6 +6,7 @@ import { resolveBtlScheduleByMonth, vatTypeForDate, type TaxProfile } from '@/ap
 import { getVatRateForDate } from '@/app/lib/vat'
 import { resolveExpenseLine, type ExpenseLine } from './expenseScale'
 import MonthBreakdownPanel from './MonthBreakdownPanel'
+import { mergedMonthIncome, type InvoiceIncomeResult } from './invoiceIncome'
 import { DOCUMENT_UPLOAD_ACCEPT } from '@/app/utils/documentUploadAccept'
 
 export type BTLRates = {
@@ -147,11 +148,12 @@ function computeMonthlyBTL(monthlyIncome: number, rates: BTLRates) {
   return { nationalInsurance, healthInsurance, total: nationalInsurance + healthInsurance }
 }
 
-export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMap, expCategoryMap, categoryByName, currentYear, currentMonth, rates, taxProfile, personUid, advancePayments, onUploadReceipt, onDetachReceipt }: {
+export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMap, expCategoryMap, categoryByName, currentYear, currentMonth, rates, taxProfile, personUid, advancePayments, onUploadReceipt, onDetachReceipt, invoiceIncome }: {
   businesses: Business[]; transactions: Transaction[]; bizCategoryMap: Map<string, string[]>
   expCategoryMap: Map<string, string[]>; categoryByName: Map<string, Category>
   currentYear: number; currentMonth: number; rates: BTLRates; taxProfile?: TaxProfile; personUid?: string
   advancePayments?: AdvancePayment[]
+  invoiceIncome: InvoiceIncomeResult // aglamazo#485: the table's own income
   onUploadReceipt?: (month: string, file: File, type?: 'incomeTax' | 'btl') => Promise<void>
   onDetachReceipt?: (month: string, type?: 'incomeTax' | 'btl') => Promise<void>
 }) {
@@ -159,12 +161,11 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
   const [uploadMonth, setUploadMonth] = useState<string | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const seBiz = businesses.filter(b => !b.isTaxFree)
+  const seBizIds = seBiz.map(b => b.syncId).filter((x): x is string => !!x)
   if (seBiz.length === 0) return null
 
-  const seCatNames = new Set<string>()
   const seExpCatNames = new Set<string>()
   for (const biz of seBiz) {
-    (biz.syncId && bizCategoryMap.get(biz.syncId) || []).forEach(n => seCatNames.add(n))
     ;(biz.syncId && expCategoryMap.get(biz.syncId) || []).forEach(n => seExpCatNames.add(n))
   }
 
@@ -213,7 +214,7 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
 
   const monthlyRows = Array.from({ length: currentMonth + 1 }, (_, i) => {
     const monthStr = `${String(i + 1).padStart(2, '0')}/${currentYear}`
-    const income = transactions.filter(t => t.month === monthStr && t.category && seCatNames.has(t.category)).reduce((s, t) => s + (t.amount || 0), 0)
+    const income = mergedMonthIncome(invoiceIncome, seBizIds, monthStr).total
     // aglamazo#395 (Sheli): this table computed its own netIncome
     // independently of SelfEmployedIncomeTaxSection and missed #394's fix —
     // a household-folded category (ארנונה/חשמל) must scale by the member's
@@ -526,7 +527,7 @@ function computeIncomeTax(income: number, brackets: IncomeTaxStep[]): number {
   return tax
 }
 
-export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCategoryMap, expCategoryMap, categoryByName, currentYear, currentMonth, btlRates, brackets, salaryDocs, advancePayments, onUploadReceipt, onDetachReceipt, taxProfile }: {
+export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCategoryMap, expCategoryMap, categoryByName, currentYear, currentMonth, btlRates, brackets, salaryDocs, advancePayments, onUploadReceipt, onDetachReceipt, taxProfile, invoiceIncome }: {
   businesses: Business[]; transactions: Transaction[]; bizCategoryMap: Map<string, string[]>
   expCategoryMap: Map<string, string[]>; categoryByName: Map<string, Category>
   currentYear: number; currentMonth: number; btlRates: BTLRates | null; brackets: IncomeTaxStep[]
@@ -535,18 +536,18 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
   onUploadReceipt?: (month: string, file: File, type?: 'incomeTax' | 'btl') => Promise<void>
   onDetachReceipt?: (month: string, type?: 'incomeTax' | 'btl') => Promise<void>
   taxProfile?: TaxProfile
+  invoiceIncome: InvoiceIncomeResult // aglamazo#485: the table's own income
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploadMonth, setUploadMonth] = React.useState<string | null>(null)
   const [uploadError, setUploadError] = React.useState<string | null>(null)
   const [breakdownMonth, setBreakdownMonth] = React.useState<number | null>(null)
   const seBiz = businesses.filter(b => !b.isTaxFree)
+  const seBizIds = seBiz.map(b => b.syncId).filter((x): x is string => !!x)
   if (seBiz.length === 0) return null
 
-  const seCatNames = new Set<string>()
   const seExpCatNames = new Set<string>()
   for (const biz of seBiz) {
-    (biz.syncId && bizCategoryMap.get(biz.syncId) || []).forEach(n => seCatNames.add(n))
     ;(biz.syncId && expCategoryMap.get(biz.syncId) || []).forEach(n => seExpCatNames.add(n))
   }
 
@@ -615,14 +616,14 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
 
   const monthlyRows = Array.from({ length: currentMonth + 1 }, (_, i) => {
     const monthStr = `${String(i + 1).padStart(2, '0')}/${currentYear}`
-    const incomeTx = transactions.filter(t => t.month === monthStr && t.category && seCatNames.has(t.category))
+    const incomeDetail = mergedMonthIncome(invoiceIncome, seBizIds, monthStr)
     // aglamazo#394: a household-folded category (ארנונה/חשמל) only counts
     // toward this person's taxes at their own recognized % (Agla, aglamazo#369:
     // "16% should go to taxes page. Not AH") — never at its full bank amount.
     const expenseLines = transactions
       .filter(t => t.month === monthStr && t.category && seExpCatNames.has(t.category))
       .map(t => resolveExpenseLine(t, seBiz, categoryByName))
-    const income = incomeTx.reduce((s, t) => s + (t.amount || 0), 0)
+    const income = incomeDetail.total
     const expenses = expenseLines.reduce((s, l) => s + l.recognizedAmount, 0)
     const netIncome = income - expenses
 
@@ -654,8 +655,8 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
     // an עוסק מורשה the deposited amount includes VAT collected on the
     // state's behalf, which isn't the dealer's own turnover either
     // (aglamazo#381).
-    const monthIncomeTx = transactions.filter(t => t.month === monthStr && t.category && seCatNames.has(t.category))
-    const advanceTurnover = turnoverExVat(monthIncomeTx, taxProfile)
+    // aglamazo#485: turnover is the same invoice income, already excl. VAT.
+    const advanceTurnover = income
     let advancePaid = 0
     if (hasAdvance) {
       if (advancePeriod === 2) {
@@ -672,8 +673,9 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
         if (isPaymentMonth) {
           const periodMonth1Str = `${String(i - 1).padStart(2, '0')}/${currentYear}`
           const periodMonth2Str = `${String(i).padStart(2, '0')}/${currentYear}`
-          const periodIncomeTx = transactions.filter(t => (t.month === periodMonth1Str || t.month === periodMonth2Str) && t.category && seCatNames.has(t.category))
-          advancePaid = turnoverExVat(periodIncomeTx, taxProfile) * (advancePercent / 100)
+          const periodTurnover = mergedMonthIncome(invoiceIncome, seBizIds, periodMonth1Str).total
+            + mergedMonthIncome(invoiceIncome, seBizIds, periodMonth2Str).total
+          advancePaid = periodTurnover * (advancePercent / 100)
         }
       } else {
         advancePaid = advanceTurnover * (advancePercent / 100)
@@ -710,7 +712,7 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
     // hidden only when there is truly nothing.
     const isDue = hasAdvance && (advancePaidDisplay > 0 || !!paymentRecord?.paidAt)
 
-    return { month: i, label: HEBREW_MONTHS[i], income, expenses, netIncome, incomeTx, expenseLines, btlPaid, btlIsForecast, btlDeduction, taxBase, salary, tax, advancePaid, advancePaidDisplay, advancePaidIsForecast, monthKey, paymentRecord, isDue }
+    return { month: i, label: HEBREW_MONTHS[i], income, expenses, netIncome, incomeDetail, expenseLines, btlPaid, btlIsForecast, btlDeduction, taxBase, salary, tax, advancePaid, advancePaidDisplay, advancePaidIsForecast, monthKey, paymentRecord, isDue }
   })
 
   const annualTotals = {
@@ -931,7 +933,7 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
           <MonthBreakdownPanel
             onClose={() => setBreakdownMonth(null)}
             monthLabel={`${row.label} ${currentYear}`}
-            incomeTx={row.incomeTx}
+            income={row.incomeDetail}
             expenseLines={row.expenseLines}
           />
         )

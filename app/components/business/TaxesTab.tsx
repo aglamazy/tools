@@ -48,6 +48,7 @@ async function loadHouseholdMembers(): Promise<{ members: HouseholdMember[]; deb
 }
 
 import { TaxExemptStatusBanner, ExemptStatusBanner } from './TaxStatusBanners'
+import { useInvoiceIncome } from './useInvoiceIncome'
 
 export default function TaxesTab() {
   return (
@@ -558,6 +559,7 @@ type SummarySectionsProps = {
 
 function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBusinesses, transactions, bizCategoryMap, expCategoryMap, categoryByName, currentYear, currentMonth, taxExemptInfo, btlRates, incomeTaxBrackets, advancePayments, onUploadReceipt, onDetachReceipt, taxProfile, personUid }: SummarySectionsProps) {
   const [activeSection, setActiveSection] = useState(sections[0].id)
+  const invoiceIncome = useInvoiceIncome({ businesses: nonRentalBusinesses, transactions, bizCategoryMap, taxProfile })
 
   return (
     <div>
@@ -589,7 +591,10 @@ function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBu
         <EmployeeSummaryTable docs={filteredDocs} currentYear={currentYear} currentMonth={currentMonth} />
       )}
 
-      {activeSection === 'selfEmployed' && (
+      {activeSection === 'selfEmployed' && !invoiceIncome && (
+        <p style={{ color: '#94a3b8', fontSize: '0.85rem' }}>טוען מסמכי הכנסה…</p>
+      )}
+      {activeSection === 'selfEmployed' && invoiceIncome && (
         <>
           <SelfEmployedSummaryTable
             businesses={nonRentalBusinesses}
@@ -599,6 +604,7 @@ function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBu
             categoryByName={categoryByName}
             currentYear={currentYear}
             currentMonth={currentMonth}
+            invoiceIncome={invoiceIncome}
           />
           {btlRates && (
             <SelfEmployedBTLSection
@@ -615,6 +621,7 @@ function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBu
               advancePayments={advancePayments}
               onUploadReceipt={onUploadReceipt}
               onDetachReceipt={onDetachReceipt}
+              invoiceIncome={invoiceIncome}
             />
           )}
           {incomeTaxBrackets && incomeTaxBrackets.length > 0 && (
@@ -633,6 +640,7 @@ function SummarySections({ sections, filteredDocs, nonRentalBusinesses, rentalBu
               onUploadReceipt={onUploadReceipt}
               onDetachReceipt={onDetachReceipt}
               taxProfile={taxProfile}
+              invoiceIncome={invoiceIncome}
             />
           )}
         </>

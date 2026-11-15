@@ -3,17 +3,18 @@
 import React from 'react'
 import type { Transaction } from '@/app/db/financeDB'
 import type { ExpenseLine } from './expenseScale'
+import type { MonthIncome } from './invoiceIncome'
+import IncomeDocsList from './IncomeDocsList'
 
 type Props = {
   onClose: () => void
   monthLabel: string
-  incomeTx: Transaction[]
+  income: MonthIncome // aglamazo#485: invoices + unpapered deposits
   expenseLines: ExpenseLine[]
 }
 
 const fmt = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
 
-const rowStyle: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', gap: '0.75rem', padding: '0.4rem 0', borderBottom: '1px solid #f1f5f9', fontSize: '0.85rem' }
 const tdStyle: React.CSSProperties = { padding: '0.4rem 0.5rem', borderBottom: '1px solid #f1f5f9', fontSize: '0.85rem' }
 const thStyle: React.CSSProperties = { padding: '0.3rem 0.5rem', fontSize: '0.75rem', color: '#64748b', fontWeight: 600, textAlign: 'left', borderBottom: '1px solid #e2e8f0' }
 
@@ -32,8 +33,8 @@ const label = (t: Transaction) => t.merchant || t.description || '—'
  * portion of the bank amount actually counted toward this month's
  * netIncome above, instead of leaving that scaling invisible.
  */
-export default function MonthBreakdownPanel({ onClose, monthLabel, incomeTx, expenseLines }: Props) {
-  const incomeTotal = incomeTx.reduce((s, t) => s + (t.amount || 0), 0)
+export default function MonthBreakdownPanel({ onClose, monthLabel, income, expenseLines }: Props) {
+  const incomeTotal = income.total
   const expenseTotal = expenseLines.reduce((s, l) => s + l.recognizedAmount, 0)
 
   return (
@@ -54,16 +55,7 @@ export default function MonthBreakdownPanel({ onClose, monthLabel, incomeTx, exp
           <span>הכנסות</span>
           <span>{fmt(incomeTotal)}</span>
         </div>
-        {incomeTx.length === 0 ? (
-          <p style={{ fontSize: '0.8rem', color: '#94a3b8', margin: 0 }}>אין הכנסות בחודש זה.</p>
-        ) : (
-          incomeTx.map((t) => (
-            <div key={t.id} style={rowStyle}>
-              <span>{label(t)}</span>
-              <span>{fmt(t.amount || 0)}</span>
-            </div>
-          ))
-        )}
+        <IncomeDocsList income={income} />
       </div>
 
       <div style={{ padding: '0 1rem 1rem 1rem' }}>
