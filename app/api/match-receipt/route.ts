@@ -1,4 +1,5 @@
 // CALLER-KEYED ROUTE — uses platform Gemini key + caller's Claude API key
+import { classifyDocumentLinkFailure, type LinkAttempt } from '@/app/services/documentLinkFailure'
 import { NextRequest, NextResponse } from 'next/server'
 import { extractJsonWithFallback, type ExtractionFailure } from '@/app/services/llm/extractionLadder'
 import { GEMINI_FLASH_MODEL, GEMINI_PRO_MODEL } from '@/app/services/llm/modelRegistry'
@@ -387,17 +388,19 @@ async function handleDownloadPdf(url: string) {
   }
 
   let response: Response | null = null
-  let triedUrls: string[] = []
+  const triedUrls: string[] = []
+  const attempts: LinkAttempt[] = []
   for (const v of variants) {
     triedUrls.push(v)
     const r = await fetch(v, { redirect: 'follow', headers: browserHeaders })
+    const ct = (r.headers.get('content-type') || '').toLowerCase()
+    attempts.push({ url: v, finalUrl: r.url || undefined, status: r.status, contentType: ct })
     if (!r.ok) {
       console.error('[match-receipt] PDF variant non-OK:', r.status, v)
       continue
     }
-    const ct = (r.headers.get('content-type') || '').toLowerCase()
     if (ct.startsWith('text/html')) {
-      console.error('[match-receipt] PDF variant returned HTML viewer (not the PDF):', v)
+      console.error('[match-receipt] PDF variant returned HTML (not the PDF):', v, '→', r.url, ct)
       continue
     }
     // Accept anything that's not HTML — typically application/pdf or octet-stream.
@@ -406,7 +409,10 @@ async function handleDownloadPdf(url: string) {
   }
 
   if (!response) {
-    return NextResponse.json({ error: `Download failed: no PDF after ${triedUrls.length} variants`, triedUrls }, { status: 502 })
+    // aglamazo#489: say WHY and what to do (login page vs not a PDF), not "skip"
+    const failure = classifyDocumentLinkFailure(attempts)
+    console.error('[match-receipt] document link failed:', failure.code, JSON.stringify(attempts))
+    return NextResponse.json({ error: failure.message, errorCode: failure.code, attempts, triedUrls }, { status: 502 })
   }
 
   const contentType = response.headers.get('content-type') || 'application/pdf'
