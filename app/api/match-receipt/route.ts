@@ -80,7 +80,9 @@ ${candidateList}`,
     // and its Claude fallback can fail to produce clean JSON at the smaller
     // budget once the candidate list gets this long.
     geminiMaxTokens: 4096,
-    anthropicMaxTokens: 4096,
+    // aglamazo#488: Claude's thinking comes out of this same pool — on Agla's
+    // 93-mail list it spent all 4096 output tokens thinking and left no text.
+    anthropicMaxTokens: 16000,
     geminiTemperature: 0,
     geminiDisableThinking: true,
     anthropicApiKey: claudeApiKey,

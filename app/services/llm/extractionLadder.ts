@@ -372,6 +372,22 @@ async function tryAnthropic<T>(options: {
     }
 
     const data = await response.json()
+    // aglamazo#488: a budget cut-off must say so, even when it left no text at
+    // all (thinking used the whole max_tokens) — it used to surface as
+    // "did not return JSON text", which hid the cause.
+    if (data.stop_reason === 'max_tokens') {
+      const blocks = Array.isArray(data.content) ? data.content.map((c: any) => c?.type).join(',') : ''
+      console.error(`[${options.routeName}] Claude hit max_tokens=${options.maxTokens}`, JSON.stringify({ usage: data.usage, blocks }))
+      return {
+        ok: false,
+        provider: 'anthropic',
+        error: `Claude response was cut off (stop_reason=max_tokens, ${data.usage?.output_tokens ?? '?'} output tokens, ${data.usage?.output_tokens_details?.thinking_tokens ?? '?'} of them thinking)`,
+        details: `stop_reason=max_tokens blocks=${blocks}`,
+        raw: JSON.stringify(data).slice(0, 2000),
+        providerError: true,
+        fellBack: true,
+      }
+    }
     const textBlock = Array.isArray(data.content) ? data.content.find((c: any) => c?.type === 'text') : undefined
     const text = textBlock?.text?.trim() ?? ''
     if (!text) {
