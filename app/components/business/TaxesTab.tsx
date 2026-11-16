@@ -15,6 +15,7 @@ import HouseholdIncomeSummary from './TaxHouseholdSummary'
 import { SelfEmployedBTLSection, SelfEmployedIncomeTaxSection, type BTLRates, type IncomeTaxStep } from './TaxSelfEmployedSections'
 import TaxVatSection from './TaxVatSection'
 import { getTaxProfile, type TaxProfile } from '@/app/components/TaxProfileSection'
+import TaxesMemberSettings from './TaxesMemberSettings'
 import SelfEmployedSummaryTable from './TaxSelfEmployedSummaryTable'
 import { HEBREW_MONTHS, cellStyle, tHeaderStyle, fmt } from './taxSharedStyles'
 import { BusinessType } from '@/app/types/business'
@@ -99,6 +100,7 @@ function AnnualSummarySubTab() {
   const [rentalMonthlyLimit, setRentalMonthlyLimit] = useState<number | null>(null)
   const [advancePayments, setAdvancePayments] = useState<AdvancePayment[]>([])
   const [taxProfile, setTaxProfile] = useState<TaxProfile>({})
+  const [memberSettingsOpen, setMemberSettingsOpen] = useState(false)
   // The year being viewed — selectable (year-selector UI below), defaults to
   // the real current year. currentMonth is "how many months of this year
   // have data": up to today for the live year, all 12 for any other year —
@@ -188,10 +190,13 @@ function AnnualSummarySubTab() {
   }, [currentYear, authReady])
 
   // Reload tax profile when the user selects a different household member tab.
-  useEffect(() => {
-    if (!authReady) return
+  const reloadTaxProfile = () => {
     const uid = selectedUser === 'all' ? getUser()?.uid : selectedUser
     getTaxProfile(uid).then(setTaxProfile)
+  }
+  useEffect(() => {
+    if (!authReady) return
+    reloadTaxProfile()
   }, [selectedUser, authReady])
 
   // Build derived data (needed before useEffect for tax exempt)
@@ -419,6 +424,12 @@ function AnnualSummarySubTab() {
             <option key={y} value={y}>{y}</option>
           ))}
         </select>
+        <TaxesMemberSettings
+          user={authReady ? getUser() : null}
+          isOpen={memberSettingsOpen}
+          onOpen={() => setMemberSettingsOpen(true)}
+          onClose={() => { setMemberSettingsOpen(false); reloadTaxProfile() }}
+        />
       </div>
 
       {debugMode && (
