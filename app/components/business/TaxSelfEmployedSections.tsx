@@ -8,6 +8,7 @@ import { resolveExpenseLine, type ExpenseLine } from './expenseScale'
 import MonthBreakdownPanel from './MonthBreakdownPanel'
 import { mergedMonthIncome, type InvoiceIncomeResult } from './invoiceIncome'
 import { DOCUMENT_UPLOAD_ACCEPT } from '@/app/utils/documentUploadAccept'
+import BtlDisclaimer from '@/app/components/BtlDisclaimer'
 
 export type BTLRates = {
   reduced: { nationalInsurance: number; healthInsurance: number }
@@ -303,6 +304,7 @@ export function SelfEmployedBTLSection({ businesses, transactions, bizCategoryMa
   return (
     <div style={{ marginTop: '2rem', overflowX: 'auto' }}>
       <h3 style={{ fontSize: '1rem', marginBottom: '0.5rem' }}>ביטוח לאומי ובריאות — עצמאי — {currentYear}</h3>
+      <BtlDisclaimer />
       <p style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.75rem' }}>
         חישוב מבוסס על הכנסה נטו (הכנסה פחות הוצאות) מעסקים: {seBiz.map(b => b.name).join(', ')}
       </p>
@@ -752,6 +754,7 @@ export function SelfEmployedIncomeTaxSection({ businesses, transactions, bizCate
         חישוב מבוסס על הכנסה נטו פחות 52% מביטוח לאומי ששולם. עסקים: {seBiz.map(b => b.name).join(', ')}
         {annualTotals.salary > 0 ? ` | הכנסה ממשכורת: ${fmt(annualTotals.salary)} (מדרגות מס מחושבות בהתאם)` : ''}
       </p>
+      <BtlDisclaimer />
 
       {/* Brackets info */}
       <div style={{ marginBottom: '1rem', padding: '0.75rem 1rem', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: '0.5rem', fontSize: '0.8rem', color: '#92400e' }}>
