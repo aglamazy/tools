@@ -87,3 +87,45 @@ describe('supplierService — bindSupplierToExisting (aglamazo, 2026-09-15)', ()
     await expect(bindSupplierToExisting(s.id!, s.id!)).rejects.toThrow()
   })
 })
+
+// aglamazo#478: the real dev store holds the same bank alias on two supplier
+// records (508 such aliases). renameSupplierAlias wrote to the FIRST holder
+// while buildSupplierAliasMap displayed the LAST, so a rename looked unsaved.
+describe('supplierService — rename/merge with a duplicated alias (aglamazo#478)', () => {
+  const seed = (name: string, aliases: string[]) =>
+    db.suppliers.add({ name, bankCardAliases: aliases, emailSenders: [], createdAt: '2026-07-13T12:00:00.000Z' })
+
+  beforeEach(async () => { await db.suppliers.clear() })
+  afterEach(async () => { await db.suppliers.clear() })
+
+  it('Latin rename: "CLAUDE.AI SUBSCRIPTI" held by two records renames to "Claude Max" and displays it', async () => {
+    await seed('קלוד מקס', ['CLAUDE.AI SUBSCRIPTI'])
+    await seed('CLAUDE.AI SUBSCRIPTI', ['CLAUDE.AI SUBSCRIPTI'])
+    await renameSupplierAlias('CLAUDE.AI SUBSCRIPTI', 'Claude Max')
+    const map = await buildSupplierAliasMap()
+    expect(map.get('claude.ai subscripti')).toBe('Claude Max')
+    const holders = (await db.suppliers.toArray()).filter(s => s.bankCardAliases.includes('CLAUDE.AI SUBSCRIPTI'))
+    expect(holders.map(s => s.name)).toEqual(['Claude Max'])
+  })
+
+  it('merge onto an existing name: "OPENAI *CHATGPT SU" (also on a stale record) joins "ChatGPT מנוי"', async () => {
+    await seed('ChatGPT מנוי', ['OPENAI *CHATGPT SUBS'])
+    await seed('OPENAI *CHATGPT SU', ['OPENAI *CHATGPT SU'])
+    await seed('OPENAI *CHATGPT SU', ['OPENAI *CHATGPT SU']) // the duplicate
+    await renameSupplierAlias('OPENAI *CHATGPT SU', 'ChatGPT מנוי')
+    const map = await buildSupplierAliasMap()
+    expect(map.get('openai *chatgpt su')).toBe('ChatGPT מנוי')
+    expect(map.get('openai *chatgpt subs')).toBe('ChatGPT מנוי')
+    const all = await db.suppliers.toArray()
+    expect(all.filter(s => s.name === 'ChatGPT מנוי')).toHaveLength(1)
+    expect(all.filter(s => s.name === 'OPENAI *CHATGPT SU')).toHaveLength(0)
+  })
+
+  it('Hebrew rename that already saved keeps showing: the most recently renamed holder wins over a stale seed', async () => {
+    await db.suppliers.add({ name: 'OPENAI *CHATGPT SUBS', bankCardAliases: ['OPENAI *CHATGPT SUBS'], emailSenders: [], createdAt: '2026-10-18T18:24:37.558Z', updatedAt: '2026-10-18T18:24:37.558Z' })
+    await db.suppliers.add({ name: 'ChatGPT מנוי', bankCardAliases: ['OPENAI *CHATGPT SUBS'], emailSenders: [], createdAt: '2026-11-04T00:00:00.000Z', updatedAt: '2026-11-14T17:03:52.807Z' })
+    await db.suppliers.add({ name: 'OPENAI *CHATGPT SUBS', bankCardAliases: ['OPENAI *CHATGPT SUBS'], emailSenders: [], createdAt: '2026-11-10T08:11:54.996Z', updatedAt: '2026-11-10T08:11:54.996Z' })
+    expect((await buildSupplierAliasMap()).get('openai *chatgpt subs')).toBe('ChatGPT מנוי')
+    expect(await resolveSupplierDisplayName('OPENAI *CHATGPT SUBS')).toBe('ChatGPT מנוי')
+  })
+})

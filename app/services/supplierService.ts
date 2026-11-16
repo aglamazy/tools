@@ -1,11 +1,21 @@
 import { db, type Supplier } from '@/app/db/financeDB'
 
+// aglamazo#478: when several records hold one alias (per-device seeding
+// merged by sync), the one a person last renamed is the truth — a rename
+// stamps updatedAt. Lookup and display both use this, so they never disagree.
+const touchedAt = (s: Supplier) => s.updatedAt || s.createdAt || ''
+const newer = (a: Supplier, b: Supplier) => (touchedAt(b) > touchedAt(a) ? b : a)
+
 /** Case-insensitive exact match against a supplier's known bank/card description strings. */
 export async function findSupplierByAlias(raw: string): Promise<Supplier | undefined> {
   const key = raw.trim().toLowerCase()
   if (!key) return undefined
   const suppliers = await db.suppliers.toArray()
-  return suppliers.find((s) => s.bankCardAliases.some((a) => a.toLowerCase() === key))
+  let found: Supplier | undefined
+  for (const s of suppliers) {
+    if (s.bankCardAliases.some((a) => a.trim().toLowerCase() === key)) found = found ? newer(found, s) : s
+  }
+  return found
 }
 
 /**
@@ -59,13 +69,16 @@ export async function resolveSupplierDisplayName(raw: string): Promise<string> {
  */
 export async function buildSupplierAliasMap(): Promise<Map<string, string>> {
   const suppliers = await db.suppliers.toArray()
-  const map = new Map<string, string>()
+  const holder = new Map<string, Supplier>()
   for (const s of suppliers) {
     for (const alias of s.bankCardAliases) {
-      map.set(alias.trim().toLowerCase(), s.name)
+      // the same record findSupplierByAlias returns (aglamazo#478)
+      const k = alias.trim().toLowerCase()
+      const prev = holder.get(k)
+      holder.set(k, prev ? newer(prev, s) : s)
     }
   }
-  return map
+  return new Map(Array.from(holder, ([k, s]) => [k, s.name]))
 }
 
 function dedupeCaseInsensitive(values: string[]): string[] {
@@ -111,18 +124,27 @@ async function mergeSuppliers(from: Supplier, to: Supplier): Promise<Supplier> {
 export async function renameSupplierAlias(rawValue: string, newName: string): Promise<void> {
   const trimmedName = newName.trim()
   if (!trimmedName) return
-  const supplier = await resolveOrCreateSupplier(rawValue)
-  if (supplier.name === trimmedName) return
+  const key = rawValue.trim().toLowerCase()
+  if (!key) return
 
+  // aglamazo#478: the same alias can sit on more than one record (508 in the
+  // real store, from per-device seeding merged by sync). Renaming only the
+  // first holder left the others showing the old name, so EVERY holder is
+  // folded into one record here.
   const suppliers = await db.suppliers.toArray()
-  const existingWithName = suppliers.find(
-    (s) => s.id !== supplier.id && s.name.toLowerCase() === trimmedName.toLowerCase(),
-  )
-  if (existingWithName) {
-    await mergeSuppliers(supplier, existingWithName)
-    return
+  const holders = suppliers.filter((s) => s.bankCardAliases.some((a) => a.trim().toLowerCase() === key))
+  if (holders.length === 0) holders.push(await resolveOrCreateSupplier(rawValue))
+
+  const named = suppliers.find((s) => s.name.toLowerCase() === trimmedName.toLowerCase())
+    ?? holders.find((s) => s.name.toLowerCase() === trimmedName.toLowerCase())
+  let target = named ?? holders[0]
+  for (const h of holders) {
+    if (h.id === target.id) continue
+    target = await mergeSuppliers(h, target)
   }
-  await db.suppliers.update(supplier.id!, { name: trimmedName, updatedAt: new Date().toISOString() })
+  if (target.name !== trimmedName && !named) {
+    await db.suppliers.update(target.id!, { name: trimmedName, updatedAt: new Date().toISOString() })
+  }
 }
 
 /**

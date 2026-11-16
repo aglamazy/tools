@@ -6,6 +6,7 @@ import { routes } from '@/app/config'
 import type { AgentTaskStatus } from '@/app/types/bot'
 import { getTaxProfile, resolveBtlScheduleByMonth } from '@/app/components/TaxProfileSection'
 import { MONTH_NAMES_HE } from '@/app/lib/dateUtils'
+import { BTL_DISCLAIMER_SHORT } from '@/app/components/BtlDisclaimer'
 
 type Priority = 'low' | 'medium' | 'high'
 
@@ -793,7 +794,7 @@ async function checkBtlPaymentReminders(): Promise<AutoTask[]> {
     tasks.push({
       id: `btl-${uid}-${year}-${String(i + 1).padStart(2, '0')}`,
       title: `${titlePrefix} ${MONTH_NAMES_HE[i]} ${year}`,
-      description: `${expected.toLocaleString('he-IL')} ₪ · עד ${deadline.toLocaleDateString('he-IL')}`,
+      description: `${expected.toLocaleString('he-IL')} ₪ · עד ${deadline.toLocaleDateString('he-IL')} · ${BTL_DISCLAIMER_SHORT}`,
       type: 'expected-payment',
       priority,
       quadrant,

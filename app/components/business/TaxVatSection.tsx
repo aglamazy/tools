@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { vatDeductibleCategoryNames } from './vatExpenseScope'
 import { db, type Business, type Transaction, type YpayDocument, type ExpenseDocument, type Project, type VatPayment, type Supplier } from '@/app/db/financeDB'
 import type { Category } from '@/app/types/category'
 import { getVatRateForDate } from '@/app/lib/vat'
@@ -331,8 +332,8 @@ export default function TaxVatSection({
 
   const expenseRows = useMemo<ExpenseRow[]>(() => {
     if (!selectedPeriod) return []
-    const deductibleCatNames = new Set<string>()
-    for (const names of expCategoryMap.values()) names.forEach(n => deductibleCatNames.add(n))
+    // aglamazo#487: only this person's businesses, never every member's
+    const deductibleCatNames = vatDeductibleCategoryNames(expCategoryMap, businesses.map(b => b.syncId))
 
     const docsByTxId = groupExpenseDocsByTransaction(expenseDocs)
 
@@ -393,7 +394,7 @@ export default function TaxVatSection({
     }
     rows.sort((a, b) => a.date.getTime() - b.date.getTime())
     return rows
-  }, [effectiveTransactions, expCategoryMap, categoryByName, expenseDocs, cutoff, personUid, selectedPeriod, isPeriodClosed, selectedPayment, periods, closedPeriodKeys])
+  }, [effectiveTransactions, expCategoryMap, businesses, categoryByName, expenseDocs, cutoff, personUid, selectedPeriod, isPeriodClosed, selectedPayment, periods, closedPeriodKeys])
 
   const totals = useMemo(() => {
     const output = incomeRows.reduce((s, r) => s + r.outputVat, 0)

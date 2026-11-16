@@ -17,7 +17,7 @@ import { appSettingsStore, AccountOwners } from '@/app/stores/appSettingsStore'
 import { getUser } from '@/app/stores/authStore'
 import { transactionStore } from '@/app/stores/transactionStore'
 import type { Household, HouseholdInvitation, HouseholdRole } from '@/app/types/household'
-import TaxProfileSection from '@/app/components/TaxProfileSection'
+import MemberSettingsModal from './MemberSettingsModal'
 
 type HouseholdWithEmails = Household & { memberEmails?: Record<string, string> }
 
@@ -627,16 +627,12 @@ export default function HouseholdTab() {
         onNo={() => setCancelInviteId(null)}
       />
 
-      <Modal isOpen={!!memberSettings} onClose={() => setMemberSettings(null)} maxWidth="640px">
-        <div className="modal-header">
-          <h2>הגדרות חבר/ה</h2>
-        </div>
-        <div className="modal-body">
-          {memberSettings && (
-            <TaxProfileSection userId={memberSettings.uid} memberLabel={memberSettings.label} />
-          )}
-        </div>
-      </Modal>
+      <MemberSettingsModal
+        isOpen={!!memberSettings}
+        onClose={() => setMemberSettings(null)}
+        userId={memberSettings?.uid ?? ''}
+        memberLabel={memberSettings?.label}
+      />
 
       <Modal isOpen={alertModal.isOpen} onClose={() => setAlertModal({ isOpen: false, message: '' })} maxWidth="450px">
         <div className="modal-body" style={{ textAlign: 'center', padding: '2rem' }}>

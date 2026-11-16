@@ -663,7 +663,8 @@ async function tryCandidate(
         pdfContentType = downloaded.contentType
         pdfFileName = downloaded.fileName
       } else {
-        log(`  ↳ url download failed: ${downloaded.error} — skip`)
+        // aglamazo#489: the server's reason names the cause and the action
+        log(`  ↳ ${downloaded.error}`)
         return null
       }
     } catch (err: any) {

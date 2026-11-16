@@ -1,4 +1,6 @@
 // CALLER-KEYED ROUTE — uses platform Gemini key + caller's Claude API key
+import { classifyDocumentLinkFailure, type LinkAttempt } from '@/app/services/documentLinkFailure'
+import { withForeignVatZero } from '@/app/services/foreignVat'
 import { NextRequest, NextResponse } from 'next/server'
 import { extractJsonWithFallback, type ExtractionFailure } from '@/app/services/llm/extractionLadder'
 import { GEMINI_FLASH_MODEL, GEMINI_PRO_MODEL } from '@/app/services/llm/modelRegistry'
@@ -80,7 +82,9 @@ ${candidateList}`,
     // and its Claude fallback can fail to produce clean JSON at the smaller
     // budget once the candidate list gets this long.
     geminiMaxTokens: 4096,
-    anthropicMaxTokens: 4096,
+    // aglamazo#488: Claude's thinking comes out of this same pool — on Agla's
+    // 93-mail list it spent all 4096 output tokens thinking and left no text.
+    anthropicMaxTokens: 16000,
     geminiTemperature: 0,
     geminiDisableThinking: true,
     anthropicApiKey: claudeApiKey,
@@ -357,7 +361,7 @@ async function handleExtract(
   }
 
   console.log(`[match-receipt] extract · ${result.provider} raw result →\n${result.text}`)
-  return NextResponse.json(result.data)
+  return NextResponse.json(withForeignVatZero(result.data))
 }
 
 async function handleDownloadPdf(url: string) {
@@ -387,17 +391,19 @@ async function handleDownloadPdf(url: string) {
   }
 
   let response: Response | null = null
-  let triedUrls: string[] = []
+  const triedUrls: string[] = []
+  const attempts: LinkAttempt[] = []
   for (const v of variants) {
     triedUrls.push(v)
     const r = await fetch(v, { redirect: 'follow', headers: browserHeaders })
+    const ct = (r.headers.get('content-type') || '').toLowerCase()
+    attempts.push({ url: v, finalUrl: r.url || undefined, status: r.status, contentType: ct })
     if (!r.ok) {
       console.error('[match-receipt] PDF variant non-OK:', r.status, v)
       continue
     }
-    const ct = (r.headers.get('content-type') || '').toLowerCase()
     if (ct.startsWith('text/html')) {
-      console.error('[match-receipt] PDF variant returned HTML viewer (not the PDF):', v)
+      console.error('[match-receipt] PDF variant returned HTML (not the PDF):', v, '→', r.url, ct)
       continue
     }
     // Accept anything that's not HTML — typically application/pdf or octet-stream.
@@ -406,7 +412,10 @@ async function handleDownloadPdf(url: string) {
   }
 
   if (!response) {
-    return NextResponse.json({ error: `Download failed: no PDF after ${triedUrls.length} variants`, triedUrls }, { status: 502 })
+    // aglamazo#489: say WHY and what to do (login page vs not a PDF), not "skip"
+    const failure = classifyDocumentLinkFailure(attempts)
+    console.error('[match-receipt] document link failed:', failure.code, JSON.stringify(attempts))
+    return NextResponse.json({ error: failure.message, errorCode: failure.code, attempts, triedUrls }, { status: 502 })
   }
 
   const contentType = response.headers.get('content-type') || 'application/pdf'
@@ -486,7 +495,7 @@ async function handleExtractPdf(pdfBase64: string, transaction: TransactionInfo,
     return extractionFailureResponse(result, result.status ?? 502)
   }
 
-  return NextResponse.json(result.data)
+  return NextResponse.json(withForeignVatZero(result.data))
 }
 
 async function handleExtractImage(imageBase64: string, mediaType: string, transaction: TransactionInfo, claudeApiKey?: string) {
@@ -529,7 +538,7 @@ async function handleExtractImage(imageBase64: string, mediaType: string, transa
     return extractionFailureResponse(result, result.status ?? 502)
   }
 
-  return NextResponse.json(result.data)
+  return NextResponse.json(withForeignVatZero(result.data))
 }
 
 /**

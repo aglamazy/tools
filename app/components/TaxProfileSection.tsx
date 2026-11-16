@@ -10,6 +10,7 @@ import { getAccessToken } from '@/app/services/googleTokenService'
 import { getUser } from '@/app/stores/authStore'
 import { normalizeDate } from '@/app/utils/parsers/shared'
 import BtlMonthOverridesPanel from './BtlMonthOverridesPanel'
+import BtlDisclaimer from './BtlDisclaimer'
 
 export type VatConversion = {
   from: 'exempt' | 'authorized'
@@ -637,6 +638,7 @@ export default function TaxProfileSection({ userId, memberLabel }: TaxProfileSec
                   </button>
                 </div>
                 <span style={{ fontSize: '0.75rem', color: '#64748b' }}>ביטוח לאומי (סכום חודשי)</span>
+                <BtlDisclaimer />
                 {profile.btlNotices && profile.btlNotices.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginTop: '0.4rem' }}>
                     {profile.btlNotices.map(n => {
