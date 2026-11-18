@@ -19,7 +19,8 @@ import Modal from '@/app/components/Modal'
 import YpayIncomeImportPanel from './YpayIncomeImportPanel'
 import { DOCUMENT_UPLOAD_ACCEPT } from '@/app/utils/documentUploadAccept'
 import { resolveOpenPeriodKey, computeClosedPeriodKeys } from '@/app/utils/vatPeriodRollForward'
-import { groupExpenseDocsByTransaction, resolveLinkedExpenseDoc } from './expenseScale'
+import { expenseDocumentFilterState, groupExpenseDocsByTransaction, resolveLinkedExpenseDoc, sortVatExpenseRows } from './expenseScale'
+import { resolveVatIncomeOwner } from '@/app/services/billing/businessInvoice'
 import ShaamFilingView from './ShaamFilingView'
 
 const ILS = (n: number) => n.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })
@@ -148,7 +149,8 @@ type ExpenseRow = {
   vatRate: number
   sharePercent: number
   hasDoc: boolean
-  docUrl?: string
+  hasPeriodDoc: boolean
+  isZeroVat: boolean
   // Attached AND actually extracted (real amount/VAT data present) — distinct
   // from hasDoc, which is also true for a bare doc link with nothing
   // extracted (e.g. a stalled/failed extraction from before the amount-
@@ -176,6 +178,7 @@ export default function TaxVatSection({
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null)
   const [showZeroVatRows, setShowZeroVatRows] = useState(true)
   const [showHandledRows, setShowHandledRows] = useState(true)
+  const [expenseSort, setExpenseSort] = useState<{ key: 'date' | 'vendor' | 'amount'; direction: 'asc' | 'desc' }>({ key: 'date', direction: 'asc' })
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null)
   // aglamazo#381 (Agla, 2026-09-14): a settings entry point for revenue-
   // document providers feeding this page's מחזור — reuses each business's
@@ -254,18 +257,7 @@ export default function TaxVatSection({
     setExpenseDocs(prev => prev.filter(d => d.id !== docId))
   }
 
-  const userProjectNames = useMemo(() => {
-    const businessSyncIds = new Set(businesses.map(b => b.syncId).filter((x): x is string => x != null))
-    const names = new Set<string>()
-    for (const p of projects) {
-      if (businessSyncIds.has(p.businessId)) names.add(p.name)
-    }
-    return names
-  }, [businesses, projects])
-
-  // Union of every business's partners — used by the transaction-edit modal's
-  // "שולם על ידי" fix for mis-attributed rows. Not scoped to a single business
-  // since a row's exact business isn't tracked on ExpenseRow.
+  // Partners for the transaction-edit modal; a row has no exact business.
   const editParticipants = useMemo(() => {
     const map = new Map<string, { uid: string; label: string }>()
     for (const b of businesses) {
@@ -276,8 +268,7 @@ export default function TaxVatSection({
 
   const editCategoryOptions = useMemo(() => Array.from(categoryByName.keys()).sort(), [categoryByName])
 
-  // The VatPayment (if any) that matches the selected period's date range.
-  // Used to decide closed-vs-open and which tagged docs to show.
+  // The selected period's VAT payment decides closed-vs-open behavior.
   const selectedPayment = useMemo(
     () => selectedPeriod
       ? vatPayments.find(p => p.periodStart === selectedPeriod.startISO && p.periodEnd === selectedPeriod.endISO)
@@ -289,13 +280,15 @@ export default function TaxVatSection({
   // Rolls an untagged late document into the next OPEN period (#402).
   const closedPeriodKeys = useMemo(() => computeClosedPeriodKeys(periods, vatPayments), [periods, vatPayments])
 
-  const incomeRows = useMemo<IncomeRow[]>(() => {
-    if (!selectedPeriod) return []
+  const { incomeRows, unassignedIncomeDocs } = useMemo(() => {
+    if (!selectedPeriod) return { incomeRows: [], unassignedIncomeDocs: [] }
     const taxableTypes = new Set<number>([YpayDocType.TaxInvoice, YpayDocType.TaxInvoiceReceipt])
     const rows: IncomeRow[] = []
+    const unassigned: YpayDocument[] = []
     for (const d of ypayDocs) {
       if (!taxableTypes.has(d.docType)) continue
-      if (d.projectName && !userProjectNames.has(d.projectName)) continue
+      const owner = resolveVatIncomeOwner(d, businesses, projects)
+      if (owner === null) continue
       const created = new Date(d.createdAt)
       if (isPeriodClosed) {
         // Closed period: show only docs tagged with this payment. vatPaymentId
@@ -309,6 +302,7 @@ export default function TaxVatSection({
         if (created < cutoff) continue
         if (resolveOpenPeriodKey(created, periods, closedPeriodKeys) !== selectedPeriod.key) continue
       }
+      if (owner === undefined) { unassigned.push(d); continue }
       const vatRate = getVatRateForDate(created)
       rows.push({
         id: d.id!,
@@ -327,8 +321,8 @@ export default function TaxVatSection({
       })
     }
     rows.sort((a, b) => a.date.getTime() - b.date.getTime())
-    return rows
-  }, [ypayDocs, cutoff, userProjectNames, selectedPeriod, isPeriodClosed, selectedPayment, periods, closedPeriodKeys])
+    return { incomeRows: rows, unassignedIncomeDocs: unassigned }
+  }, [ypayDocs, cutoff, businesses, projects, selectedPeriod, isPeriodClosed, selectedPayment, periods, closedPeriodKeys])
 
   const expenseRows = useMemo<ExpenseRow[]>(() => {
     if (!selectedPeriod) return []
@@ -354,9 +348,10 @@ export default function TaxVatSection({
         : cat?.deductibleByMember?.[personUid] ?? (cat?.isDeductible ? 100 : 0)
       if (sharePercent <= 0) continue
       const eligibleAmount = Math.abs(t.amount || 0) * (sharePercent / 100)
-      const linkedDoc = resolveLinkedExpenseDoc(t.syncId ? docsByTxId.get(t.syncId) : undefined, {
+      const docCandidates = t.syncId ? docsByTxId.get(t.syncId) : undefined; const linkedDoc = resolveLinkedExpenseDoc(docCandidates, {
         isPeriodClosed, paymentSyncId: selectedPayment?.syncId,
       })
+      const documentState = expenseDocumentFilterState(docCandidates)
       if (isPeriodClosed) {
         // Closed period: only show transactions with a doc tagged to this payment.
         if (!linkedDoc) continue
@@ -387,9 +382,10 @@ export default function TaxVatSection({
         inputVat,
         vatRate,
         sharePercent,
-        hasDoc: !!linkedDoc,
-        docUrl: linkedDoc?.driveWebViewLink || linkedDoc?.externalUrl,
-        isHandled: !!linkedDoc && (linkedDoc.amount != null || linkedDoc.vatAmount != null),
+        hasDoc: documentState.hasDoc,
+        hasPeriodDoc: !!linkedDoc,
+        isZeroVat: documentState.isZeroVat,
+        isHandled: documentState.isHandled,
       })
     }
     rows.sort((a, b) => a.date.getTime() - b.date.getTime())
@@ -403,21 +399,16 @@ export default function TaxVatSection({
   }, [incomeRows, expenseRows])
 
   const missingDocCount = expenseRows.filter(r => !r.hasDoc).length
-  const zeroVatCount = expenseRows.filter(r => r.hasDoc && r.inputVat === 0).length
-  const handledCount = expenseRows.filter(r => r.isHandled).length
+  const zeroVatCount = expenseRows.filter(r => r.isZeroVat).length; const handledCount = expenseRows.filter(r => r.isHandled).length
 
-  // Two independent noise filters, both UI toggles (not hardcoded) since
-  // hiding silently makes a real match indistinguishable from "nothing
-  // happened":
-  //  - zero-VAT: hasDoc with confirmed ₪0 input VAT (e.g. foreign vendors).
-  //  - handled: attached AND actually extracted (real amount/VAT present) —
-  //    a broader "nothing left to do here" than zero-VAT specifically.
-  // Undocumented rows are always visible regardless (still pending).
+  // Independent toggles; undocumented rows always remain visible.
   const visibleExpenseRows = expenseRows.filter(r => {
-    if (!showZeroVatRows && r.hasDoc && r.inputVat === 0) return false
+    if (!showZeroVatRows && r.isZeroVat) return false
     if (!showHandledRows && r.isHandled) return false
     return true
   })
+  const sortedExpenseRows = useMemo(() => sortVatExpenseRows(visibleExpenseRows, expenseSort.key, expenseSort.direction), [visibleExpenseRows, expenseSort])
+  const toggleExpenseSort = (key: 'date' | 'vendor' | 'amount') => setExpenseSort(current => ({ key, direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc' }))
 
   const ratesInWindow = useMemo(() => {
     const set = new Set<number>()
@@ -639,9 +630,15 @@ export default function TaxVatSection({
       {selectedPeriod && <ShaamFilingView periodLabel={selectedPeriod.label} incomeRows={incomeRows} expenseRows={expenseRows} />}
 
       <SectionBlock title={`חשבוניות הכנסה (${incomeRows.length})`}>
-        {incomeRows.length === 0 ? (
+        {incomeRows.length === 0 && unassignedIncomeDocs.length === 0 ? (
           <EmptyHint text="לא נמצאו חשבוניות חבות מע״מ מאז המעבר לעוסק מורשה." />
         ) : (
+          <>
+          {unassignedIncomeDocs.length > 0 && (
+            <div style={{ marginBottom: '0.5rem', color: '#b45309', fontSize: '0.85rem' }}>
+              ⚠️ {unassignedIncomeDocs.length} חשבוניות לא משויכות אינן נספרות: {unassignedIncomeDocs.map(d => `#${d.serialNumber}`).join(', ')}
+            </div>
+          )}
           <table style={tableStyle}>
             <thead>
               <tr>
@@ -679,6 +676,7 @@ export default function TaxVatSection({
               </tr>
             </tbody>
           </table>
+          </>
         )}
         <YpayIncomeImportPanel
           onImported={async () => {
@@ -738,9 +736,9 @@ export default function TaxVatSection({
           <table style={tableStyle}>
             <thead>
               <tr>
-                <th style={thStyle}>תאריך</th>
-                <th style={thStyle}>ספק / תיאור</th>
-                <th style={{ ...thStyle, textAlign: 'left' }}>סכום מוכר</th>
+                <th style={thStyle}><button type="button" onClick={() => toggleExpenseSort('date')}>תאריך {expenseSort.key === 'date' ? (expenseSort.direction === 'asc' ? '↑' : '↓') : ''}</button></th>
+                <th style={thStyle}><button type="button" onClick={() => toggleExpenseSort('vendor')}>ספק / תיאור {expenseSort.key === 'vendor' ? (expenseSort.direction === 'asc' ? '↑' : '↓') : ''}</button></th>
+                <th style={{ ...thStyle, textAlign: 'left' }}><button type="button" onClick={() => toggleExpenseSort('amount')}>סכום מוכר {expenseSort.key === 'amount' ? (expenseSort.direction === 'asc' ? '↑' : '↓') : ''}</button></th>
                 <th style={{ ...thStyle, textAlign: 'left' }}>חלק</th>
                 <th style={{ ...thStyle, textAlign: 'left' }}>%</th>
                 <th style={{ ...thStyle, textAlign: 'left' }}>מס תשומות</th>
@@ -748,7 +746,7 @@ export default function TaxVatSection({
               </tr>
             </thead>
             <tbody>
-              {visibleExpenseRows.map(r => {
+              {sortedExpenseRows.map(r => {
                 const linked = expenseDocs.find(d => d.transactionId === r.transactionSyncId)
                 return (
                   <tr key={r.key} style={trStyle}>
@@ -782,7 +780,7 @@ export default function TaxVatSection({
                     </td>
                     <td style={{ ...tdStyle, textAlign: 'left', color: '#64748b' }}>{Math.round(r.vatRate * 100)}%</td>
                     <td style={{ ...tdStyle, textAlign: 'left', fontWeight: 600 }}>
-                      {r.hasDoc ? ILS(r.inputVat) : <span style={{ color: '#94a3b8' }}>—</span>}
+                      {r.hasPeriodDoc ? ILS(r.inputVat) : <span style={{ color: '#94a3b8' }}>—</span>}
                     </td>
                     <td style={tdStyle}>
                       <ExpenseMatchCell
