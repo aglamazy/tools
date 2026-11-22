@@ -10,6 +10,8 @@ import {
   resolveExpenseLine,
   groupExpenseDocsByTransaction,
   resolveLinkedExpenseDoc,
+  expenseDocumentFilterState,
+  sortVatExpenseRows,
 } from './expenseScale'
 
 // aglamazo#369, Agla 2026-09-13, live with Sheli: "The household items should
@@ -245,5 +247,46 @@ describe('groupExpenseDocsByTransaction + resolveLinkedExpenseDoc (aglamazo#402)
   it('open period: ignores a doc pinned to a different payment', () => {
     const docs = [makeDoc({ id: 1, vatPaymentId: 'pay-A' })]
     expect(resolveLinkedExpenseDoc(docs, { isPeriodClosed: false })).toBeUndefined()
+  })
+})
+
+describe('expenseDocumentFilterState (aglamazo#491)', () => {
+  const makeDoc = (over: Partial<ExpenseDocument>): ExpenseDocument => ({
+    id: 1, transactionId: 'tx-1', vendor: 'v', driveFileId: '', createdAt: '2026-01-01', ...over,
+  } as ExpenseDocument)
+
+  it('counts an attached document pinned to a closed period without making it open-period VAT', () => {
+    const state = expenseDocumentFilterState([makeDoc({ vatPaymentId: 'paid-may-june', amount: 100, vatAmount: 18 })])
+    expect(state).toEqual({ hasDoc: true, isZeroVat: false, isHandled: true })
+  })
+
+  it('recognizes explicit zero VAT, but does not classify a document with no extracted values as handled', () => {
+    expect(expenseDocumentFilterState([makeDoc({ amount: 100, vatAmount: 0 })])).toEqual({
+      hasDoc: true, isZeroVat: true, isHandled: true,
+    })
+    expect(expenseDocumentFilterState([makeDoc({})])).toEqual({
+      hasDoc: true, isZeroVat: false, isHandled: false,
+    })
+  })
+
+  it('keeps an undocumented row visible to both filters', () => {
+    expect(expenseDocumentFilterState(undefined)).toEqual({
+      hasDoc: false, isZeroVat: false, isHandled: false,
+    })
+  })
+})
+
+describe('sortVatExpenseRows (aglamazo#490)', () => {
+  const rows = [
+    { date: new Date('2026-06-03'), vendor: 'NAS.COM* NAS SUMMIT', amount: 20 },
+    { date: new Date('2026-06-01'), vendor: 'מקס נתניה', amount: 100 },
+    { date: new Date('2026-06-02'), vendor: 'אבירם', amount: 50 },
+  ]
+
+  it('uses the explicit Hebrew collation, then sorts dates and amounts in either direction', () => {
+    expect(sortVatExpenseRows(rows, 'vendor', 'asc').map(r => r.vendor)).toEqual(['אבירם', 'מקס נתניה', 'NAS.COM* NAS SUMMIT'])
+    expect(sortVatExpenseRows(rows, 'date', 'asc').map(r => r.date.getDate())).toEqual([1, 2, 3])
+    expect(sortVatExpenseRows(rows, 'amount', 'desc').map(r => r.amount)).toEqual([100, 50, 20])
+    expect(rows.map(r => r.amount)).toEqual([20, 100, 50])
   })
 })

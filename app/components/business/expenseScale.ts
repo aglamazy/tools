@@ -1,6 +1,25 @@
 import type { Category } from '@/app/types/category'
 import type { Business, ExpenseDocument, Transaction } from '@/app/db/financeDB'
 
+export type VatExpenseSort = 'date' | 'vendor' | 'amount'
+export type SortDirection = 'asc' | 'desc'
+
+/** The VAT expense table's display-only order. */
+export function sortVatExpenseRows<T extends { date: Date; vendor: string; amount: number }>(
+  rows: readonly T[], key: VatExpenseSort, direction: SortDirection,
+): T[] {
+  const multiplier = direction === 'asc' ? 1 : -1
+  const collator = new Intl.Collator('he')
+  return [...rows].sort((a, b) => {
+    const result = key === 'date'
+      ? a.date.getTime() - b.date.getTime()
+      : key === 'amount'
+        ? a.amount - b.amount
+        : collator.compare(a.vendor, b.vendor)
+    return result * multiplier
+  })
+}
+
 /**
  * Group expense documents by transaction, keeping every doc rather than
  * letting a plain Map overwrite silently keep whichever came last — a
@@ -36,6 +55,26 @@ export function resolveLinkedExpenseDoc(
   }
   const unpinned = candidates.filter((d) => d.vatPaymentId == null)
   return unpinned.find((d) => d.amount != null || d.vatAmount != null) || unpinned[0]
+}
+
+/**
+ * Document state used by the VAT expense-list badges and filters. This must
+ * inspect every document attached to the transaction: a document already
+ * reported in a closed period is still an attached document in this list,
+ * even though resolveLinkedExpenseDoc deliberately excludes it from the open
+ * period's input-VAT total.
+ */
+export function expenseDocumentFilterState(candidates: ExpenseDocument[] | undefined): {
+  hasDoc: boolean
+  isZeroVat: boolean
+  isHandled: boolean
+} {
+  const docs = candidates || []
+  return {
+    hasDoc: docs.length > 0,
+    isZeroVat: docs.some((doc) => doc.vatAmount === 0),
+    isHandled: docs.some((doc) => doc.amount != null || doc.vatAmount != null),
+  }
 }
 
 /**
