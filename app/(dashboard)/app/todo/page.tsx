@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useToast } from '@/app/components/ToastContainer'
 import { todoStore, type UserTask, type AutoTask, type EisenhowerQuadrant } from '@/app/stores/todoStore'
-import { getUser } from '@/app/stores/authStore'
+import { subscribeToAuth, type AuthUser } from '@/app/stores/authStore'
+import { onSignedInUser } from '@/app/services/onSignedInUser'
 import { getHouseholdInfo } from '@/app/services/householdService'
 import { assignTaskOwners, resolvePrimaryUid, isOnList } from '@/app/services/taskOwnership'
 import { listBots, createAgentTask, subscribeToAgentTasks, markWebhookTaskClaimed, type BotSummary } from '@/app/services/botService'
@@ -83,12 +84,15 @@ export default function TodoPage() {
     return () => document.removeEventListener('mousedown', handler)
   }, [snoozeMenuTaskId])
 
-  // Load tasks, household info, and bots on mount
+  // Load tasks and bots on mount
   useEffect(() => {
     loadTasks(true) // deduplicate on first load
-    loadHouseholdPartner()
     loadBots()
   }, [])
+
+  // Household info + per-member settings need the auth user, which is still
+  // null on a direct load/reload; run when it resolves (aglamazo#474, Agla 134365).
+  useEffect(() => onSignedInUser(subscribeToAuth, user => { loadHouseholdPartner(user) }), [])
 
   // Subscribe to agent task status updates + webhook-created tasks
   useEffect(() => {
@@ -152,9 +156,7 @@ export default function TodoPage() {
     setLoading(false)
   }
 
-  const loadHouseholdPartner = async () => {
-    const user = getUser()
-    if (!user) return
+  const loadHouseholdPartner = async (user: AuthUser) => {
     setCurrentUid(user.uid)
     setListUid(user.uid)
     appSettingsStore.getHideAutoTasks(user.uid).then(setHideAutoTasks)
