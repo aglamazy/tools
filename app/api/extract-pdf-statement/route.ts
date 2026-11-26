@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withServiceCall } from 'agents-observe/next'
 import { extractJsonWithFallback } from '@/app/services/llm/extractionLadder'
 import { ANTHROPIC_MODEL, GEMINI_PRO_MODEL } from '@/app/services/llm/modelRegistry'
-import { toSheetRows, findZeroAmountRows, type Extraction } from '@/app/utils/pdfExtractionRows'
+import { toSheetRows, findZeroAmountRows, findAmbiguousCreditRows, type Extraction } from '@/app/utils/pdfExtractionRows'
 
 const SYSTEM_PROMPT = `אתה מומחה בקריאת דפי בנק וכרטיסי אשראי ישראליים מקובץ PDF.
 המסמך הוא או דף תנועות בחשבון בנק, או פירוט עסקאות בכרטיס אשראי לחודש מסוים.
@@ -17,11 +17,14 @@ const SYSTEM_PROMPT = `אתה מומחה בקריאת דפי בנק וכרטיס
 2. עבור דף בנק: חלץ accountNumber (תבנית XXX-XXXXXX), processingMonth (MM/YYYY), ולכל שורה — date (DD/MM/YYYY), description, debit, credit, balance, reference (אסמכתא).
 3. עבור דף אשראי: חלץ cardNumber (4 ספרות אחרונות), billingDate (DD/MM/YYYY של מועד החיוב), ולכל שורה — date (DD/MM/YYYY), merchant, txAmount (סכום עסקה), billAmount (סכום חיוב — הסכום שמחויב המחיוב בפועל, תמיד בשקלים), currency (מטבע העסקה: "ILS" לעסקה בשקלים, אחרת קוד המטבע כפי שמופיע, לדוג' "USD"/"$"), detail (פירוט / תשלומים / זיכוי).
 4. אל תכלול שורות סיכום ("סה\"כ", "יתרת פתיחה" וכו'); רק עסקאות אמיתיות.
-5. סכומים חיוביים = חיוב; סכומי זיכוי = שליליים. שמור את הסימן.
+5. סכומים חיוביים = חיוב; סכומי זיכוי = שליליים. שמור את הסימן. שורה היא זיכוי רק כשהסכום מודפס עם סימן מינוס (למשל "-278.00") או שהמילה "זיכוי" מופיעה בעמודת הפירוט — לעולם אל תסיק זיכוי מתוכן הפירוט או משם בית העסק (למשל "תודה ל-…" בתשלום PAYBOX הוא חיוב רגיל).
 6. עסקאות מט"ח (currency שונה מ-ILS): בדוחות ישראכרט/כרטיסי אשראי כאלה מופיעים לעיתים בשני אופנים —
    (א) בטבלת "עסקאות למועד חיוב" (הטבלה הרגילה) — שם מופיעות שתי עמודות סכום: הסכום המקורי במטבע חוץ (למשל "$200.00") והסכום שחויב בפועל בשקלים (למשל "₪607.21"), לרוב זו לצד זו על אותה שורה. billAmount חייב להיות הסכום בשקלים, לעולם לא הסכום במטבע חוץ — גם אם הוא נראה כמו "הסכום" הבולט יותר בשורה. שים לב לכיווניות RTL בעמוד: הסכום השמאלי בתצוגה אינו בהכרח הראשון לוגית.
    (ב) בטבלת "עסקאות שטרם נקלטו" (עסקאות שעדיין לא נקלטו/הומרו סופית) — שם מופיע רק הסכום במטבע חוץ, ללא המרה לשקלים כלל (ההמרה תופיע רק בדוח החודש הבא לאחר שהעסקה תיסלק). עבור שורות כאלה: השאר billAmount כ-null (אל תמלא את הסכום במטבע חוץ בשדה billAmount) — עדיף להשמיט את הערך מאשר לנחש אותו.
-7. החזר אך ורק JSON תקין, ללא markdown, ללא הסברים.
+7. טבלת "רכישות בחו"ל" של ישראכרט: עמודת "סכום מקורי" (עם סמל המטבע: ₪ / $ / € / ALL וכו') היא txAmount, והסמל הוא currency; העמודה "סכום החיוב נטו לתשלום ב-₪" (הימנית ביותר) היא billAmount. גם כשהסכום המקורי כבר בשקלים — מלא billAmount (אותו סכום) ו-currency="ILS". לעולם אל תשאיר גם billAmount וגם currency ריקים בשורה.
+8. כל עסקה היא שורה אחת שמתחילה בתאריך משלה. עמודת "ענף" (קטגוריה: דלק, מסעדות/קפה, תקשורת…) ועמודת "סוג"/"כרטיס" הן תכונות של אותה שורה — לעולם לא שורה נפרדת. אל תחזיר שורה שאין לה תאריך משלה בעמוד.
+9. statementTotals: כל סכום בשורת "סה"כ חיוב לתאריך" שמופיעה בעמוד הזה (מספר לכל שורה כזו, בסימן שלה). אם אין בעמוד שורה כזו — רשימה ריקה.
+10. החזר אך ורק JSON תקין, ללא markdown, ללא הסברים.
 
 מבנה ה-JSON:
 {
@@ -30,6 +33,7 @@ const SYSTEM_PROMPT = `אתה מומחה בקריאת דפי בנק וכרטיס
   "cardNumber": "1473" או null,
   "billingDate": "10/04/2026" או null,
   "processingMonth": "04/2026" או null,
+  "statementTotals": [10696.91],
   "rows": [
     { "date": "DD/MM/YYYY", "description": "...", "debit": 0, "credit": 100.50, "balance": 12345.67, "reference": "..." },
     { "date": "DD/MM/YYYY", "merchant": "...", "txAmount": 150.00, "billAmount": 150.00, "detail": "תשלום 1 מתוך 3" }
@@ -46,6 +50,7 @@ const GEMINI_RESPONSE_SCHEMA = {
     cardNumber: { type: 'string', nullable: true },
     billingDate: { type: 'string', nullable: true },
     processingMonth: { type: 'string', nullable: true },
+    statementTotals: { type: 'array', items: { type: 'number' } },
     rows: {
       type: 'array',
       items: {
@@ -63,10 +68,14 @@ const GEMINI_RESPONSE_SCHEMA = {
           reference: { type: 'string', nullable: true },
           detail: { type: 'string', nullable: true },
         },
+        // aglamazo#452: Gemini omits optional keys outright (page 1 of the Oct
+        // 1473 statement came back with no billAmount/currency on any row and
+        // no cardNumber). Required + nullable forces it to decide each field.
+        required: ['date', 'merchant', 'description', 'txAmount', 'billAmount', 'currency', 'debit', 'credit', 'balance', 'reference', 'detail'],
       },
     },
   },
-  required: ['kind', 'rows'],
+  required: ['kind', 'accountNumber', 'cardNumber', 'billingDate', 'processingMonth', 'statementTotals', 'rows'],
 }
 
 const GEMINI_PDF_MODEL = GEMINI_PRO_MODEL
@@ -137,6 +146,16 @@ ${exampleContext}
         if (extraction.kind === 'bank' && !extraction.accountNumber) {
           return 'החילוץ לא זיהה מספר חשבון — ייתכן שהמסמך נקרא בצורה שגויה. מנסה שוב.'
         }
+        // aglamazo#452: a credit row with neither a NIS billAmount nor a
+        // currency is ambiguous — creditRows() would then store txAmount,
+        // which on a foreign row is the ORIGINAL amount (Vodafone Albania
+        // ALL 4,400 stored as ₪4,400 instead of ₪167.45). Reject and retry.
+        if (extraction.kind === 'credit') {
+          const ambiguous = findAmbiguousCreditRows(extraction)
+          if (ambiguous.length > 0) {
+            return `החילוץ הניב ${ambiguous.length} שורות ללא סכום חיוב בשקלים וללא מטבע — מנסה שוב.`
+          }
+        }
         const zeroAmountRows = findZeroAmountRows(extraction)
         if (zeroAmountRows.length > 0) {
           return `החילוץ הניב ${zeroAmountRows.length} שורות עם סכום 0 מתוך ${extraction.rows.length} — ככל הנראה המסמך גדול מדי לחילוץ במכה אחת. פצל את הקובץ לחלקים קטנים יותר ונסה שוב.`
@@ -171,6 +190,7 @@ ${exampleContext}
       cardNumber: extraction.cardNumber ?? null,
       billingDate: extraction.billingDate ?? null,
       processingMonth: extraction.processingMonth ?? null,
+      statementTotals: extraction.statementTotals ?? [],
       rows,
       rawRows: extraction.rows,
     })

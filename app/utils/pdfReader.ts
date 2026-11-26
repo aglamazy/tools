@@ -1,7 +1,7 @@
 import { db } from '@/app/db/financeDB'
 import type { SheetRow } from '@/app/types/transactions'
 import { splitPdfIntoChunks } from './pdfSplitter'
-import { toSheetRows, mergeExtractions, findZeroAmountRows, type Extraction } from './pdfExtractionRows'
+import { toSheetRows, mergeExtractions, findZeroAmountRows, reconcileCreditTotals, type Extraction } from './pdfExtractionRows'
 
 export type PdfReadProgress = { current: number; total: number }
 
@@ -80,6 +80,7 @@ async function fetchExtractionChunk(
     cardNumber: json.cardNumber,
     billingDate: json.billingDate,
     processingMonth: json.processingMonth,
+    statementTotals: Array.isArray(json.statementTotals) ? json.statementTotals : [],
     rows: json.rawRows,
     rawRows: json.rawRows,
   }
@@ -156,6 +157,15 @@ async function fetchExtraction(file: File, onProgress?: (p: PdfReadProgress) => 
   const zeroAmountRows = findZeroAmountRows(merged)
   if (zeroAmountRows.length > 0) {
     throw new Error(`חילוץ ה-PDF הניב ${zeroAmountRows.length} שורות עם סכום 0 לאחר המיזוג — נסה שוב.`)
+  }
+
+  // aglamazo#452: the rows must add up to the statement's own printed total —
+  // a short read or a foreign amount taken as NIS fails here, loudly, instead
+  // of storing a wrong month.
+  const mismatch = reconcileCreditTotals(merged)
+  if (mismatch) {
+    console.error('[pdfReader] reconcile failed:', mismatch)
+    throw new Error(mismatch)
   }
 
   return toSheetRows(merged)

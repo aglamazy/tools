@@ -22,6 +22,9 @@ export type Extraction = {
   cardNumber?: string | null
   billingDate?: string | null
   processingMonth?: string | null
+  // Every "סה"כ חיוב לתאריך" figure printed on the page(s) — the statement's
+  // own totals, used to reconcile the extracted rows (aglamazo#452).
+  statementTotals?: number[] | null
   rows: ExtractedRow[]
 }
 
@@ -120,6 +123,7 @@ export function mergeExtractions(chunks: Extraction[]): Extraction {
     cardNumber: firstNonNull('cardNumber') ?? null,
     billingDate: firstNonNull('billingDate') ?? null,
     processingMonth: firstNonNull('processingMonth') ?? null,
+    statementTotals: chunks.flatMap((c) => c.statementTotals ?? []),
     rows: chunks.flatMap((c) => c.rows),
   }
 }
@@ -134,4 +138,39 @@ export function findZeroAmountRows(extraction: Extraction): ExtractedRow[] {
   return extraction.kind === 'credit'
     ? extraction.rows.filter((r) => !!r.date && !r.txAmount && !r.billAmount)
     : extraction.rows.filter((r) => !!r.date && !r.debit && !r.credit)
+}
+
+/**
+ * A credit row with no NIS billAmount AND no currency is ambiguous: creditRows()
+ * would store its txAmount, which on a foreign-purchase row is the ORIGINAL
+ * amount (aglamazo#452: ALL 4,400 stored as ₪4,400 instead of ₪167.45).
+ */
+export function findAmbiguousCreditRows(extraction: Extraction): ExtractedRow[] {
+  if (extraction.kind !== 'credit') return []
+  return extraction.rows.filter((r) => !!r.date && r.billAmount == null && !r.currency?.trim())
+}
+
+/**
+ * Reconcile a merged credit extraction against the statement's own printed
+ * totals ("סה"כ חיוב לתאריך"). Returns null when they agree (within 1 agora per
+ * row of rounding) or when the statement printed no total; otherwise a Hebrew
+ * error naming both figures. A short read (aglamazo#452: 4 of ~93 rows) or a
+ * foreign amount taken as NIS can never pass this.
+ */
+export function reconcileCreditTotals(extraction: Extraction): string | null {
+  if (extraction.kind !== 'credit') return null
+  const totals = extraction.statementTotals ?? []
+  if (totals.length === 0) return null
+  const expected = round2(totals.reduce((a, t) => a + t, 0))
+  const sheet = creditRows(extraction)
+  const headerIdx = sheet.findIndex((r) => r[0] === 'תאריך עסקה')
+  const actual = round2(
+    sheet.slice(headerIdx + 1).reduce((a, r) => a + (typeof r[3] === 'number' ? r[3] : 0), 0),
+  )
+  if (Math.abs(actual - expected) <= 0.01) return null
+  return `סכום השורות שחולצו (${actual.toFixed(2)}) שונה מסה"כ החיוב בדוח (${expected.toFixed(2)}) — הקובץ לא יובא. נסה שוב.`
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100
 }
