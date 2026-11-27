@@ -1,7 +1,7 @@
 import { db } from '@/app/db/financeDB'
 import type { SheetRow } from '@/app/types/transactions'
 import { splitPdfIntoChunks } from './pdfSplitter'
-import { toSheetRows, mergeExtractions, findZeroAmountRows, reconcileCreditTotals, type Extraction } from './pdfExtractionRows'
+import { toSheetRows, mergeExtractions, findZeroAmountRows, reconcileCreditTotals, type Extraction, type KnownIdentifiers } from './pdfExtractionRows'
 
 export type PdfReadProgress = { current: number; total: number }
 
@@ -45,7 +45,7 @@ function buildExampleContext(extraction: Extraction): string {
 /** POST a single PDF (or page-range chunk) to the extraction endpoint and return its raw extraction. */
 async function fetchExtractionChunk(
   file: File,
-  opts: { hint?: 'bank' | 'credit'; exampleContext?: string },
+  opts: { hint?: 'bank' | 'credit'; exampleContext?: string; known?: KnownIdentifiers },
 ): Promise<Extraction & { rawRows: Extraction['rows'] }> {
   console.log(`[TEMP#358] fetchExtractionChunk start: ${file.name} (${file.size}b)`)
   const apiKey = await getClaudeApiKey()
@@ -61,6 +61,7 @@ async function fetchExtractionChunk(
       ...(apiKey ? { claudeApiKey: apiKey } : {}),
       ...(opts.hint ? { hint: opts.hint } : {}),
       ...(opts.exampleContext ? { exampleContext: opts.exampleContext } : {}),
+      ...(opts.known ? { known: opts.known } : {}),
     }),
   })
 
@@ -101,7 +102,7 @@ const MAX_CHUNK_ATTEMPTS = 3
  */
 async function extractChunkWithRetry(
   chunk: File,
-  opts: { hint?: 'bank' | 'credit'; exampleContext?: string },
+  opts: { hint?: 'bank' | 'credit'; exampleContext?: string; known?: KnownIdentifiers },
   label: string,
 ): Promise<Extraction & { rawRows: Extraction['rows'] }> {
   let lastErr: unknown
@@ -134,6 +135,9 @@ async function fetchExtraction(file: File, onProgress?: (p: PdfReadProgress) => 
   bump()
   const hint = first.kind
   const exampleContext = buildExampleContext(first)
+  // aglamazo#504: Isracard prints the card number on page 1 only — later
+  // chunks inherit it instead of failing 422 "no card number".
+  const known: KnownIdentifiers = { cardNumber: first.cardNumber ?? null, accountNumber: first.accountNumber ?? null }
 
   // The remaining pages are independent of each other — each only needs page
   // 1's example, not the page before it. So fan them out in PARALLEL instead
@@ -142,7 +146,7 @@ async function fetchExtraction(file: File, onProgress?: (p: PdfReadProgress) => 
   // if any page fails all attempts, the whole import fails (no silent gaps).
   const rest = await Promise.all(
     chunks.slice(1).map((chunk, i) =>
-      extractChunkWithRetry(chunk, { hint, exampleContext }, `chunk ${i + 2}/${total}`).then((r) => {
+      extractChunkWithRetry(chunk, { hint, exampleContext, known }, `chunk ${i + 2}/${total}`).then((r) => {
         bump()
         return r
       }),

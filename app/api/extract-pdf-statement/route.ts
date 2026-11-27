@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withServiceCall } from 'agents-observe/next'
 import { extractJsonWithFallback } from '@/app/services/llm/extractionLadder'
 import { ANTHROPIC_MODEL, GEMINI_PRO_MODEL } from '@/app/services/llm/modelRegistry'
-import { toSheetRows, findZeroAmountRows, findAmbiguousCreditRows, type Extraction } from '@/app/utils/pdfExtractionRows'
+import { toSheetRows, validateChunkExtraction, withKnownIdentifiers, type Extraction, type KnownIdentifiers } from '@/app/utils/pdfExtractionRows'
 
 const SYSTEM_PROMPT = `אתה מומחה בקריאת דפי בנק וכרטיסי אשראי ישראליים מקובץ PDF.
 המסמך הוא או דף תנועות בחשבון בנק, או פירוט עסקאות בכרטיס אשראי לחודש מסוים.
@@ -83,9 +83,12 @@ const GEMINI_PDF_MODEL = GEMINI_PRO_MODEL
 async function handler(req: NextRequest) {
   try {
     const body = await req.json()
-    const { pdfBase64, hint, exampleContext } = body as {
+    const { pdfBase64, hint, exampleContext, known: knownRaw } = body as {
       pdfBase64?: string
       hint?: 'bank' | 'credit'
+      // Identifiers page 1 of the same document already established (sent
+      // with every continuation chunk, aglamazo#504).
+      known?: KnownIdentifiers
       // Few-shot context for a continuation chunk of a multi-chunk PDF (see
       // pdfReader.ts): a JSON blob built from an EARLIER chunk's own real
       // extraction (account/month + a few sample rows). Statement exports
@@ -99,6 +102,10 @@ async function handler(req: NextRequest) {
 
     if (!pdfBase64) {
       return NextResponse.json({ error: 'Missing pdfBase64' }, { status: 400 })
+    }
+    const known: KnownIdentifiers = {
+      cardNumber: typeof knownRaw?.cardNumber === 'string' ? knownRaw.cardNumber : null,
+      accountNumber: typeof knownRaw?.accountNumber === 'string' ? knownRaw.accountNumber : null,
     }
 
     const userMessage = exampleContext
@@ -123,45 +130,9 @@ ${exampleContext}
       geminiResponseSchema: GEMINI_RESPONSE_SCHEMA,
       anthropicModel: ANTHROPIC_MODEL,
       anthropicMaxTokens: 16000,
-      validate: (extraction) => {
-        if (extraction.kind !== 'bank' && extraction.kind !== 'credit') {
-          return 'המסמך אינו דף בנק או פירוט כרטיס אשראי — אנא בדוק את הקובץ שהועלה.'
-        }
-        // A real Israeli credit-card statement always prints the card's last
-        // 4 digits, and a real bank statement always prints its account
-        // number (per SYSTEM_PROMPT's own instruction) — this is a document
-        // Gemini occasionally hallucinates a near-empty read of even at
-        // temperature 0 (see pdfReader.ts's MAX_CHUNK_ATTEMPTS comment: a
-        // known, already-observed flakiness class). A missing identifier is
-        // the cheapest reliable signal that happened again: the existing
-        // zero-amount check alone let a degenerate 1-row, wrong-month,
-        // cardNumber-less extraction through as "success" (aglamazo#358,
-        // reproduced live 2026-09-10 via instrumented client-side trail —
-        // Gemini returned a plausible-looking but wrong single row, not an
-        // error). Rejecting here reuses the same retry path zero-amount
-        // rows already use — no new retry mechanism needed.
-        if (extraction.kind === 'credit' && !extraction.cardNumber) {
-          return 'החילוץ לא זיהה מספר כרטיס — ייתכן שהמסמך נקרא בצורה שגויה. מנסה שוב.'
-        }
-        if (extraction.kind === 'bank' && !extraction.accountNumber) {
-          return 'החילוץ לא זיהה מספר חשבון — ייתכן שהמסמך נקרא בצורה שגויה. מנסה שוב.'
-        }
-        // aglamazo#452: a credit row with neither a NIS billAmount nor a
-        // currency is ambiguous — creditRows() would then store txAmount,
-        // which on a foreign row is the ORIGINAL amount (Vodafone Albania
-        // ALL 4,400 stored as ₪4,400 instead of ₪167.45). Reject and retry.
-        if (extraction.kind === 'credit') {
-          const ambiguous = findAmbiguousCreditRows(extraction)
-          if (ambiguous.length > 0) {
-            return `החילוץ הניב ${ambiguous.length} שורות ללא סכום חיוב בשקלים וללא מטבע — מנסה שוב.`
-          }
-        }
-        const zeroAmountRows = findZeroAmountRows(extraction)
-        if (zeroAmountRows.length > 0) {
-          return `החילוץ הניב ${zeroAmountRows.length} שורות עם סכום 0 מתוך ${extraction.rows.length} — ככל הנראה המסמך גדול מדי לחילוץ במכה אחת. פצל את הקובץ לחלקים קטנים יותר ונסה שוב.`
-        }
-        return null
-      },
+      // aglamazo#504: a continuation page carries the identifier page 1
+      // already established — Isracard prints the card number on page 1 only.
+      validate: (extraction) => validateChunkExtraction(extraction, known),
     })
 
     if (!result.ok) {
@@ -177,7 +148,7 @@ ${exampleContext}
       )
     }
 
-    const extraction = result.data
+    const extraction = withKnownIdentifiers(result.data, known)
     // Return both the pre-built SheetRow shape (single-call callers use this
     // directly) and the raw extraction (kind/metadata/rows) — multi-chunk
     // callers (readPdfFile splitting a large PDF into page-range calls, #251)

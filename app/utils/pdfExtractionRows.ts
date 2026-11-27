@@ -174,3 +174,44 @@ export function reconcileCreditTotals(extraction: Extraction): string | null {
 function round2(n: number): number {
   return Math.round(n * 100) / 100
 }
+
+export type KnownIdentifiers = { cardNumber?: string | null; accountNumber?: string | null }
+
+/** Fill a chunk's missing card/account number from what page 1 established (aglamazo#504). */
+export function withKnownIdentifiers(e: Extraction, known: KnownIdentifiers): Extraction {
+  return {
+    ...e,
+    cardNumber: e.cardNumber || known.cardNumber || null,
+    accountNumber: e.accountNumber || known.accountNumber || null,
+  }
+}
+
+/**
+ * Per-chunk validation run by the extraction route (retry on a non-null
+ * message). A missing identifier is the cheapest signal of a degenerate read
+ * (aglamazo#358) — but only on a chunk that should print it: a continuation
+ * page of an Isracard statement does not, so an identifier page 1 already
+ * established counts (aglamazo#504: chunks 2/4 and 3/4 failed 422 x3).
+ */
+export function validateChunkExtraction(extraction: Extraction, known: KnownIdentifiers = {}): string | null {
+  if (extraction.kind !== 'bank' && extraction.kind !== 'credit') {
+    return 'המסמך אינו דף בנק או פירוט כרטיס אשראי — אנא בדוק את הקובץ שהועלה.'
+  }
+  const e = withKnownIdentifiers(extraction, known)
+  if (e.kind === 'credit' && !e.cardNumber) {
+    return 'החילוץ לא זיהה מספר כרטיס — ייתכן שהמסמך נקרא בצורה שגויה. מנסה שוב.'
+  }
+  if (e.kind === 'bank' && !e.accountNumber) {
+    return 'החילוץ לא זיהה מספר חשבון — ייתכן שהמסמך נקרא בצורה שגויה. מנסה שוב.'
+  }
+  // aglamazo#452: a foreign row with no NIS figure would store its original amount.
+  const ambiguous = findAmbiguousCreditRows(e)
+  if (ambiguous.length > 0) {
+    return `החילוץ הניב ${ambiguous.length} שורות ללא סכום חיוב בשקלים וללא מטבע — מנסה שוב.`
+  }
+  const zeroAmountRows = findZeroAmountRows(e)
+  if (zeroAmountRows.length > 0) {
+    return `החילוץ הניב ${zeroAmountRows.length} שורות עם סכום 0 מתוך ${e.rows.length} — ככל הנראה המסמך גדול מדי לחילוץ במכה אחת. פצל את הקובץ לחלקים קטנים יותר ונסה שוב.`
+  }
+  return null
+}
