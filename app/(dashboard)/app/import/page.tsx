@@ -10,7 +10,7 @@ import MessageModal from '@/app/components/MessageModal'
 import YesNoModal from '@/app/components/YesNoModal'
 import { useToast } from '@/app/components/ToastContainer'
 import { loadDirectoryHandle, persistDirectoryHandle } from '@/app/utils/directoryStorage'
-import { deleteImportedFileRows } from '@/app/stores/importedFileDeletion'
+import { removeImportedFile, replaceImportedFile } from '@/app/stores/importedFileDeletion'
 import { transactionStore } from '@/app/stores/transactionStore'
 import { config } from '@/app/config'
 import { extractFileMetadata } from '@/app/utils/filePreview'
@@ -221,18 +221,9 @@ const handleDeleteFile = (file: ImportedFile) => {
       onConfirm: async () => {
         if (!fileToDelete) return
 
-        // Delete transactions associated with this file
-        await transactionStore.deleteTransactionsForFile(
-          fileToDelete.fileType,
-          fileToDelete.processingMonth || '',
-          fileToDelete.cardNumber,
-          fileToDelete.fileKey,
-          fileToDelete.fileName
-        )
-
-        // Remove this file's importedFiles row(s) with a hooked delete so the
-        // ledger tombstones them (aglamazo#463), then refresh from the source.
-        await deleteImportedFileRows(fileToDelete)
+        // Transactions, then the importedFiles row(s) through a hooked delete
+        // so the ledger tombstones them (aglamazo#463); refresh from the source.
+        await removeImportedFile(fileToDelete)
         const refreshed = await transactionStore.getImportedFiles()
         setFiles(refreshed ? refreshed.files : [])
 
@@ -292,11 +283,6 @@ const handleDeleteFile = (file: ImportedFile) => {
         const fileId = `${Date.now()}-${file.name}`
         const { fileImportService } = await import('@/app/services/fileImportService')
 
-        // Re-import is additive: don't delete the old file's transactions.
-        // saveBankTransactions / saveCreditCardData dedup by date|desc|amount,
-        // so existing categorized rows are preserved and only genuinely new
-        // rows from the (more complete) file get inserted.
-
         // Import new transactions. The preview's metadata.processingMonth is only
         // a guess (deterministic-parser preview, no LLM) — credit-card imports run
         // their own independent LLM extraction that can land on a different month
@@ -343,7 +329,9 @@ const handleDeleteFile = (file: ImportedFile) => {
             onCancel: () => close(false),
           })
         })
-        if (replace) await doImport()
+        // aglamazo#503: yes = the old file and its transactions go, then the
+        // new file imports in full (Agla 2026-11-04, msg 104808).
+        if (replace) await replaceImportedFile(existingFile, doImport)
         return
       }
 
